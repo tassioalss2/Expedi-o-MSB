@@ -1,0 +1,21 @@
+# Ambiente Python
+backend/venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.env
+backend/.env.txt
+
+# Ambiente Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log
+
+# Scripts de importação (contêm caminhos locais)
+backend/importar_*.py
+backend/migrar_*.py
