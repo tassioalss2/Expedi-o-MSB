@@ -14,6 +14,7 @@ const TIPOS = [
   'Embalagem danificada',
   'Erro de Transportadora na NF',
   'Cancelamento de OV',
+  'Retornou a OV',
   'Atraso na coleta',
   'Erro no faturamento',
   'Outro',
@@ -126,7 +127,7 @@ function ModalDetalhe({ oc, onClose }: { oc: any; onClose: () => void }) {
         </div>
 
         <div className="p-5 border-t flex items-center justify-between gap-2">
-          <button onClick={() => { setModalExcluir(true); setSenha(''); setSenhaErrada(false) }}
+          <button onClick={() => setModalExcluir(true)}
             className="px-3 py-2 text-red-500 border border-red-200 rounded-lg text-sm hover:bg-red-50 flex items-center gap-1.5">
             🗑 Excluir
           </button>
