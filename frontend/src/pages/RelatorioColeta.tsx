@@ -20,6 +20,7 @@ interface OVColeta {
   dias: number
   adicionado_em: string
   pallet_codigo: string
+  numero_nf?: string
 }
 
 // ── Configuração visual por faixa de dias ─────────────────────
@@ -71,6 +72,7 @@ export function RelatorioColeta() {
         dias: calcDias(pp.adicionado_em),
         adicionado_em: pp.adicionado_em,
         pallet_codigo: pallet.codigo,
+        numero_nf: pp.pedidos?.numero_nf,
       })
     }
   }
@@ -198,6 +200,7 @@ export function RelatorioColeta() {
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
                   <th className="text-left px-4 py-2.5 text-gray-500 font-semibold">OV</th>
+                  <th className="text-left px-4 py-2.5 text-gray-500 font-semibold">NF</th>
                   <th className="text-left px-4 py-2.5 text-gray-500 font-semibold">Cliente</th>
                   <th className="text-left px-4 py-2.5 text-gray-500 font-semibold">Transportadora</th>
                   <th className="text-center px-4 py-2.5 text-gray-500 font-semibold">Caixas</th>
@@ -220,6 +223,7 @@ export function RelatorioColeta() {
                   return (
                     <tr key={i} className={`${ov.dias >= 6 ? 'bg-red-50' : ov.dias >= 3 ? 'bg-orange-50' : ''}`}>
                       <td className="px-4 py-3 font-bold text-gray-900">{ov.numero_pedido}</td>
+                      <td className="px-4 py-3 text-blue-600 font-medium">{ov.numero_nf ? `📄 ${ov.numero_nf}` : '—'}</td>
                       <td className="px-4 py-3 text-gray-700 max-w-[180px] truncate">{ov.cliente}</td>
                       <td className="px-4 py-3">
                         <span className="text-xs font-semibold text-gray-700">{transpLabel}</span>

@@ -154,7 +154,7 @@ def relatorio_coletas_realizadas(
 
     # Busca pallet_pedidos coletados no período
     registros = db.table("pallet_pedidos").select(
-        "*, pedidos(numero_pedido, transportadora_id, transportadoras(nome), clientes(nome)), pallets(codigo, transportadoras(nome))"
+        "*, pedidos(numero_pedido, numero_nf, transportadora_id, transportadoras(nome), clientes(nome)), pallets(codigo, transportadoras(nome))"
     ).eq("status", "COLETADO").gte("coletado_em", f"{data_inicio}T00:00:00").lte("coletado_em", f"{data_fim}T23:59:59").execute().data
 
     resultado = []
@@ -166,6 +166,7 @@ def relatorio_coletas_realizadas(
         transp_pallet = (pallet.get("transportadoras") or {}).get("nome") or "—"
         resultado.append({
             "numero_pedido": pedido.get("numero_pedido", "—"),
+            "numero_nf": pedido.get("numero_nf"),
             "cliente": (pedido.get("clientes") or {}).get("nome", "—"),
             "transportadora": transp_ov,          # transportadora real da OV
             "pallet": transp_pallet,              # transportadora do pallet

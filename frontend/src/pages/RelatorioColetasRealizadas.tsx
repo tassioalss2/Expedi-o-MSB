@@ -68,6 +68,7 @@ export function RelatorioColetasRealizadas() {
     dias_espera: number
     tempo_formatado: string
     num_caixas?: number
+    numero_nf?: string
   }
 
   const raw = Array.isArray(data) ? data : []
@@ -189,9 +190,9 @@ export function RelatorioColetasRealizadas() {
               <thead className="border-b border-gray-100">
                 <tr className="text-left text-gray-500">
                   <th className="px-4 py-3 font-semibold">OV</th>
+                  <th className="px-4 py-3 font-semibold">NF</th>
                   <th className="px-4 py-3 font-semibold">Cliente</th>
                   <th className="px-4 py-3 font-semibold">Transportadora Real</th>
-                  <th className="px-4 py-3 font-semibold">Pallet</th>
                   <th className="px-4 py-3 font-semibold text-center">Caixas</th>
                   <th className="px-4 py-3 font-semibold">Entrou no Pallet</th>
                   <th className="px-4 py-3 font-semibold">Data/Hora Coleta</th>
@@ -202,6 +203,7 @@ export function RelatorioColetasRealizadas() {
                 {registros.map((r, i) => (
                   <tr key={i} className={r.dias_espera > 5 ? 'bg-red-50' : r.dias_espera > 3 ? 'bg-orange-50' : 'hover:bg-gray-50'}>
                     <td className="px-4 py-3 font-bold text-gray-900">{r.numero_pedido}</td>
+                    <td className="px-4 py-3 text-blue-600 font-medium">{r.numero_nf ? `📄 ${r.numero_nf}` : '—'}</td>
                     <td className="px-4 py-3 text-gray-700 max-w-[200px]">
                       <p className="truncate">{r.cliente}</p>
                     </td>
