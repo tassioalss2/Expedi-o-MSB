@@ -39,9 +39,10 @@ export function Pallets() {
 
   const pallets: any[] = Array.isArray(data) ? data : []
   const FIXOS = ['PLT-BRIX', 'PLT-RR CARGO', 'PLT-CORREIOS', 'PLT-OUTROS']
-  const ativos = pallets.filter(p => p && p.status !== 'COLETADO')
-  const fixos = FIXOS.map(cod => ativos.find(p => p.codigo === cod)).filter(Boolean)
-  const extras = ativos.filter(p => !FIXOS.includes(p.codigo))
+  // Pallets fixos SEMPRE aparecem (mesmo se COLETADO — voltam vazios)
+  const fixos = FIXOS.map(cod => pallets.find(p => p.codigo === cod)).filter(Boolean)
+  // Pallets extras só aparecem se ativos (não coletados)
+  const extras = pallets.filter(p => p && !FIXOS.includes(p.codigo) && p.status !== 'COLETADO')
   const todos: any[] = [...fixos, ...extras]
 
   const adicionar = useMutation({
