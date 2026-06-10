@@ -51,15 +51,14 @@ export function Layout() {
         sidebarAberto ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       )}>
         {/* Logo + botão fechar no mobile */}
-        <div className="p-5 border-b border-gray-700 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center font-bold text-sm">
-              ACE
-            </div>
-            <div>
-              <p className="font-bold text-sm leading-tight">ACE-MSB</p>
-              <p className="text-gray-400 text-xs">Controle de Expedição</p>
-            </div>
+        <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+          <div className="flex flex-col gap-0.5">
+            <img
+              src="/msb-logo.png"
+              alt="MSB — Medical System do Brasil"
+              className="h-8 w-auto object-contain brightness-0 invert"
+            />
+            <p className="text-gray-400 text-[10px] tracking-widest uppercase">Controle de Expedição</p>
           </div>
           <button
             onClick={fecharSidebar}
@@ -122,12 +121,11 @@ export function Layout() {
           >
             <Menu size={22} />
           </button>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-blue-500 rounded flex items-center justify-center font-bold text-xs">
-              ACE
-            </div>
-            <span className="font-semibold text-sm">ACE-MSB</span>
-          </div>
+          <img
+            src="/msb-logo.png"
+            alt="MSB"
+            className="h-7 w-auto object-contain brightness-0 invert"
+          />
         </div>
 
         {/* Página */}
