@@ -29,20 +29,33 @@ function formatarData(iso: string): string {
 
 // ── ZPL (Browser Print / raw TCP) ────────────────────────────────────────────
 
-/** Gera ZPL para TLP 2844 — ASCII puro, layout idêntico ao modelo MSB */
+/**
+ * Gera ZPL para TLP 2844 — 100mm × 60mm (800 × 480 dots @ 203dpi)
+ * Layout idêntico ao modelo MSB — Arial Black 19.5pt ≈ 55 dots
+ *   ITEM: {codigo}
+ *   LOTE: {lote}
+ *   VAL:  {validade}
+ *   QNT:  {quantidade} UNIDADES
+ *   Nome: {operador}
+ *   INVENTARIO: {data}
+ */
 function gerarZPL(dados: EtiquetaInventario): string {
-  const val = dados.validade || '---'
+  const val  = dados.validade  || '---'
   const data = formatarData(dados.dataInventario)
+  const nome = dados.operador  || ''
+
+  // 6 linhas × 77 dots espaçamento, fonte 55 dots (~19.5pt @ 203dpi)
   return `^XA
 ^MMT
-^PW812
-^LL508
+^PW800
+^LL480
 ^LS0
-^FO20,15^A0N,60,60^FDITEM: ${dados.codigo}^FS
-^FO20,100^A0N,60,60^FDLOTE: ${dados.lote}^FS
-^FO20,185^A0N,60,60^FDQNT: ${dados.quantidade} UNIDADES^FS
-^FO20,270^A0N,60,60^FDVAL: ${val}^FS
-^FO20,355^A0N,60,60^FDINVENTARIO: ${data}^FS
+^FO8,5^A0N,55,55^FDITEM: ${dados.codigo}^FS
+^FO8,82^A0N,55,55^FDLOTE: ${dados.lote}^FS
+^FO8,159^A0N,55,55^FDVAL: ${val}^FS
+^FO8,236^A0N,55,55^FDQNT: ${dados.quantidade} UNIDADES^FS
+^FO8,313^A0N,55,55^FDNome: ${nome}^FS
+^FO8,390^A0N,55,55^FDINVENTARIO: ${data}^FS
 ^XZ`
 }
 
@@ -112,23 +125,27 @@ export function imprimirEtiquetaNavegador(dados: EtiquetaInventario): void {
   const val = dados.validade || '---'
   const data = formatarData(dados.dataInventario)
 
+  const nome = dados.operador || ''
+
+  // 100mm × 60mm — 6 linhas, Arial Black 19pt
   const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>Etiqueta</title>
 <style>
-  @page { size: 4in 2.5in; margin: 4mm; }
+  @page { size: 100mm 60mm; margin: 2mm; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; font-weight: 900; }
-  p { font-size: 18pt; line-height: 1.35; letter-spacing: -0.5px; }
+  body { font-family: 'Arial Black', Arial, sans-serif; font-weight: 900; }
+  p { font-size: 19pt; line-height: 1.28; white-space: nowrap; }
 </style>
 </head>
 <body>
   <p>ITEM: ${dados.codigo}</p>
   <p>LOTE: ${dados.lote}</p>
-  <p>QNT: ${dados.quantidade} UNIDADES</p>
   <p>VAL: ${val}</p>
+  <p>QNT: ${dados.quantidade} UNIDADES</p>
+  <p>Nome: ${nome}</p>
   <p>INVENTARIO: ${data}</p>
 </body>
 </html>`

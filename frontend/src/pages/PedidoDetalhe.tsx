@@ -11,6 +11,7 @@ import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { TIPO_FRETE_LABEL } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiqueta, verificarZebraConectado, ZEBRA_DOWNLOAD_URL } from '../lib/zebraPrint'
+import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
 
 // ── Linha de info ─────────────────────────────────────────────────────────────
@@ -201,6 +202,7 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
 // ── Modal Verificação Física (Operador 2) ─────────────────────────────────────
 function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
+  const { usuario } = useAuthStore()
   const { data: inv } = useQuery({
     queryKey: ['inventario', pedido.id],
     queryFn: () => api.get(`/pedidos/${pedido.id}/inventario`).then(r => r.data),
@@ -246,6 +248,7 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
         quantidade: estoqueRestante,
         ov: pedido.numero_pedido,
         dataInventario: new Date().toISOString(),
+        operador: usuario?.nome || '',
       })
       setImprimindo(null)
       if (!resultado.ok) {
