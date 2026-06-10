@@ -61,7 +61,7 @@ export async function verificarZebraConectado(): Promise<boolean> {
   }
 }
 
-/** Lista impressoras disponíveis */
+/** Lista todas as impressoras disponíveis no Browser Print */
 export async function listarImpressoras(): Promise<any[]> {
   try {
     const resp = await fetch(`${ZEBRA_URL}/available`)
@@ -73,7 +73,38 @@ export async function listarImpressoras(): Promise<any[]> {
   }
 }
 
-/** Imprime etiqueta na impressora Zebra */
+/**
+ * Encontra a TLP 2844 na lista de impressoras.
+ * Busca pelo nome (case-insensitive) e NÃO usa fallback para outra impressora,
+ * evitando imprimir na impressora errada (ex: ZD230).
+ */
+export async function encontrarTLP2844(): Promise<{ printer: any | null; erro?: string }> {
+  const impressoras = await listarImpressoras()
+
+  if (impressoras.length === 0) {
+    return {
+      printer: null,
+      erro: 'Nenhuma impressora encontrada no Zebra Browser Print. Verifique se o serviço está rodando.',
+    }
+  }
+
+  const tlp = impressoras.find(p => {
+    const nome = (p?.name || '').toLowerCase()
+    return nome.includes('2844') || nome.includes('tlp')
+  })
+
+  if (!tlp) {
+    const nomes = impressoras.map((p: any) => p?.name || 'sem nome').join(', ')
+    return {
+      printer: null,
+      erro: `TLP 2844 não encontrada no Browser Print. Impressoras visíveis: ${nomes}. Adicione a TLP 2844 em "Added Devices" no Browser Print.`,
+    }
+  }
+
+  return { printer: tlp }
+}
+
+/** Imprime etiqueta na impressora TLP 2844 */
 export async function imprimirEtiqueta(
   dados: EtiquetaInventario,
   impressora?: any
@@ -89,15 +120,9 @@ export async function imprimirEtiqueta(
 
     let printer = impressora
     if (!printer) {
-      const impressoras = await listarImpressoras()
-      if (impressoras.length === 0) {
-        return { ok: false, erro: 'Nenhuma impressora Zebra encontrada.' }
-      }
-      // Prioriza TLP 2844
-      printer = impressoras.find(p =>
-        p?.name?.toLowerCase().includes('2844') ||
-        p?.name?.toLowerCase().includes('zebra')
-      ) || impressoras[0]
+      const { printer: tlp, erro } = await encontrarTLP2844()
+      if (!tlp) return { ok: false, erro }
+      printer = tlp
     }
 
     const zpl = gerarZPL(dados)
