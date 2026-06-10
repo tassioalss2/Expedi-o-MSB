@@ -13,6 +13,7 @@ import { NovoPedido } from './pages/NovoPedido'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
 import { RelatorioColetasRealizadas } from './pages/RelatorioColetasRealizadas'
+import { Relatorios } from './pages/Relatorios'
 import { useAuthStore } from './store/authStore'
 
 const qc = new QueryClient({
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="pallets" element={<Pallets />} />
             <Route path="ocorrencias" element={<Ocorrencias />} />
             <Route path="indicadores" element={<Indicadores />} />
+            <Route path="relatorios" element={<Relatorios />} />
             <Route path="cadastros" element={<Cadastros />} />
           </Route>
 

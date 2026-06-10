@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
-  Users, LogOut, Activity, Layers, Menu, X,
+  Users, LogOut, Activity, Layers, Menu, X, BarChart2,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -13,6 +13,7 @@ const nav = [
   { to: '/pallets',    label: 'Pallets',    icone: Layers },
   { to: '/ocorrencias',label: 'Ocorrências',icone: AlertTriangle },
   { to: '/indicadores',label: 'Indicadores',icone: Activity },
+  { to: '/relatorios', label: 'Relatórios', icone: BarChart2 },
   { to: '/cadastros',  label: 'Cadastros',  icone: ClipboardList },
   { to: '/admin',      label: 'Usuários',   icone: Users, perfis: ['ADMIN', 'GERENCIA'] },
 ]

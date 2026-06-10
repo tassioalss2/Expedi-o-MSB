@@ -255,8 +255,14 @@ function InfoEtapaModal({ status, cfg, onClose }: { status: string; cfg: any; on
 
 function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedido: (p: Pedido) => void }) {
   const [infoAberta, setInfoAberta] = useState<string | null>(null)
+  const hoje = new Date().toISOString().slice(0, 10) // 'YYYY-MM-DD'
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
-    acc[status] = pedidos.filter((p) => p.status === status)
+    let lista = pedidos.filter((p) => p.status === status)
+    // Expedido: só mostra coletas do dia atual
+    if (status === 'EXPEDIDO') {
+      lista = lista.filter((p) => p.atualizado_em?.slice(0, 10) === hoje)
+    }
+    acc[status] = lista
     return acc
   }, {})
 
