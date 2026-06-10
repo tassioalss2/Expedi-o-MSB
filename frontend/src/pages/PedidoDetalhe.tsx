@@ -213,6 +213,7 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   const [validadeMap, setValidadeMap] = useState<Record<string, string>>({})
   const [zebraConectado, setZebraConectado] = useState<boolean | null>(null)
   const [imprimindo, setImprimindo] = useState<string | null>(null)
+  const [nomeOperador, setNomeOperador] = useState(usuario?.nome || '')
 
   // Verifica Zebra ao abrir
   useEffect(() => {
@@ -248,7 +249,7 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
         quantidade: estoqueRestante,
         ov: pedido.numero_pedido,
         dataInventario: new Date().toISOString(),
-        operador: usuario?.nome || '',
+        operador: nomeOperador || usuario?.nome || '',
       })
       setImprimindo(null)
       if (!resultado.ok) {
@@ -292,7 +293,26 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl w-full max-w-4xl my-4">
-        <div className="p-5 border-b">
+        <div className="p-5 border-b space-y-3">
+          {/* Nome do operador */}
+          <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+            <span className="text-blue-600 text-lg">👤</span>
+            <label className="text-sm font-semibold text-blue-800 whitespace-nowrap">Operador:</label>
+            <input
+              type="text"
+              value={nomeOperador}
+              onChange={e => setNomeOperador(e.target.value)}
+              placeholder="Digite seu nome antes de conferir..."
+              className="flex-1 bg-white border border-blue-300 rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-400"
+              autoFocus
+            />
+            {nomeOperador && (
+              <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium whitespace-nowrap">
+                ✓ Sairá na etiqueta
+              </span>
+            )}
+          </div>
+
           <div className="flex items-start justify-between">
             <div>
               <h2 className="text-lg font-bold">🔍 Verificação Física — {pedido.numero_pedido}</h2>
