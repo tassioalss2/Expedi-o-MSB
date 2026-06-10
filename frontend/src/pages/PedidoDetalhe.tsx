@@ -250,6 +250,8 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
       setImprimindo(null)
       if (!resultado.ok) {
         toast.error(`Impressão: ${resultado.erro}`)
+      } else if (resultado.metodo === 'navegador') {
+        toast.success(`🖨 Abrindo etiqueta no navegador — selecione TLP 2844`)
       } else {
         toast.success(`🖨 Etiqueta impressa — ${item.codigo_item}`)
       }
