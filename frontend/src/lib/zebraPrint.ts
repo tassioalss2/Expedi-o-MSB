@@ -35,7 +35,6 @@ function gerarZPL(dados: EtiquetaInventario): string {
   const val = dados.validade || '---'
 
   return `^XA
-^CI28
 ^MMT
 ^PW812
 ^LL508
@@ -44,7 +43,7 @@ function gerarZPL(dados: EtiquetaInventario): string {
 ^FO20,100^A0N,60,60^FDLOTE: ${dados.lote}^FS
 ^FO20,185^A0N,60,60^FDQNT: ${dados.quantidade} UNIDADES^FS
 ^FO20,270^A0N,60,60^FDVAL: ${val}^FS
-^FO20,355^A0N,60,60^FDINVENTÁRIO: ${dataFormatada}^FS
+^FO20,355^A0N,60,60^FDINVENTARIO: ${dataFormatada}^FS
 ^XZ`
 }
 
