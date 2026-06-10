@@ -382,6 +382,12 @@ class VerificarFisicoRequest(BaseModel):
 
 # ── Cubagem ───────────────────────────────────────────────────
 
+class CubagemItemCreate(BaseModel):
+    tipo_caixa_id: Optional[str] = None
+    tipo_caixa_nome: str
+    quantidade: int = 1
+
+
 class CubagemCreate(BaseModel):
     peso_kg: Optional[float] = None
     altura_cm: Optional[float] = None
@@ -389,6 +395,7 @@ class CubagemCreate(BaseModel):
     comprimento_cm: Optional[float] = None
     num_caixas: Optional[int] = None
     observacao: Optional[str] = None
+    itens: list[CubagemItemCreate] = []
 
 
 class CubagemOut(BaseModel):

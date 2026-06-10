@@ -511,13 +511,11 @@ function ModalCubagem({ pedido, onClose }: { pedido: Pedido; onClose: () => void
         peso_kg: pesoTotal ? Number(pesoTotal) : null,
         num_caixas: totalCaixas,
         observacao: observacao || null,
-      })
-      await api.post(`/pedidos-cubagem/${pedido.id}/itens`, {
         itens: itens.filter(i => i.tipo_caixa_nome).map(i => ({
           tipo_caixa_id: i.tipo_caixa_id || null,
           tipo_caixa_nome: i.tipo_caixa_nome,
           quantidade: i.quantidade,
-        }))
+        })),
       })
       return cubRes
     },
@@ -690,9 +688,9 @@ const RETORNOS: Record<string, { label: string; destinos: { status: string; labe
   AGUARD_VERIFICACAO:    { label: 'Aguard. Verificação',  destinos: [{ status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   DIVERGENCIA:           { label: 'Divergência',          destinos: [{ status: 'EM_INVENTARIO', label: 'Em Inventário (reprocessar)' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   AGUARD_TRATATIVA:      { label: 'Aguard. Tratativa',    destinos: [{ status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
-  EM_PROCESSO_SISTEMICO: { label: 'Proc. Sistêmico',      destinos: [{ status: 'AGUARD_VERIFICACAO', label: 'Aguard. Verificação' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
-  AGUARD_FATURAMENTO:    { label: 'Aguard. Faturamento',  destinos: [{ status: 'EM_PROCESSO_SISTEMICO', label: 'Proc. Sistêmico (D365)' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
-  FATURADO:              { label: 'Faturado',             destinos: [{ status: 'AGUARD_FATURAMENTO', label: 'Aguard. Faturamento' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
+  EM_PROCESSO_SISTEMICO: { label: 'D365 + Cubagem',       destinos: [{ status: 'AGUARD_VERIFICACAO', label: 'Aguard. Verificação' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
+  AGUARD_FATURAMENTO:    { label: 'Aguard. Faturamento',  destinos: [{ status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
+  FATURADO:              { label: 'Faturado',             destinos: [{ status: 'AGUARD_FATURAMENTO', label: 'Aguard. Faturamento' }, { status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   AGUARD_COLETA:         { label: 'No Pallet',            destinos: [{ status: 'FATURADO', label: 'Faturado (remover do pallet)' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
 }
 
@@ -712,13 +710,15 @@ function ModalRetornarEtapa({ pedido, onClose }: { pedido: Pedido; onClose: () =
   const [destinoStatus, setDestinoStatus] = useState(config?.destinos[0]?.status || '')
   const [motivo, setMotivo] = useState(MOTIVOS_RETORNO[0])
   const [motivoOutro, setMotivoOutro] = useState('')
+  const [registrarOcorrencia, setRegistrarOcorrencia] = useState(true)
 
   const motivoFinal = motivo === 'Outro motivo' ? motivoOutro : motivo
 
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/retornar-etapa`, {
       status_destino: destinoStatus,
-      motivo: motivoFinal,
+      motivo: registrarOcorrencia ? (motivoFinal || 'Retorno sem motivo') : 'Retorno sem ocorrência',
+      registrar_ocorrencia: registrarOcorrencia,
     }),
     onSuccess: () => {
       toast.success('OV retornada à etapa anterior. Ocorrência registrada.')
@@ -762,30 +762,44 @@ function ModalRetornarEtapa({ pedido, onClose }: { pedido: Pedido; onClose: () =
             </div>
           </div>
 
-          {/* Motivo */}
-          <div>
-            <label className="text-sm font-medium text-gray-700">Motivo *</label>
-            <select value={motivo} onChange={e => setMotivo(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
-              {MOTIVOS_RETORNO.map(m => <option key={m}>{m}</option>)}
-            </select>
-            {motivo === 'Outro motivo' && (
-              <textarea rows={2} value={motivoOutro} onChange={e => setMotivoOutro(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm mt-2"
-                placeholder="Descreva o motivo..." autoFocus />
-            )}
-          </div>
+          {/* Toggle ocorrência */}
+          <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer">
+            <input type="checkbox" checked={registrarOcorrencia}
+              onChange={e => setRegistrarOcorrencia(e.target.checked)}
+              className="w-4 h-4 accent-amber-600" />
+            <div>
+              <p className="text-sm font-medium text-gray-700">Registrar ocorrência</p>
+              <p className="text-xs text-gray-400">Desmarque para retornar sem gerar ocorrência</p>
+            </div>
+          </label>
+
+          {/* Motivo — só aparece se registrar ocorrência */}
+          {registrarOcorrencia && (
+            <div>
+              <label className="text-sm font-medium text-gray-700">Motivo *</label>
+              <select value={motivo} onChange={e => setMotivo(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+                {MOTIVOS_RETORNO.map(m => <option key={m}>{m}</option>)}
+              </select>
+              {motivo === 'Outro motivo' && (
+                <textarea rows={2} value={motivoOutro} onChange={e => setMotivoOutro(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-2"
+                  placeholder="Descreva o motivo..." autoFocus />
+              )}
+            </div>
+          )}
 
           {/* Aviso */}
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-            ⚠️ A OV voltará para <strong>{destinoLabel}</strong> e uma ocorrência será registrada automaticamente.
+            ⚠️ A OV voltará para <strong>{destinoLabel}</strong>
+            {registrarOcorrencia ? ' e uma ocorrência será registrada automaticamente.' : ' sem registrar ocorrência.'}
             {pedido.status === 'AGUARD_COLETA' && <span className="block mt-1">📦 A OV será removida do pallet.</span>}
           </div>
         </div>
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !motivoFinal.trim() || !destinoStatus}
+            disabled={mutation.isPending || !destinoStatus || (registrarOcorrencia && !motivoFinal.trim())}
             className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-amber-500">
             {mutation.isPending ? 'Retornando...' : '↩ Confirmar Retorno'}
           </button>

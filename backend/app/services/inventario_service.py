@@ -159,13 +159,37 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
     }
     result = db.table("cubagem").insert(cub).execute().data[0]
 
+    # Salva e monta itens de cubagem (tipos de caixa)
+    db.table("cubagem_itens").delete().eq("pedido_id", pedido_id).execute()
+    itens_para_msg = []
+    for item in payload.itens:
+        if not item.tipo_caixa_nome:
+            continue
+        db.table("cubagem_itens").insert({
+            "pedido_id": pedido_id,
+            "tipo_caixa_id": item.tipo_caixa_id or None,
+            "tipo_caixa_nome": item.tipo_caixa_nome,
+            "quantidade": item.quantidade,
+            "criado_em": _agora(),
+        }).execute()
+        desc = ""
+        if item.tipo_caixa_id:
+            tc = db.table("tipos_caixa").select("descricao").eq("id", item.tipo_caixa_id).execute()
+            if tc.data:
+                desc = tc.data[0].get("descricao", "")
+        itens_para_msg.append({
+            "tipo_caixa_nome": item.tipo_caixa_nome,
+            "quantidade": item.quantidade,
+            "tipos_caixa": {"descricao": desc},
+        })
+
     # Só avança o status se ainda estiver em processo sistêmico
     if pedido["status"] == StatusPedido.EM_PROCESSO_SISTEMICO.value:
         alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario, "Cubagem registrada — aguardando faturamento")
 
     # Monta mensagem para o Teams
-    cliente_nome = pedido.get("clientes", {}).get("nome", "") if pedido.get("clientes") else ""
-    msg = gerar_mensagem_teams(pedido["numero_pedido"], cliente_nome, result)
+    cliente_nome = (pedido.get("cliente") or pedido.get("clientes") or {}).get("nome", "")
+    msg = gerar_mensagem_teams(pedido["numero_pedido"], cliente_nome, result, itens_para_msg)
     return {"cubagem": result, "mensagem_teams": msg}
 
 
@@ -175,18 +199,38 @@ def obter_cubagem(pedido_id: str) -> dict | None:
     return result.data[0] if result.data else None
 
 
-def gerar_mensagem_teams(numero_pedido: str, cliente: str, cubagem: dict) -> str:
+def gerar_mensagem_teams(numero_pedido: str, cliente: str, cubagem: dict, itens: list = None) -> str:
     linhas = [f"📦 *Cubagem — {numero_pedido}*"]
+
     if cliente:
-        linhas.append(f"Cliente: {cliente}")
+        linhas.append(f"👤 Cliente: {cliente}")
+
+    linhas.append("")
+
+    # Tipos de caixa com quantidade e dimensões
+    if itens:
+        linhas.append("📦 *Caixas:*")
+        for item in itens:
+            nome = item.get("tipo_caixa_nome") or "—"
+            qtd = item.get("quantidade", 1)
+            # Busca dimensões do tipo de caixa
+            tipo = item.get("tipos_caixa") or {}
+            desc = tipo.get("descricao", "")
+            if desc:
+                linhas.append(f"  • {qtd}x {nome} — {desc}")
+            else:
+                linhas.append(f"  • {qtd}x {nome}")
+
+    linhas.append("")
+
     if cubagem.get("num_caixas"):
-        linhas.append(f"Volumes: {cubagem['num_caixas']} caixa(s)")
+        linhas.append(f"📊 Total: {cubagem['num_caixas']} caixa(s)")
     if cubagem.get("peso_kg"):
-        linhas.append(f"Peso: {cubagem['peso_kg']} kg")
-    if cubagem.get("altura_cm") and cubagem.get("largura_cm") and cubagem.get("comprimento_cm"):
-        linhas.append(f"Dimensões: {cubagem['altura_cm']}cm × {cubagem['largura_cm']}cm × {cubagem['comprimento_cm']}cm")
+        linhas.append(f"⚖️ Peso total: {cubagem['peso_kg']} kg")
     if cubagem.get("observacao"):
-        linhas.append(f"Obs: {cubagem['observacao']}")
+        linhas.append(f"📝 Obs: {cubagem['observacao']}")
+
+    linhas.append("")
     linhas.append("✅ Pronto para faturamento")
     return "\n".join(linhas)
 
