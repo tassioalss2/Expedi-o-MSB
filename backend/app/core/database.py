@@ -166,6 +166,7 @@ class SupabaseClient:
 
 
 _client: Optional[SupabaseClient] = None
+_service_client: Optional[SupabaseClient] = None
 
 
 def get_db() -> SupabaseClient:
@@ -176,4 +177,8 @@ def get_db() -> SupabaseClient:
 
 
 def get_service_db() -> SupabaseClient:
-    return get_db()
+    """Usa a service role key que ignora RLS — para operações do servidor."""
+    global _service_client
+    if _service_client is None:
+        _service_client = SupabaseClient(settings.supabase_url, settings.supabase_service_key)
+    return _service_client
