@@ -254,9 +254,11 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
       if (!resultado.ok) {
         toast.error(`Impressão: ${resultado.erro}`)
       } else if (resultado.metodo === 'navegador') {
-        toast.success(`🖨 Abrindo etiqueta no navegador — selecione TLP 2844`)
+        toast.success(`🖨 Abrindo etiqueta — selecione TLP 2844 e imprima`)
+      } else if (resultado.metodo === 'print_agent') {
+        toast.success(`🖨 Impresso automaticamente — ${item.codigo_item}`)
       } else {
-        toast.success(`🖨 Etiqueta impressa — ${item.codigo_item}`)
+        toast.success(`🖨 Etiqueta enviada — ${item.codigo_item}`)
       }
     }
   }

@@ -4,7 +4,8 @@
  * impressão via navegador (window.print) se falhar.
  */
 
-const ZEBRA_URL = 'http://localhost:9100'
+const ZEBRA_URL        = 'http://localhost:9100'   // Zebra Browser Print
+const PRINT_AGENT_URL  = 'http://localhost:9095'   // MSB Print Agent
 
 export interface EtiquetaInventario {
   codigo: string
@@ -59,8 +60,24 @@ function gerarZPL(dados: EtiquetaInventario): string {
 ^XZ`
 }
 
-/** Verifica se o Zebra Browser Print está rodando */
+/** Verifica se o MSB Print Agent está rodando (localhost:9095) */
+export async function verificarPrintAgent(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${PRINT_AGENT_URL}/status`, {
+      signal: AbortSignal.timeout(1500),
+    })
+    return resp.ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Verifica se QUALQUER método de impressão automática está disponível.
+ * Testa PrintAgent primeiro, depois Browser Print.
+ */
 export async function verificarZebraConectado(): Promise<boolean> {
+  if (await verificarPrintAgent()) return true
   try {
     const resp = await fetch(`${ZEBRA_URL}/available`, {
       signal: AbortSignal.timeout(2000),
@@ -179,9 +196,26 @@ export async function imprimirEtiqueta(
   dados: EtiquetaInventario,
   impressora?: any
 ): Promise<ResultadoImpressao> {
-  // ── Tentativa 1: Browser Print ──
+  const zpl = gerarZPL(dados)
+
+  // ── Tentativa 1: MSB Print Agent (localhost:9095) ──
   try {
-    const conectado = await verificarZebraConectado()
+    const agentOk = await verificarPrintAgent()
+    if (agentOk) {
+      const resp = await fetch(`${PRINT_AGENT_URL}/print`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zpl }),
+      })
+      if (resp.ok) return { ok: true, metodo: 'print_agent' }
+    }
+  } catch { /* cai para próxima tentativa */ }
+
+  // ── Tentativa 2: Browser Print (localhost:9100) ──
+  try {
+    const conectado = await fetch(`${ZEBRA_URL}/available`, {
+      signal: AbortSignal.timeout(2000),
+    }).then(r => r.ok).catch(() => false)
 
     if (conectado) {
       let printer = impressora
@@ -189,26 +223,18 @@ export async function imprimirEtiqueta(
         const { printer: tlp } = await encontrarTLP2844()
         printer = tlp
       }
-
       if (printer) {
-        const zpl = gerarZPL(dados)
         const resp = await fetch(`${ZEBRA_URL}/write`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ device: printer, data: zpl }),
         })
-
-        if (resp.ok) {
-          return { ok: true, metodo: 'browser_print' }
-        }
-        // 500 ou outro erro → cai para fallback
+        if (resp.ok) return { ok: true, metodo: 'browser_print' }
       }
     }
-  } catch {
-    // ignora e cai para fallback
-  }
+  } catch { /* cai para fallback */ }
 
-  // ── Tentativa 2: window.print() via driver Windows ──
+  // ── Tentativa 3: window.print() via driver Windows ──
   imprimirEtiquetaNavegador(dados)
   return { ok: true, metodo: 'navegador' }
 }
