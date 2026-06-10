@@ -90,7 +90,14 @@ export async function encontrarTLP2844(): Promise<{ printer: any | null; erro?: 
 
   const tlp = impressoras.find(p => {
     const nome = (p?.name || '').toLowerCase()
-    return nome.includes('2844') || nome.includes('tlp')
+    // Exclui explicitamente a ZD230 para não imprimir na impressora errada
+    if (nome.includes('zd230')) return false
+    return (
+      nome.includes('2844') ||
+      nome.includes('tlp') ||
+      nome === 'zebra 01' ||       // nome registrado no Browser Print desta unidade
+      nome.includes('zebra 01')
+    )
   })
 
   if (!tlp) {
