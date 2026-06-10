@@ -15,39 +15,37 @@ export interface EtiquetaInventario {
   operador?: string
 }
 
-/** Gera ZPL para Zebra TLP 2844 (4" x 2", 203dpi) */
+/** Gera ZPL para Zebra TLP 2844 (4" x 2.5", 203dpi)
+ *  Layout idêntico ao modelo MSB:
+ *    ITEM: UFGH-035150RHS
+ *    LOTE: 000026-26-01
+ *    QNT: 200 UNIDADES
+ *    VAL: 03/2029
+ *    INVENTÁRIO: 02/06/2026
+ */
 function gerarZPL(dados: EtiquetaInventario): string {
-  const dataFormatada = new Date(dados.dataInventario).toLocaleDateString('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit'
-  })
+  const dt = new Date(dados.dataInventario)
+  const dataFormatada = [
+    String(dt.getDate()).padStart(2, '0'),
+    String(dt.getMonth() + 1).padStart(2, '0'),
+    dt.getFullYear(),
+  ].join('/')
 
-  return `
-^XA
+  // Validade: aceita MM/AAAA ou MM/YYYY — passa direto como digitado
+  const val = dados.validade || '---'
+
+  return `^XA
+^CI28
 ^MMT
 ^PW812
-^LL406
+^LL508
 ^LS0
-
-^FO30,20^A0N,28,28^FDMSB Biomedical - Inventario^FS
-
-^FO30,60^A0N,36,36^FD${dados.codigo}^FS
-
-^FO30,105^A0N,24,24^FDLote: ${dados.lote}^FS
-
-^FO30,135^A0N,24,24^FDValidade: ${dados.validade || '---'}^FS
-
-^FO30,170^A0N,36,36^FDQTD: ${dados.quantidade}^FS
-
-^FO30,215^A0N,20,20^FDOV: ${dados.ov}^FS
-^FO30,240^A0N,20,20^FDData: ${dataFormatada}^FS
-
-^FO420,60^BCN,80,Y,N,N^FD${dados.codigo}^FS
-
-^FO30,275^GB752,3,3^FS
-^FO30,283^A0N,18,18^FDInventario Continuo MSB^FS
-
-^XZ`.trim()
+^FO20,15^A0N,60,60^FDITEM: ${dados.codigo}^FS
+^FO20,100^A0N,60,60^FDLOTE: ${dados.lote}^FS
+^FO20,185^A0N,60,60^FDQNT: ${dados.quantidade} UNIDADES^FS
+^FO20,270^A0N,60,60^FDVAL: ${val}^FS
+^FO20,355^A0N,60,60^FDINVENTÁRIO: ${dataFormatada}^FS
+^XZ`
 }
 
 /** Verifica se o Zebra Browser Print está rodando */
