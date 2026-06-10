@@ -350,13 +350,15 @@ def confirmar_coleta(pedido_id: str, payload: ConfirmarColetaRequest, usuario: U
         "atualizado_em": _agora(),
     }).eq("id", pedido_id).execute()
 
+    from app.services.inventario_service import _get_usuario_real
+    uid = _get_usuario_real(str(usuario.id))
     db.table("coletas").insert({
         "pedido_id": pedido_id,
         "motorista": payload.motorista,
         "placa": payload.placa,
         "protocolo": payload.protocolo,
         "data_real": payload.data_real_coleta.isoformat(),
-        "registrado_por": str(usuario.id),
+        "registrado_por": uid,
         "criado_em": _agora(),
     }).execute()
 
@@ -396,10 +398,12 @@ def criar_ocorrencia(payload: OcorrenciaCreate, usuario: UsuarioOut) -> dict:
 
 def fechar_ocorrencia(ocorrencia_id: str, resolucao: str, usuario: UsuarioOut) -> dict:
     db = get_service_db()
+    from app.services.inventario_service import _get_usuario_real
+    uid = _get_usuario_real(str(usuario.id))
     result = db.table("ocorrencias").update({
         "status": "FECHADA",
         "resolucao": resolucao,
-        "resolvido_por": str(usuario.id),
+        "resolvido_por": uid,
         "resolvido_em": _agora(),
     }).eq("id", ocorrencia_id).execute()
     return result.data[0]
