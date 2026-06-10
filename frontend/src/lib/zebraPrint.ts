@@ -49,6 +49,7 @@ function gerarZPL(dados: EtiquetaInventario): string {
   return `^XA
 ^MNN
 ^PW800
+^LL480
 ^LS0
 ^FO8,5^A0N,55,55^FDITEM: ${dados.codigo}^FS
 ^FO8,82^A0N,55,55^FDLOTE: ${dados.lote}^FS
