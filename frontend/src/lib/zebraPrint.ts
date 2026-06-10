@@ -198,14 +198,21 @@ export async function imprimirEtiqueta(
 ): Promise<ResultadoImpressao> {
   const zpl = gerarZPL(dados)
 
-  // ── Tentativa 1: MSB Print Agent (localhost:9095) ──
+  // ── Tentativa 1: MSB Print Agent (localhost:9095) — usa GDI, sem conflito ZPL ──
   try {
     const agentOk = await verificarPrintAgent()
     if (agentOk) {
       const resp = await fetch(`${PRINT_AGENT_URL}/print`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ zpl }),
+        body: JSON.stringify({
+          codigo:          dados.codigo,
+          lote:            dados.lote,
+          validade:        dados.validade || '---',
+          quantidade:      dados.quantidade,
+          operador:        dados.operador || '',
+          data_inventario: dados.dataInventario,
+        }),
       })
       if (resp.ok) return { ok: true, metodo: 'print_agent' }
     }
