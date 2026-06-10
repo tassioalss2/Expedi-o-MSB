@@ -364,6 +364,24 @@ def confirmar_coleta(pedido_id: str, payload: ConfirmarColetaRequest, usuario: U
 
     alterar_status(pedido_id, StatusPedido.COLETADO.value, usuario, f"Coleta confirmada — {payload.protocolo or ''}")
     alterar_status(pedido_id, StatusPedido.EXPEDIDO.value, usuario, "Expedição finalizada")
+
+    # Atualiza pallet_pedidos se a OV estiver em algum pallet
+    agora = _agora()
+    entrada = db.table("pallet_pedidos").select("id, pallet_id").eq("pedido_id", pedido_id).eq("status", "AGUARDANDO").execute()
+    if entrada.data:
+        pp = entrada.data[0]
+        db.table("pallet_pedidos").update({
+            "coletado_em": agora,
+            "status": "COLETADO",
+        }).eq("id", pp["id"]).execute()
+        # Fecha o pallet se não houver mais OVs aguardando
+        restantes = db.table("pallet_pedidos").select("id").eq("pallet_id", pp["pallet_id"]).eq("status", "AGUARDANDO").execute()
+        if not restantes.data:
+            db.table("pallets").update({
+                "status": "COLETADO",
+                "data_real_coleta": agora,
+            }).eq("id", pp["pallet_id"]).execute()
+
     return obter_pedido(pedido_id)
 
 
