@@ -183,7 +183,7 @@ export function imprimirEtiquetaNavegador(dados: EtiquetaInventario): void {
 
 export type ResultadoImpressao = {
   ok: boolean
-  metodo?: 'browser_print' | 'navegador'
+  metodo?: 'browser_print' | 'print_agent' | 'navegador'
   erro?: string
 }
 
