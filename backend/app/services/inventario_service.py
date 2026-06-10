@@ -272,7 +272,7 @@ def listar_pallets(status: str | None = None) -> list:
 
     for p in pallets:
         pedidos = db.table("pallet_pedidos").select(
-            "*, pedidos(numero_pedido, status, transportadora_id, transportadoras(nome), clientes(nome))"
+            "*, pedidos(numero_pedido, numero_nf, status, transportadora_id, transportadoras(nome), clientes(nome))"
         ).eq("pallet_id", p["id"]).eq("status", "AGUARDANDO").execute().data
         # Adiciona transportadora_nome direto no pedido para facilitar frontend
         for pp in pedidos:
