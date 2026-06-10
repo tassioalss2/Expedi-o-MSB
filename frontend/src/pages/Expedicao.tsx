@@ -128,7 +128,10 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
         <span className="font-bold text-gray-900 text-sm">{pedido.numero_pedido}</span>
         <PrioridadeBadge prioridade={pedido.prioridade} />
       </div>
-      <p className="text-sm text-gray-600 truncate mb-2">{pedido.cliente_nome || pedido.cliente?.nome}</p>
+      <p className="text-sm text-gray-600 truncate mb-1">{pedido.cliente_nome || pedido.cliente?.nome}</p>
+      {pedido.numero_nf && (
+        <p className="text-xs text-blue-600 font-medium mb-1">📄 NF {pedido.numero_nf}</p>
+      )}
       <div className="flex items-center justify-between">
         <span className={`text-xs ${atrasado ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
           {atrasado ? '⚠ ATRASADO' : `Entrega: ${new Date(pedido.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}`}
