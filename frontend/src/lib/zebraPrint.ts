@@ -47,9 +47,9 @@ function gerarZPL(dados: EtiquetaInventario): string {
 
   // 6 linhas × 77 dots espaçamento, fonte 55 dots (~19.5pt @ 203dpi)
   return `^XA
-^MMT
+^MNN
 ^PW800
-^LL480
+^LL460
 ^LS0
 ^FO8,5^A0N,55,55^FDITEM: ${dados.codigo}^FS
 ^FO8,82^A0N,55,55^FDLOTE: ${dados.lote}^FS
