@@ -369,11 +369,18 @@ def confirmar_coleta_pallet(pallet_id: str, usuario: UsuarioOut, pedido_ids: lis
             pass
 
     # Verifica se ainda há OVs aguardando no pallet
+    PALLETS_FIXOS = ['PLT-BRIX', 'PLT-RR CARGO', 'PLT-CORREIOS', 'PLT-OUTROS']
     restantes = db.table("pallet_pedidos").select("id").eq("pallet_id", pallet_id).eq("status", "AGUARDANDO").execute().data
     if not restantes:
-        db.table("pallets").update({
-            "status": "COLETADO",
-            "data_real_coleta": agora,
-        }).eq("id", pallet_id).execute()
+        # Pallets fixos voltam para ABERTO (nunca fecham permanentemente)
+        pallet_info = db.table("pallets").select("codigo").eq("id", pallet_id).execute().data
+        codigo = pallet_info[0]["codigo"] if pallet_info else ""
+        if codigo in PALLETS_FIXOS:
+            db.table("pallets").update({"status": "ABERTO"}).eq("id", pallet_id).execute()
+        else:
+            db.table("pallets").update({
+                "status": "COLETADO",
+                "data_real_coleta": agora,
+            }).eq("id", pallet_id).execute()
 
     return {"ok": True, "pallet_id": pallet_id, "pedidos_expedidos": expedidos}
