@@ -213,6 +213,7 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   const [validadeMap, setValidadeMap] = useState<Record<string, string>>({})
   const [imprimindo, setImprimindo] = useState<string | null>(null)
   const [nomeOperador, setNomeOperador] = useState(usuario?.nome || '')
+  const [porCaixaMap, setPorCaixaMap] = useState<Record<string, number>>({})
 
   const itens: InventarioItem[] = inv?.itens || []
   const totalItens = itens.length
@@ -231,20 +232,42 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
       return novo
     })
 
-    // Imprime etiqueta ao marcar como conferido — envia para fila no backend
+    // Imprime etiqueta(s) ao marcar como conferido — envia para fila no backend
     if (!jaConferido) {
       setImprimindo(id)
       const estoqueRestante = item.qtd_sistemico - item.qtd_venda
+      const porCaixa = porCaixaMap[id]
       try {
-        await api.post('/impressao', {
-          codigo:          item.codigo_item,
-          lote:            item.lote,
-          validade:        validadeMap[id] || undefined,
-          quantidade:      estoqueRestante,
-          operador:        nomeOperador || usuario?.nome || '',
-          data_inventario: new Date().toISOString(),
-        })
-        toast.success(`🖨 Etiqueta enviada — ${item.codigo_item}`)
+        if (porCaixa && porCaixa > 0 && estoqueRestante > porCaixa) {
+          // Múltiplas etiquetas — uma por caixa
+          let restante = estoqueRestante
+          let numCaixas = 0
+          while (restante > 0) {
+            const qtdCaixa = Math.min(porCaixa, restante)
+            await api.post('/impressao', {
+              codigo:          item.codigo_item,
+              lote:            item.lote,
+              validade:        validadeMap[id] || undefined,
+              quantidade:      qtdCaixa,
+              operador:        nomeOperador || usuario?.nome || '',
+              data_inventario: new Date().toISOString(),
+            })
+            restante -= qtdCaixa
+            numCaixas++
+          }
+          toast.success(`🖨 ${numCaixas} etiquetas enviadas — ${item.codigo_item}`)
+        } else {
+          // Etiqueta única com quantidade total
+          await api.post('/impressao', {
+            codigo:          item.codigo_item,
+            lote:            item.lote,
+            validade:        validadeMap[id] || undefined,
+            quantidade:      estoqueRestante,
+            operador:        nomeOperador || usuario?.nome || '',
+            data_inventario: new Date().toISOString(),
+          })
+          toast.success(`🖨 Etiqueta enviada — ${item.codigo_item}`)
+        }
       } catch (err: any) {
         const msg = err?.response?.data?.detail || err?.message || String(err)
         console.error('[Impressao] Erro ao enviar job:', msg, err)
@@ -340,6 +363,7 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
                 <th className="pb-2 pr-3 text-right">Sistema</th>
                 <th className="pb-2 pr-3 text-right">Venda</th>
                 <th className="pb-2 pr-3 text-right font-semibold text-blue-600">Restante</th>
+                <th className="pb-2 pr-3 text-center text-orange-600" title="Quantas unidades cabem em cada caixa">Por caixa</th>
                 <th className="pb-2 pr-3 text-right">Físico</th>
                 <th className="pb-2 pr-3">Status</th>
                 <th className="pb-2">Obs.</th>
@@ -389,6 +413,27 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
                       estoqueRestante < 0 ? 'text-red-600' : 'text-blue-600'
                     }`}>
                       {estoqueRestante}
+                    </td>
+                    {/* Por caixa — qtd por caixa para gerar múltiplas etiquetas */}
+                    <td className="py-2 pr-3">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="—"
+                          value={porCaixaMap[item.id] || ''}
+                          onChange={e => {
+                            const v = parseInt(e.target.value)
+                            setPorCaixaMap(prev => ({ ...prev, [item.id]: v || 0 }))
+                          }}
+                          className="w-16 border border-orange-200 rounded px-2 py-1 text-xs text-center focus:border-orange-400 focus:outline-none"
+                        />
+                        {porCaixaMap[item.id] > 0 && estoqueRestante > 0 && (
+                          <span className="text-[10px] text-orange-600 font-medium">
+                            {Math.ceil(estoqueRestante / porCaixaMap[item.id])} cx
+                          </span>
+                        )}
+                      </div>
                     </td>
                     {/* Qtd físico verificado */}
                     <td className="py-2 pr-3">
