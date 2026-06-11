@@ -138,10 +138,9 @@ def formatar_data(iso: str) -> str:
 MESES_PT = ['janeiro','fevereiro','marco','abril','maio','junho',
             'julho','agosto','setembro','outubro','novembro','dezembro']
 
-# Cores Win32 COLORREF = 0x00BBGGRR
-COR_PRETO    = 0x000000
-COR_BRANCO   = 0xFFFFFF
-COR_VERMELHO = 0x0000FF   # RGB(255,0,0)
+# Cores Win32 COLORREF (impressora termica = so preto e branco)
+COR_PRETO  = 0x000000
+COR_BRANCO = 0xFFFFFF
 
 
 def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
@@ -233,10 +232,10 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
 
     # Separador vertical (ja incluido pela borda do logo acima)
     # "NF" label
-    txt("NF", 36, 1.5, 10, bold=True, cor=COR_PRETO)
+    txt("NF", 36, 2, 9, bold=True, cor=COR_PRETO)
 
-    # NF numero em vermelho
-    txt(nf_num, 46, 1.5, 18, bold=True, cor=COR_VERMELHO)
+    # NF numero — grande e negrito para destacar
+    txt(nf_num, 46, 1.5, 19, bold=True, cor=COR_PRETO)
 
     # Linha divisoria zona 1 / zona 2
     pen1 = win32ui.CreatePen(0, 1, COR_PRETO)
@@ -261,9 +260,7 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     y_cx = px(18.5, 'y')
 
     hdc.SetTextColor(COR_PRETO)
-    hdc.TextOut(x0, y_cx, s1)
-    hdc.SetTextColor(COR_VERMELHO)
-    hdc.TextOut(x0 + w1, y_cx, s2 + s3)
+    hdc.TextOut(x0, y_cx, s1 + s2 + s3)
     hdc.SelectObject(old_f)
 
     # Linha divisoria zona 2 / remetente
