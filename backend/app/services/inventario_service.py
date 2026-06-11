@@ -314,10 +314,14 @@ def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletReques
             detail=f"Pedido '{pedido['numero_pedido']}' precisa estar FATURADO (status atual: {pedido['status']})"
         )
 
-    # Verifica se já está em algum pallet
-    existente = db.table("pallet_pedidos").select("id").eq("pedido_id", pedido["id"]).execute()
+    # Verifica se já está em algum pallet ATIVO (ignora pallets já coletados/cancelados)
+    existente = db.table("pallet_pedidos").select("id, pallet_id").eq("pedido_id", pedido["id"]).execute()
     if existente.data:
-        raise HTTPException(status_code=400, detail="Pedido já está em um pallet")
+        pallet_id_atual = existente.data[0]["pallet_id"]
+        pallet_atual = db.table("pallets").select("status").eq("id", pallet_id_atual).execute()
+        status_pallet = pallet_atual.data[0]["status"] if pallet_atual.data else None
+        if status_pallet not in ("realizado", "cancelado", None):
+            raise HTTPException(status_code=400, detail="Pedido já está em um pallet")
 
     db.table("pallet_pedidos").insert({
         "pallet_id": pallet_id,
