@@ -238,26 +238,25 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
       const estoqueRestante = item.qtd_sistemico - item.qtd_venda
       const porCaixa = porCaixaMap[id]
       try {
-        if (porCaixa && porCaixa > 0 && estoqueRestante > porCaixa) {
-          // Múltiplas etiquetas — uma por caixa
-          let restante = estoqueRestante
-          let numCaixas = 0
-          while (restante > 0) {
-            const qtdCaixa = Math.min(porCaixa, restante)
+        if (porCaixa && porCaixa > 0) {
+          // Imprime apenas a caixa aberta (restante da divisão)
+          const caixaAberta = estoqueRestante % porCaixa
+          if (caixaAberta > 0) {
             await api.post('/impressao', {
               codigo:          item.codigo_item,
               lote:            item.lote,
               validade:        validadeMap[id] || undefined,
-              quantidade:      qtdCaixa,
+              quantidade:      caixaAberta,
               operador:        nomeOperador || usuario?.nome || '',
               data_inventario: new Date().toISOString(),
             })
-            restante -= qtdCaixa
-            numCaixas++
+            toast.success(`🖨 Caixa aberta (${caixaAberta} un) — ${item.codigo_item}`)
+          } else {
+            // Todas as caixas fechadas — não imprime
+            toast(`📦 Todas as caixas fechadas — sem etiqueta para ${item.codigo_item}`)
           }
-          toast.success(`🖨 ${numCaixas} etiquetas enviadas — ${item.codigo_item}`)
         } else {
-          // Etiqueta única com quantidade total
+          // Sem "por caixa" configurado — etiqueta única com total
           await api.post('/impressao', {
             codigo:          item.codigo_item,
             lote:            item.lote,
@@ -429,8 +428,11 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
                           className="w-16 border border-orange-200 rounded px-2 py-1 text-xs text-center focus:border-orange-400 focus:outline-none"
                         />
                         {porCaixaMap[item.id] > 0 && estoqueRestante > 0 && (
-                          <span className="text-[10px] text-orange-600 font-medium">
-                            {Math.ceil(estoqueRestante / porCaixaMap[item.id])} cx
+                          <span className="text-[10px] font-medium">
+                            {estoqueRestante % porCaixaMap[item.id] === 0
+                              ? <span className="text-gray-400">todas fechadas</span>
+                              : <span className="text-orange-600">aberta: {estoqueRestante % porCaixaMap[item.id]} un</span>
+                            }
                           </span>
                         )}
                       </div>
