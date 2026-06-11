@@ -1232,6 +1232,7 @@ export function PedidoDetalhe() {
   const [valorProdutos, setValorProdutos] = useState('')
   const [valorFrete, setValorFrete] = useState('')
   const [novaDataEntrega, setNovaDataEntrega] = useState('')
+  const [numCaixasEspelho, setNumCaixasEspelho] = useState(1)
 
   const { data: pedido, isLoading } = useQuery<Pedido>({
     queryKey: ['pedido', id],
@@ -1266,9 +1267,25 @@ export function PedidoDetalhe() {
       valor_frete: isCIF && valorFrete ? Number(valorFrete) : null,
       data_prevista_entrega: novaDataEntrega || null,
     }),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success('NF registrada!')
       qc.invalidateQueries({ queryKey: ['pedido', id] })
+      // Imprime espelhos de carga
+      if (numCaixasEspelho > 0) {
+        try {
+          for (let cx = 1; cx <= numCaixasEspelho; cx++) {
+            await api.post('/impressao', {
+              tipo:           'espelho',
+              numero_nf:      nf,
+              numero_pedido:  pedido?.numero_pedido || '',
+              caixa:          cx,
+              total_caixas:   numCaixasEspelho,
+              data:           new Date().toISOString(),
+            })
+          }
+          toast.success(`🖨 ${numCaixasEspelho} espelho(s) enviados para impressão`)
+        } catch { /* NF já registrada, ignora erro de impressão */ }
+      }
       setModal(null)
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro'),
@@ -1700,6 +1717,24 @@ export function PedidoDetalhe() {
                   )}
                 </>
               )}
+              {/* Espelhos de carga */}
+              <div className="border-t pt-4">
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                  🖨 Espelhos de carga
+                  <span className="text-xs text-gray-400 font-normal ml-1">(etiquetas coladas nas caixas)</span>
+                </label>
+                <div className="flex items-center gap-3 mt-1">
+                  <input
+                    type="number" min={0} max={99}
+                    value={numCaixasEspelho}
+                    onChange={e => setNumCaixasEspelho(parseInt(e.target.value) || 0)}
+                    className="w-24 border rounded-lg px-3 py-2.5 text-sm text-center"
+                  />
+                  <span className="text-sm text-gray-500">
+                    {numCaixasEspelho === 0 ? 'Nenhum espelho' : `${numCaixasEspelho} etiqueta(s) — 1/N … N/N`}
+                  </span>
+                </div>
+              </div>
               {/* Corrigir data de entrega */}
               <div className="border-t pt-4">
                 <label className="text-sm font-medium text-gray-700 flex items-center gap-1">

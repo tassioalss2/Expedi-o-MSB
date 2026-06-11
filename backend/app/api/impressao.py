@@ -1,27 +1,40 @@
 """
-Fila de impressão — etiquetas de inventário.
+Fila de impressão — etiquetas de inventário e espelhos de carga.
 O Print Agent (Windows) busca jobs pendentes neste endpoint a cada 1 segundo.
 Evita o problema de CORS/Private-Network-Access do Chrome ao conectar em localhost.
 """
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, ConfigDict
 
 from app.core.database import get_service_db
 from app.core.deps import get_current_user
 from app.models.schemas import UsuarioOut
-from pydantic import BaseModel
 
 router = APIRouter(tags=["impressao"])
 
 
 class EtiquetaPayload(BaseModel):
-    codigo: str
-    lote: str
+    """Payload flexível — suporta etiquetas de inventário e espelhos de carga."""
+    model_config = ConfigDict(extra='allow')
+
+    tipo: str = 'inventario'
+
+    # Inventário
+    codigo: Optional[str] = None
+    lote: Optional[str] = None
     validade: Optional[str] = None
-    quantidade: int
-    operador: Optional[str] = ""
-    data_inventario: str
+    quantidade: Optional[int] = None
+    operador: Optional[str] = ''
+    data_inventario: Optional[str] = None
+
+    # Espelho de carga
+    numero_nf: Optional[str] = None
+    numero_pedido: Optional[str] = None
+    caixa: Optional[int] = None
+    total_caixas: Optional[int] = None
+    data: Optional[str] = None
 
 
 @router.post("/impressao")
@@ -29,7 +42,7 @@ def enfileirar_etiqueta(
     payload: EtiquetaPayload,
     usuario: UsuarioOut = Depends(get_current_user),
 ):
-    """Frontend chama isso ao verificar um item — enfileira a impressão."""
+    """Frontend chama isso ao verificar um item ou registrar NF — enfileira a impressão."""
     db = get_service_db()
     result = db.table("fila_impressao").insert({
         "payload": payload.model_dump(),
