@@ -245,18 +245,10 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
           data_inventario: new Date().toISOString(),
         })
         toast.success(`🖨 Etiqueta enviada — ${item.codigo_item}`)
-      } catch {
-        // Fallback: impressão via navegador
-        imprimirEtiquetaNavegador({
-          codigo:        item.codigo_item,
-          lote:          item.lote,
-          validade:      validadeMap[id] || '',
-          quantidade:    estoqueRestante,
-          ov:            pedido.numero_pedido,
-          dataInventario: new Date().toISOString(),
-          operador:      nomeOperador || usuario?.nome || '',
-        })
-        toast.success(`🖨 Abrindo etiqueta no navegador — ${item.codigo_item}`)
+      } catch (err: any) {
+        const msg = err?.response?.data?.detail || err?.message || String(err)
+        console.error('[Impressao] Erro ao enviar job:', msg, err)
+        toast.error(`❌ Erro ao enviar etiqueta: ${msg}`)
       }
       setImprimindo(null)
     }
