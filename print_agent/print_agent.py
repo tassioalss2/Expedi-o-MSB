@@ -1,5 +1,5 @@
 """
-MSB Print Agent v3.0
+MSB Print Agent v3.1
 ====================
 Agente de impressao para Zebra TLP 2844.
 
@@ -135,14 +135,20 @@ def formatar_data(iso: str) -> str:
         return iso[:10] if len(iso) >= 10 else iso
 
 
-MESES_PT = ['janeiro','fevereiro','março','abril','maio','junho',
+MESES_PT = ['janeiro','fevereiro','marco','abril','maio','junho',
             'julho','agosto','setembro','outubro','novembro','dezembro']
+
+# Cores Win32 COLORREF = 0x00BBGGRR
+COR_PRETO    = 0x000000
+COR_BRANCO   = 0xFFFFFF
+COR_VERMELHO = 0x0000FF   # RGB(255,0,0)
 
 
 def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     """
-    Imprime etiqueta espelho de carga (NF + OV + caixa X/Y + endereço MSB).
-    Mesmo papel 100mm × 60mm da TLP 2844.
+    Imprime etiqueta espelho de carga — layout fiel ao modelo MSB.
+    Zonas: [logo+NF] | [caixa X/Y grande] | [remetente+OV]
+    Papel 100mm x 60mm, TLP 2844.
     """
     hdc = win32ui.CreateDC()
     hdc.CreatePrinterDC(nome_impressora)
@@ -150,102 +156,149 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     dpi_x = hdc.GetDeviceCaps(win32con.LOGPIXELSX)
     dpi_y = hdc.GetDeviceCaps(win32con.LOGPIXELSY)
 
-    def mm_x(mm): return int(mm * dpi_x / 25.4)
-    def mm_y(mm): return int(mm * dpi_y / 25.4)
+    def px(mm, eixo='x'):
+        return int(mm * (dpi_x if eixo == 'x' else dpi_y) / 25.4)
 
-    def mk_font(pt, bold=False, angle_deg=0):
+    def mk_font(pt, bold=False, angulo=0):
         return win32ui.CreateFont({
             'name': 'Arial',
             'height': -int(pt * dpi_y / 72),
             'weight': 700 if bold else 400,
             'charset': 0,
-            'escapement': angle_deg * 10,
-            'orientation': angle_deg * 10,
+            'escapement': angulo * 10,
+            'orientation': angulo * 10,
         })
 
-    # Dados
+    def txt(s, x_mm, y_mm, pt, bold=False, cor=COR_PRETO, angulo=0):
+        hdc.SetTextColor(cor)
+        f = mk_font(pt, bold, angulo)
+        old = hdc.SelectObject(f)
+        hdc.TextOut(px(x_mm), px(y_mm, 'y'), s)
+        w, h = hdc.GetTextExtent(s)
+        hdc.SelectObject(old)
+        return w
+
+    # ── Dados ─────────────────────────────────────────────────────────────────
     caixa  = dados.get('caixa', 1)
     total  = dados.get('total_caixas', 1)
     nf_num = dados.get('numero_nf', '')
     ov     = dados.get('numero_pedido', '')
     iso    = dados.get('data', '')
 
-    # Formata data estilo "Lauro de Freitas, 11 de junho de 2026"
+    # Hora e data em horario local (astimezone converte UTC -> fuso do PC)
     try:
-        dt = datetime.fromisoformat(iso.replace('Z', '+00:00'))
-        data_ext = f"Lauro de Freitas, {dt.day} de {MESES_PT[dt.month-1]} de {dt.year}"
-        hora_str = dt.strftime('%H:%M')
+        dt = datetime.fromisoformat(iso.replace('Z', '+00:00')).astimezone()
+        hora_str   = dt.strftime('%H:%M')
+        data_longa = (f"Lauro de Freitas,   {dt.day} de "
+                      f"{MESES_PT[dt.month-1]},   {dt.year}")
     except Exception:
-        data_ext = iso[:10] if iso else ''
-        hora_str = ''
+        hora_str   = ''
+        data_longa = ''
 
-    faixa_x  = mm_x(85)   # faixa CUIDADO FRAGIL começa em 85mm
-    label_w  = mm_x(100)
-    label_h  = mm_y(60)
+    # Constantes de layout (mm)
+    M   = 2     # margem
+    FX  = 85    # inicio da faixa FRAGIL
+    LW  = 100   # largura total
+    LH  = 60    # altura total
 
     hdc.StartDoc("Espelho MSB")
     hdc.StartPage()
-    hdc.SetBkMode(1)  # TRANSPARENT
+    hdc.SetBkMode(1)   # TRANSPARENT
 
-    # ── Faixa lateral CUIDADO - FRAGIL ──────────────────────────────────────
-    hdc.FillSolidRect((faixa_x, 0, label_w, label_h), 0x000000)
-    hdc.SetTextColor(0xFFFFFF)
-    f = mk_font(10, bold=True, angle_deg=90)
+    # =========================================================================
+    # FAIXA DIREITA: CUIDADO - FRAGIL (fundo preto, texto branco 90 graus)
+    # =========================================================================
+    hdc.FillSolidRect((px(FX), 0, px(LW), px(LH, 'y')), COR_PRETO)
+    hdc.SetTextColor(COR_BRANCO)
+    f = mk_font(10, bold=True, angulo=90)
     old_f = hdc.SelectObject(f)
-    hdc.TextOut(faixa_x + mm_x(4), mm_y(56), "CUIDADO  -  FRAGIL")
+    hdc.TextOut(px(FX + 4), px(57, 'y'), "CUIDADO  -  FRAGIL")
     hdc.SelectObject(old_f)
 
-    hdc.SetTextColor(0x000000)
+    # =========================================================================
+    # ZONA 1 — LOGO + NF  (0..15mm)
+    # =========================================================================
+    # Borda do bloco logo (retangulo)
+    pen2 = win32ui.CreatePen(0, 2, COR_PRETO)
+    old_pen = hdc.SelectObject(pen2)
+    hdc.MoveTo((px(M),   px(1,    'y')))
+    hdc.LineTo((px(34),  px(1,    'y')))
+    hdc.LineTo((px(34),  px(14.5, 'y')))
+    hdc.LineTo((px(M),   px(14.5, 'y')))
+    hdc.LineTo((px(M),   px(1,    'y')))
+    hdc.SelectObject(old_pen)
 
-    # ── NF ──────────────────────────────────────────────────────────────────
-    f = mk_font(10, bold=True)
-    old_f = hdc.SelectObject(f)
-    hdc.TextOut(mm_x(2), mm_y(2), "NF")
+    txt("mSb",                   3,  1.8,  14, bold=True,  cor=COR_PRETO)
+    txt("Medical System do Brasil", 3, 10.8,  5, bold=False, cor=COR_PRETO)
+
+    # Separador vertical (ja incluido pela borda do logo acima)
+    # "NF" label
+    txt("NF", 36, 1.5, 10, bold=True, cor=COR_PRETO)
+
+    # NF numero em vermelho
+    txt(nf_num, 46, 1.5, 18, bold=True, cor=COR_VERMELHO)
+
+    # Linha divisoria zona 1 / zona 2
+    pen1 = win32ui.CreatePen(0, 1, COR_PRETO)
+    old_pen = hdc.SelectObject(pen1)
+    hdc.MoveTo((px(M),       px(15.5, 'y')))
+    hdc.LineTo((px(FX - M),  px(15.5, 'y')))
+    hdc.SelectObject(old_pen)
+
+    # =========================================================================
+    # ZONA 2 — CAIXA X / Y  (16..36mm) — preto e vermelho
+    # =========================================================================
+    s1 = str(caixa)
+    s2 = " / "
+    s3 = str(total)
+    f_cx = mk_font(28, bold=True)
+    old_f = hdc.SelectObject(f_cx)
+    w1, _ = hdc.GetTextExtent(s1)
+    w2, _ = hdc.GetTextExtent(s2)
+    w3, _ = hdc.GetTextExtent(s3)
+    total_w = w1 + w2 + w3
+    x0 = max(px(M), (px(FX) - total_w) // 2)
+    y_cx = px(18.5, 'y')
+
+    hdc.SetTextColor(COR_PRETO)
+    hdc.TextOut(x0, y_cx, s1)
+    hdc.SetTextColor(COR_VERMELHO)
+    hdc.TextOut(x0 + w1, y_cx, s2 + s3)
     hdc.SelectObject(old_f)
 
-    f = mk_font(20, bold=True)
-    old_f = hdc.SelectObject(f)
-    hdc.TextOut(mm_x(14), mm_y(1.5), nf_num)
-    hdc.SelectObject(old_f)
+    # Linha divisoria zona 2 / remetente
+    old_pen = hdc.SelectObject(pen1)
+    hdc.MoveTo((px(M),       px(36.5, 'y')))
+    hdc.LineTo((px(FX - M),  px(36.5, 'y')))
+    hdc.SelectObject(old_pen)
 
-    # ── OV ──────────────────────────────────────────────────────────────────
-    f = mk_font(11, bold=True)
-    old_f = hdc.SelectObject(f)
-    hdc.TextOut(mm_x(2), mm_y(13), f"OV: {ov}")
-    hdc.SelectObject(old_f)
+    # =========================================================================
+    # ZONA 3 — REMETENTE + ENDERECO + OV  (37..60mm)
+    # =========================================================================
+    # Header "REMETENTE" (fundo preto, texto branco)
+    hdc.FillSolidRect((px(M), px(37, 'y'), px(FX - M), px(42.5, 'y')), COR_PRETO)
+    txt("REMETENTE", 3.5, 38, 7, bold=True, cor=COR_BRANCO)
 
-    # ── Caixa X / Y (grande, centralizado) ──────────────────────────────────
-    texto_cx = f"{caixa} / {total}"
-    f = mk_font(28, bold=True)
-    old_f = hdc.SelectObject(f)
-    tw, _ = hdc.GetTextExtent(texto_cx)
-    x_cx = max(mm_x(2), (faixa_x - tw) // 2)
-    hdc.TextOut(x_cx, mm_y(19), texto_cx)
-    hdc.SelectObject(old_f)
+    # Nome empresa
+    txt("MSB MEDICAL SYSTEM DO BRASIL", M, 43, 6.5, bold=True, cor=COR_PRETO)
 
-    # ── Header REMETENTE ────────────────────────────────────────────────────
-    hdc.FillSolidRect((mm_x(2), mm_y(39), faixa_x - mm_x(1), mm_y(45)), 0x000000)
-    hdc.SetTextColor(0xFFFFFF)
-    f = mk_font(7, bold=True)
-    old_f = hdc.SelectObject(f)
-    hdc.TextOut(mm_x(3), mm_y(40), "REMETENTE")
-    hdc.SelectObject(old_f)
+    # Linhas de endereco
+    linhas = [
+        "Rua Araponga, 364, Qd1, Lote 19",
+        "Bairro Pitangueiras - Lauro de Freitas | BA",
+        "Cep:42.701-330 - Telefone: (71) 3024-4015",
+        "Site: www.msbbrasil.com - E-mail: msb@msbbrasil.com",
+    ]
+    y_e = 46.0
+    for ln in linhas:
+        txt(ln, M, y_e, 5.2, bold=False, cor=COR_PRETO)
+        y_e += 2.8
 
-    hdc.SetTextColor(0x000000)
+    # Hora + data longa
+    txt(f"{hora_str}      {data_longa}", M, y_e, 5.2, bold=False, cor=COR_PRETO)
 
-    # ── Endereço ────────────────────────────────────────────────────────────
-    f = mk_font(7, bold=True)
-    old_f = hdc.SelectObject(f)
-    hdc.TextOut(mm_x(2), mm_y(46), "MSB MEDICAL SYSTEM DO BRASIL")
-    hdc.SelectObject(old_f)
-
-    f = mk_font(6, bold=False)
-    old_f = hdc.SelectObject(f)
-    hdc.TextOut(mm_x(2), mm_y(50.5),
-                "Rua Araponga, 364, Qd1, Lote 19 - Pitangueiras - Lauro de Freitas/BA  CEP: 42.701-330")
-    hdc.TextOut(mm_x(2), mm_y(55.5),
-                f"{hora_str}   {data_ext}")
-    hdc.SelectObject(old_f)
+    # OV em destaque na parte de baixo
+    txt(f"OV: {ov}", M, 56.5, 7, bold=True, cor=COR_PRETO)
 
     hdc.EndPage()
     hdc.EndDoc()
@@ -358,7 +411,7 @@ def main():
     import os
     os.system('cls' if os.name == 'nt' else 'clear')
     print("\n" + "="*55)
-    print("  MSB Print Agent v3.0")
+    print("  MSB Print Agent v3.1")
     print("="*55)
 
     print("\n  Buscando impressora TLP 2844...")
