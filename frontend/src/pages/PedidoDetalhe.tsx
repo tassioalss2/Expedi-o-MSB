@@ -220,6 +220,11 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
     verificarZebraConectado().then(ok => setZebraConectado(ok))
   }, [])
 
+  function reconectarZebra() {
+    setZebraConectado(null)
+    verificarZebraConectado().then(ok => setZebraConectado(ok))
+  }
+
   const itens: InventarioItem[] = inv?.itens || []
   const totalItens = itens.length
   const totalConferidos = conferidos.size
@@ -318,14 +323,21 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
               <h2 className="text-lg font-bold">🔍 Verificação Física — {pedido.numero_pedido}</h2>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <p className="text-sm text-gray-500">Confira se o estoque restante (Sistema − Venda) bate com o físico</p>
+                {zebraConectado === null && (
+                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium animate-pulse">🔄 Verificando impressora...</span>
+                )}
                 {zebraConectado === true && (
                   <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">🖨 Zebra conectada — imprime ao check</span>
                 )}
                 {zebraConectado === false && (
-                  <a href={ZEBRA_DOWNLOAD_URL} target="_blank" rel="noreferrer"
-                    className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium hover:underline">
-                    ⚠ Zebra offline — clique para instalar Browser Print
-                  </a>
+                  <span className="flex items-center gap-1">
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">⚠ Zebra offline</span>
+                    <button
+                      onClick={reconectarZebra}
+                      className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium hover:bg-blue-200 transition-colors"
+                      title="Tentar reconectar ao Print Agent"
+                    >🔄 Reconectar</button>
+                  </span>
                 )}
               </div>
             </div>

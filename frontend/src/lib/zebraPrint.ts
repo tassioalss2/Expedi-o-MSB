@@ -64,7 +64,7 @@ function gerarZPL(dados: EtiquetaInventario): string {
 export async function verificarPrintAgent(): Promise<boolean> {
   try {
     const resp = await fetch(`${PRINT_AGENT_URL}/status`, {
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(3000),
     })
     return resp.ok
   } catch {
