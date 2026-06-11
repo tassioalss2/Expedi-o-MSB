@@ -1671,7 +1671,6 @@ export function PedidoDetalhe() {
                   )}
                 </>
               )}
-            </div>
               {/* Corrigir data de entrega */}
               <div className="border-t pt-4">
                 <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
