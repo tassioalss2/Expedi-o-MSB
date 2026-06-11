@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.cadastros import router as cadastros_router
+from app.api.impressao import router as impressao_router
 from app.api.inventario import router as inventario_router
 from app.api.pedidos import router as pedidos_router
 
@@ -27,6 +28,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(pedidos_router, prefix="/api/v1")
 app.include_router(cadastros_router, prefix="/api/v1")
 app.include_router(inventario_router, prefix="/api/v1")
+app.include_router(impressao_router, prefix="/api/v1")
 
 
 @app.get("/health")

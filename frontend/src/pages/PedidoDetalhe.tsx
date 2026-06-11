@@ -10,7 +10,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { TIPO_FRETE_LABEL } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
-import { imprimirEtiqueta, verificarZebraConectado, ZEBRA_DOWNLOAD_URL } from '../lib/zebraPrint'
+import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
 import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
 
@@ -211,19 +211,8 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   const [itensVerif, setItensVerif] = useState<Record<string, { qtd_fisico: number; status_item: string; observacao: string }>>({})
   const [conferidos, setConferidos] = useState<Set<string>>(new Set())
   const [validadeMap, setValidadeMap] = useState<Record<string, string>>({})
-  const [zebraConectado, setZebraConectado] = useState<boolean | null>(null)
   const [imprimindo, setImprimindo] = useState<string | null>(null)
   const [nomeOperador, setNomeOperador] = useState(usuario?.nome || '')
-
-  // Verifica Zebra ao abrir
-  useEffect(() => {
-    verificarZebraConectado().then(ok => setZebraConectado(ok))
-  }, [])
-
-  function reconectarZebra() {
-    setZebraConectado(null)
-    verificarZebraConectado().then(ok => setZebraConectado(ok))
-  }
 
   const itens: InventarioItem[] = inv?.itens || []
   const totalItens = itens.length
@@ -242,30 +231,34 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
       return novo
     })
 
-    // Imprime etiqueta ao marcar como conferido (se Zebra conectada)
-    if (!jaConferido && zebraConectado) {
+    // Imprime etiqueta ao marcar como conferido — envia para fila no backend
+    if (!jaConferido) {
       setImprimindo(id)
-      const verif = itensVerif[id] || {}
       const estoqueRestante = item.qtd_sistemico - item.qtd_venda
-      const resultado = await imprimirEtiqueta({
-        codigo: item.codigo_item,
-        lote: item.lote,
-        validade: validadeMap[id] || '',
-        quantidade: estoqueRestante,
-        ov: pedido.numero_pedido,
-        dataInventario: new Date().toISOString(),
-        operador: nomeOperador || usuario?.nome || '',
-      })
-      setImprimindo(null)
-      if (!resultado.ok) {
-        toast.error(`Impressão: ${resultado.erro}`)
-      } else if (resultado.metodo === 'navegador') {
-        toast.success(`🖨 Abrindo etiqueta — selecione TLP 2844 e imprima`)
-      } else if (resultado.metodo === 'print_agent') {
-        toast.success(`🖨 Impresso automaticamente — ${item.codigo_item}`)
-      } else {
+      try {
+        await api.post('/impressao', {
+          codigo:          item.codigo_item,
+          lote:            item.lote,
+          validade:        validadeMap[id] || undefined,
+          quantidade:      estoqueRestante,
+          operador:        nomeOperador || usuario?.nome || '',
+          data_inventario: new Date().toISOString(),
+        })
         toast.success(`🖨 Etiqueta enviada — ${item.codigo_item}`)
+      } catch {
+        // Fallback: impressão via navegador
+        imprimirEtiquetaNavegador({
+          codigo:        item.codigo_item,
+          lote:          item.lote,
+          validade:      validadeMap[id] || '',
+          quantidade:    estoqueRestante,
+          ov:            pedido.numero_pedido,
+          dataInventario: new Date().toISOString(),
+          operador:      nomeOperador || usuario?.nome || '',
+        })
+        toast.success(`🖨 Abrindo etiqueta no navegador — ${item.codigo_item}`)
       }
+      setImprimindo(null)
     }
   }
 
@@ -323,22 +316,7 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
               <h2 className="text-lg font-bold">🔍 Verificação Física — {pedido.numero_pedido}</h2>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <p className="text-sm text-gray-500">Confira se o estoque restante (Sistema − Venda) bate com o físico</p>
-                {zebraConectado === null && (
-                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium animate-pulse">🔄 Verificando impressora...</span>
-                )}
-                {zebraConectado === true && (
-                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">🖨 Zebra conectada — imprime ao check</span>
-                )}
-                {zebraConectado === false && (
-                  <span className="flex items-center gap-1">
-                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">⚠ Zebra offline</span>
-                    <button
-                      onClick={reconectarZebra}
-                      className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium hover:bg-blue-200 transition-colors"
-                      title="Tentar reconectar ao Print Agent"
-                    >🔄 Reconectar</button>
-                  </span>
-                )}
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">🖨 Imprime automaticamente ao conferir</span>
               </div>
             </div>
             {/* Progresso de conferência */}
