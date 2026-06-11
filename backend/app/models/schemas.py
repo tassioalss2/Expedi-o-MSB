@@ -269,6 +269,7 @@ class FaturamentoRequest(BaseModel):
     valor_produtos: Optional[float] = None  # CIF: valor só dos produtos
     valor_frete: Optional[float] = None     # CIF: custo do frete separado
     chave_nfe: Optional[str] = None
+    data_prevista_entrega: Optional[date] = None  # permite corrigir a data ao registrar NF
 
 
 # ── Coleta ────────────────────────────────────────────────────────────────────

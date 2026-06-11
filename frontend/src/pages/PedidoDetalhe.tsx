@@ -1202,6 +1202,7 @@ export function PedidoDetalhe() {
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
   const [valorFrete, setValorFrete] = useState('')
+  const [novaDataEntrega, setNovaDataEntrega] = useState('')
 
   const { data: pedido, isLoading } = useQuery<Pedido>({
     queryKey: ['pedido', id],
@@ -1234,6 +1235,7 @@ export function PedidoDetalhe() {
       valor_nf: valorNfCalculado || null,
       valor_produtos: isCIF && valorProdutos ? Number(valorProdutos) : null,
       valor_frete: isCIF && valorFrete ? Number(valorFrete) : null,
+      data_prevista_entrega: novaDataEntrega || null,
     }),
     onSuccess: () => {
       toast.success('NF registrada!')
@@ -1669,6 +1671,27 @@ export function PedidoDetalhe() {
                   )}
                 </>
               )}
+            </div>
+              {/* Corrigir data de entrega */}
+              <div className="border-t pt-4">
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                  📅 Corrigir data de entrega
+                  <span className="text-xs text-gray-400 font-normal ml-1">
+                    (atual: {pedido.data_prevista_entrega
+                      ? new Date(pedido.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')
+                      : '—'})
+                  </span>
+                </label>
+                <input
+                  type="date"
+                  value={novaDataEntrega}
+                  onChange={e => setNovaDataEntrega(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
+                />
+                {!novaDataEntrega && (
+                  <p className="text-xs text-gray-400 mt-1">Deixe em branco para manter a data atual</p>
+                )}
+              </div>
             </div>
             <div className="p-5 border-t flex gap-2 justify-end">
               <button onClick={() => setModal(null)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>

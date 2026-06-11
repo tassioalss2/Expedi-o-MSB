@@ -308,14 +308,18 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
     if pedido["status"] != StatusPedido.AGUARD_FATURAMENTO.value:
         raise HTTPException(status_code=422, detail="Pedido não está aguardando faturamento")
 
-    db.table("pedidos").update({
+    update_data: dict = {
         "numero_nf": payload.numero_nf,
         "valor_nf": payload.valor_nf,
         "valor_produtos": payload.valor_produtos,
         "valor_frete": payload.valor_frete,
         "chave_nfe": payload.chave_nfe,
         "atualizado_em": _agora(),
-    }).eq("id", pedido_id).execute()
+    }
+    if payload.data_prevista_entrega:
+        update_data["data_prevista_entrega"] = payload.data_prevista_entrega.isoformat()
+
+    db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
 
     alterar_status(pedido_id, StatusPedido.FATURADO.value, usuario, f"NF {payload.numero_nf} emitida")
     return obter_pedido(pedido_id)
