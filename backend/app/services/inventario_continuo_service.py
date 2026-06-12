@@ -4,7 +4,7 @@ Inventário Contínuo — Service Layer
 """
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from app.db.supabase_client import get_service_db
+from app.core.database import get_service_db
 from app.models.schemas import CicloCreate, ContagemCreate, RevisarContagemRequest, UsuarioOut
 
 
