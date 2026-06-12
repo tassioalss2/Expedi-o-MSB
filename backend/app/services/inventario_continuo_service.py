@@ -156,13 +156,10 @@ def criar_contagem(ciclo_id: str, payload: ContagemCreate, usuario: UsuarioOut) 
     if payload.qtd_sistemica < 0:
         raise HTTPException(422, "Quantidade sistêmica não pode ser negativa.")
 
-    # Divergência = Físico − (Sistêmico − Venda)
-    # Sistêmico = estoque antes da separação
-    # Venda     = quantidade separada/vendida
-    # Físico    = o que ficou fisicamente após a separação
-    # Se físico == sistêmico − venda → divergência zero (contagem correta)
-    qtd_esperada    = payload.qtd_sistemica - payload.qtd_venda
-    qtd_divergencia = payload.qtd_fisica - qtd_esperada
+    # Divergência = Físico − Sistêmico
+    # Se o físico bate com o sistêmico → zero, mesmo que haja venda pendente.
+    # "Venda" é informação de contexto (saída ainda não processada no D365), NÃO altera o cálculo.
+    qtd_divergencia = payload.qtd_fisica - payload.qtd_sistemica
     pct = round(abs(qtd_divergencia) / payload.qtd_sistemica * 100, 2) if payload.qtd_sistemica > 0 else 0.0
 
     # Determina status

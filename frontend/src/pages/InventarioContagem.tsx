@@ -135,8 +135,8 @@ export function InventarioContagem() {
   const sist   = Number(qtdSistem) || 0
   const fis    = qtdFisica !== '' ? Number(qtdFisica) : null
   const venda  = Number(qtdVenda)  || 0
-  const esperado = sist - venda
-  const diverg   = fis !== null ? fis - esperado : null
+  const esperado = sist - venda   // apenas informativo: o que vai restar após D365 processar a venda
+  const diverg   = fis !== null ? fis - sist : null   // divergência real: físico vs sistêmico
   const pct      = diverg !== null && sist > 0 ? Math.abs(diverg) / sist * 100 : 0
   const temDiverg = diverg !== null && diverg !== 0
 
