@@ -127,13 +127,17 @@ export function InventarioContagem() {
   })
 
   // Cálculos em tempo real
-  // Divergência = Físico - Sistêmico (comparação direta)
-  // Venda é contexto explicativo, NÃO altera o cálculo
-  const sist  = Number(qtdSistem) || 0
-  const fis   = qtdFisica !== '' ? Number(qtdFisica) : null
-  const venda = Number(qtdVenda) || 0
-  const diverg = fis !== null ? fis - sist : null
-  const pct    = diverg !== null && sist > 0 ? Math.abs(diverg) / sist * 100 : 0
+  // Sistêmico = estoque antes da separação
+  // Venda     = quantidade separada/vendida
+  // Físico    = o que ficou após a separação
+  // Divergência = Físico − (Sistêmico − Venda)
+  // Se o físico bate com o esperado após separação → divergência zero
+  const sist   = Number(qtdSistem) || 0
+  const fis    = qtdFisica !== '' ? Number(qtdFisica) : null
+  const venda  = Number(qtdVenda)  || 0
+  const esperado = sist - venda
+  const diverg   = fis !== null ? fis - esperado : null
+  const pct      = diverg !== null && sist > 0 ? Math.abs(diverg) / sist * 100 : 0
   const temDiverg = diverg !== null && diverg !== 0
 
   // Motivo selecionado
@@ -225,8 +229,8 @@ export function InventarioContagem() {
             sublabel="Quantidade que o sistema mostra"
             value={qtdSistem} onChange={setQtdSistem} />
 
-          <CampoNumero label="Qtd. Física (contada) *"
-            sublabel="Quantidade que você contou fisicamente"
+          <CampoNumero label="Qtd. Física (após separação) *"
+            sublabel="O que ficou fisicamente após separar a venda"
             value={qtdFisica} onChange={setQtdFisica} destaque />
 
           {/* Divergência em tempo real */}
