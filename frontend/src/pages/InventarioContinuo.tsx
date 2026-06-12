@@ -269,7 +269,8 @@ export function InventarioContinuo() {
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro ao encerrar ciclo'),
   })
 
-  const semCiclo = !loadingCiclo && (!cicloAberto || cicloAberto.sem_ciclo_aberto)
+  // sem_ciclo: backend retorna {} quando não há ciclo → checar pelo campo id
+  const semCiclo = !loadingCiclo && !cicloAberto?.id
 
   // Stats do ciclo aberto
   const stats = cicloAberto?.id ? {
