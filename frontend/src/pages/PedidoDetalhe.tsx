@@ -1265,7 +1265,6 @@ export function PedidoDetalhe() {
   const [valorProdutos, setValorProdutos] = useState('')
   const [valorFrete, setValorFrete] = useState('')
   const [novaDataEntrega, setNovaDataEntrega] = useState('')
-  const [numCaixasEspelho, setNumCaixasEspelho] = useState(1)
   const [reimprimindoEspelho, setReimprimindoEspelho] = useState(false)
 
   const { data: pedido, isLoading } = useQuery<Pedido>({
@@ -1304,22 +1303,21 @@ export function PedidoDetalhe() {
     onSuccess: async () => {
       toast.success('NF registrada!')
       qc.invalidateQueries({ queryKey: ['pedido', id] })
-      // Imprime espelhos de carga — 1 único job; o print agent faz o loop internamente
-      if (numCaixasEspelho > 0) {
-        try {
-          await api.post('/impressao', {
-            tipo:          'espelho',
-            numero_nf:     nf,
-            numero_pedido: pedido?.numero_pedido || '',
-            caixa:         1,
-            total_caixas:  numCaixasEspelho,
-            data:          new Date().toISOString(),
-          })
-          toast.success(`🖨 ${numCaixasEspelho} espelho(s) enviados para impressão`)
-        } catch (err: any) {
-          console.error('[Impressao espelho] Erro:', err)
-          toast.error('Erro ao enviar para impressão — verifique o Print Agent')
-        }
+      // Imprime espelhos de carga — quantidade vem da cubagem (1 por caixa)
+      const qtdEspelhos = cubagem?.num_caixas ?? 1
+      try {
+        await api.post('/impressao', {
+          tipo:          'espelho',
+          numero_nf:     nf,
+          numero_pedido: pedido?.numero_pedido || '',
+          caixa:         1,
+          total_caixas:  qtdEspelhos,
+          data:          new Date().toISOString(),
+        })
+        toast.success(`🖨 ${qtdEspelhos} espelho(s) enviados para impressão`)
+      } catch (err: any) {
+        console.error('[Impressao espelho] Erro:', err)
+        toast.error('Erro ao enviar para impressão — verifique o Print Agent')
       }
       setModal(null)
     },
@@ -1781,23 +1779,26 @@ export function PedidoDetalhe() {
                   )}
                 </>
               )}
-              {/* Espelhos de carga */}
+              {/* Espelhos de carga — automático pela cubagem */}
               <div className="border-t pt-4">
-                <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
-                  🖨 Espelhos de carga
-                  <span className="text-xs text-gray-400 font-normal ml-1">(etiquetas coladas nas caixas)</span>
-                </label>
-                <div className="flex items-center gap-3 mt-1">
-                  <input
-                    type="number" min={0} max={99}
-                    value={numCaixasEspelho}
-                    onChange={e => setNumCaixasEspelho(parseInt(e.target.value) || 0)}
-                    className="w-24 border rounded-lg px-3 py-2.5 text-sm text-center"
-                  />
-                  <span className="text-sm text-gray-500">
-                    {numCaixasEspelho === 0 ? 'Nenhum espelho' : `${numCaixasEspelho} etiqueta(s) — 1/N … N/N`}
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-gray-700">
+                    🖨 Espelhos de carga
+                    <span className="text-xs text-gray-400 font-normal ml-1">(1 por caixa)</span>
+                  </p>
+                  <span className={`text-sm font-bold ${cubagem?.num_caixas ? 'text-indigo-600' : 'text-gray-400'}`}>
+                    {cubagem?.num_caixas ?? 1} etiqueta(s)
                   </span>
                 </div>
+                {cubagem?.num_caixas ? (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Quantidade conforme cubagem registrada ({cubagem.num_caixas} caixa(s)).
+                  </p>
+                ) : (
+                  <p className="text-xs text-amber-500 mt-1">
+                    ⚠ Cubagem não registrada — será impressa 1 etiqueta. Registre a cubagem para imprimir o número correto.
+                  </p>
+                )}
               </div>
               {/* Corrigir data de entrega */}
               <div className="border-t pt-4">
