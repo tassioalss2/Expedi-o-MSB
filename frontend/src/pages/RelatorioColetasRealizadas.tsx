@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { format, subDays } from 'date-fns'
+import { format, subDays, startOfWeek, startOfMonth } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { ArrowLeft, Printer, CheckCircle, Truck, Clock, TrendingUp } from 'lucide-react'
 import api from '../lib/api'
@@ -45,11 +45,26 @@ const TRANSP_CORES: Record<string, string> = {
   'CORREIOS': 'bg-yellow-500', 'OUTROS': 'bg-gray-500',
 }
 
+const ATALHOS = [
+  { label: 'Hoje',         inicio: (h: Date) => h,                    fim: (h: Date) => h },
+  { label: 'Esta semana',  inicio: (h: Date) => startOfWeek(h, { weekStartsOn: 1 }), fim: (h: Date) => h },
+  { label: 'Este mês',     inicio: (h: Date) => startOfMonth(h),      fim: (h: Date) => h },
+  { label: 'Últimos 7d',   inicio: (h: Date) => subDays(h, 7),        fim: (h: Date) => h },
+  { label: 'Últimos 30d',  inicio: (h: Date) => subDays(h, 30),       fim: (h: Date) => h },
+]
+
 export function RelatorioColetasRealizadas() {
   const navigate = useNavigate()
   const hoje = new Date()
   const [dataInicio, setDataInicio] = useState(format(subDays(hoje, 30), 'yyyy-MM-dd'))
-  const [dataFim, setDataFim] = useState(format(hoje, 'yyyy-MM-dd'))
+  const [dataFim,    setDataFim]    = useState(format(hoje, 'yyyy-MM-dd'))
+  const [atalhoAtivo, setAtalhoAtivo] = useState('Últimos 30d')
+
+  const aplicarAtalho = (a: typeof ATALHOS[0]) => {
+    setDataInicio(format(a.inicio(hoje), 'yyyy-MM-dd'))
+    setDataFim(format(a.fim(hoje), 'yyyy-MM-dd'))
+    setAtalhoAtivo(a.label)
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['relatorio-coletas', dataInicio, dataFim],
@@ -118,14 +133,47 @@ export function RelatorioColetasRealizadas() {
       </div>
 
       {/* Filtro de período */}
-      <div className="flex items-center gap-3 bg-gray-50 rounded-xl p-4 print:hidden">
-        <span className="text-sm font-medium text-gray-600">Período:</span>
-        <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)}
-          className="border rounded-lg px-3 py-2 text-sm" />
-        <span className="text-gray-400">até</span>
-        <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)}
-          className="border rounded-lg px-3 py-2 text-sm" />
-        <span className="text-xs text-gray-400 ml-2">{totalOVs} coleta(s) encontrada(s)</span>
+      <div className="bg-gray-50 rounded-xl p-4 print:hidden space-y-3">
+        {/* Atalhos rápidos */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-gray-500 mr-1">Período rápido:</span>
+          {ATALHOS.map(a => (
+            <button
+              key={a.label}
+              onClick={() => aplicarAtalho(a)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
+                atalhoAtivo === a.label
+                  ? a.label === 'Hoje'
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-gray-800 text-white border-gray-800'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400 hover:bg-gray-100'
+              }`}
+            >
+              {a.label === 'Hoje' ? '📅 Hoje' : a.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Filtro manual por data */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-medium text-gray-600">Ou defina o período:</span>
+          <input
+            type="date"
+            value={dataInicio}
+            onChange={e => { setDataInicio(e.target.value); setAtalhoAtivo('') }}
+            className="border rounded-lg px-3 py-2 text-sm"
+          />
+          <span className="text-gray-400">até</span>
+          <input
+            type="date"
+            value={dataFim}
+            onChange={e => { setDataFim(e.target.value); setAtalhoAtivo('') }}
+            className="border rounded-lg px-3 py-2 text-sm"
+          />
+          <span className="text-xs text-gray-400 ml-1">
+            {isLoading ? 'Carregando...' : `${totalOVs} coleta(s) encontrada(s)`}
+          </span>
+        </div>
       </div>
 
       {/* Métricas */}
