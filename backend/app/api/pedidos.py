@@ -69,7 +69,8 @@ def alterar_status(
 
 class RetornarEtapaRequest(BaseModel):
     status_destino: str
-    motivo: str
+    motivo: str = ''
+    registrar_ocorrencia: bool = True
 
 
 @router.post("/{pedido_id}/retornar-etapa")
@@ -93,11 +94,9 @@ def retornar_etapa(
     status_anterior = pedido["status"]
     agora = _agora()
 
-    # Se estava no pallet, remove
+    # Se estava no pallet, remove o vinculo (DELETE — tabela nao tem coluna status)
     if status_anterior == StatusPedido.AGUARD_COLETA.value:
-        db.table("pallet_pedidos").update({
-            "status": "RETORNADO",
-        }).eq("pedido_id", str(pedido_id)).eq("status", "AGUARDANDO").execute()
+        db.table("pallet_pedidos").delete().eq("pedido_id", str(pedido_id)).execute()
 
     # Atualiza status
     db.table("pedidos").update({
@@ -115,21 +114,22 @@ def retornar_etapa(
         "criado_em": agora,
     }).execute()
 
-    # Ocorrência automática
-    db.table("ocorrencias").insert({
-        "pedido_id": str(pedido_id),
-        "tipo": "Retornou a OV",
-        "descricao": (
-            f"OV {pedido['numero_pedido']} retornou de '{status_anterior}' para '{payload.status_destino}'.\n"
-            f"Motivo: {payload.motivo}"
-        ),
-        "responsavel_id": uid,
-        "status": "FECHADA",
-        "resolucao": payload.motivo,
-        "resolvido_por": uid,
-        "resolvido_em": agora,
-        "criado_em": agora,
-    }).execute()
+    # Ocorrência — só cria se solicitado
+    if payload.registrar_ocorrencia:
+        db.table("ocorrencias").insert({
+            "pedido_id": str(pedido_id),
+            "tipo": "Retornou a OV",
+            "descricao": (
+                f"OV {pedido['numero_pedido']} retornou de '{status_anterior}' para '{payload.status_destino}'.\n"
+                f"Motivo: {payload.motivo}"
+            ),
+            "responsavel_id": uid,
+            "status": "FECHADA",
+            "resolucao": payload.motivo,
+            "resolvido_por": uid,
+            "resolvido_em": agora,
+            "criado_em": agora,
+        }).execute()
 
     return {"ok": True, "status_anterior": status_anterior, "status_novo": payload.status_destino}
 
