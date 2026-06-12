@@ -226,11 +226,30 @@ export function InventarioContagem() {
           <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">🔢 Quantidades</h3>
 
           <CampoNumero label="Qtd. Sistêmica (D365) *"
-            sublabel="Quantidade que o sistema mostra"
+            sublabel="Quantidade que o D365 mostra antes da separação"
             value={qtdSistem} onChange={setQtdSistem} />
 
-          <CampoNumero label="Qtd. Física (após separação) *"
-            sublabel="O que ficou fisicamente após separar a venda"
+          {/* Estoque esperado — calculado automaticamente */}
+          {sist > 0 && (
+            <div className={`rounded-xl border-2 px-4 py-3 flex items-center justify-between ${
+              venda > 0 ? 'border-blue-300 bg-blue-50' : 'border-gray-200 bg-gray-50'
+            }`}>
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  Estoque esperado {venda > 0 ? `(${sist} − ${venda})` : ''}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  O que deve estar fisicamente no estoque
+                </p>
+              </div>
+              <p className={`text-3xl font-bold ${venda > 0 ? 'text-blue-700' : 'text-gray-700'}`}>
+                {esperado} <span className="text-sm font-normal">un</span>
+              </p>
+            </div>
+          )}
+
+          <CampoNumero label="Qtd. Física (contada) *"
+            sublabel="O que você encontrou fisicamente — deve bater com o estoque esperado acima"
             value={qtdFisica} onChange={setQtdFisica} destaque />
 
           {/* Divergência em tempo real */}
@@ -258,11 +277,9 @@ export function InventarioContagem() {
           )}
 
           {/* Campo de venda — só aparece se há divergência */}
-          {temDiverg && (
-            <CampoNumero label="Qtd. Vendida/Movimentada"
-              sublabel="Saída registrada no D365 não computada ainda"
-              value={qtdVenda} onChange={setQtdVenda} />
-          )}
+          <CampoNumero label="Qtd. Separada / Vendida"
+            sublabel="Quantidade que foi separada ou vendida (será subtraída do sistêmico)"
+            value={qtdVenda} onChange={setQtdVenda} />
         </div>
 
         {/* Motivo — só aparece se há divergência */}
