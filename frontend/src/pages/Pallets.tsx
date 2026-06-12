@@ -205,6 +205,9 @@ export function Pallets() {
 
                           <p className="text-xs text-gray-500 truncate">{pp?.pedidos?.clientes?.nome || '—'}</p>
                           <div className="flex items-center gap-2 mt-0.5">
+                            {pp?.pedidos?.numero_nf && (
+                              <span className="text-xs font-semibold text-indigo-600">NF {pp.pedidos.numero_nf}</span>
+                            )}
                             {pp?.num_caixas && <p className="text-xs text-gray-400">{pp.num_caixas} cx</p>}
                             {pallet.codigo === 'PLT-OUTROS' && pp?.pedidos?.transportadora_nome && (
                               <span className="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded font-medium">
