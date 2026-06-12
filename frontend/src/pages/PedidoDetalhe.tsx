@@ -1266,6 +1266,7 @@ export function PedidoDetalhe() {
   const [valorFrete, setValorFrete] = useState('')
   const [novaDataEntrega, setNovaDataEntrega] = useState('')
   const [numCaixasEspelho, setNumCaixasEspelho] = useState(1)
+  const [reimprimindoEspelho, setReimprimindoEspelho] = useState(false)
 
   const { data: pedido, isLoading } = useQuery<Pedido>({
     queryKey: ['pedido', id],
@@ -1639,6 +1640,35 @@ export function PedidoDetalhe() {
                 <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700">
                   <p className="font-semibold">✅ {status === 'EXPEDIDO' ? 'Expedido!' : 'Coletado!'}</p>
                 </div>
+              )}
+
+              {/* Reimprimir espelhos — fallback quando a impressão falhou na hora do registro */}
+              {['FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'].includes(status) && pedido.numero_nf && (
+                <button
+                  onClick={async () => {
+                    try {
+                      setReimprimindoEspelho(true)
+                      const qtd = cubagem?.num_caixas ?? 1
+                      await api.post('/impressao', {
+                        tipo:          'espelho',
+                        numero_nf:     pedido.numero_nf,
+                        numero_pedido: pedido.numero_pedido,
+                        caixa:         1,
+                        total_caixas:  qtd,
+                        data:          new Date().toISOString(),
+                      })
+                      toast.success(`🖨 ${qtd} espelho(s) enviados para reimpressão`)
+                    } catch {
+                      toast.error('Erro ao reimprimir — verifique o Print Agent')
+                    } finally {
+                      setReimprimindoEspelho(false)
+                    }
+                  }}
+                  disabled={reimprimindoEspelho}
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  🖨 Reimprimir Espelhos{cubagem?.num_caixas ? ` (${cubagem.num_caixas} cx)` : ''}
+                </button>
               )}
 
               {/* Registrar cubagem retroativamente */}

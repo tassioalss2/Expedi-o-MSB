@@ -85,13 +85,16 @@ LOGO_PATH = _get_logo_path()
 
 # ── Supabase REST helpers ─────────────────────────────────────────────────────
 
+TIMEOUT_SUPABASE = 20  # segundos — aumentado para redes lentas
+
+
 def buscar_proximo_job() -> dict | None:
     """Busca o proximo job pendente na fila de impressao."""
     url = (
         f"{SUPABASE_URL}/rest/v1/fila_impressao"
         "?status=eq.pendente&order=criado_em.asc&limit=1"
     )
-    resp = requests.get(url, headers=HEADERS, timeout=5)
+    resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT_SUPABASE)
     resp.raise_for_status()
     data = resp.json()
     return data[0] if data else None
@@ -100,7 +103,7 @@ def buscar_proximo_job() -> dict | None:
 def atualizar_status(job_id: str, status: str) -> None:
     """Atualiza o status de um job na fila."""
     url = f"{SUPABASE_URL}/rest/v1/fila_impressao?id=eq.{job_id}"
-    requests.patch(url, headers=HEADERS, json={"status": status}, timeout=5)
+    requests.patch(url, headers=HEADERS, json={"status": status}, timeout=TIMEOUT_SUPABASE)
 
 
 # ── Impressora ────────────────────────────────────────────────────────────────
@@ -318,12 +321,12 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     # =========================================================================
     hdc.FillSolidRect((px(FX), 0, px(LW), px(LH, 'y')), COR_PRETO)
     hdc.SetTextColor(COR_BRANCO)
-    f_fr = mk_font(10, bold=True, angulo=90)
+    f_fr = mk_font(11, bold=True, angulo=90)
     old_f = hdc.SelectObject(f_fr)
     _txt_fragil = "CUIDADO  -  FRAGIL"
     w_fr, _ = hdc.GetTextExtent(_txt_fragil)
     y_fr = (px(LH, 'y') + w_fr) // 2
-    h_fr = int(10 * dpi_y / 72)
+    h_fr = int(11 * dpi_y / 72)
     x_fr = px(FX) + (px(LW) - px(FX) - h_fr) // 2
     hdc.TextOut(x_fr, y_fr, _txt_fragil)
     hdc.SelectObject(old_f)
@@ -370,7 +373,7 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     rect_borda(logo_x, logo_y, logo_x + logo_w, logo_y + logo_h, esp=1)
     linha_v(logo_x + logo_w + 1, 0.5, 17, esp=1)
 
-    txt("NF", 37, 1.0, 9, bold=True, cor=COR_PRETO)
+    txt("NF", 37, 1.0, 11, bold=True, cor=COR_PRETO)
     txt(nf_num, 37, 5.5, 26, bold=True, cor=COR_PRETO)
 
     linha_h(M, 17, FX - M, esp=2)
@@ -379,7 +382,7 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     # ZONA 2 — VOLUME X / Y  (y: 17-38 mm)
     # =========================================================================
 
-    f_vol = mk_font(7, bold=True)
+    f_vol = mk_font(9, bold=True)
     old_f = hdc.SelectObject(f_vol)
     hdc.SetTextColor(COR_PRETO)
     w_vol, _ = hdc.GetTextExtent("VOLUME")
@@ -409,22 +412,22 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
 
     # Header "REMETENTE" — fundo preto, texto branco (largura total)
     hdc.FillSolidRect((px(M), px(38.3, 'y'), px(FX - M), px(43, 'y')), COR_PRETO)
-    txt("REMETENTE", 3.5, 38.9, 7, bold=True, cor=COR_BRANCO)
+    txt("REMETENTE", 3.5, 38.9, 8, bold=True, cor=COR_BRANCO)
 
     # Separador vertical das colunas (abaixo do header REMETENTE)
     linha_v(BC_SEP, 43, LH, esp=1)
 
     # Coluna esquerda — endereco (x=2-43mm)
     y_e  = 43.2
-    step = 2.15
+    step = 2.35
 
-    txt("MSB MEDICAL SYSTEM DO BRASIL",       M, y_e,          6.5, bold=True)
-    txt("Rua Araponga, 364 — Pitangueiras",    M, y_e + step,   5.5)
-    txt("Lauro de Freitas — Bahia",            M, y_e + 2*step, 5.5)
-    txt("CEP: 42.701-330",                     M, y_e + 3*step, 5.5)
-    txt("(71) 3024-4015",                      M, y_e + 4*step, 5.5)
-    txt(f"{data_str}  {hora_str}h",            M, y_e + 5*step, 5.5)
-    txt(f"OV: {ov}",                           M, y_e + 6*step, 6, bold=True)
+    txt("MSB MEDICAL SYSTEM DO BRASIL",       M, y_e,          7, bold=True)
+    txt("Rua Araponga, 364 — Pitangueiras",    M, y_e + step,   6)
+    txt("Lauro de Freitas — Bahia",            M, y_e + 2*step, 6)
+    txt("CEP: 42.701-330",                     M, y_e + 3*step, 6)
+    txt("(71) 3024-4015",                      M, y_e + 4*step, 6)
+    txt(f"{data_str}  {hora_str}h",            M, y_e + 5*step, 6)
+    txt(f"OV: {ov}",                           M, y_e + 6*step, 6.5, bold=True)
 
     # Coluna direita — barcode Code 39 da OV (x=44.5-83mm)
     bc_x0_mm  = BC_SEP + 0.5
@@ -449,7 +452,7 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
         _c39_draw(hdc, ov_cod, bc_x0_px, bc_y0_px, bc_h_px, N, W)
 
         # Texto legivel (human-readable) abaixo do barcode, centralizado
-        f_hr  = mk_font(6, bold=True)
+        f_hr  = mk_font(6.5, bold=True)
         old_f = hdc.SelectObject(f_hr)
         hdc.SetTextColor(COR_PRETO)
         w_hr, _ = hdc.GetTextExtent(ov)
@@ -528,12 +531,19 @@ def polling_loop(nome_impressora: str) -> None:
     """
     Consulta a fila de impressao no Supabase a cada POLL_INTERVAL segundos.
     Quando encontra um job pendente, imprime e marca como concluido.
+
+    Tratamento de erros:
+      - Timeout Supabase  → loga aviso, aguarda 5s e tenta de novo (nao conta como erro critico)
+      - Sem conexao       → loga uma vez e continua tentando
+      - Erro de impressao → marca job como "erro" (nao bloqueia a fila) e loga
     """
-    erros_consecutivos = 0
+    erros_consecutivos  = 0
+    avisos_timeout      = 0
 
     while True:
         try:
             job = buscar_proximo_job()
+            avisos_timeout = 0  # conexao ok — reseta contador de timeout
 
             if job:
                 job_id  = job["id"]
@@ -542,27 +552,45 @@ def polling_loop(nome_impressora: str) -> None:
 
                 atualizar_status(job_id, "processando")
 
-                if tipo == "espelho":
-                    total_cx = int(payload.get('total_caixas', 1))
-                    nf_ref   = payload.get('numero_nf', '')
-                    for cx in range(1, total_cx + 1):
-                        payload_cx = {**payload, 'caixa': cx}
-                        imprimir_espelho_gdi(payload_cx, nome_impressora)
-                        if cx < total_cx:
-                            time.sleep(1.5)  # Aguarda Zebra avançar o papel
-                    desc = f"Espelho NF{nf_ref} x{total_cx}"
-                else:
-                    imprimir_gdi(payload, nome_impressora)
-                    desc = payload.get("codigo", "?")
+                try:
+                    if tipo == "espelho":
+                        total_cx = int(payload.get('total_caixas', 1))
+                        nf_ref   = payload.get('numero_nf', '')
+                        for cx in range(1, total_cx + 1):
+                            payload_cx = {**payload, 'caixa': cx}
+                            imprimir_espelho_gdi(payload_cx, nome_impressora)
+                            if cx < total_cx:
+                                time.sleep(1.5)  # Aguarda Zebra avançar o papel
+                        desc = f"Espelho NF{nf_ref} x{total_cx}"
+                    else:
+                        imprimir_gdi(payload, nome_impressora)
+                        desc = payload.get("codigo", "?")
 
-                atualizar_status(job_id, "concluido")
-                log(f"OK  {desc} -> {nome_impressora}")
-                erros_consecutivos = 0
+                    atualizar_status(job_id, "concluido")
+                    log(f"OK  {desc} -> {nome_impressora}")
+                    erros_consecutivos = 0
+
+                except Exception as print_err:
+                    # Impressao falhou — marca como erro para nao travar a fila
+                    try:
+                        atualizar_status(job_id, "erro")
+                    except Exception:
+                        pass
+                    erros_consecutivos += 1
+                    log(f"ERRO impressao ({erros_consecutivos}): {print_err}")
+
+        except requests.exceptions.Timeout:
+            # Supabase lento — nao e erro critico, so avisa uma vez
+            avisos_timeout += 1
+            if avisos_timeout == 1:
+                log("Supabase lento — aguardando conexao...")
+            time.sleep(4)  # espera extra antes de tentar de novo
 
         except requests.exceptions.ConnectionError:
             erros_consecutivos += 1
             if erros_consecutivos == 1:
                 log("Sem conexao com internet — aguardando...")
+
         except Exception as e:
             erros_consecutivos += 1
             log(f"ERRO ({erros_consecutivos}): {e}")
