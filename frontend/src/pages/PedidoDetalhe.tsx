@@ -215,6 +215,9 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   const [nomeOperador, setNomeOperador] = useState(usuario?.nome || '')
   const [porCaixaMap, setPorCaixaMap] = useState<Record<string, number>>({})
 
+  // Ref síncrono para bloquear duplo-clique antes do React re-renderizar
+  const emProcessamentoRef = useRef<Set<string>>(new Set())
+
   const itens: InventarioItem[] = inv?.itens || []
   const totalItens = itens.length
   const totalConferidos = conferidos.size
@@ -225,6 +228,9 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   }
 
   const toggleConferido = async (id: string, item: InventarioItem) => {
+    // Bloqueia duplo-clique: ref é síncrono, não depende de re-render
+    if (emProcessamentoRef.current.has(id)) return
+
     const jaConferido = conferidos.has(id)
     setConferidos(prev => {
       const novo = new Set(prev)
@@ -234,6 +240,7 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
 
     // Imprime etiqueta(s) ao marcar como conferido — envia para fila no backend
     if (!jaConferido) {
+      emProcessamentoRef.current.add(id)   // bloqueia imediatamente (síncrono)
       setImprimindo(id)
       const estoqueRestante = item.qtd_sistemico - item.qtd_venda
       const porCaixa = porCaixaMap[id]
@@ -271,8 +278,10 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
         const msg = err?.response?.data?.detail || err?.message || String(err)
         console.error('[Impressao] Erro ao enviar job:', msg, err)
         toast.error(`❌ Erro ao enviar etiqueta: ${msg}`)
+      } finally {
+        emProcessamentoRef.current.delete(id)  // libera após concluir (ou erro)
+        setImprimindo(null)
       }
-      setImprimindo(null)
     }
   }
 
