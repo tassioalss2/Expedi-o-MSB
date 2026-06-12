@@ -434,6 +434,7 @@ class PalletOut(BaseModel):
 class AdicionarPedidoPalletRequest(BaseModel):
     pedido_id: str  # Aceita número de OV (OV015374) ou UUID
     num_caixas: Optional[int] = None
+    observacao: Optional[str] = None  # Transportadora para PLT-OUTROS
 
 
 # ── Importação CSV ────────────────────────────────────────────────────────────

@@ -1063,6 +1063,7 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
   const qc = useQueryClient()
   const [palletId, setPalletId] = useState('')
   const [numCaixas, setNumCaixas] = useState('')
+  const [transportadoraOutros, setTransportadoraOutros] = useState('')
 
   const { data: pallets = [] } = useQuery({
     queryKey: ['pallets-ativos'],
@@ -1076,10 +1077,15 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
     'CORREIOS': 'bg-yellow-500', 'OUTROS': 'bg-gray-500',
   }
 
+  // Verifica se o pallet selecionado é PLT-OUTROS
+  const palletSelecionado = (pallets as any[]).find((p: any) => p.id === palletId)
+  const isOutros = palletSelecionado?.codigo === 'PLT-OUTROS'
+
   const mutation = useMutation({
     mutationFn: () => api.post(`/pallets/${palletId}/pedidos`, {
       pedido_id: pedido.numero_pedido,
       num_caixas: numCaixas ? Number(numCaixas) : null,
+      observacao: isOutros && transportadoraOutros.trim() ? transportadoraOutros.trim() : undefined,
     }),
     onSuccess: () => {
       toast.success('OV alocada no pallet!')
@@ -1106,7 +1112,7 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
               const cor = CORES[nome] || 'bg-gray-500'
               const selecionado = palletId === p.id
               return (
-                <button key={p.id} onClick={() => setPalletId(p.id)}
+                <button key={p.id} onClick={() => { setPalletId(p.id); setTransportadoraOutros('') }}
                   className={`rounded-xl border-2 p-3 text-left transition-all ${
                     selecionado ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-gray-300'
                   }`}>
@@ -1123,6 +1129,24 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
             })}
           </div>
 
+          {/* Campo transportadora — só aparece para PLT-OUTROS */}
+          {isOutros && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-1">
+              <label className="text-sm font-semibold text-gray-700">
+                🚚 Qual transportadora vai coletar? *
+              </label>
+              <input
+                type="text"
+                value={transportadoraOutros}
+                onChange={e => setTransportadoraOutros(e.target.value.toUpperCase())}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm mt-1 font-medium focus:outline-none focus:ring-2 focus:ring-gray-400"
+                placeholder="Ex: JADLOG, TNT, TOTAL..."
+                autoFocus
+              />
+              <p className="text-xs text-gray-400">Aparecerá no card do pallet para identificação</p>
+            </div>
+          )}
+
           {palletId && (
             <div>
               <label className="text-sm font-medium text-gray-700">Nº de Caixas desta OV</label>
@@ -1135,7 +1159,7 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !palletId}
+            disabled={mutation.isPending || !palletId || (isOutros && !transportadoraOutros.trim())}
             className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-teal-500">
             {mutation.isPending ? 'Alocando...' : '📦 Confirmar Alocação'}
           </button>

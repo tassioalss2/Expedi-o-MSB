@@ -323,12 +323,15 @@ def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletReques
         if status_pallet not in ("realizado", "cancelado", None):
             raise HTTPException(status_code=400, detail="Pedido já está em um pallet")
 
-    db.table("pallet_pedidos").insert({
+    insert_data: dict = {
         "pallet_id": pallet_id,
         "pedido_id": pedido["id"],
         "num_caixas": payload.num_caixas,
         "adicionado_em": _agora(),
-    }).execute()
+    }
+    if payload.observacao:
+        insert_data["observacao"] = payload.observacao
+    db.table("pallet_pedidos").insert(insert_data).execute()
 
     # Atualiza status do pedido para AGUARD_COLETA diretamente no banco
     db.table("pedidos").update({

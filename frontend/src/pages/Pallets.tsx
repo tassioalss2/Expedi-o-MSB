@@ -209,9 +209,9 @@ export function Pallets() {
                               <span className="text-xs font-semibold text-indigo-600">NF {pp.pedidos.numero_nf}</span>
                             )}
                             {pp?.num_caixas && <p className="text-xs text-gray-400">{pp.num_caixas} cx</p>}
-                            {pallet.codigo === 'PLT-OUTROS' && pp?.pedidos?.transportadora_nome && (
-                              <span className="text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded font-medium">
-                                {pp.pedidos.transportadora_nome}
+                            {pallet.codigo === 'PLT-OUTROS' && (pp?.observacao || pp?.pedidos?.transportadora_nome) && (
+                              <span className="text-xs bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded font-medium">
+                                🚚 {pp.observacao || pp.pedidos.transportadora_nome}
                               </span>
                             )}
                           </div>
