@@ -256,15 +256,19 @@ export function InventarioContinuo() {
     refetchInterval: 20000,
   })
 
-  // Histórico
+  // Histórico — carrega ao abrir a aba; filtra conforme o usuário digita
   const [histCodigo, setHistCodigo] = useState('')
   const [histLote, setHistLote] = useState('')
   const { data: historico = [], isLoading: loadingHist, refetch: refetchHist } = useQuery({
     queryKey: ['inv-historico', histCodigo, histLote],
     queryFn: () => api.get('/inventario-continuo/historico', {
-      params: { codigo: histCodigo || undefined, lote: histLote || undefined },
+      params: {
+        codigo:   histCodigo.trim() || undefined,
+        lote:     histLote.trim()   || undefined,
+      },
     }).then(r => r.data),
-    enabled: false,
+    enabled: aba === 'historico',   // carrega assim que o usuário abre a aba
+    staleTime: 60_000,
   })
 
   const fecharCiclo = useMutation({
@@ -457,42 +461,82 @@ export function InventarioContinuo() {
           {/* Tab: Histórico */}
           {aba === 'historico' && (
             <div className="space-y-4">
-              <div className="flex gap-3 flex-wrap">
-                <input value={histCodigo} onChange={e => setHistCodigo(e.target.value.toUpperCase())}
-                  placeholder="Código do produto" className="border rounded-lg px-3 py-2 text-sm w-48" />
-                <input value={histLote} onChange={e => setHistLote(e.target.value.toUpperCase())}
-                  placeholder="Lote" className="border rounded-lg px-3 py-2 text-sm w-40" />
-                <button onClick={() => refetchHist()}
-                  className="px-4 py-2 bg-gray-800 text-white rounded-lg text-sm">🔎 Buscar</button>
+              {/* Filtros — reativa a query automaticamente ao digitar */}
+              <div className="flex gap-3 flex-wrap items-center">
+                <input
+                  value={histCodigo}
+                  onChange={e => setHistCodigo(e.target.value.toUpperCase())}
+                  placeholder="🔎 Filtrar por código"
+                  className="border rounded-lg px-3 py-2 text-sm w-52"
+                />
+                <input
+                  value={histLote}
+                  onChange={e => setHistLote(e.target.value.toUpperCase())}
+                  placeholder="🔎 Filtrar por lote"
+                  className="border rounded-lg px-3 py-2 text-sm w-44"
+                />
+                {(histCodigo || histLote) && (
+                  <button
+                    onClick={() => { setHistCodigo(''); setHistLote('') }}
+                    className="text-xs text-gray-400 hover:text-gray-600 underline"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+                {!loadingHist && (
+                  <span className="text-xs text-gray-400 ml-auto">
+                    {(historico as any[]).length} registro(s)
+                  </span>
+                )}
               </div>
+
               {loadingHist ? (
-                <p className="text-center text-gray-400 py-8">Buscando...</p>
+                <div className="text-center text-gray-400 py-12">
+                  <div className="inline-block w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin mb-2" />
+                  <p className="text-sm">Carregando histórico...</p>
+                </div>
               ) : (historico as any[]).length === 0 ? (
-                <p className="text-center text-gray-400 py-8">Digite o código ou lote e clique em buscar.</p>
+                <div className="text-center text-gray-400 py-12">
+                  <p className="text-sm">Nenhum registro encontrado.</p>
+                  {(histCodigo || histLote) && (
+                    <p className="text-xs mt-1">Tente limpar os filtros ou verificar o código/lote.</p>
+                  )}
+                </div>
               ) : (
-                (historico as any[]).map((c: any) => (
-                  <div key={c.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 text-sm space-y-1">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <span className="font-bold font-mono">{c.codigo_produto}</span>
-                      <StatusBadge status={c.status} />
-                    </div>
-                    <div className="text-xs text-gray-500 flex gap-4 flex-wrap">
-                      <span>Lote: {c.lote}</span>
-                      <span>Sist: {c.qtd_sistemica} | Físico: {c.qtd_fisica ?? '—'}</span>
-                      {c.qtd_divergencia !== 0 && c.qtd_divergencia != null && (
-                        <span className={c.qtd_divergencia > 0 ? 'text-blue-600 font-bold' : 'text-red-600 font-bold'}>
-                          Diverg: {fmt(c.qtd_divergencia)}
-                        </span>
+                <div className="space-y-2">
+                  {(historico as any[]).map((c: any) => (
+                    <div key={c.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 text-sm">
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold font-mono text-gray-900">{c.codigo_produto}</span>
+                          <span className="text-xs text-gray-400 border border-gray-200 px-1.5 py-0.5 rounded">
+                            {c.lote}
+                          </span>
+                        </div>
+                        <StatusBadge status={c.status} />
+                      </div>
+                      <div className="text-xs text-gray-500 flex gap-4 flex-wrap">
+                        <span>Sist: <strong>{c.qtd_sistemica}</strong></span>
+                        <span>Físico: <strong>{c.qtd_fisica ?? '—'}</strong></span>
+                        {c.qtd_divergencia !== 0 && c.qtd_divergencia != null && (
+                          <span className={`font-bold ${c.qtd_divergencia > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                            Diverg: {fmt(c.qtd_divergencia)}
+                          </span>
+                        )}
+                        <span>👤 {c.operador_nome}</span>
+                        <span className="text-gray-300">|</span>
+                        <span className="text-gray-400 italic">{c.inventario_ciclos?.nome}</span>
+                        <span>{c.contado_em ? format(parseISO(c.contado_em), "dd/MM/yy", { locale: ptBR }) : '—'}</span>
+                      </div>
+                      {c.inventario_motivos && (
+                        <p className="text-xs text-orange-600 mt-1">⚠ {c.inventario_motivos.descricao}</p>
                       )}
-                      <span>👤 {c.operador_nome}</span>
-                      <span>{c.inventario_ciclos?.nome}</span>
-                      <span>{c.contado_em ? format(parseISO(c.contado_em), "dd/MM/yy HH:mm") : '—'}</span>
+                      {c.observacao && (
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">📝 {c.observacao}</p>
+                      )}
                     </div>
-                    {c.inventario_motivos && (
-                      <p className="text-xs text-orange-600">⚠ {c.inventario_motivos.descricao}</p>
-                    )}
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
           )}
