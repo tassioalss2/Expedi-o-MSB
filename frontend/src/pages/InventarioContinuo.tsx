@@ -264,6 +264,7 @@ export function InventarioContinuo() {
   // Histórico — busca ao vivo com debounce de 400ms
   const [histCodigo, setHistCodigo] = useState('')
   const [histLote,   setHistLote]   = useState('')
+  const [histStatus, setHistStatus] = useState('')   // filtro de status (frontend)
 
   // Valores "atrasados" — só mudam 400ms após o usuário parar de digitar
   const [histCodigoQ, setHistCodigoQ] = useState('')
@@ -292,6 +293,11 @@ export function InventarioContinuo() {
     enabled:   aba === 'historico',
     staleTime: 30_000,
   })
+
+  // Histórico filtrado por status (frontend filter, sem nova requisição)
+  const histFiltrado = (historico as any[]).filter(
+    c => !histStatus || c.status === histStatus
+  )
 
   const fecharCiclo = useMutation({
     mutationFn: () => api.patch(`/inventario-continuo/ciclos/${cicloAberto?.id}/fechar`),
@@ -484,32 +490,50 @@ export function InventarioContinuo() {
           {aba === 'historico' && (
             <div className="space-y-4">
               {/* Filtros — reativa a query automaticamente ao digitar */}
-              <div className="flex gap-3 flex-wrap items-center">
-                <input
-                  value={histCodigo}
-                  onChange={e => setHistCodigo(e.target.value.toUpperCase())}
-                  placeholder="🔎 Filtrar por código"
-                  className="border rounded-lg px-3 py-2 text-sm w-52"
-                />
-                <input
-                  value={histLote}
-                  onChange={e => setHistLote(e.target.value.toUpperCase())}
-                  placeholder="🔎 Filtrar por lote"
-                  className="border rounded-lg px-3 py-2 text-sm w-44"
-                />
-                {(histCodigo || histLote) && (
-                  <button
-                    onClick={() => { setHistCodigo(''); setHistLote(''); setHistCodigoQ(''); setHistLoteQ('') }}
-                    className="text-xs text-gray-400 hover:text-gray-600 underline"
-                  >
-                    ✕ Limpar
-                  </button>
-                )}
-                <span className="text-xs text-gray-400 ml-auto">
-                  {digitando || loadingHist
-                    ? '🔍 buscando...'
-                    : `${(historico as any[]).length} registro(s)`}
-                </span>
+              <div className="space-y-2">
+                <div className="flex gap-3 flex-wrap items-center">
+                  <input
+                    value={histCodigo}
+                    onChange={e => setHistCodigo(e.target.value.toUpperCase())}
+                    placeholder="🔎 Filtrar por código"
+                    className="border rounded-lg px-3 py-2 text-sm w-52"
+                  />
+                  <input
+                    value={histLote}
+                    onChange={e => setHistLote(e.target.value.toUpperCase())}
+                    placeholder="🔎 Filtrar por lote"
+                    className="border rounded-lg px-3 py-2 text-sm w-44"
+                  />
+                  {(histCodigo || histLote || histStatus) && (
+                    <button
+                      onClick={() => {
+                        setHistCodigo(''); setHistLote('')
+                        setHistCodigoQ(''); setHistLoteQ('')
+                        setHistStatus('')
+                      }}
+                      className="text-xs text-gray-400 hover:text-gray-600 underline"
+                    >
+                      ✕ Limpar tudo
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-400 ml-auto">
+                    {digitando || loadingHist ? '🔍 buscando...' : `${histFiltrado.length} registro(s)`}
+                  </span>
+                </div>
+
+                {/* Filtro de status */}
+                <div className="flex gap-2 flex-wrap">
+                  {['', 'OK', 'EM_ANALISE', 'DIVERGENCIA', 'AJUSTE_APROVADO', 'RECONTAGEM'].map(s => (
+                    <button key={s} onClick={() => setHistStatus(s)}
+                      className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                        histStatus === s
+                          ? 'bg-gray-800 text-white border-gray-800'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'
+                      }`}>
+                      {s === '' ? 'Todos' : (STATUS_CONFIG[s]?.label ?? s)}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {loadingHist ? (
@@ -517,16 +541,16 @@ export function InventarioContinuo() {
                   <div className="inline-block w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin mb-2" />
                   <p className="text-sm">Carregando histórico...</p>
                 </div>
-              ) : (historico as any[]).length === 0 ? (
+              ) : histFiltrado.length === 0 ? (
                 <div className="text-center text-gray-400 py-12">
                   <p className="text-sm">Nenhum registro encontrado.</p>
-                  {(histCodigo || histLote) && (
-                    <p className="text-xs mt-1">Tente limpar os filtros ou verificar o código/lote.</p>
+                  {(histCodigo || histLote || histStatus) && (
+                    <p className="text-xs mt-1">Tente limpar os filtros.</p>
                   )}
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {(historico as any[]).map((c: any) => (
+                  {histFiltrado.map((c: any) => (
                     <div key={c.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3 text-sm">
                       <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
                         <div className="flex items-center gap-2">
