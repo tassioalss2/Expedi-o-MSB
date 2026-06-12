@@ -164,6 +164,9 @@ class PedidoCreate(BaseModel):
     prioridade: Prioridade = Prioridade.NORMAL
     observacoes: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
+    # Recriação de OV cancelada — preenchidos apenas quando o operador confirma a duplicata
+    forcar_duplicata: bool = False
+    motivo_duplicata: Optional[str] = None
 
 
 class PedidoOut(BaseModel):

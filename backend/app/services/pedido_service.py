@@ -57,11 +57,78 @@ def _registrar_movimentacao(pedido_id: str, status_anterior: str, status_novo: s
 def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     db = get_service_db()
 
-    # Verifica duplicidade
-    existe = db.table("pedidos").select("id").eq("numero_pedido", payload.numero_pedido).execute()
+    # ── Verifica duplicidade ───────────────────────────────────────────────────
+    existe = db.table("pedidos").select("id,status").eq("numero_pedido", payload.numero_pedido).execute()
     if existe.data:
-        raise HTTPException(status_code=400, detail=f"Pedido '{payload.numero_pedido}' já existe")
+        ped_existente = existe.data[0]
 
+        if not payload.forcar_duplicata:
+            # 409 → frontend detecta e oferece opção de recriar se CANCELADO
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "msg": f"Pedido '{payload.numero_pedido}' já existe.",
+                    "status_existente": ped_existente["status"],
+                    "pode_recriar": ped_existente["status"] == "CANCELADO",
+                },
+            )
+
+        # forcar_duplicata=True: só permite recriar OVs CANCELADAS
+        if ped_existente["status"] != "CANCELADO":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"OV '{payload.numero_pedido}' já existe com status "
+                    f"'{ped_existente['status']}'. Só é possível recriar OVs canceladas."
+                ),
+            )
+
+        # ── Reativa a OV cancelada com os novos dados do formulário ───────────
+        from app.services.inventario_service import _get_usuario_real
+        uid   = _get_usuario_real(str(usuario.id))
+        agora = _agora()
+        pid   = ped_existente["id"]
+
+        db.table("pedidos").update({
+            "status":                StatusPedido.LIBERADO.value,
+            "cliente_id":            str(payload.cliente_id),
+            "transportadora_id":     str(payload.transportadora_id) if payload.transportadora_id else None,
+            "tipo_frete":            payload.tipo_frete.value if payload.tipo_frete else "FOB",
+            "local_entrega":         payload.local_entrega,
+            "prioridade":            payload.prioridade.value,
+            "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
+            "data_prevista_coleta":  payload.data_prevista_coleta.isoformat() if payload.data_prevista_coleta else None,
+            "observacoes":           payload.observacoes,
+            "numero_nf":             None,   # limpa dados do ciclo anterior
+            "valor_nf":              None,
+            "atualizado_em":         agora,
+        }).eq("id", pid).execute()
+
+        # Registra ocorrência auditável
+        db.table("ocorrencias").insert({
+            "pedido_id":      pid,
+            "tipo":           "OV Recriada após Cancelamento",
+            "descricao": (
+                f"OV {payload.numero_pedido} foi recriada após cancelamento.\n"
+                f"Motivo informado: {payload.motivo_duplicata}\n"
+                f"Operador confirmou que a recriação é intencional."
+            ),
+            "responsavel_id": uid,
+            "status":         "FECHADA",
+            "resolucao":      payload.motivo_duplicata,
+            "resolvido_por":  uid,
+            "resolvido_em":   agora,
+            "criado_em":      agora,
+        }).execute()
+
+        _registrar_movimentacao(
+            pid, "CANCELADO", StatusPedido.LIBERADO.value,
+            uid, f"OV recriada após cancelamento. Motivo: {payload.motivo_duplicata}"
+        )
+
+        return db.table("pedidos").select("*").eq("id", pid).execute().data[0]
+
+    # ── Criação normal ─────────────────────────────────────────────────────────
     pedido_data = {
         "numero_pedido": payload.numero_pedido,
         "cliente_id": str(payload.cliente_id),

@@ -75,6 +75,7 @@ function ClienteAutocomplete({ value, onChange }: { value: string; onChange: (id
 export function NovoPedido() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+
   const [form, setForm] = useState({
     numero_pedido: '',
     cliente_id: '',
@@ -87,26 +88,77 @@ export function NovoPedido() {
     observacoes: '',
   })
 
+  // Estado do modal de recriação de OV cancelada
+  const [modalRecriar, setModalRecriar] = useState({
+    visivel: false,
+    motivo: '',
+    confirmado: false,
+  })
+
   const { data: transportadoras = [] } = useQuery<Transportadora[]>({
     queryKey: ['transportadoras'],
     queryFn: () => api.get('/transportadoras').then(r => r.data),
   })
 
+  /** Monta o body base da requisição */
+  const buildBody = (extra?: Record<string, unknown>) => ({
+    ...form,
+    transportadora_id: form.transportadora_id || null,
+    itens: [],
+    ...extra,
+  })
+
+  /** Criação normal */
   const mutation = useMutation({
-    mutationFn: () => api.post('/pedidos', {
-      ...form,
-      transportadora_id: form.transportadora_id || null,
-      itens: [],
-    }),
+    mutationFn: () => api.post('/pedidos', buildBody()),
     onSuccess: (res) => {
       toast.success('OV cadastrada!')
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       navigate(`/expedicao/${res.data.id}`)
     },
-    onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro ao cadastrar OV'),
+    onError: (e: any) => {
+      const status = e.response?.status
+      const detail = e.response?.data?.detail
+
+      // 409 + pode_recriar → OV foi cancelada; mostrar modal de confirmação
+      if (status === 409 && detail?.pode_recriar) {
+        setModalRecriar({ visivel: true, motivo: '', confirmado: false })
+        return
+      }
+
+      // 409 sem pode_recriar → OV ainda ativa, não pode recriar
+      if (status === 409) {
+        toast.error(
+          `OV ${form.numero_pedido} já existe (status: "${detail?.status_existente || 'ativo'}"). Não é possível recriar uma OV ativa.`
+        )
+        return
+      }
+
+      toast.error(typeof detail === 'string' ? detail : detail?.msg || 'Erro ao cadastrar OV')
+    },
+  })
+
+  /** Recriação de OV cancelada — disparada após confirmação no modal */
+  const mutationRecriar = useMutation({
+    mutationFn: () => api.post('/pedidos', buildBody({
+      forcar_duplicata: true,
+      motivo_duplicata: modalRecriar.motivo.trim(),
+    })),
+    onSuccess: (res) => {
+      toast.success(`✅ OV ${form.numero_pedido} recriada com sucesso!`)
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      setModalRecriar({ visivel: false, motivo: '', confirmado: false })
+      navigate(`/expedicao/${res.data.id}`)
+    },
+    onError: (e: any) => {
+      const detail = e.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : 'Erro ao recriar OV')
+    },
   })
 
   const podeEnviar = form.numero_pedido && form.cliente_id && form.data_prevista_entrega
+  const podeConfirmarRecriar =
+    modalRecriar.motivo.trim().length >= 5 && modalRecriar.confirmado
 
   const handleClienteChange = (id: string, nome: string) => {
     setForm(f => ({ ...f, cliente_id: id, cliente_nome: nome }))
@@ -207,6 +259,91 @@ export function NovoPedido() {
           </button>
         </div>
       </div>
+
+      {/* ── Modal: OV cancelada — confirmar recriação ── */}
+      {modalRecriar.visivel && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
+
+            {/* Header */}
+            <div className="p-5 border-b bg-amber-50 rounded-t-2xl">
+              <h2 className="text-lg font-bold text-amber-800">⚠ OV já cadastrada — Recriar?</h2>
+              <p className="text-sm text-amber-700 mt-1">
+                A OV <strong className="font-mono">{form.numero_pedido}</strong> foi{' '}
+                <strong>cancelada anteriormente</strong>. Para reativá-la com os dados
+                preenchidos, informe o motivo e confirme abaixo.
+              </p>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4">
+
+              {/* Aviso de auditoria */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-1">
+                <p>📋 <strong>O que acontecerá:</strong></p>
+                <ul className="list-disc list-inside space-y-0.5 ml-1">
+                  <li>A OV cancelada será <strong>reativada</strong> com os dados preenchidos</li>
+                  <li>Uma <strong>ocorrência será registrada</strong> automaticamente com o motivo informado</li>
+                  <li>O histórico de cancelamento será preservado</li>
+                </ul>
+              </div>
+
+              {/* Motivo */}
+              <div>
+                <label className="text-sm font-semibold text-gray-700">
+                  Motivo da recriação *
+                </label>
+                <textarea
+                  rows={3}
+                  value={modalRecriar.motivo}
+                  onChange={e => setModalRecriar(prev => ({ ...prev, motivo: e.target.value }))}
+                  placeholder="Ex: OV cancelada por engano — vendas confirmou que o pedido continua e deve ser reativado"
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  autoFocus
+                />
+                {modalRecriar.motivo.trim().length > 0 && modalRecriar.motivo.trim().length < 5 && (
+                  <p className="text-xs text-red-500 mt-1">Descreva o motivo com mais detalhes (mín. 5 caracteres)</p>
+                )}
+              </div>
+
+              {/* Checkbox de confirmação */}
+              <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
+                modalRecriar.confirmado
+                  ? 'border-amber-500 bg-amber-50'
+                  : 'border-gray-200 hover:border-amber-300'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={modalRecriar.confirmado}
+                  onChange={e => setModalRecriar(prev => ({ ...prev, confirmado: e.target.checked }))}
+                  className="mt-0.5 w-4 h-4 accent-amber-600 flex-shrink-0"
+                />
+                <span className="text-sm text-gray-700">
+                  Confirmo que a OV <strong className="font-mono">{form.numero_pedido}</strong> foi
+                  cancelada por engano e que a recriação é <strong>intencional e autorizada</strong>
+                </span>
+              </label>
+            </div>
+
+            {/* Botões */}
+            <div className="p-5 border-t flex gap-3">
+              <button
+                onClick={() => setModalRecriar({ visivel: false, motivo: '', confirmado: false })}
+                className="flex-1 py-2.5 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => mutationRecriar.mutate()}
+                disabled={mutationRecriar.isPending || !podeConfirmarRecriar}
+                className="flex-1 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-amber-500 transition-colors"
+              >
+                {mutationRecriar.isPending ? 'Recriando...' : '✅ Confirmar Recriação'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
