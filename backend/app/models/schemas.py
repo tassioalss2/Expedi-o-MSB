@@ -448,4 +448,26 @@ class ImportacaoResultado(BaseModel):
     erros: list[dict]
 
 
+# ── Inventário Contínuo ───────────────────────────────────────────────────────
+
+class CicloCreate(BaseModel):
+    nome: str
+    data_abertura: date
+    meta_itens: Optional[int] = None
+
+class ContagemCreate(BaseModel):
+    codigo_produto: str
+    descricao_produto: Optional[str] = None
+    lote: str
+    qtd_sistemica: int
+    qtd_fisica: int
+    qtd_venda: int = 0
+    motivo_id: Optional[str] = None
+    observacao: Optional[str] = None
+
+class RevisarContagemRequest(BaseModel):
+    acao: str  # 'APROVAR' ou 'RECONTAGEM'
+    instrucao_recontagem: Optional[str] = None
+
+
 TokenResponse.model_rebuild()

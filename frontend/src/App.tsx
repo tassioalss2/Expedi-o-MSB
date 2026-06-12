@@ -14,6 +14,8 @@ import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
 import { RelatorioColetasRealizadas } from './pages/RelatorioColetasRealizadas'
 import { Relatorios } from './pages/Relatorios'
+import { InventarioContinuo } from './pages/InventarioContinuo'
+import { InventarioContagem } from './pages/InventarioContagem'
 import { useAuthStore } from './store/authStore'
 
 const qc = new QueryClient({
@@ -54,6 +56,8 @@ export default function App() {
             <Route path="indicadores" element={<Indicadores />} />
             <Route path="relatorios" element={<Relatorios />} />
             <Route path="cadastros" element={<Cadastros />} />
+            <Route path="inventario" element={<InventarioContinuo />} />
+            <Route path="inventario/contagem" element={<InventarioContagem />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

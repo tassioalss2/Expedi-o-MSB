@@ -44,12 +44,19 @@ except ImportError:
     input("Pressione ENTER para sair...")
     sys.exit(1)
 
-# Pillow — opcional para renderizar logo. Se ausente, usa texto.
+# Pillow — opcional para renderizar logo e QR Code.
 try:
     from PIL import Image, ImageWin
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
+
+# QR Code — requer: pip install "qrcode[pil]"
+try:
+    import qrcode as _qrlib
+    HAS_QRCODE = True
+except ImportError:
+    HAS_QRCODE = False
 
 # ── Configuracao Supabase ─────────────────────────────────────────────────────
 SUPABASE_URL = "https://lgpsqwgvepdfilknggec.supabase.co"
@@ -165,62 +172,6 @@ COR_PRETO  = 0x000000
 COR_BRANCO = 0xFFFFFF
 
 
-# ── Code 39 Barcode ───────────────────────────────────────────────────────────
-# Cada simbolo: 9 elementos alternando barra/espaco (B S B S B S B S B).
-# 1 = largo (wide), 0 = estreito (narrow). Exatamente 3 elementos largos por simbolo.
-_C39 = {
-    '0':(0,0,0,1,1,0,1,0,0), '1':(1,0,0,1,0,0,0,0,1),
-    '2':(0,0,1,1,0,0,0,0,1), '3':(1,0,1,1,0,0,0,0,0),
-    '4':(0,0,0,1,0,1,0,0,1), '5':(1,0,0,1,0,1,0,0,0),
-    '6':(0,0,1,1,0,1,0,0,0), '7':(0,0,0,1,0,0,0,1,1),
-    '8':(1,0,0,1,0,0,0,1,0), '9':(0,0,1,1,0,0,0,1,0),
-    'A':(1,0,0,0,1,0,0,0,1), 'B':(0,0,1,0,1,0,0,0,1),
-    'C':(1,0,1,0,1,0,0,0,0), 'D':(0,0,0,0,1,0,1,0,1),
-    'E':(1,0,0,0,1,0,1,0,0), 'F':(0,0,1,0,1,0,1,0,0),
-    'G':(0,0,0,0,1,1,0,0,1), 'H':(1,0,0,0,1,1,0,0,0),
-    'I':(0,0,1,0,1,1,0,0,0), 'J':(0,0,0,0,1,0,0,1,1),
-    'K':(1,0,0,0,0,0,1,0,1), 'L':(0,0,1,0,0,0,1,0,1),
-    'M':(1,0,1,0,0,0,1,0,0), 'N':(0,0,0,0,0,1,1,0,1),
-    'O':(1,0,0,0,0,1,1,0,0), 'P':(0,0,1,0,0,1,1,0,0),
-    'Q':(0,0,0,0,0,0,1,1,1), 'R':(1,0,0,0,0,0,1,1,0),
-    'S':(0,0,1,0,0,0,1,1,0), 'T':(0,0,0,0,0,1,0,1,1),
-    'U':(1,1,0,0,0,0,0,0,1), 'V':(0,1,1,0,0,0,0,0,1),
-    'W':(1,1,1,0,0,0,0,0,0), 'X':(0,1,0,0,0,1,0,0,1),
-    'Y':(1,1,0,0,0,1,0,0,0), 'Z':(0,1,1,0,0,1,0,0,0),
-    '-':(0,1,0,0,0,0,0,1,1), '.':(1,1,0,0,0,0,0,1,0),
-    ' ':(0,1,1,0,0,0,0,1,0), '$':(0,1,0,1,0,1,0,0,0),
-    '/':(0,1,0,1,0,0,0,1,0), '+':(0,1,0,0,0,1,0,1,0),
-    '%':(0,0,0,1,0,1,0,1,0), '*':(0,1,0,0,0,1,1,0,0),
-}
-
-def _c39_largura(texto: str, N: int, W: int) -> int:
-    """Calcula a largura total do barcode em pixels (sem desenhar)."""
-    chars = ['*'] + [c for c in texto.upper() if c in _C39] + ['*']
-    n_sim    = len(chars)
-    n_wide   = n_sim * 3
-    n_narrow = n_sim * 6 + (n_sim - 1)   # 6 narrow/sym + (n-1) gaps inter-char
-    return n_narrow * N + n_wide * W
-
-def _c39_draw(hdc, texto: str, x0: int, y0: int, h: int, N: int = 2, W: int = 5) -> int:
-    """
-    Desenha barcode Code 39 no HDC. Argumentos em pixels.
-    Posicoes pares (0,2,4,6,8) = barras pretas; impares = espacos brancos.
-    Retorna a largura total desenhada em pixels.
-    """
-    chars = ['*'] + [c for c in texto.upper() if c in _C39] + ['*']
-    x = x0
-    for i, c in enumerate(chars):
-        for j, e in enumerate(_C39[c]):
-            larg = W if e else N
-            cor  = COR_PRETO if j % 2 == 0 else COR_BRANCO
-            hdc.FillSolidRect((x, y0, x + larg, y0 + h), cor)
-            x += larg
-        if i < len(chars) - 1:
-            hdc.FillSolidRect((x, y0, x + N, y0 + h), COR_BRANCO)  # gap inter-char
-            x += N
-    return x - x0
-
-
 # ── Espelho de Carga ──────────────────────────────────────────────────────────
 
 def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
@@ -310,7 +261,8 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     FX     = 85     # inicio da faixa FRAGIL
     LW     = 100    # largura total
     LH     = 60     # altura total
-    BC_SEP = 44     # separador vertical: endereco | barcode (mm)
+    BC_SEP = 38     # separador vertical: endereco | barcode (mm)
+    # BC_SEP=38mm da 44.5mm para o barcode → quiet zone ~4mm cada lado (min=2.5mm)
 
     hdc.StartDoc("Espelho MSB")
     hdc.StartPage()
@@ -417,48 +369,55 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     # Separador vertical das colunas (abaixo do header REMETENTE)
     linha_v(BC_SEP, 43, LH, esp=1)
 
-    # Coluna esquerda — endereco (x=2-43mm)
+    # Coluna esquerda — endereco (x=2 até BC_SEP mm)
+    # 6 linhas (OV removida daqui — fica só embaixo do QR)
     y_e  = 43.2
-    step = 2.35
+    step = 2.4   # passo maior pois temos uma linha a menos
 
-    txt("MSB MEDICAL SYSTEM DO BRASIL",       M, y_e,          7, bold=True)
-    txt("Rua Araponga, 364 — Pitangueiras",    M, y_e + step,   6)
-    txt("Lauro de Freitas — Bahia",            M, y_e + 2*step, 6)
-    txt("CEP: 42.701-330",                     M, y_e + 3*step, 6)
-    txt("(71) 3024-4015",                      M, y_e + 4*step, 6)
-    txt(f"{data_str}  {hora_str}h",            M, y_e + 5*step, 6)
-    txt(f"OV: {ov}",                           M, y_e + 6*step, 6.5, bold=True)
+    txt("MSB MEDICAL SYSTEM DO BRASIL",       M, y_e,          7,   bold=True)
+    txt("Rua Araponga, 364 — Pitangueiras",    M, y_e + step,   6.5)
+    txt("Lauro de Freitas — Bahia",            M, y_e + 2*step, 6.5)
+    txt("CEP: 42.701-330",                     M, y_e + 3*step, 6.5)
+    txt("(71) 3024-4015",                      M, y_e + 4*step, 6.5)
+    txt(f"{data_str}  {hora_str}h",            M, y_e + 5*step, 6.5)
+    # Ultima linha: 43.2 + 5×2.4 = 55.2mm + 2.3mm (fonte) = 57.5mm → 2.5mm margem ✓
 
-    # Coluna direita — barcode Code 39 da OV (x=44.5-83mm)
-    bc_x0_mm  = BC_SEP + 0.5
-    avail_px  = px(FX - M - bc_x0_mm)   # pixels disponiveis na coluna
+    # Coluna direita — QR Code da OV (x=BC_SEP+0.5 a 83mm = 44.5mm disponivel)
+    if HAS_PIL and HAS_QRCODE and ov:
+        try:
+            qr = _qrlib.QRCode(
+                version=None,
+                error_correction=_qrlib.constants.ERROR_CORRECT_M,
+                box_size=3,   # 3px/modulo ≈ 0.375mm: QR≈11mm → cabe com OV abaixo
+                border=4,     # 4 modulos de quiet zone (padrao ISO)
+            )
+            qr.add_data(ov)
+            qr.make(fit=True)
+            pil_qr = qr.make_image(fill_color='black', back_color='white').convert('RGB')
 
-    ov_cod = ''.join(c for c in ov.upper() if c in _C39)
-    if ov_cod:
-        # Escolhe N e W para caber na largura disponivel (fallback progressivo)
-        N, W = 2, 5
-        if _c39_largura(ov_cod, N, W) > avail_px:
-            N, W = 2, 4
-        if _c39_largura(ov_cod, N, W) > avail_px:
-            N, W = 1, 3
+            qr_px = pil_qr.size[0]   # QR e quadrado
 
-        bc_h_px  = px(11.5, 'y')       # altura das barras
-        bc_y0_px = px(43.5, 'y')       # inicio (logo abaixo do header REMETENTE)
-        bc_w_px  = _c39_largura(ov_cod, N, W)
+            # Centraliza horizontalmente na coluna direita
+            col_x0 = px(BC_SEP + 0.5)
+            col_x1 = px(FX - M)
+            qr_x0  = col_x0 + max(0, (col_x1 - col_x0 - qr_px) // 2)
+            qr_y0  = px(43.5, 'y')
 
-        # Centraliza horizontalmente na coluna direita
-        bc_x0_px = px(bc_x0_mm) + max(0, (avail_px - bc_w_px) // 2)
+            dib = ImageWin.Dib(pil_qr)
+            dib.draw(hdc.GetHandleOutput(), (qr_x0, qr_y0, qr_x0 + qr_px, qr_y0 + qr_px))
 
-        _c39_draw(hdc, ov_cod, bc_x0_px, bc_y0_px, bc_h_px, N, W)
+            # Texto legivel abaixo do QR, centralizado
+            f_hr  = mk_font(6.5, bold=True)
+            old_f = hdc.SelectObject(f_hr)
+            hdc.SetTextColor(COR_PRETO)
+            w_hr, _ = hdc.GetTextExtent(ov)
+            hdc.TextOut(qr_x0 + max(0, (qr_px - w_hr) // 2),
+                        qr_y0 + qr_px + px(0.8, 'y'), ov)
+            hdc.SelectObject(old_f)
 
-        # Texto legivel (human-readable) abaixo do barcode, centralizado
-        f_hr  = mk_font(6.5, bold=True)
-        old_f = hdc.SelectObject(f_hr)
-        hdc.SetTextColor(COR_PRETO)
-        w_hr, _ = hdc.GetTextExtent(ov)
-        hdc.TextOut(bc_x0_px + max(0, (bc_w_px - w_hr) // 2),
-                    bc_y0_px + bc_h_px + px(1.2, 'y'), ov)
-        hdc.SelectObject(old_f)
+        except Exception as qr_err:
+            print(f"  [QR Code] Erro: {qr_err}")
+            txt(f"OV: {ov}", BC_SEP + 1, 51, 7, bold=True)  # fallback texto
 
     hdc.EndPage()
     hdc.EndDoc()
@@ -607,8 +566,10 @@ def main():
     print("  MSB Print Agent v3.4")
     print("="*55)
 
-    logo_status = "com logo real (Pillow)" if HAS_PIL else "fallback texto (Pillow nao instalado)"
-    print(f"\n  Logo: {logo_status}")
+    logo_status = "OK (Pillow)" if HAS_PIL else "fallback texto"
+    qr_status   = "OK (qrcode)" if HAS_QRCODE else "AUSENTE — instale: pip install qrcode[pil]"
+    print(f"\n  Logo  : {logo_status}")
+    print(f"  QR Code: {qr_status}")
 
     print("\n  Buscando impressora TLP 2844...")
     printer = encontrar_tlp2844()
