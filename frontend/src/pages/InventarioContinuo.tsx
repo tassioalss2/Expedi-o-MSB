@@ -176,8 +176,9 @@ function ModalRevisar({ contagem, onClose }: { contagem: any; onClose: () => voi
 
 function CardContagem({ c, onRevisar, podeRevisar }: { c: any; onRevisar: () => void; podeRevisar: boolean }) {
   const [expand, setExpand] = useState(false)
-  const diverg = c.qtd_divergencia ?? 0
+  const diverg   = c.qtd_divergencia ?? 0
   const temDiverg = diverg !== 0
+  const estoque  = (c.qtd_sistemica ?? 0) - (c.qtd_venda ?? 0)   // sistêmico − venda
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm overflow-hidden ${
@@ -190,9 +191,13 @@ function CardContagem({ c, onRevisar, podeRevisar }: { c: any; onRevisar: () => 
             <span className="text-xs text-gray-400">Lote: {c.lote}</span>
             <StatusBadge status={c.status} />
           </div>
-          <div className="flex gap-4 mt-1 text-xs text-gray-500">
+          <div className="flex gap-4 mt-1 text-xs text-gray-500 flex-wrap">
             <span>👤 {c.operador_nome}</span>
             <span>Sist: <strong>{c.qtd_sistemica}</strong></span>
+            {(c.qtd_venda ?? 0) > 0 && (
+              <span>Venda: <strong className="text-orange-600">{c.qtd_venda}</strong></span>
+            )}
+            <span>Estoque: <strong className="text-teal-700">{estoque}</strong></span>
             <span>Físico: <strong>{c.qtd_fisica ?? '—'}</strong></span>
             {temDiverg && (
               <span className={`font-bold ${diverg > 0 ? 'text-blue-600' : 'text-red-600'}`}>
@@ -534,6 +539,14 @@ export function InventarioContinuo() {
                       </div>
                       <div className="text-xs text-gray-500 flex gap-4 flex-wrap">
                         <span>Sist: <strong>{c.qtd_sistemica}</strong></span>
+                        {(c.qtd_venda ?? 0) > 0 && (
+                          <span>Venda: <strong className="text-orange-600">{c.qtd_venda}</strong></span>
+                        )}
+                        <span>
+                          Estoque: <strong className="text-teal-700">
+                            {(c.qtd_sistemica ?? 0) - (c.qtd_venda ?? 0)}
+                          </strong>
+                        </span>
                         <span>Físico: <strong>{c.qtd_fisica ?? '—'}</strong></span>
                         {c.qtd_divergencia !== 0 && c.qtd_divergencia != null && (
                           <span className={`font-bold ${c.qtd_divergencia > 0 ? 'text-blue-600' : 'text-red-600'}`}>
