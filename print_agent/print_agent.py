@@ -1,5 +1,5 @@
 """
-MSB Print Agent v3.1
+MSB Print Agent v3.4
 ====================
 Agente de impressao para Zebra TLP 2844.
 
@@ -44,6 +44,13 @@ except ImportError:
     input("Pressione ENTER para sair...")
     sys.exit(1)
 
+# Pillow — opcional para renderizar logo. Se ausente, usa texto.
+try:
+    from PIL import Image, ImageWin
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 # ── Configuracao Supabase ─────────────────────────────────────────────────────
 SUPABASE_URL = "https://lgpsqwgvepdfilknggec.supabase.co"
 SUPABASE_KEY = (
@@ -61,6 +68,19 @@ HEADERS = {
     "Content-Type": "application/json",
     "Prefer": "return=representation",
 }
+
+# ── Logo MSB — carrega do arquivo PNG na mesma pasta do EXE ──────────────────
+import os as _os
+
+def _get_logo_path() -> str:
+    """Retorna o caminho da logo. Funciona em script .py e em EXE PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        base = sys._MEIPASS          # pasta temporaria do PyInstaller
+    else:
+        base = _os.path.dirname(_os.path.abspath(__file__))
+    return _os.path.join(base, 'msb_logo.png')
+
+LOGO_PATH = _get_logo_path()
 
 
 # ── Supabase REST helpers ─────────────────────────────────────────────────────
@@ -124,7 +144,7 @@ def encontrar_tlp2844() -> str | None:
     return None
 
 
-# ── GDI Printing ──────────────────────────────────────────────────────────────
+# ── GDI helpers ───────────────────────────────────────────────────────────────
 
 def formatar_data(iso: str) -> str:
     """Converte ISO para DD/MM/YYYY."""
@@ -138,16 +158,82 @@ def formatar_data(iso: str) -> str:
 MESES_PT = ['janeiro','fevereiro','marco','abril','maio','junho',
             'julho','agosto','setembro','outubro','novembro','dezembro']
 
-# Cores Win32 COLORREF (impressora termica = so preto e branco)
 COR_PRETO  = 0x000000
 COR_BRANCO = 0xFFFFFF
 
 
+# ── Code 39 Barcode ───────────────────────────────────────────────────────────
+# Cada simbolo: 9 elementos alternando barra/espaco (B S B S B S B S B).
+# 1 = largo (wide), 0 = estreito (narrow). Exatamente 3 elementos largos por simbolo.
+_C39 = {
+    '0':(0,0,0,1,1,0,1,0,0), '1':(1,0,0,1,0,0,0,0,1),
+    '2':(0,0,1,1,0,0,0,0,1), '3':(1,0,1,1,0,0,0,0,0),
+    '4':(0,0,0,1,0,1,0,0,1), '5':(1,0,0,1,0,1,0,0,0),
+    '6':(0,0,1,1,0,1,0,0,0), '7':(0,0,0,1,0,0,0,1,1),
+    '8':(1,0,0,1,0,0,0,1,0), '9':(0,0,1,1,0,0,0,1,0),
+    'A':(1,0,0,0,1,0,0,0,1), 'B':(0,0,1,0,1,0,0,0,1),
+    'C':(1,0,1,0,1,0,0,0,0), 'D':(0,0,0,0,1,0,1,0,1),
+    'E':(1,0,0,0,1,0,1,0,0), 'F':(0,0,1,0,1,0,1,0,0),
+    'G':(0,0,0,0,1,1,0,0,1), 'H':(1,0,0,0,1,1,0,0,0),
+    'I':(0,0,1,0,1,1,0,0,0), 'J':(0,0,0,0,1,0,0,1,1),
+    'K':(1,0,0,0,0,0,1,0,1), 'L':(0,0,1,0,0,0,1,0,1),
+    'M':(1,0,1,0,0,0,1,0,0), 'N':(0,0,0,0,0,1,1,0,1),
+    'O':(1,0,0,0,0,1,1,0,0), 'P':(0,0,1,0,0,1,1,0,0),
+    'Q':(0,0,0,0,0,0,1,1,1), 'R':(1,0,0,0,0,0,1,1,0),
+    'S':(0,0,1,0,0,0,1,1,0), 'T':(0,0,0,0,0,1,0,1,1),
+    'U':(1,1,0,0,0,0,0,0,1), 'V':(0,1,1,0,0,0,0,0,1),
+    'W':(1,1,1,0,0,0,0,0,0), 'X':(0,1,0,0,0,1,0,0,1),
+    'Y':(1,1,0,0,0,1,0,0,0), 'Z':(0,1,1,0,0,1,0,0,0),
+    '-':(0,1,0,0,0,0,0,1,1), '.':(1,1,0,0,0,0,0,1,0),
+    ' ':(0,1,1,0,0,0,0,1,0), '$':(0,1,0,1,0,1,0,0,0),
+    '/':(0,1,0,1,0,0,0,1,0), '+':(0,1,0,0,0,1,0,1,0),
+    '%':(0,0,0,1,0,1,0,1,0), '*':(0,1,0,0,0,1,1,0,0),
+}
+
+def _c39_largura(texto: str, N: int, W: int) -> int:
+    """Calcula a largura total do barcode em pixels (sem desenhar)."""
+    chars = ['*'] + [c for c in texto.upper() if c in _C39] + ['*']
+    n_sim    = len(chars)
+    n_wide   = n_sim * 3
+    n_narrow = n_sim * 6 + (n_sim - 1)   # 6 narrow/sym + (n-1) gaps inter-char
+    return n_narrow * N + n_wide * W
+
+def _c39_draw(hdc, texto: str, x0: int, y0: int, h: int, N: int = 2, W: int = 5) -> int:
+    """
+    Desenha barcode Code 39 no HDC. Argumentos em pixels.
+    Posicoes pares (0,2,4,6,8) = barras pretas; impares = espacos brancos.
+    Retorna a largura total desenhada em pixels.
+    """
+    chars = ['*'] + [c for c in texto.upper() if c in _C39] + ['*']
+    x = x0
+    for i, c in enumerate(chars):
+        for j, e in enumerate(_C39[c]):
+            larg = W if e else N
+            cor  = COR_PRETO if j % 2 == 0 else COR_BRANCO
+            hdc.FillSolidRect((x, y0, x + larg, y0 + h), cor)
+            x += larg
+        if i < len(chars) - 1:
+            hdc.FillSolidRect((x, y0, x + N, y0 + h), COR_BRANCO)  # gap inter-char
+            x += N
+    return x - x0
+
+
+# ── Espelho de Carga ──────────────────────────────────────────────────────────
+
 def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
     """
-    Imprime etiqueta espelho de carga — layout fiel ao modelo MSB.
-    Zonas: [logo+NF] | [caixa X/Y grande] | [remetente+OV]
-    Papel 100mm x 60mm, TLP 2844.
+    MSB Print Agent v3.4 — Layout v3.3 + barcode Code 39 da OV.
+    Papel 100 mm x 60 mm — Zebra TLP 2844 (203 DPI, monocromatico).
+
+    Estrutura:
+      Zona 1 ( 0-17 mm): Logo MSB real + numero da NF
+      Zona 2 (17-38 mm): Contador de volume MUITO grande (X / Y)
+      Zona 3 (38-60 mm): REMETENTE bar + endereco (col. esq) | barcode OV (col. dir)
+      Faixa (85-100mm):  CUIDADO - FRAGIL (preto, texto branco 90 graus)
+
+    Zona 3 — divisao de colunas:
+      Coluna esq  (x= 2-43mm): endereco do remetente + data + OV texto
+      Coluna dir  (x=44-83mm): barcode Code 39 da OV centralizado + texto legivel
     """
     hdc = win32ui.CreateDC()
     hdc.CreatePrinterDC(nome_impressora)
@@ -173,134 +259,210 @@ def imprimir_espelho_gdi(dados: dict, nome_impressora: str) -> None:
         f = mk_font(pt, bold, angulo)
         old = hdc.SelectObject(f)
         hdc.TextOut(px(x_mm), px(y_mm, 'y'), s)
-        w, h = hdc.GetTextExtent(s)
+        w, _ = hdc.GetTextExtent(s)
         hdc.SelectObject(old)
         return w
+
+    def linha_h(x0_mm, y_mm, x1_mm, esp=1):
+        pen = win32ui.CreatePen(0, esp, COR_PRETO)
+        old = hdc.SelectObject(pen)
+        hdc.MoveTo((px(x0_mm), px(y_mm, 'y')))
+        hdc.LineTo((px(x1_mm), px(y_mm, 'y')))
+        hdc.SelectObject(old)
+
+    def linha_v(x_mm, y0_mm, y1_mm, esp=1):
+        pen = win32ui.CreatePen(0, esp, COR_PRETO)
+        old = hdc.SelectObject(pen)
+        hdc.MoveTo((px(x_mm), px(y0_mm, 'y')))
+        hdc.LineTo((px(x_mm), px(y1_mm, 'y')))
+        hdc.SelectObject(old)
+
+    def rect_borda(x0, y0, x1, y1, esp=1):
+        pen = win32ui.CreatePen(0, esp, COR_PRETO)
+        old = hdc.SelectObject(pen)
+        hdc.MoveTo((px(x0), px(y0, 'y')))
+        hdc.LineTo((px(x1), px(y0, 'y')))
+        hdc.LineTo((px(x1), px(y1, 'y')))
+        hdc.LineTo((px(x0), px(y1, 'y')))
+        hdc.LineTo((px(x0), px(y0, 'y')))
+        hdc.SelectObject(old)
 
     # ── Dados ─────────────────────────────────────────────────────────────────
     caixa  = dados.get('caixa', 1)
     total  = dados.get('total_caixas', 1)
-    nf_num = dados.get('numero_nf', '')
-    ov     = dados.get('numero_pedido', '')
+    nf_num = str(dados.get('numero_nf', ''))
+    ov     = str(dados.get('numero_pedido', ''))
     iso    = dados.get('data', '')
 
-    # Hora e data em horario local (astimezone converte UTC -> fuso do PC)
     try:
         dt = datetime.fromisoformat(iso.replace('Z', '+00:00')).astimezone()
-        hora_str   = dt.strftime('%H:%M')
-        data_longa = (f"Lauro de Freitas,   {dt.day} de "
-                      f"{MESES_PT[dt.month-1]},   {dt.year}")
+        hora_str = dt.strftime('%H:%M')
+        data_str = dt.strftime('%d/%m/%Y')
     except Exception:
-        hora_str   = ''
-        data_longa = ''
+        hora_str = ''
+        data_str = ''
 
     # Constantes de layout (mm)
-    M   = 2     # margem
-    FX  = 85    # inicio da faixa FRAGIL
-    LW  = 100   # largura total
-    LH  = 60    # altura total
+    M      = 2      # margem esquerda
+    FX     = 85     # inicio da faixa FRAGIL
+    LW     = 100    # largura total
+    LH     = 60     # altura total
+    BC_SEP = 44     # separador vertical: endereco | barcode (mm)
 
     hdc.StartDoc("Espelho MSB")
     hdc.StartPage()
-    hdc.SetBkMode(1)   # TRANSPARENT
+    hdc.SetBkMode(1)  # TRANSPARENT
 
     # =========================================================================
-    # FAIXA DIREITA: CUIDADO - FRAGIL (fundo preto, texto branco 90 graus)
+    # FAIXA CUIDADO-FRAGIL  (x: 85-100 mm, altura total, fundo preto)
     # =========================================================================
     hdc.FillSolidRect((px(FX), 0, px(LW), px(LH, 'y')), COR_PRETO)
     hdc.SetTextColor(COR_BRANCO)
-    f = mk_font(10, bold=True, angulo=90)
-    old_f = hdc.SelectObject(f)
-    hdc.TextOut(px(FX + 4), px(57, 'y'), "CUIDADO  -  FRAGIL")
+    f_fr = mk_font(10, bold=True, angulo=90)
+    old_f = hdc.SelectObject(f_fr)
+    _txt_fragil = "CUIDADO  -  FRAGIL"
+    w_fr, _ = hdc.GetTextExtent(_txt_fragil)
+    y_fr = (px(LH, 'y') + w_fr) // 2
+    h_fr = int(10 * dpi_y / 72)
+    x_fr = px(FX) + (px(LW) - px(FX) - h_fr) // 2
+    hdc.TextOut(x_fr, y_fr, _txt_fragil)
     hdc.SelectObject(old_f)
 
     # =========================================================================
-    # ZONA 1 — LOGO + NF  (0..15mm)
+    # ZONA 1 — LOGO + NF  (y: 0-17 mm)
     # =========================================================================
-    # Borda do bloco logo (retangulo)
-    pen2 = win32ui.CreatePen(0, 2, COR_PRETO)
-    old_pen = hdc.SelectObject(pen2)
-    hdc.MoveTo((px(M),   px(1,    'y')))
-    hdc.LineTo((px(34),  px(1,    'y')))
-    hdc.LineTo((px(34),  px(14.5, 'y')))
-    hdc.LineTo((px(M),   px(14.5, 'y')))
-    hdc.LineTo((px(M),   px(1,    'y')))
-    hdc.SelectObject(old_pen)
 
-    txt("mSb",                   3,  1.8,  14, bold=True,  cor=COR_PRETO)
-    txt("Medical System do Brasil", 3, 10.8,  5, bold=False, cor=COR_PRETO)
+    logo_x, logo_y, logo_w, logo_h = M, 0.5, 32.0, 16.0
 
-    # Separador vertical (ja incluido pela borda do logo acima)
-    # "NF" label
-    txt("NF", 36, 2, 9, bold=True, cor=COR_PRETO)
+    logo_ok = False
+    if HAS_PIL:
+        try:
+            img  = Image.open(LOGO_PATH).convert('RGBA')
+            bg   = Image.new('RGB', img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            gray = bg.convert('L').point(lambda v: 0 if v < 210 else 255)
+            rgb  = gray.convert('RGB')
+            tw   = px(logo_w)
+            th   = px(logo_h, 'y')
+            resized = rgb.resize((tw, th), Image.LANCZOS)
+            dib  = ImageWin.Dib(resized)
+            x1   = px(logo_x)
+            y1   = px(logo_y, 'y')
+            dib.draw(hdc.GetHandleOutput(), (x1, y1, x1 + tw, y1 + th))
+            logo_ok = True
+        except Exception as e:
+            print(f"  [Logo] Erro ao renderizar: {e}")
 
-    # NF numero — grande e negrito para destacar
-    txt(nf_num, 46, 1.5, 19, bold=True, cor=COR_PRETO)
+    if not logo_ok:
+        hdc.SetTextColor(COR_PRETO)
+        f_msb = mk_font(18, bold=True)
+        old_f = hdc.SelectObject(f_msb)
+        hdc.TextOut(px(3), px(2, 'y'), "mSb")
+        w_msb, _ = hdc.GetTextExtent("mSb")
+        hdc.SelectObject(old_f)
+        f_reg = mk_font(7)
+        old_f = hdc.SelectObject(f_reg)
+        hdc.SetTextColor(COR_PRETO)
+        hdc.TextOut(px(3) + w_msb, px(1, 'y'), "R")
+        hdc.SelectObject(old_f)
+        txt("Medical System do Brasil", 3, 12, 5.5, cor=COR_PRETO)
 
-    # Linha divisoria zona 1 / zona 2
-    pen1 = win32ui.CreatePen(0, 1, COR_PRETO)
-    old_pen = hdc.SelectObject(pen1)
-    hdc.MoveTo((px(M),       px(15.5, 'y')))
-    hdc.LineTo((px(FX - M),  px(15.5, 'y')))
-    hdc.SelectObject(old_pen)
+    rect_borda(logo_x, logo_y, logo_x + logo_w, logo_y + logo_h, esp=1)
+    linha_v(logo_x + logo_w + 1, 0.5, 17, esp=1)
+
+    txt("NF", 37, 1.0, 9, bold=True, cor=COR_PRETO)
+    txt(nf_num, 37, 5.5, 26, bold=True, cor=COR_PRETO)
+
+    linha_h(M, 17, FX - M, esp=2)
 
     # =========================================================================
-    # ZONA 2 — CAIXA X / Y  (16..36mm) — preto e vermelho
+    # ZONA 2 — VOLUME X / Y  (y: 17-38 mm)
     # =========================================================================
-    s1 = str(caixa)
-    s2 = " / "
-    s3 = str(total)
-    f_cx = mk_font(28, bold=True)
+
+    f_vol = mk_font(7, bold=True)
+    old_f = hdc.SelectObject(f_vol)
+    hdc.SetTextColor(COR_PRETO)
+    w_vol, _ = hdc.GetTextExtent("VOLUME")
+    hdc.TextOut((px(FX) - w_vol) // 2, px(18.5, 'y'), "VOLUME")
+    hdc.SelectObject(old_f)
+
+    s_cx  = str(caixa)
+    s_sep = "  /  "
+    s_tot = str(total)
+
+    f_cx = mk_font(38, bold=True)
     old_f = hdc.SelectObject(f_cx)
-    w1, _ = hdc.GetTextExtent(s1)
-    w2, _ = hdc.GetTextExtent(s2)
-    w3, _ = hdc.GetTextExtent(s3)
+    hdc.SetTextColor(COR_PRETO)
+    w1, _ = hdc.GetTextExtent(s_cx)
+    w2, _ = hdc.GetTextExtent(s_sep)
+    w3, _ = hdc.GetTextExtent(s_tot)
     total_w = w1 + w2 + w3
     x0 = max(px(M), (px(FX) - total_w) // 2)
-    y_cx = px(18.5, 'y')
-
-    hdc.SetTextColor(COR_PRETO)
-    hdc.TextOut(x0, y_cx, s1 + s2 + s3)
+    hdc.TextOut(x0, px(21, 'y'), s_cx + s_sep + s_tot)
     hdc.SelectObject(old_f)
 
-    # Linha divisoria zona 2 / remetente
-    old_pen = hdc.SelectObject(pen1)
-    hdc.MoveTo((px(M),       px(36.5, 'y')))
-    hdc.LineTo((px(FX - M),  px(36.5, 'y')))
-    hdc.SelectObject(old_pen)
+    linha_h(M, 38, FX - M, esp=2)
 
     # =========================================================================
-    # ZONA 3 — REMETENTE + ENDERECO + OV  (37..60mm)
+    # ZONA 3 — REMETENTE (col.esq) | BARCODE OV (col.dir)  (y: 38-60 mm)
     # =========================================================================
-    # Header "REMETENTE" (fundo preto, texto branco)
-    hdc.FillSolidRect((px(M), px(37, 'y'), px(FX - M), px(42.5, 'y')), COR_PRETO)
-    txt("REMETENTE", 3.5, 38, 7, bold=True, cor=COR_BRANCO)
 
-    # Nome empresa
-    txt("MSB MEDICAL SYSTEM DO BRASIL", M, 43, 6.5, bold=True, cor=COR_PRETO)
+    # Header "REMETENTE" — fundo preto, texto branco (largura total)
+    hdc.FillSolidRect((px(M), px(38.3, 'y'), px(FX - M), px(43, 'y')), COR_PRETO)
+    txt("REMETENTE", 3.5, 38.9, 7, bold=True, cor=COR_BRANCO)
 
-    # Linhas de endereco
-    linhas = [
-        "Rua Araponga, 364, Qd1, Lote 19",
-        "Bairro Pitangueiras - Lauro de Freitas | BA",
-        "Cep:42.701-330 - Telefone: (71) 3024-4015",
-        "Site: www.msbbrasil.com - E-mail: msb@msbbrasil.com",
-    ]
-    y_e = 46.0
-    for ln in linhas:
-        txt(ln, M, y_e, 5.2, bold=False, cor=COR_PRETO)
-        y_e += 2.8
+    # Separador vertical das colunas (abaixo do header REMETENTE)
+    linha_v(BC_SEP, 43, LH, esp=1)
 
-    # Hora + data longa
-    txt(f"{hora_str}      {data_longa}", M, y_e, 5.2, bold=False, cor=COR_PRETO)
+    # Coluna esquerda — endereco (x=2-43mm)
+    y_e  = 43.2
+    step = 2.15
 
-    # OV em destaque na parte de baixo
-    txt(f"OV: {ov}", M, 56.5, 7, bold=True, cor=COR_PRETO)
+    txt("MSB MEDICAL SYSTEM DO BRASIL",       M, y_e,          6.5, bold=True)
+    txt("Rua Araponga, 364 — Pitangueiras",    M, y_e + step,   5.5)
+    txt("Lauro de Freitas — Bahia",            M, y_e + 2*step, 5.5)
+    txt("CEP: 42.701-330",                     M, y_e + 3*step, 5.5)
+    txt("(71) 3024-4015",                      M, y_e + 4*step, 5.5)
+    txt(f"{data_str}  {hora_str}h",            M, y_e + 5*step, 5.5)
+    txt(f"OV: {ov}",                           M, y_e + 6*step, 6, bold=True)
+
+    # Coluna direita — barcode Code 39 da OV (x=44.5-83mm)
+    bc_x0_mm  = BC_SEP + 0.5
+    avail_px  = px(FX - M - bc_x0_mm)   # pixels disponiveis na coluna
+
+    ov_cod = ''.join(c for c in ov.upper() if c in _C39)
+    if ov_cod:
+        # Escolhe N e W para caber na largura disponivel (fallback progressivo)
+        N, W = 2, 5
+        if _c39_largura(ov_cod, N, W) > avail_px:
+            N, W = 2, 4
+        if _c39_largura(ov_cod, N, W) > avail_px:
+            N, W = 1, 3
+
+        bc_h_px  = px(11.5, 'y')       # altura das barras
+        bc_y0_px = px(43.5, 'y')       # inicio (logo abaixo do header REMETENTE)
+        bc_w_px  = _c39_largura(ov_cod, N, W)
+
+        # Centraliza horizontalmente na coluna direita
+        bc_x0_px = px(bc_x0_mm) + max(0, (avail_px - bc_w_px) // 2)
+
+        _c39_draw(hdc, ov_cod, bc_x0_px, bc_y0_px, bc_h_px, N, W)
+
+        # Texto legivel (human-readable) abaixo do barcode, centralizado
+        f_hr  = mk_font(6, bold=True)
+        old_f = hdc.SelectObject(f_hr)
+        hdc.SetTextColor(COR_PRETO)
+        w_hr, _ = hdc.GetTextExtent(ov)
+        hdc.TextOut(bc_x0_px + max(0, (bc_w_px - w_hr) // 2),
+                    bc_y0_px + bc_h_px + px(1.2, 'y'), ov)
+        hdc.SelectObject(old_f)
 
     hdc.EndPage()
     hdc.EndDoc()
     hdc.DeleteDC()
 
+
+# ── Etiqueta de Inventario ────────────────────────────────────────────────────
 
 def imprimir_gdi(dados: dict, nome_impressora: str) -> None:
     """
@@ -381,8 +543,14 @@ def polling_loop(nome_impressora: str) -> None:
                 atualizar_status(job_id, "processando")
 
                 if tipo == "espelho":
-                    imprimir_espelho_gdi(payload, nome_impressora)
-                    desc = f"Espelho NF{payload.get('numero_nf','')} {payload.get('caixa','')}/{payload.get('total_caixas','')}"
+                    total_cx = int(payload.get('total_caixas', 1))
+                    nf_ref   = payload.get('numero_nf', '')
+                    for cx in range(1, total_cx + 1):
+                        payload_cx = {**payload, 'caixa': cx}
+                        imprimir_espelho_gdi(payload_cx, nome_impressora)
+                        if cx < total_cx:
+                            time.sleep(1.5)  # Aguarda Zebra avançar o papel
+                    desc = f"Espelho NF{nf_ref} x{total_cx}"
                 else:
                     imprimir_gdi(payload, nome_impressora)
                     desc = payload.get("codigo", "?")
@@ -408,8 +576,11 @@ def main():
     import os
     os.system('cls' if os.name == 'nt' else 'clear')
     print("\n" + "="*55)
-    print("  MSB Print Agent v3.1")
+    print("  MSB Print Agent v3.4")
     print("="*55)
+
+    logo_status = "com logo real (Pillow)" if HAS_PIL else "fallback texto (Pillow nao instalado)"
+    print(f"\n  Logo: {logo_status}")
 
     print("\n  Buscando impressora TLP 2844...")
     printer = encontrar_tlp2844()

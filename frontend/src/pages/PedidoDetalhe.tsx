@@ -1294,21 +1294,22 @@ export function PedidoDetalhe() {
     onSuccess: async () => {
       toast.success('NF registrada!')
       qc.invalidateQueries({ queryKey: ['pedido', id] })
-      // Imprime espelhos de carga
+      // Imprime espelhos de carga — 1 único job; o print agent faz o loop internamente
       if (numCaixasEspelho > 0) {
         try {
-          for (let cx = 1; cx <= numCaixasEspelho; cx++) {
-            await api.post('/impressao', {
-              tipo:           'espelho',
-              numero_nf:      nf,
-              numero_pedido:  pedido?.numero_pedido || '',
-              caixa:          cx,
-              total_caixas:   numCaixasEspelho,
-              data:           new Date().toISOString(),
-            })
-          }
+          await api.post('/impressao', {
+            tipo:          'espelho',
+            numero_nf:     nf,
+            numero_pedido: pedido?.numero_pedido || '',
+            caixa:         1,
+            total_caixas:  numCaixasEspelho,
+            data:          new Date().toISOString(),
+          })
           toast.success(`🖨 ${numCaixasEspelho} espelho(s) enviados para impressão`)
-        } catch { /* NF já registrada, ignora erro de impressão */ }
+        } catch (err: any) {
+          console.error('[Impressao espelho] Erro:', err)
+          toast.error('Erro ao enviar para impressão — verifique o Print Agent')
+        }
       }
       setModal(null)
     },
