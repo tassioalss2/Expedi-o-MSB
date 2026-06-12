@@ -127,10 +127,12 @@ export function InventarioContagem() {
   })
 
   // Cálculos em tempo real
+  // Divergência = Físico - Sistêmico (comparação direta)
+  // Venda é contexto explicativo, NÃO altera o cálculo
   const sist  = Number(qtdSistem) || 0
   const fis   = qtdFisica !== '' ? Number(qtdFisica) : null
   const venda = Number(qtdVenda) || 0
-  const diverg = fis !== null ? fis - (sist - venda) : null
+  const diverg = fis !== null ? fis - sist : null
   const pct    = diverg !== null && sist > 0 ? Math.abs(diverg) / sist * 100 : 0
   const temDiverg = diverg !== null && diverg !== 0
 

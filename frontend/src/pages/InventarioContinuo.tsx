@@ -217,7 +217,7 @@ function CardContagem({ c, onRevisar, podeRevisar }: { c: any; onRevisar: () => 
           {c.inventario_motivos && <p><span className="text-gray-400">Motivo:</span> {c.inventario_motivos.descricao}</p>}
           {c.observacao && <p><span className="text-gray-400">Obs:</span> {c.observacao}</p>}
           {c.instrucao_recontagem && <p className="text-purple-700"><span className="text-gray-400">Instrução:</span> {c.instrucao_recontagem}</p>}
-          <p><span className="text-gray-400">Contado em:</span> {c.contado_em ? format(parseISO(c.contado_em), "dd/MM HH:mm", { locale: ptBR }) : '—'}</p>
+          <p><span className="text-gray-400">Contado em:</span> {c.contado_em ? format(parseISO(c.contado_em.slice(0,10)), "dd/MM/yyyy", { locale: ptBR }) : '—'}</p>
         </div>
       )}
     </div>
@@ -543,7 +543,7 @@ export function InventarioContinuo() {
                         <span>👤 {c.operador_nome}</span>
                         <span className="text-gray-300">|</span>
                         <span className="text-gray-400 italic">{c.inventario_ciclos?.nome}</span>
-                        <span>{c.contado_em ? format(parseISO(c.contado_em), "dd/MM/yy", { locale: ptBR }) : '—'}</span>
+                        <span>{c.contado_em ? format(parseISO(c.contado_em.slice(0,10)), "dd/MM/yy", { locale: ptBR }) : '—'}</span>
                       </div>
                       {c.inventario_motivos && (
                         <p className="text-xs text-orange-600 mt-1">⚠ {c.inventario_motivos.descricao}</p>
