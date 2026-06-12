@@ -132,6 +132,9 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
       {pedido.numero_nf && (
         <p className="text-xs text-blue-600 font-medium mb-1">📄 NF {pedido.numero_nf}</p>
       )}
+      {pedido.transportadora_nome && (
+        <p className="text-xs text-gray-500 font-medium mb-1">🚚 {pedido.transportadora_nome}</p>
+      )}
       <div className="flex items-center justify-between">
         <span className={`text-xs ${atrasado ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
           {atrasado ? '⚠ ATRASADO' : `Entrega: ${new Date(pedido.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}`}
