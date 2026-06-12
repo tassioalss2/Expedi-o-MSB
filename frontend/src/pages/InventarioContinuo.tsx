@@ -31,17 +31,19 @@ function fmt(v: number | null | undefined) {
 
 // ── Modal: Abrir Ciclo ────────────────────────────────────────────────────────
 
+const META_DIARIA_PADRAO = 10   // meta fixa: 10 lotes/dia útil
+
 function ModalAbrirCiclo({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const hoje = new Date().toISOString().slice(0, 10)
   const [nome, setNome] = useState(`Inventário ${format(new Date(), "dd/MM/yyyy", { locale: ptBR })}`)
-  const [meta, setMeta] = useState('')
+  const [meta, setMeta] = useState(String(META_DIARIA_PADRAO))
 
   const mutation = useMutation({
     mutationFn: () => api.post('/inventario-continuo/ciclos', {
       nome,
       data_abertura: hoje,
-      meta_itens: meta ? Number(meta) : null,
+      meta_itens: meta ? Number(meta) : META_DIARIA_PADRAO,
     }),
     onSuccess: () => {
       toast.success('Ciclo aberto!')
@@ -57,7 +59,7 @@ function ModalAbrirCiclo({ onClose }: { onClose: () => void }) {
       <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
         <div className="p-5 border-b">
           <h2 className="text-lg font-bold">📋 Abrir Ciclo de Inventário</h2>
-          <p className="text-sm text-gray-500 mt-0.5">Um ciclo agrupa todas as contagens do turno/dia</p>
+          <p className="text-sm text-gray-500 mt-0.5">Um ciclo agrupa todas as contagens do dia útil</p>
         </div>
         <div className="p-5 space-y-4">
           <div>
@@ -66,9 +68,15 @@ function ModalAbrirCiclo({ onClose }: { onClose: () => void }) {
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
           </div>
           <div>
-            <label className="text-sm font-medium text-gray-700">Meta de itens a contar</label>
-            <input type="number" value={meta} onChange={e => setMeta(e.target.value)}
-              placeholder="Ex: 60" className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <label className="text-sm font-medium text-gray-700 flex items-center justify-between">
+              Meta de lotes a contar
+              <span className="text-xs text-teal-600 font-normal">padrão: {META_DIARIA_PADRAO}/dia útil</span>
+            </label>
+            <input type="number" min={1} value={meta} onChange={e => setMeta(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <p className="text-xs text-gray-400 mt-1">
+              Política MSB: mínimo de {META_DIARIA_PADRAO} lotes diferentes por dia útil
+            </p>
           </div>
         </div>
         <div className="p-5 border-t flex gap-2">
@@ -273,11 +281,15 @@ export function InventarioContinuo() {
   const semCiclo = !loadingCiclo && !cicloAberto?.id
 
   // Stats do ciclo aberto
+  const meta = cicloAberto?.meta_itens ?? META_DIARIA_PADRAO
   const stats = cicloAberto?.id ? {
-    total: cicloAberto.total_contagens ?? (contagens as any[]).length,
-    ok: cicloAberto.contagens_ok ?? (contagens as any[]).filter((c: any) => c.status === 'OK').length,
-    emAnalise: cicloAberto.em_analise ?? (contagens as any[]).filter((c: any) => ['DIVERGENCIA','EM_ANALISE'].includes(c.status)).length,
-    acuracidade: cicloAberto.acuracidade ?? 0,
+    total:       cicloAberto.total_contagens ?? (contagens as any[]).length,
+    ok:          cicloAberto.contagens_ok    ?? (contagens as any[]).filter((c: any) => c.status === 'OK').length,
+    emAnalise:   cicloAberto.em_analise      ?? (contagens as any[]).filter((c: any) => ['DIVERGENCIA','EM_ANALISE'].includes(c.status)).length,
+    acuracidade: cicloAberto.acuracidade     ?? 0,
+    meta,
+    pctMeta:     Math.min(100, Math.round(((cicloAberto.total_contagens ?? 0) / meta) * 100)),
+    metaBatida:  (cicloAberto.total_contagens ?? 0) >= meta,
   } : null
 
   return (
@@ -340,6 +352,41 @@ export function InventarioContinuo() {
                 </button>
               )}
             </div>
+            {/* Barra de progresso da meta diária */}
+            <div className={`rounded-xl p-4 border-2 ${stats.metaBatida ? 'bg-green-50 border-green-400' : 'bg-blue-50 border-blue-200'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">{stats.metaBatida ? '🏆' : '🎯'}</span>
+                  <div>
+                    <p className="text-sm font-bold text-gray-800">
+                      Meta do dia: {stats.total} / {stats.meta} lotes
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {stats.metaBatida
+                        ? `✅ Meta batida! ${stats.total - stats.meta > 0 ? `+${stats.total - stats.meta} acima da meta` : 'Exatamente na meta'}`
+                        : `Faltam ${stats.meta - stats.total} lote(s) para atingir a meta`}
+                    </p>
+                  </div>
+                </div>
+                <span className={`text-2xl font-bold ${stats.metaBatida ? 'text-green-700' : 'text-blue-700'}`}>
+                  {stats.pctMeta}%
+                </span>
+              </div>
+              <div className="w-full bg-white rounded-full h-3 border border-gray-200">
+                <div
+                  className={`h-3 rounded-full transition-all duration-500 ${stats.metaBatida ? 'bg-green-500' : 'bg-blue-500'}`}
+                  style={{ width: `${stats.pctMeta}%` }}
+                />
+              </div>
+              {/* Marcadores da meta */}
+              <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <span>0</span>
+                <span className="font-medium text-gray-600">{Math.round(stats.meta / 2)}</span>
+                <span className="font-medium text-teal-600">{stats.meta} ✓</span>
+              </div>
+            </div>
+
+            {/* Cards de resumo */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="bg-gray-50 rounded-xl p-3 text-center">
                 <p className="text-2xl font-bold text-gray-800">{stats.total}</p>
