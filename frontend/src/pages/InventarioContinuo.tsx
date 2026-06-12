@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format, parseISO } from 'date-fns'
@@ -256,19 +256,36 @@ export function InventarioContinuo() {
     refetchInterval: 20000,
   })
 
-  // Histórico — carrega ao abrir a aba; filtra conforme o usuário digita
+  // Histórico — busca ao vivo com debounce de 400ms
   const [histCodigo, setHistCodigo] = useState('')
-  const [histLote, setHistLote] = useState('')
+  const [histLote,   setHistLote]   = useState('')
+
+  // Valores "atrasados" — só mudam 400ms após o usuário parar de digitar
+  const [histCodigoQ, setHistCodigoQ] = useState('')
+  const [histLoteQ,   setHistLoteQ]   = useState('')
+
+  useEffect(() => {
+    const t = setTimeout(() => setHistCodigoQ(histCodigo.trim()), 400)
+    return () => clearTimeout(t)
+  }, [histCodigo])
+
+  useEffect(() => {
+    const t = setTimeout(() => setHistLoteQ(histLote.trim()), 400)
+    return () => clearTimeout(t)
+  }, [histLote])
+
+  const digitando = histCodigo !== histCodigoQ || histLote !== histLoteQ
+
   const { data: historico = [], isLoading: loadingHist, refetch: refetchHist } = useQuery({
-    queryKey: ['inv-historico', histCodigo, histLote],
-    queryFn: () => api.get('/inventario-continuo/historico', {
+    queryKey: ['inv-historico', histCodigoQ, histLoteQ],
+    queryFn:  () => api.get('/inventario-continuo/historico', {
       params: {
-        codigo:   histCodigo.trim() || undefined,
-        lote:     histLote.trim()   || undefined,
+        codigo: histCodigoQ || undefined,
+        lote:   histLoteQ   || undefined,
       },
     }).then(r => r.data),
-    enabled: aba === 'historico',   // carrega assim que o usuário abre a aba
-    staleTime: 60_000,
+    enabled:   aba === 'historico',
+    staleTime: 30_000,
   })
 
   const fecharCiclo = useMutation({
@@ -477,17 +494,17 @@ export function InventarioContinuo() {
                 />
                 {(histCodigo || histLote) && (
                   <button
-                    onClick={() => { setHistCodigo(''); setHistLote('') }}
+                    onClick={() => { setHistCodigo(''); setHistLote(''); setHistCodigoQ(''); setHistLoteQ('') }}
                     className="text-xs text-gray-400 hover:text-gray-600 underline"
                   >
-                    Limpar filtros
+                    ✕ Limpar
                   </button>
                 )}
-                {!loadingHist && (
-                  <span className="text-xs text-gray-400 ml-auto">
-                    {(historico as any[]).length} registro(s)
-                  </span>
-                )}
+                <span className="text-xs text-gray-400 ml-auto">
+                  {digitando || loadingHist
+                    ? '🔍 buscando...'
+                    : `${(historico as any[]).length} registro(s)`}
+                </span>
               </div>
 
               {loadingHist ? (
