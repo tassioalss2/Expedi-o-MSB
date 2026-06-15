@@ -61,20 +61,15 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     db = get_service_db()
 
     # ── Verifica duplicidade ───────────────────────────────────────────────────
-    # Busca a OV "raiz" com esse número (remessa_numero = 1 ou sem pai)
+    # Busca todas as OVs com esse número; usa a original (menor remessa_numero)
     existe = (
         db.table("pedidos")
         .select("id,status,remessa_numero")
         .eq("numero_pedido", payload.numero_pedido)
-        .is_("pedido_pai_id", "null")
         .execute()
     )
-    if not existe.data:
-        # Pode haver só derivadas; busca qualquer OV com esse número
-        existe = db.table("pedidos").select("id,status,remessa_numero").eq("numero_pedido", payload.numero_pedido).execute()
-
     if existe.data:
-        ped_existente = existe.data[0]
+        ped_existente = sorted(existe.data, key=lambda x: x.get("remessa_numero") or 1)[0]
         pode_derivar = ped_existente["status"] in _STATUSES_PERMITE_DERIVAR
 
         if not payload.forcar_duplicata and not payload.criar_derivada:
