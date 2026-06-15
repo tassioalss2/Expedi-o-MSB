@@ -1,8 +1,11 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   Users, LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
+  FlaskConical, ChevronDown, ChevronRight,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -19,10 +22,21 @@ const nav = [
   { to: '/admin',      label: 'Usuários',           icone: Users, perfis: ['ADMIN', 'GERENCIA'] },
 ]
 
+const navEsterilizacao = [
+  { to: '/esterilizacao',            label: 'Painel do Operador' },
+  { to: '/esterilizacao/planejamento', label: 'Planejamento' },
+  { to: '/esterilizacao/dashboard',  label: 'Dashboard' },
+  { to: '/esterilizacao/produtos',   label: 'Produtos Estéreis' },
+]
+
 export function Layout() {
   const { usuario, logout } = useAuthStore()
   const navigate = useNavigate()
+  const location = useLocation()
   const [sidebarAberto, setSidebarAberto] = useState(false)
+  const [esterilizacaoAberto, setEsterilizacaoAberto] = useState(
+    location.pathname.startsWith('/esterilizacao')
+  )
 
   const handleLogout = () => {
     logout()
@@ -34,6 +48,14 @@ export function Layout() {
   )
 
   const fecharSidebar = () => setSidebarAberto(false)
+
+  // Badge: OVs novas em LIBERADO aguardando expedição
+  const { data: ovsPendentes = [] } = useQuery({
+    queryKey: ['ovs-liberado-count'],
+    queryFn: () => api.get('/pedidos', { params: { status: 'LIBERADO' } }).then(r => r.data),
+    refetchInterval: 30000,
+  })
+  const badgeExpedicao = (ovsPendentes as any[]).length
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -70,7 +92,7 @@ export function Layout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navFiltrado.map(({ to, label, icone: Icone }) => (
             <NavLink
               key={to}
@@ -86,9 +108,53 @@ export function Layout() {
               }
             >
               <Icone size={18} />
-              {label}
+              <span className="flex-1">{label}</span>
+              {to === '/expedicao' && badgeExpedicao > 0 && (
+                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                  {badgeExpedicao > 99 ? '99+' : badgeExpedicao}
+                </span>
+              )}
             </NavLink>
           ))}
+
+          {/* Módulo Esterilização — submenu */}
+          <div>
+            <button
+              onClick={() => setEsterilizacaoAberto(!esterilizacaoAberto)}
+              className={clsx(
+                'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                location.pathname.startsWith('/esterilizacao')
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+              )}
+            >
+              <FlaskConical size={18} />
+              <span className="flex-1 text-left">Esterilização</span>
+              {esterilizacaoAberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+            {esterilizacaoAberto && (
+              <div className="ml-4 mt-1 space-y-0.5 border-l border-gray-700 pl-3">
+                {navEsterilizacao.map(({ to, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end
+                    onClick={fecharSidebar}
+                    className={({ isActive }) =>
+                      clsx(
+                        'flex items-center px-2 py-2 rounded-lg text-xs transition-colors',
+                        isActive
+                          ? 'bg-blue-500/40 text-white font-semibold'
+                          : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                      )
+                    }
+                  >
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
 
         {/* Usuário */}

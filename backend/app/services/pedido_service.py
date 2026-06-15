@@ -29,6 +29,38 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _notificar_teams_nova_ov(pedido: dict, cliente_nome: str) -> None:
+    """Envia notificação ao canal Teams da expedição quando uma nova OV é criada."""
+    from app.core.config import settings
+    webhook = settings.teams_webhook_expedicao
+    if not webhook:
+        return
+
+    PRIORIDADE_LABEL = {"NORMAL": "Normal", "ALTA": "⚡ Alta", "CRITICA": "🔴 Crítica"}
+    FRETE_LABEL = {"FOB": "FOB", "CIF_COM_VALOR": "CIF com Valor NF", "CIF_SEM_VALOR": "CIF sem Valor NF"}
+
+    data_entrega = pedido.get("data_prevista_entrega", "")
+    try:
+        from datetime import date as _date
+        data_entrega = _date.fromisoformat(data_entrega).strftime("%d/%m/%Y")
+    except Exception:
+        pass
+
+    texto = (
+        f"📋 **Nova OV recebida — {pedido['numero_pedido']}**\n\n"
+        f"👤 Cliente: **{cliente_nome}**\n"
+        f"🚚 Frete: {FRETE_LABEL.get(pedido.get('tipo_frete', 'FOB'), pedido.get('tipo_frete', ''))}\n"
+        f"📅 Entrega prevista: **{data_entrega}**\n"
+        f"⚑ Prioridade: {PRIORIDADE_LABEL.get(pedido.get('prioridade', 'NORMAL'), 'Normal')}"
+    )
+
+    import requests as _req
+    try:
+        _req.post(webhook, json={"text": texto}, timeout=5)
+    except Exception:
+        pass
+
+
 def _validar_transicao(atual: str, novo: str) -> None:
     permitidos = TRANSICOES_PERMITIDAS.get(StatusPedido(atual), [])
     if StatusPedido(novo) not in permitidos:
@@ -239,6 +271,12 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         db.table("itens_pedido").insert(itens).execute()
 
     _registrar_movimentacao(pedido["id"], None, StatusPedido.LIBERADO.value, str(usuario.id), "Pedido criado")
+
+    # Notifica canal Teams da expedição
+    cliente_res = get_service_db().table("clientes").select("nome").eq("id", str(payload.cliente_id)).execute()
+    cliente_nome = cliente_res.data[0]["nome"] if cliente_res.data else ""
+    _notificar_teams_nova_ov(pedido, cliente_nome)
+
     return pedido
 
 
