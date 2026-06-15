@@ -166,7 +166,10 @@ export function NovoPedido() {
     },
     onError: (e: any) => {
       const detail = e.response?.data?.detail
-      toast.error(typeof detail === 'string' ? detail : 'Erro ao criar remessa derivada')
+      const msg = typeof detail === 'string' ? detail
+        : Array.isArray(detail) ? (detail[0]?.msg || JSON.stringify(detail[0]))
+        : detail?.msg || detail?.message || JSON.stringify(detail) || 'Erro ao criar remessa derivada'
+      toast.error(msg, { duration: 6000 })
     },
   })
 

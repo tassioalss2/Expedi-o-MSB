@@ -121,7 +121,17 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
                 "criado_em":             _agora(),
                 "atualizado_em":         _agora(),
             }
-            resultado = db.table("pedidos").insert(pedido_data).execute()
+            try:
+                resultado = db.table("pedidos").insert(pedido_data).execute()
+            except Exception as exc:
+                import requests as _req
+                msg = str(exc)
+                if isinstance(exc, _req.HTTPError) and exc.response is not None:
+                    try:
+                        msg = exc.response.json().get("message") or exc.response.text or msg
+                    except Exception:
+                        msg = exc.response.text or msg
+                raise HTTPException(status_code=500, detail=f"Erro ao criar remessa no banco: {msg}")
             pedido = resultado.data[0]
             itens = [
                 {
