@@ -187,10 +187,69 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
     if pedido["status"] == StatusPedido.EM_PROCESSO_SISTEMICO.value:
         alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario, "Cubagem registrada — aguardando faturamento")
 
+    # Alimenta o inventário contínuo automaticamente (falha silenciosa para não bloquear)
+    try:
+        _registrar_contagens_automaticas(pedido_id, pedido["numero_pedido"], uid, usuario.nome)
+    except Exception:
+        pass
+
     # Monta mensagem para o Teams
     cliente_nome = (pedido.get("cliente") or pedido.get("clientes") or {}).get("nome", "")
     msg = gerar_mensagem_teams(pedido["numero_pedido"], cliente_nome, result, itens_para_msg)
     return {"cubagem": result, "mensagem_teams": msg}
+
+
+def _registrar_contagens_automaticas(pedido_id: str, pedido_numero: str, uid: str, operador_nome: str) -> None:
+    """Cria contagens no inventário contínuo para os itens verificados do pedido.
+    Só age se houver um ciclo aberto. Falhas não bloqueiam o fluxo principal.
+    """
+    db = get_service_db()
+
+    ciclo_res = db.table("inventario_ciclos").select("id").eq("status", "ABERTO").execute()
+    if not ciclo_res.data:
+        return
+
+    ciclo_id = ciclo_res.data[0]["id"]
+
+    itens = db.table("inventario_itens").select("*").eq("pedido_id", pedido_id).execute().data
+    if not itens:
+        return
+
+    # Motivo padrão para divergências geradas automaticamente
+    motivo_res = db.table("inventario_motivos").select("id").ilike("descricao", "%venda%").limit(1).execute()
+    if not motivo_res.data:
+        motivo_res = db.table("inventario_motivos").select("id").eq("ativo", True).limit(1).execute()
+    motivo_padrao_id = motivo_res.data[0]["id"] if motivo_res.data else None
+
+    agora = _agora()
+    for item in itens:
+        qtd_sist  = int(item.get("qtd_sistemico") or 0)
+        qtd_fis   = int(item.get("qtd_fisico") if item.get("qtd_fisico") is not None else qtd_sist)
+        qtd_venda = int(item.get("qtd_venda") or 0)
+
+        divergencia = qtd_fis - qtd_sist
+        pct = round(abs(divergencia) / qtd_sist * 100, 2) if qtd_sist > 0 else 0.0
+        status = "OK" if divergencia == 0 else "EM_ANALISE"
+
+        db.table("inventario_contagens").insert({
+            "ciclo_id":          ciclo_id,
+            "codigo_produto":    item["codigo_item"],
+            "descricao_produto": None,
+            "lote":              item["lote"],
+            "operador_id":       uid,
+            "operador_nome":     operador_nome,
+            "qtd_sistemica":     qtd_sist,
+            "qtd_fisica":        qtd_fis,
+            "qtd_venda":         qtd_venda,
+            "qtd_divergencia":   divergencia,
+            "pct_divergencia":   pct,
+            "status":            status,
+            "motivo_id":         motivo_padrao_id if divergencia != 0 else None,
+            "observacao":        f"Registrado automaticamente via OV {pedido_numero}",
+            "contado_em":        agora,
+            "criado_em":         agora,
+            "atualizado_em":     agora,
+        }).execute()
 
 
 def obter_cubagem(pedido_id: str) -> dict | None:
