@@ -464,6 +464,7 @@ class ContagemCreate(BaseModel):
     qtd_venda: int = 0
     motivo_id: Optional[str] = None
     observacao: Optional[str] = None
+    operador_nome: Optional[str] = None  # sobrescreve o nome do usuário autenticado se informado
 
 class RevisarContagemRequest(BaseModel):
     acao: str  # 'APROVAR' ou 'RECONTAGEM'

@@ -177,7 +177,7 @@ def criar_contagem(ciclo_id: str, payload: ContagemCreate, usuario: UsuarioOut) 
         "descricao_produto": payload.descricao_produto,
         "lote":              payload.lote.strip().upper(),
         "operador_id":       uid,
-        "operador_nome":     usuario.nome,
+        "operador_nome":     (payload.operador_nome or "").strip() or usuario.nome,
         "qtd_sistemica":     payload.qtd_sistemica,
         "qtd_fisica":        payload.qtd_fisica,
         "qtd_venda":         payload.qtd_venda,

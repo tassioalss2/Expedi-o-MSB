@@ -105,6 +105,7 @@ export function InventarioContagem() {
   const qc = useQueryClient()
   const { usuario } = useAuthStore()
 
+  const [operadorNome, setOperadorNome] = useState(() => usuario?.nome || '')
   const [codigo, setCodigo] = useState('')
   const [descricao, setDescricao] = useState('')
   const [lote, setLote] = useState('')
@@ -146,7 +147,7 @@ export function InventarioContagem() {
 
   // Validação
   const cicloId = cicloAberto?.id
-  const podeEnviar = cicloId && codigo.trim() && lote.trim() && qtdSistem !== '' && qtdFisica !== ''
+  const podeEnviar = cicloId && operadorNome.trim() && codigo.trim() && lote.trim() && qtdSistem !== '' && qtdFisica !== ''
     && (!temDiverg || motivoId)
     && (!precisaObs || observacao.trim().length >= 5)
 
@@ -160,12 +161,13 @@ export function InventarioContagem() {
       qtd_venda: venda,
       motivo_id: motivoId || null,
       observacao: observacao.trim() || null,
+      operador_nome: operadorNome.trim() || null,
     }),
     onSuccess: () => {
       toast.success('✅ Contagem registrada!')
       qc.invalidateQueries({ queryKey: ['inv-contagens'] })
       qc.invalidateQueries({ queryKey: ['inv-ciclo-aberto'] })
-      // Limpa para próxima contagem
+      // Limpa para próxima contagem (mantém operador)
       setCodigo(''); setDescricao(''); setLote('')
       setQtdSistem(''); setQtdFisica(''); setQtdVenda('')
       setMotivoId(''); setObservacao('')
@@ -193,11 +195,33 @@ export function InventarioContagem() {
         </button>
         <div>
           <h1 className="text-xl font-bold text-gray-900">Nova Contagem</h1>
-          <p className="text-xs text-gray-400">{cicloAberto.nome} · 👤 {usuario?.nome}</p>
+          <p className="text-xs text-gray-400">{cicloAberto.nome} · 👤 {operadorNome || usuario?.nome}</p>
         </div>
       </div>
 
       <div className="space-y-4">
+
+        {/* Operador */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-4">
+          <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">👤 Operador</h3>
+          <label className="text-sm font-semibold text-gray-700">Quem está contando? *</label>
+          <input
+            type="text"
+            value={operadorNome}
+            onChange={e => setOperadorNome(e.target.value)}
+            placeholder="Nome do operador"
+            className="w-full border rounded-xl px-4 py-2.5 text-sm mt-1"
+          />
+          {operadorNome !== (usuario?.nome || '') && (
+            <button
+              type="button"
+              onClick={() => setOperadorNome(usuario?.nome || '')}
+              className="text-xs text-teal-600 hover:underline mt-1"
+            >
+              ↩ Usar meu nome ({usuario?.nome})
+            </button>
+          )}
+        </div>
 
         {/* Produto */}
         <div className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3">
