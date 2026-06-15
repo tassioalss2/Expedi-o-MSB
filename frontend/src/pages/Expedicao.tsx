@@ -125,7 +125,14 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
       }`}
     >
       <div className="flex items-start justify-between gap-2 mb-2">
-        <span className="font-bold text-gray-900 text-sm">{pedido.numero_pedido}</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="font-bold text-gray-900 text-sm truncate">{pedido.numero_pedido}</span>
+          {(pedido.remessa_numero ?? 1) > 1 && (
+            <span className="flex-shrink-0 text-xs font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+              R{pedido.remessa_numero}
+            </span>
+          )}
+        </div>
         <PrioridadeBadge prioridade={pedido.prioridade} />
       </div>
       <p className="text-sm text-gray-600 truncate mb-1">{pedido.cliente_nome || pedido.cliente?.nome}</p>

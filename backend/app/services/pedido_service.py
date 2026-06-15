@@ -54,24 +54,95 @@ def _registrar_movimentacao(pedido_id: str, status_anterior: str, status_novo: s
     }).execute()
 
 
+_STATUSES_PERMITE_DERIVAR = {"FATURADO", "AGUARD_COLETA", "EXPEDIDO"}
+
+
 def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     db = get_service_db()
 
     # ── Verifica duplicidade ───────────────────────────────────────────────────
-    existe = db.table("pedidos").select("id,status").eq("numero_pedido", payload.numero_pedido).execute()
+    # Busca a OV "raiz" com esse número (remessa_numero = 1 ou sem pai)
+    existe = (
+        db.table("pedidos")
+        .select("id,status,remessa_numero")
+        .eq("numero_pedido", payload.numero_pedido)
+        .is_("pedido_pai_id", "null")
+        .execute()
+    )
+    if not existe.data:
+        # Pode haver só derivadas; busca qualquer OV com esse número
+        existe = db.table("pedidos").select("id,status,remessa_numero").eq("numero_pedido", payload.numero_pedido).execute()
+
     if existe.data:
         ped_existente = existe.data[0]
+        pode_derivar = ped_existente["status"] in _STATUSES_PERMITE_DERIVAR
 
-        if not payload.forcar_duplicata:
-            # 409 → frontend detecta e oferece opção de recriar se CANCELADO
+        if not payload.forcar_duplicata and not payload.criar_derivada:
+            # Calcula qual seria o próximo número de remessa
+            todas = db.table("pedidos").select("remessa_numero").eq("numero_pedido", payload.numero_pedido).execute()
+            max_remessa = max((r.get("remessa_numero") or 1) for r in todas.data)
             raise HTTPException(
                 status_code=409,
                 detail={
                     "msg": f"Pedido '{payload.numero_pedido}' já existe.",
                     "status_existente": ped_existente["status"],
                     "pode_recriar": ped_existente["status"] == "CANCELADO",
+                    "pode_derivar": pode_derivar,
+                    "pedido_pai_id": ped_existente["id"],
+                    "remessa_numero_proximo": max_remessa + 1,
                 },
             )
+
+        # criar_derivada=True → nova OV vinculada à original
+        if payload.criar_derivada:
+            if not pode_derivar:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"OV '{payload.numero_pedido}' está com status '{ped_existente['status']}'. "
+                        "Só é possível criar remessa derivada de OVs já faturadas ou expedidas."
+                    ),
+                )
+            todas = db.table("pedidos").select("remessa_numero").eq("numero_pedido", payload.numero_pedido).execute()
+            max_remessa = max((r.get("remessa_numero") or 1) for r in todas.data)
+            nova_remessa = max_remessa + 1
+
+            from app.services.inventario_service import _get_usuario_real
+            uid = _get_usuario_real(str(usuario.id))
+            pedido_data = {
+                "numero_pedido":         payload.numero_pedido,
+                "cliente_id":            str(payload.cliente_id),
+                "transportadora_id":     str(payload.transportadora_id) if payload.transportadora_id else None,
+                "tipo_frete":            payload.tipo_frete.value if payload.tipo_frete else "FOB",
+                "local_entrega":         payload.local_entrega,
+                "status":                StatusPedido.LIBERADO.value,
+                "prioridade":            payload.prioridade.value,
+                "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
+                "data_prevista_coleta":  payload.data_prevista_coleta.isoformat() if payload.data_prevista_coleta else None,
+                "observacoes":           payload.observacoes,
+                "pedido_pai_id":         ped_existente["id"],
+                "remessa_numero":        nova_remessa,
+                "criado_por":            None,
+                "criado_em":             _agora(),
+                "atualizado_em":         _agora(),
+            }
+            resultado = db.table("pedidos").insert(pedido_data).execute()
+            pedido = resultado.data[0]
+            itens = [
+                {
+                    "pedido_id":       pedido["id"],
+                    "produto_id":      str(item.produto_id),
+                    "lote_id":         str(item.lote_id) if item.lote_id else None,
+                    "qtd_solicitada":  item.qtd_solicitada,
+                    "status_item":     "PENDENTE",
+                }
+                for item in payload.itens
+            ]
+            if itens:
+                db.table("itens_pedido").insert(itens).execute()
+            _registrar_movimentacao(pedido["id"], None, StatusPedido.LIBERADO.value, uid,
+                                    f"Remessa R{nova_remessa} criada a partir da OV original {payload.numero_pedido}")
+            return pedido
 
         # forcar_duplicata=True: só permite recriar OVs CANCELADAS
         if ped_existente["status"] != "CANCELADO":
@@ -164,6 +235,22 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
 
     _registrar_movimentacao(pedido["id"], None, StatusPedido.LIBERADO.value, str(usuario.id), "Pedido criado")
     return pedido
+
+
+def listar_familia(numero_pedido: str) -> list[dict]:
+    """Retorna todas as remessas (original + derivadas) de uma OV."""
+    db = get_service_db()
+    resultado = (
+        db.table("pedidos")
+        .select("id,numero_pedido,status,remessa_numero,pedido_pai_id,numero_nf,atualizado_em,criado_em,prioridade")
+        .eq("numero_pedido", numero_pedido)
+        .order("remessa_numero")
+        .execute()
+    )
+    hoje = date.today().isoformat()
+    for p in resultado.data:
+        p["atrasado"] = False
+    return resultado.data
 
 
 def listar_pedidos(

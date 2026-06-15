@@ -167,6 +167,8 @@ class PedidoCreate(BaseModel):
     # Recriação de OV cancelada — preenchidos apenas quando o operador confirma a duplicata
     forcar_duplicata: bool = False
     motivo_duplicata: Optional[str] = None
+    # Faturamento parcial — cria nova OV derivada vinculada à OV original
+    criar_derivada: bool = False
 
 
 class PedidoOut(BaseModel):

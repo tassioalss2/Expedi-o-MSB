@@ -95,6 +95,13 @@ export function NovoPedido() {
     confirmado: false,
   })
 
+  // Estado do modal de OV derivada (faturamento parcial)
+  const [modalDerivar, setModalDerivar] = useState({
+    visivel: false,
+    remessaNumero: 2,
+    confirmado: false,
+  })
+
   const { data: transportadoras = [] } = useQuery<Transportadora[]>({
     queryKey: ['transportadoras'],
     queryFn: () => api.get('/transportadoras').then(r => r.data),
@@ -126,7 +133,17 @@ export function NovoPedido() {
         return
       }
 
-      // 409 sem pode_recriar → OV ainda ativa, não pode recriar
+      // 409 + pode_derivar → OV faturada/expedida; mostrar modal de remessa derivada
+      if (status === 409 && detail?.pode_derivar) {
+        setModalDerivar({
+          visivel: true,
+          remessaNumero: detail?.remessa_numero_proximo ?? 2,
+          confirmado: false,
+        })
+        return
+      }
+
+      // 409 sem pode_recriar nem pode_derivar → OV ainda ativa em separação
       if (status === 409) {
         toast.error(
           `OV ${form.numero_pedido} já existe (status: "${detail?.status_existente || 'ativo'}"). Não é possível recriar uma OV ativa.`
@@ -135,6 +152,21 @@ export function NovoPedido() {
       }
 
       toast.error(typeof detail === 'string' ? detail : detail?.msg || 'Erro ao cadastrar OV')
+    },
+  })
+
+  /** Remessa derivada — disparada após confirmação no modal */
+  const mutationDerivar = useMutation({
+    mutationFn: () => api.post('/pedidos', buildBody({ criar_derivada: true })),
+    onSuccess: (res) => {
+      toast.success(`✅ Remessa R${modalDerivar.remessaNumero} criada para OV ${form.numero_pedido}!`)
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      setModalDerivar({ visivel: false, remessaNumero: 2, confirmado: false })
+      navigate(`/expedicao/${res.data.id}`)
+    },
+    onError: (e: any) => {
+      const detail = e.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : 'Erro ao criar remessa derivada')
     },
   })
 
@@ -259,6 +291,63 @@ export function NovoPedido() {
           </button>
         </div>
       </div>
+
+      {/* ── Modal: Faturamento parcial — criar remessa derivada ── */}
+      {modalDerivar.visivel && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
+
+            <div className="p-5 border-b bg-purple-50 rounded-t-2xl">
+              <h2 className="text-lg font-bold text-purple-800">📦 OV com faturamento anterior</h2>
+              <p className="text-sm text-purple-700 mt-1">
+                A OV <strong className="font-mono">{form.numero_pedido}</strong> já foi expedida anteriormente.
+                Deseja criar a <strong>Remessa R{modalDerivar.remessaNumero}</strong> para os itens que ficaram pendentes?
+              </p>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 space-y-1">
+                <p>📋 <strong>O que acontecerá:</strong></p>
+                <ul className="list-disc list-inside space-y-0.5 ml-1">
+                  <li>Será criada uma nova OV <strong className="font-mono">{form.numero_pedido} — R{modalDerivar.remessaNumero}</strong></li>
+                  <li>Ela seguirá o <strong>fluxo normal</strong> de expedição (separação, cubagem, NF, pallet)</li>
+                  <li>No detalhe de cada OV aparecerá o link para as outras remessas</li>
+                </ul>
+              </div>
+
+              <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
+                modalDerivar.confirmado ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-purple-300'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={modalDerivar.confirmado}
+                  onChange={e => setModalDerivar(prev => ({ ...prev, confirmado: e.target.checked }))}
+                  className="mt-0.5 w-4 h-4 accent-purple-600 flex-shrink-0"
+                />
+                <span className="text-sm text-gray-700">
+                  Confirmo que esta é uma <strong>remessa parcial</strong> da OV <strong className="font-mono">{form.numero_pedido}</strong> e que os itens preenchidos são os que ficaram pendentes
+                </span>
+              </label>
+            </div>
+
+            <div className="p-5 border-t flex gap-3">
+              <button
+                onClick={() => setModalDerivar({ visivel: false, remessaNumero: 2, confirmado: false })}
+                className="flex-1 py-2.5 border rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => mutationDerivar.mutate()}
+                disabled={mutationDerivar.isPending || !modalDerivar.confirmado}
+                className="flex-1 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-purple-500 transition-colors"
+              >
+                {mutationDerivar.isPending ? 'Criando...' : `✅ Criar Remessa R${modalDerivar.remessaNumero}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal: OV cancelada — confirmar recriação ── */}
       {modalRecriar.visivel && (

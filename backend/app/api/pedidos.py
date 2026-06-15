@@ -53,6 +53,11 @@ def listar_pedidos(
     )
 
 
+@router.get("/familia/{numero_pedido}")
+def listar_familia(numero_pedido: str, _: UsuarioOut = Depends(get_current_user)):
+    return pedido_service.listar_familia(numero_pedido)
+
+
 @router.get("/{pedido_id}")
 def obter_pedido(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return pedido_service.obter_pedido(str(pedido_id))

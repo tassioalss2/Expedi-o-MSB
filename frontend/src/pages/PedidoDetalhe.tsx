@@ -1285,6 +1285,14 @@ export function PedidoDetalhe() {
     enabled: !!id && !!pedido && ['AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'].includes(pedido?.status || ''),
   })
 
+  // Família de remessas (original + derivadas) — carrega se houver remessa_numero ou pedido_pai_id
+  const temFamilia = !!(pedido?.pedido_pai_id || (pedido?.remessa_numero && pedido.remessa_numero > 1))
+  const { data: familia = [] } = useQuery<any[]>({
+    queryKey: ['familia', pedido?.numero_pedido],
+    queryFn: () => api.get(`/pedidos/familia/${pedido!.numero_pedido}`).then(r => r.data),
+    enabled: !!pedido && (temFamilia || false),
+  })
+
   const isCIF = pedido?.tipo_frete === 'CIF_COM_VALOR' || pedido?.tipo_frete === 'CIF_SEM_VALOR'
 
   // Para CIF: valor_nf = valor_produtos + valor_frete
@@ -1361,6 +1369,11 @@ export function PedidoDetalhe() {
         <div className="flex-1">
           <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-2xl font-bold text-gray-900">Pedido {pedido.numero_pedido}</h1>
+            {(pedido.remessa_numero ?? 1) > 1 && (
+              <span className="bg-purple-100 text-purple-700 text-sm font-bold px-2.5 py-1 rounded-full">
+                Remessa R{pedido.remessa_numero}
+              </span>
+            )}
             {pedido.atrasado && <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded-full">⚠ ATRASADO</span>}
             <span className="text-sm text-gray-500">{TIPO_FRETE_LABEL[pedido.tipo_frete || 'FOB']}</span>
           </div>
@@ -1370,6 +1383,41 @@ export function PedidoDetalhe() {
           </div>
         </div>
       </div>
+
+      {/* Família de remessas */}
+      {temFamilia && familia.length > 1 && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-5">
+          <p className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-2">📦 Remessas desta OV</p>
+          <div className="flex flex-wrap gap-2">
+            {familia.map((r: any) => {
+              const isAtual = r.id === id
+              const label = (r.remessa_numero ?? 1) === 1 ? 'Original' : `R${r.remessa_numero}`
+              const statusColors: Record<string, string> = {
+                LIBERADO: 'text-blue-700', EXPEDIDO: 'text-green-700', CANCELADO: 'text-gray-400',
+                FATURADO: 'text-indigo-700', AGUARD_COLETA: 'text-amber-700',
+              }
+              const cor = statusColors[r.status] || 'text-gray-600'
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => !isAtual && navigate(`/expedicao/${r.id}`)}
+                  disabled={isAtual}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors ${
+                    isAtual
+                      ? 'bg-purple-100 border-purple-400 font-bold text-purple-800 cursor-default'
+                      : 'bg-white border-purple-200 hover:border-purple-400 cursor-pointer'
+                  }`}
+                >
+                  <span className="font-semibold">{label}</span>
+                  {r.numero_nf && <span className="text-xs text-gray-500">NF {r.numero_nf}</span>}
+                  <span className={`text-xs font-medium ${cor}`}>{r.status}</span>
+                  {isAtual && <span className="text-xs text-purple-500">← você está aqui</span>}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Linha do tempo */}
       <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 mb-5 overflow-x-auto">

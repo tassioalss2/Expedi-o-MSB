@@ -92,6 +92,8 @@ export interface Pedido {
   itens?: ItemPedido[]
   cliente_nome?: string
   transportadora_nome?: string
+  pedido_pai_id?: string
+  remessa_numero?: number
 }
 
 export interface InventarioItem {
