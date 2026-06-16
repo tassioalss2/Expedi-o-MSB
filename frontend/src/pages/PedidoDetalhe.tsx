@@ -967,6 +967,7 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
   const [motivo, setMotivo] = useState('')
   const [motivoOutro, setMotivoOutro] = useState('')
   const [registrarOcorrencia, setRegistrarOcorrencia] = useState(false)
+  const [nomeRealOutros, setNomeRealOutros] = useState('')
 
   const { data: transportadoras = [] } = useQuery({
     queryKey: ['transportadoras'],
@@ -981,11 +982,15 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
 
   const motivoFinal = motivo === '__outro__' ? motivoOutro : motivo
 
+  const transpSelecionada = (transportadoras as any[]).find((t: any) => t.id === transportadoraId)
+  const isOutros = transpSelecionada?.nome?.toUpperCase().includes('OUTROS')
+
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/alterar-transportadora`, {
       transportadora_id: transportadoraId,
       motivo: registrarOcorrencia ? motivoFinal : undefined,
       registrar_ocorrencia: registrarOcorrencia,
+      transportadora_nome_real: isOutros && nomeRealOutros.trim() ? nomeRealOutros.trim() : undefined,
     }),
     onSuccess: (res) => {
       const d = res.data
@@ -1017,14 +1022,37 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
           {/* Nova transportadora */}
           <div>
             <label className="text-sm font-medium text-gray-700">Nova Transportadora *</label>
-            <select value={transportadoraId} onChange={e => setTransportadoraId(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+            <select
+              value={transportadoraId}
+              onChange={e => { setTransportadoraId(e.target.value); setNomeRealOutros('') }}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
+            >
               <option value="">Selecione a transportadora correta...</option>
               {(transportadoras as any[]).map((t: any) => (
                 <option key={t.id} value={t.id}>{t.nome}</option>
               ))}
             </select>
           </div>
+
+          {/* Campo extra quando OUTROS é selecionado */}
+          {isOutros && (
+            <div>
+              <label className="text-sm font-medium text-gray-700">
+                Nome real da transportadora *
+              </label>
+              <input
+                type="text"
+                value={nomeRealOutros}
+                onChange={e => setNomeRealOutros(e.target.value)}
+                placeholder="Ex: Jadlog, Azul Cargo, Sequoia..."
+                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                autoFocus
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Será registrado nas observações da OV e no histórico.
+              </p>
+            </div>
+          )}
 
           {/* Checkbox registrar ocorrência */}
           <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
@@ -1065,7 +1093,12 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !transportadoraId || (registrarOcorrencia && !motivoFinal.trim())}
+            disabled={
+            mutation.isPending ||
+            !transportadoraId ||
+            (isOutros && !nomeRealOutros.trim()) ||
+            (registrarOcorrencia && !motivoFinal.trim())
+          }
             className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-orange-500">
             {mutation.isPending ? 'Salvando...' : '✅ Confirmar Correção'}
           </button>

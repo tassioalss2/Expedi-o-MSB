@@ -208,6 +208,7 @@ class AlterarTransportadoraRequest(BaseModel):
     transportadora_id: str
     motivo: Optional[str] = None
     registrar_ocorrencia: bool = True
+    transportadora_nome_real: Optional[str] = None  # preenchido quando selecionado "OUTROS"
 
 
 @router.post("/pedidos/{pedido_id}/alterar-transportadora")
@@ -237,12 +238,23 @@ def alterar_transportadora(
         raise HTTPException(status_code=404, detail="Transportadora não encontrada")
 
     transp_nova = nova_transp["nome"]
+    # Quando "OUTROS" é selecionado e operador informou o nome real, exibir ambos
+    transp_nova_label = (
+        f"OUTROS ({payload.transportadora_nome_real.strip()})"
+        if payload.transportadora_nome_real and payload.transportadora_nome_real.strip()
+        else transp_nova
+    )
 
-    # Atualiza transportadora no pedido
-    db.table("pedidos").update({
-        "transportadora_id": payload.transportadora_id,
-        "atualizado_em": _agora(),
-    }).eq("id", str(pedido_id)).execute()
+    # Atualiza transportadora no pedido; se nome real informado, salva em observacoes
+    update_data: dict = {"transportadora_id": payload.transportadora_id, "atualizado_em": _agora()}
+    if payload.transportadora_nome_real and payload.transportadora_nome_real.strip():
+        obs_atual = pedido.get("observacoes") or ""
+        nota = f"[Transp. real: {payload.transportadora_nome_real.strip()}]"
+        # Substitui nota anterior se já existia
+        import re as _re
+        obs_atual = _re.sub(r'\[Transp\. real:[^\]]*\]', '', obs_atual).strip()
+        update_data["observacoes"] = f"{obs_atual} {nota}".strip() if obs_atual else nota
+    db.table("pedidos").update(update_data).eq("id", str(pedido_id)).execute()
 
     # Verifica se OV está em algum pallet e move se necessário
     PALLET_FIXOS = {"BRIX": "PLT-BRIX", "RR CARGO": "PLT-RR CARGO", "CORREIOS": "PLT-CORREIOS"}
@@ -270,7 +282,7 @@ def alterar_transportadora(
             "descricao": (
                 f"Transportadora alterada por erro na emissão da NF.\n"
                 f"• De: {transp_antiga}\n"
-                f"• Para: {transp_nova}\n"
+                f"• Para: {transp_nova_label}\n"
                 f"• Motivo: {payload.motivo or '—'}\n"
                 f"• {pallet_msg}"
             ),
@@ -285,14 +297,14 @@ def alterar_transportadora(
         "status_anterior": pedido["status"],
         "status_novo": pedido["status"],
         "usuario_id": uid,
-        "observacao": f"Transportadora alterada: {transp_antiga} → {transp_nova}. {payload.motivo}",
+        "observacao": f"Transportadora alterada: {transp_antiga} → {transp_nova_label}. {payload.motivo or ''}".strip(". "),
         "criado_em": _agora(),
     }).execute()
 
     return {
         "ok": True,
         "transportadora_anterior": transp_antiga,
-        "transportadora_nova": transp_nova,
+        "transportadora_nova": transp_nova_label,
         "pallet": pallet_msg,
     }
 
