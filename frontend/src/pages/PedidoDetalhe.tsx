@@ -965,8 +965,8 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
   const qc = useQueryClient()
   const [transportadoraId, setTransportadoraId] = useState('')
   const [motivo, setMotivo] = useState('')
-
   const [motivoOutro, setMotivoOutro] = useState('')
+  const [registrarOcorrencia, setRegistrarOcorrencia] = useState(false)
 
   const { data: transportadoras = [] } = useQuery({
     queryKey: ['transportadoras'],
@@ -976,6 +976,7 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
   const { data: motivos = [] } = useQuery({
     queryKey: ['motivos-transportadora'],
     queryFn: () => api.get('/motivos-ocorrencia?tipo=TRANSPORTADORA').then(r => r.data),
+    enabled: registrarOcorrencia,
   })
 
   const motivoFinal = motivo === '__outro__' ? motivoOutro : motivo
@@ -983,7 +984,8 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/alterar-transportadora`, {
       transportadora_id: transportadoraId,
-      motivo: motivoFinal,
+      motivo: registrarOcorrencia ? motivoFinal : undefined,
+      registrar_ocorrencia: registrarOcorrencia,
     }),
     onSuccess: (res) => {
       const d = res.data
@@ -1003,9 +1005,6 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
       <div className="bg-white rounded-2xl w-full max-w-md">
         <div className="p-5 border-b">
           <h2 className="text-lg font-bold text-orange-700">🔄 Corrigir Transportadora</h2>
-          <p className="text-sm text-gray-500 mt-0.5">
-            A ocorrência será registrada automaticamente
-          </p>
         </div>
         <div className="p-5 space-y-4">
 
@@ -1027,37 +1026,46 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
             </select>
           </div>
 
-          {/* Motivo padronizado */}
-          <div>
-            <label className="text-sm font-medium text-gray-700">Motivo da correção *</label>
-            <select value={motivo} onChange={e => setMotivo(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
-              <option value="">Selecione o motivo...</option>
-              {(motivos as any[]).map((m: any) => (
-                <option key={m.id} value={m.descricao}>{m.descricao}</option>
-              ))}
-              <option value="__outro__">✏️ Outro motivo (digitar)</option>
-            </select>
-            {motivo === '__outro__' && (
-              <textarea rows={2} value={motivoOutro} onChange={e => setMotivoOutro(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm mt-2"
-                placeholder="Descreva o motivo..." autoFocus />
-            )}
-          </div>
+          {/* Checkbox registrar ocorrência */}
+          <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
+            registrarOcorrencia ? 'border-orange-400 bg-orange-50' : 'border-gray-200 hover:border-orange-300'
+          }`}>
+            <input
+              type="checkbox"
+              checked={registrarOcorrencia}
+              onChange={e => { setRegistrarOcorrencia(e.target.checked); setMotivo(''); setMotivoOutro('') }}
+              className="mt-0.5 w-4 h-4 accent-orange-600 flex-shrink-0"
+            />
+            <div>
+              <p className="text-sm font-medium text-gray-800">Registrar ocorrência</p>
+              <p className="text-xs text-gray-500 mt-0.5">Marque para documentar o motivo da troca e abrir uma ocorrência.</p>
+            </div>
+          </label>
 
-          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-xs text-orange-700">
-            <p className="font-semibold">O que será feito automaticamente:</p>
-            <ul className="mt-1 space-y-0.5 list-disc list-inside">
-              <li>Transportadora atualizada no pedido</li>
-              <li>OV movida para o pallet correto (se necessário)</li>
-              <li>Ocorrência registrada com motivo e histórico</li>
-            </ul>
-          </div>
+          {/* Motivo — só aparece se registrar ocorrência */}
+          {registrarOcorrencia && (
+            <div>
+              <label className="text-sm font-medium text-gray-700">Motivo da correção *</label>
+              <select value={motivo} onChange={e => setMotivo(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+                <option value="">Selecione o motivo...</option>
+                {(motivos as any[]).map((m: any) => (
+                  <option key={m.id} value={m.descricao}>{m.descricao}</option>
+                ))}
+                <option value="__outro__">✏️ Outro motivo (digitar)</option>
+              </select>
+              {motivo === '__outro__' && (
+                <textarea rows={2} value={motivoOutro} onChange={e => setMotivoOutro(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-2"
+                  placeholder="Descreva o motivo..." autoFocus />
+              )}
+            </div>
+          )}
         </div>
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !transportadoraId || !motivoFinal.trim()}
+            disabled={mutation.isPending || !transportadoraId || (registrarOcorrencia && !motivoFinal.trim())}
             className="px-4 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-orange-500">
             {mutation.isPending ? 'Salvando...' : '✅ Confirmar Correção'}
           </button>

@@ -206,7 +206,8 @@ def fechar_pallet(
 
 class AlterarTransportadoraRequest(BaseModel):
     transportadora_id: str
-    motivo: str
+    motivo: Optional[str] = None
+    registrar_ocorrencia: bool = True
 
 
 @router.post("/pedidos/{pedido_id}/alterar-transportadora")
@@ -261,21 +262,22 @@ def alterar_transportadora(
     else:
         pallet_msg = "OV não estava em nenhum pallet ativo."
 
-    # Registra ocorrência automática — status ABERTA para ficar visível
-    db.table("ocorrencias").insert({
-        "pedido_id": str(pedido_id),
-        "tipo": "Erro de Transportadora na NF",
-        "descricao": (
-            f"Transportadora alterada por erro na emissão da NF.\n"
-            f"• De: {transp_antiga}\n"
-            f"• Para: {transp_nova}\n"
-            f"• Motivo: {payload.motivo}\n"
-            f"• {pallet_msg}"
-        ),
-        "responsavel_id": uid,
-        "status": "ABERTA",
-        "criado_em": _agora(),
-    }).execute()
+    # Registra ocorrência apenas se solicitado
+    if payload.registrar_ocorrencia:
+        db.table("ocorrencias").insert({
+            "pedido_id": str(pedido_id),
+            "tipo": "Erro de Transportadora na NF",
+            "descricao": (
+                f"Transportadora alterada por erro na emissão da NF.\n"
+                f"• De: {transp_antiga}\n"
+                f"• Para: {transp_nova}\n"
+                f"• Motivo: {payload.motivo or '—'}\n"
+                f"• {pallet_msg}"
+            ),
+            "responsavel_id": uid,
+            "status": "ABERTA",
+            "criado_em": _agora(),
+        }).execute()
 
     # Registra movimentação
     db.table("movimentacoes").insert({
