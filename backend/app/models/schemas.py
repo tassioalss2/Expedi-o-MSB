@@ -169,6 +169,8 @@ class PedidoCreate(BaseModel):
     motivo_duplicata: Optional[str] = None
     # Faturamento parcial — cria nova OV derivada vinculada à OV original
     criar_derivada: bool = False
+    # OV em gerenciamento de crédito — inicia no status AGUARD_CREDITO
+    em_gerenciamento_credito: bool = False
 
 
 class PedidoOut(BaseModel):

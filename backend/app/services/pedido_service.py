@@ -237,13 +237,18 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         return db.table("pedidos").select("*").eq("id", pid).execute().data[0]
 
     # ── Criação normal ─────────────────────────────────────────────────────────
+    status_inicial = (
+        StatusPedido.AGUARD_CREDITO.value
+        if payload.em_gerenciamento_credito
+        else StatusPedido.LIBERADO.value
+    )
     pedido_data = {
         "numero_pedido": payload.numero_pedido,
         "cliente_id": str(payload.cliente_id),
         "transportadora_id": str(payload.transportadora_id) if payload.transportadora_id else None,
         "tipo_frete": payload.tipo_frete.value if payload.tipo_frete else "FOB",
         "local_entrega": payload.local_entrega,
-        "status": StatusPedido.LIBERADO.value,
+        "status": status_inicial,
         "prioridade": payload.prioridade.value,
         "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
         "data_prevista_coleta": payload.data_prevista_coleta.isoformat() if payload.data_prevista_coleta else None,
@@ -270,12 +275,14 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     if itens:
         db.table("itens_pedido").insert(itens).execute()
 
-    _registrar_movimentacao(pedido["id"], None, StatusPedido.LIBERADO.value, str(usuario.id), "Pedido criado")
+    obs_criacao = "Pedido criado — em gerenciamento de crédito" if payload.em_gerenciamento_credito else "Pedido criado"
+    _registrar_movimentacao(pedido["id"], None, status_inicial, str(usuario.id), obs_criacao)
 
-    # Notifica canal Teams da expedição
-    cliente_res = get_service_db().table("clientes").select("nome").eq("id", str(payload.cliente_id)).execute()
-    cliente_nome = cliente_res.data[0]["nome"] if cliente_res.data else ""
-    _notificar_teams_nova_ov(pedido, cliente_nome)
+    # Notifica canal Teams da expedição (só quando já liberado)
+    if not payload.em_gerenciamento_credito:
+        cliente_res = get_service_db().table("clientes").select("nome").eq("id", str(payload.cliente_id)).execute()
+        cliente_nome = cliente_res.data[0]["nome"] if cliente_res.data else ""
+        _notificar_teams_nova_ov(pedido, cliente_nome)
 
     return pedido
 
@@ -381,6 +388,13 @@ def alterar_status(pedido_id: str, novo_status: str, usuario: UsuarioOut,
     }).eq("id", pedido_id).execute()
 
     _registrar_movimentacao(pedido_id, pedido["status"], novo_status, str(usuario.id), observacao)
+
+    # Quando crédito aprovado, notifica Teams (mesma notificação de OV nova)
+    if pedido["status"] == StatusPedido.AGUARD_CREDITO.value and novo_status == StatusPedido.LIBERADO.value:
+        cliente_res = get_service_db().table("clientes").select("nome").eq("id", pedido["cliente_id"]).execute()
+        cliente_nome = cliente_res.data[0]["nome"] if cliente_res.data else ""
+        _notificar_teams_nova_ov(pedido, cliente_nome)
+
     return obter_pedido(pedido_id)
 
 

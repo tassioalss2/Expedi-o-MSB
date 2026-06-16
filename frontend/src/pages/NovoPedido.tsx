@@ -86,6 +86,7 @@ export function NovoPedido() {
     data_prevista_entrega: '',
     prioridade: 'NORMAL',
     observacoes: '',
+    em_gerenciamento_credito: false,
   })
 
   // Estado do modal de recriação de OV cancelada
@@ -284,13 +285,37 @@ export function NovoPedido() {
           </div>
         </div>
 
+        {/* Gerenciamento de crédito */}
+        <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
+          form.em_gerenciamento_credito
+            ? 'border-yellow-400 bg-yellow-50'
+            : 'border-gray-200 hover:border-yellow-300'
+        }`}>
+          <input
+            type="checkbox"
+            checked={form.em_gerenciamento_credito}
+            onChange={e => setForm(f => ({ ...f, em_gerenciamento_credito: e.target.checked }))}
+            className="mt-0.5 w-4 h-4 accent-yellow-600 flex-shrink-0"
+          />
+          <div>
+            <p className="text-sm font-medium text-gray-800">💳 Em gerenciamento de crédito</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Marque se a OV ainda está pendente de aprovação de crédito no D365. A separação ficará bloqueada até a liberação.
+            </p>
+          </div>
+        </label>
+
         <div className="flex gap-3 pt-2">
           <button onClick={() => navigate(-1)} className="flex-1 py-3 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">
             Cancelar
           </button>
           <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !podeEnviar}
-            className="flex-1 py-3 bg-blue-600 text-white rounded-lg text-sm font-semibold disabled:opacity-50 hover:bg-blue-500">
-            {mutation.isPending ? 'Cadastrando...' : '✅ Cadastrar OV'}
+            className={`flex-1 py-3 text-white rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors ${
+              form.em_gerenciamento_credito
+                ? 'bg-yellow-600 hover:bg-yellow-500'
+                : 'bg-blue-600 hover:bg-blue-500'
+            }`}>
+            {mutation.isPending ? 'Cadastrando...' : form.em_gerenciamento_credito ? '💳 Cadastrar (Ger. Crédito)' : '✅ Cadastrar OV'}
           </button>
         </div>
       </div>

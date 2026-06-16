@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class StatusPedido(str, Enum):
+    AGUARD_CREDITO = "AGUARD_CREDITO"
     LIBERADO = "LIBERADO"
     EM_INVENTARIO = "EM_INVENTARIO"
     AGUARD_VERIFICACAO = "AGUARD_VERIFICACAO"
@@ -18,6 +19,7 @@ class StatusPedido(str, Enum):
 
 
 TRANSICOES_PERMITIDAS: dict[StatusPedido, list[StatusPedido]] = {
+    StatusPedido.AGUARD_CREDITO:         [StatusPedido.LIBERADO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
     StatusPedido.LIBERADO:               [StatusPedido.EM_INVENTARIO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
     StatusPedido.EM_INVENTARIO:          [StatusPedido.AGUARD_VERIFICACAO, StatusPedido.BLOQUEADO],
     StatusPedido.AGUARD_VERIFICACAO:     [StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.DIVERGENCIA],

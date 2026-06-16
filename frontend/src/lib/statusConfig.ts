@@ -10,6 +10,7 @@ export interface StatusConfig {
 }
 
 export const STATUS_CONFIG: Record<StatusPedido, StatusConfig> = {
+  AGUARD_CREDITO:         { label: 'Ger. Crédito',         cor: '#FEF9C3', corTexto: '#713F12', icone: '💳', descricao: 'OV aguardando aprovação de crédito no D365 — separação bloqueada', responsavel: 'Op. Vendas' },
   LIBERADO:               { label: 'Liberado',             cor: '#E5E7EB', corTexto: '#374151', icone: '📋', descricao: 'OV recebida via Teams — aguardando inventário', responsavel: 'Operador 1' },
   EM_INVENTARIO:          { label: 'Em Inventário',        cor: '#DBEAFE', corTexto: '#1D4ED8', icone: '📦', descricao: 'Operador 1 preenchendo inventário contínuo', responsavel: 'Operador 1' },
   AGUARD_VERIFICACAO:     { label: 'Aguard. Verificação',  cor: '#FEF3C7', corTexto: '#92400E', icone: '🔍', descricao: 'Operador 2 verifica estoque físico', responsavel: 'Operador 2' },
@@ -26,6 +27,7 @@ export const STATUS_CONFIG: Record<StatusPedido, StatusConfig> = {
 }
 
 export const ORDEM_KANBAN: StatusPedido[] = [
+  'AGUARD_CREDITO',
   'LIBERADO',
   'EM_INVENTARIO',
   'AGUARD_VERIFICACAO',

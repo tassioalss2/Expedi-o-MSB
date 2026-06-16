@@ -1332,12 +1332,23 @@ export function PedidoDetalhe() {
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro'),
   })
 
+  const alterarStatusMutation = useMutation({
+    mutationFn: ({ novo_status, observacao }: { novo_status: string; observacao?: string }) =>
+      api.patch(`/pedidos/${id}/status`, { novo_status, observacao }),
+    onSuccess: () => {
+      toast.success('Status atualizado!')
+      qc.invalidateQueries({ queryKey: ['pedido', id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro ao alterar status'),
+  })
+
   if (isLoading) return <div className="p-8 text-center text-gray-400">Carregando...</div>
   if (!pedido) return <div className="p-8 text-center text-gray-400">Pedido não encontrado</div>
 
   const status = pedido.status
   const SLA_HORAS = 2
-  const STATUSES_SEPARACAO = ['LIBERADO','EM_INVENTARIO','AGUARD_VERIFICACAO','DIVERGENCIA','AGUARD_TRATATIVA','EM_PROCESSO_SISTEMICO']
+  const STATUSES_SEPARACAO = ['AGUARD_CREDITO','LIBERADO','EM_INVENTARIO','AGUARD_VERIFICACAO','DIVERGENCIA','AGUARD_TRATATIVA','EM_PROCESSO_SISTEMICO']
   const emSeparacao = STATUSES_SEPARACAO.includes(status)
   const chegouFaturamento = !STATUSES_SEPARACAO.includes(status) && status !== 'CANCELADO'
 
@@ -1605,6 +1616,16 @@ export function PedidoDetalhe() {
                 <button onClick={() => setModal('transportadora')}
                   className="w-full flex items-center gap-2 justify-center py-2 border border-orange-300 text-orange-600 rounded-lg text-sm hover:bg-orange-50">
                   🔄 Corrigir Transportadora
+                </button>
+              )}
+
+              {status === 'AGUARD_CREDITO' && (
+                <button
+                  onClick={() => alterarStatusMutation.mutate({ novo_status: 'LIBERADO', observacao: 'Crédito aprovado — OV liberada para separação' })}
+                  disabled={alterarStatusMutation.isPending}
+                  className="w-full flex items-center gap-2 justify-center py-3 bg-yellow-600 text-white rounded-lg font-medium hover:bg-yellow-500 disabled:opacity-50"
+                >
+                  ✅ Crédito Aprovado — Liberar para Separação
                 </button>
               )}
 

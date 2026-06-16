@@ -44,6 +44,7 @@ function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
     : []
 
   const STATUS_COR: Record<string, string> = {
+    AGUARD_CREDITO: 'bg-yellow-100 text-yellow-800',
     LIBERADO: 'bg-gray-100 text-gray-600',
     EM_INVENTARIO: 'bg-blue-100 text-blue-700',
     AGUARD_VERIFICACAO: 'bg-yellow-100 text-yellow-700',
