@@ -1534,12 +1534,33 @@ export function PedidoDetalhe() {
                 )}
               </div>
               {cubagem ? (
-                <div className="grid grid-cols-2 gap-x-6">
-                  {cubagem.num_caixas != null && <Linha label="Volumes" valor={`${cubagem.num_caixas} caixa(s)`} />}
-                  {cubagem.peso_kg != null && <Linha label="Peso total" valor={`${cubagem.peso_kg} kg`} />}
-                  {cubagem.altura_cm != null && <Linha label="Altura" valor={`${cubagem.altura_cm} cm`} />}
-                  {cubagem.largura_cm != null && <Linha label="Largura" valor={`${cubagem.largura_cm} cm`} />}
-                  {cubagem.comprimento_cm != null && <Linha label="Comprimento" valor={`${cubagem.comprimento_cm} cm`} />}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-x-6">
+                    {cubagem.num_caixas != null && <Linha label="Volumes" valor={`${cubagem.num_caixas} caixa(s)`} />}
+                    {cubagem.peso_kg != null && <Linha label="Peso total" valor={`${cubagem.peso_kg} kg`} />}
+                    {cubagem.altura_cm != null && <Linha label="Altura" valor={`${cubagem.altura_cm} cm`} />}
+                    {cubagem.largura_cm != null && <Linha label="Largura" valor={`${cubagem.largura_cm} cm`} />}
+                    {cubagem.comprimento_cm != null && <Linha label="Comprimento" valor={`${cubagem.comprimento_cm} cm`} />}
+                  </div>
+                  {(cubagem as any).mensagem_teams && (
+                    <div className="mt-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Mensagem para o Teams</p>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText((cubagem as any).mensagem_teams)
+                            toast.success('Copiado!')
+                          }}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          Copiar
+                        </button>
+                      </div>
+                      <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 whitespace-pre-wrap font-sans">
+                        {(cubagem as any).mensagem_teams}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-sm text-gray-400 italic">Cubagem não registrada</p>

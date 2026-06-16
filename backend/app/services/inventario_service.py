@@ -255,7 +255,26 @@ def _registrar_contagens_automaticas(pedido_id: str, pedido_numero: str, uid: st
 def obter_cubagem(pedido_id: str) -> dict | None:
     db = get_service_db()
     result = db.table("cubagem").select("*").eq("pedido_id", pedido_id).execute()
-    return result.data[0] if result.data else None
+    if not result.data:
+        return None
+    cub = result.data[0]
+
+    # Busca itens de cubagem com dimensões do tipo de caixa
+    itens_res = db.table("cubagem_itens").select("*, tipos_caixa(descricao)").eq("pedido_id", pedido_id).execute()
+    itens = itens_res.data or []
+
+    # Busca nome do cliente para montar a mensagem
+    pedido_res = db.table("pedidos").select("numero_pedido, clientes(nome)").eq("id", pedido_id).execute()
+    if pedido_res.data:
+        p = pedido_res.data[0]
+        numero = p.get("numero_pedido", "")
+        cliente_nome = (p.get("clientes") or {}).get("nome", "")
+    else:
+        numero = ""
+        cliente_nome = ""
+
+    cub["mensagem_teams"] = gerar_mensagem_teams(numero, cliente_nome, cub, itens)
+    return cub
 
 
 def gerar_mensagem_teams(numero_pedido: str, cliente: str, cubagem: dict, itens: list = None) -> str:
