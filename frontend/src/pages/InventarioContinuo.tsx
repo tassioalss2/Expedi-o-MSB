@@ -191,18 +191,21 @@ function CardContagem({ c, onRevisar, podeRevisar }: { c: any; onRevisar: () => 
             <span className="text-xs text-gray-400">Lote: {c.lote}</span>
             <StatusBadge status={c.status} />
           </div>
-          <div className="flex gap-4 mt-1 text-xs text-gray-500 flex-wrap">
+          <div className="flex gap-3 mt-1 text-xs text-gray-500 flex-wrap items-center">
             <span>👤 {c.operador_nome}</span>
+            <span className="text-gray-200">|</span>
             <span>Sist: <strong>{c.qtd_sistemica}</strong></span>
-            {(c.qtd_venda ?? 0) > 0 && (
-              <span>Venda: <strong className="text-orange-600">{c.qtd_venda}</strong></span>
-            )}
-            <span>Estoque: <strong className="text-teal-700">{estoque}</strong></span>
             <span>Físico: <strong>{c.qtd_fisica ?? '—'}</strong></span>
+            <span className="text-gray-300">‖</span>
+            <span>Venda: <strong className="text-orange-600">{c.qtd_venda ?? 0}</strong></span>
+            <span>Estoque: <strong className="text-teal-700">{estoque}</strong></span>
             {temDiverg && (
-              <span className={`font-bold ${diverg > 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                Diverg: {fmt(diverg)} ({c.pct_divergencia}%)
-              </span>
+              <>
+                <span className="text-gray-200">|</span>
+                <span className={`font-bold ${diverg > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                  Diverg: {fmt(diverg)} ({c.pct_divergencia}%)
+                </span>
+              </>
             )}
           </div>
         </div>
@@ -265,6 +268,8 @@ export function InventarioContinuo() {
   const [histCodigo, setHistCodigo] = useState('')
   const [histLote,   setHistLote]   = useState('')
   const [histStatus, setHistStatus] = useState('')   // filtro de status (frontend)
+  const [histDataDe, setHistDataDe] = useState('')
+  const [histDataAte, setHistDataAte] = useState('')
 
   // Valores "atrasados" — só mudam 400ms após o usuário parar de digitar
   const [histCodigoQ, setHistCodigoQ] = useState('')
@@ -283,11 +288,13 @@ export function InventarioContinuo() {
   const digitando = histCodigo !== histCodigoQ || histLote !== histLoteQ
 
   const { data: historico = [], isLoading: loadingHist, refetch: refetchHist } = useQuery({
-    queryKey: ['inv-historico', histCodigoQ, histLoteQ],
+    queryKey: ['inv-historico', histCodigoQ, histLoteQ, histDataDe, histDataAte],
     queryFn:  () => api.get('/inventario-continuo/historico', {
       params: {
-        codigo: histCodigoQ || undefined,
-        lote:   histLoteQ   || undefined,
+        codigo:   histCodigoQ || undefined,
+        lote:     histLoteQ   || undefined,
+        data_de:  histDataDe  || undefined,
+        data_ate: histDataAte || undefined,
       },
     }).then(r => r.data),
     enabled:   aba === 'historico',
@@ -504,12 +511,30 @@ export function InventarioContinuo() {
                     placeholder="🔎 Filtrar por lote"
                     className="border rounded-lg px-3 py-2 text-sm w-44"
                   />
-                  {(histCodigo || histLote || histStatus) && (
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs text-gray-500 whitespace-nowrap">De</label>
+                    <input
+                      type="date"
+                      value={histDataDe}
+                      onChange={e => setHistDataDe(e.target.value)}
+                      className="border rounded-lg px-2 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs text-gray-500 whitespace-nowrap">Até</label>
+                    <input
+                      type="date"
+                      value={histDataAte}
+                      onChange={e => setHistDataAte(e.target.value)}
+                      className="border rounded-lg px-2 py-2 text-sm"
+                    />
+                  </div>
+                  {(histCodigo || histLote || histStatus || histDataDe || histDataAte) && (
                     <button
                       onClick={() => {
                         setHistCodigo(''); setHistLote('')
                         setHistCodigoQ(''); setHistLoteQ('')
-                        setHistStatus('')
+                        setHistStatus(''); setHistDataDe(''); setHistDataAte('')
                       }}
                       className="text-xs text-gray-400 hover:text-gray-600 underline"
                     >
@@ -561,22 +586,21 @@ export function InventarioContinuo() {
                         </div>
                         <StatusBadge status={c.status} />
                       </div>
-                      <div className="text-xs text-gray-500 flex gap-4 flex-wrap">
+                      <div className="text-xs text-gray-500 flex gap-3 flex-wrap items-center">
                         <span>Sist: <strong>{c.qtd_sistemica}</strong></span>
-                        {(c.qtd_venda ?? 0) > 0 && (
-                          <span>Venda: <strong className="text-orange-600">{c.qtd_venda}</strong></span>
-                        )}
-                        <span>
-                          Estoque: <strong className="text-teal-700">
-                            {(c.qtd_sistemica ?? 0) - (c.qtd_venda ?? 0)}
-                          </strong>
-                        </span>
                         <span>Físico: <strong>{c.qtd_fisica ?? '—'}</strong></span>
+                        <span className="text-gray-300">‖</span>
+                        <span>Venda: <strong className="text-orange-600">{c.qtd_venda ?? 0}</strong></span>
+                        <span>Estoque: <strong className="text-teal-700">{(c.qtd_sistemica ?? 0) - (c.qtd_venda ?? 0)}</strong></span>
                         {c.qtd_divergencia !== 0 && c.qtd_divergencia != null && (
-                          <span className={`font-bold ${c.qtd_divergencia > 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                            Diverg: {fmt(c.qtd_divergencia)}
-                          </span>
+                          <>
+                            <span className="text-gray-200">|</span>
+                            <span className={`font-bold ${c.qtd_divergencia > 0 ? 'text-blue-600' : 'text-red-600'}`}>
+                              Diverg: {fmt(c.qtd_divergencia)}
+                            </span>
+                          </>
                         )}
+                        <span className="text-gray-300">|</span>
                         <span>👤 {c.operador_nome}</span>
                         <span className="text-gray-300">|</span>
                         <span className="text-gray-400 italic">{c.inventario_ciclos?.nome}</span>

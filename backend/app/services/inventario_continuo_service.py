@@ -267,7 +267,13 @@ def get_dashboard(ciclo_id: str | None = None) -> dict:
 
 # ── Histórico ──────────────────────────────────────────────────────────────────
 
-def buscar_historico(codigo: str | None, lote: str | None, operador: str | None) -> list:
+def buscar_historico(
+    codigo: str | None,
+    lote: str | None,
+    operador: str | None,
+    data_de: str | None = None,
+    data_ate: str | None = None,
+) -> list:
     db = get_service_db()
     q = db.table("inventario_contagens").select(
         "*,inventario_ciclos(nome,data_abertura),inventario_motivos(descricao,categoria)"
@@ -278,4 +284,8 @@ def buscar_historico(codigo: str | None, lote: str | None, operador: str | None)
         q = q.ilike("lote", f"%{lote.strip().upper()}%")
     if operador:
         q = q.ilike("operador_nome", f"%{operador.strip()}%")
-    return q.order("contado_em", desc=True).limit(200).execute().data
+    if data_de:
+        q = q.gte("contado_em", f"{data_de}T00:00:00")
+    if data_ate:
+        q = q.lte("contado_em", f"{data_ate}T23:59:59")
+    return q.order("contado_em", desc=True).limit(500).execute().data

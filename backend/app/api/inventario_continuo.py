@@ -74,6 +74,8 @@ def historico(
     codigo:   Optional[str] = Query(None),
     lote:     Optional[str] = Query(None),
     operador: Optional[str] = Query(None),
+    data_de:  Optional[str] = Query(None),
+    data_ate: Optional[str] = Query(None),
     usuario:  UsuarioOut = Depends(get_current_user),
 ):
-    return inventario_continuo_service.buscar_historico(codigo, lote, operador)
+    return inventario_continuo_service.buscar_historico(codigo, lote, operador, data_de, data_ate)
