@@ -155,6 +155,66 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
   )
 }
 
+function ChipOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void }) {
+  const atrasado = pedido.atrasado
+  const critica = pedido.prioridade === 'CRITICA'
+  const alta = pedido.prioridade === 'ALTA'
+  const entrega = new Date(pedido.data_prevista_entrega + 'T12:00:00')
+    .toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  const clienteAbrev = (pedido.cliente_nome || pedido.cliente?.nome || '').split(' ').slice(0, 2).join(' ')
+  const transp = resolveNomeTransportadora(pedido.transportadora_nome, pedido.observacoes)
+  const tooltip = [
+    pedido.numero_pedido,
+    pedido.cliente_nome || pedido.cliente?.nome,
+    pedido.numero_nf ? `NF ${pedido.numero_nf}` : '',
+    transp,
+    `Entrega: ${entrega}`,
+    atrasado ? '⚠ ATRASADO' : '',
+    formatDistanceToNow(parseISO(pedido.atualizado_em), { locale: ptBR, addSuffix: true }),
+  ].filter(Boolean).join(' · ')
+
+  return (
+    <button
+      onClick={onClick}
+      title={tooltip}
+      className={`w-full text-left px-2 py-1.5 rounded-md border transition-all
+        hover:shadow-sm hover:brightness-95 active:scale-[0.99] ${
+        atrasado
+          ? 'bg-red-100 border-red-300'
+          : critica
+          ? 'bg-orange-50 border-orange-200'
+          : alta
+          ? 'bg-amber-50 border-amber-100'
+          : 'bg-white border-gray-200'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-1">
+        <span className={`font-bold text-xs truncate ${atrasado ? 'text-red-800' : 'text-gray-900'}`}>
+          {atrasado && <span className="mr-0.5">⚠</span>}
+          {pedido.numero_pedido}
+          {(pedido.remessa_numero ?? 1) > 1 && (
+            <span className="text-purple-600 ml-0.5 text-[10px]">R{pedido.remessa_numero}</span>
+          )}
+        </span>
+        <span className={`text-[10px] flex-shrink-0 font-medium ${atrasado ? 'text-red-600' : 'text-gray-400'}`}>
+          {entrega}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-1 mt-0.5">
+        <span className="text-[10px] text-gray-500 truncate">{clienteAbrev}</span>
+        {pedido.numero_nf
+          ? <span className="text-[10px] text-blue-600 flex-shrink-0 font-medium">NF{pedido.numero_nf}</span>
+          : critica
+          ? <span className="text-[10px] text-orange-500 flex-shrink-0 font-bold">CRÍTICA</span>
+          : alta
+          ? <span className="text-[10px] text-amber-600 flex-shrink-0">ALTA</span>
+          : null
+        }
+      </div>
+    </button>
+  )
+}
+
 // ── Informações de cada etapa ─────────────────────────────────────────────────
 const INFO_ETAPAS: Record<string, {
   responsavel: string
@@ -308,12 +368,12 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
                         {lista.length}
                       </span>
                     </div>
-                    <div className="bg-gray-100 rounded-b-lg p-2 space-y-2 overflow-y-auto flex-1">
+                    <div className="bg-gray-100 rounded-b-lg p-1.5 grid grid-cols-2 gap-1 overflow-y-auto flex-1 content-start">
                       {lista.length === 0 && (
-                        <p className="text-xs text-gray-400 text-center py-3">Nenhum pedido</p>
+                        <p className="text-xs text-gray-400 text-center py-3 col-span-2">—</p>
                       )}
                       {lista.map((p) => (
-                        <CardPedido key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
+                        <ChipOV key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
                       ))}
                     </div>
                   </div>
