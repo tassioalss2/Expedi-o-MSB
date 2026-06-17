@@ -89,7 +89,8 @@ export function Dashboard() {
       atrasados: s.atrasados,
     })) || []
 
-  const otifColor = (indicadores?.otif || 0) >= 95 ? '#22C55E' : (indicadores?.otif || 0) >= 90 ? '#F59E0B' : '#EF4444'
+  const otifValor = indicadores?.otif ?? null
+  const otifColor = otifValor === null ? '#D1D5DB' : otifValor >= 95 ? '#22C55E' : otifValor >= 90 ? '#F59E0B' : '#EF4444'
 
   return (
     <div className="p-6 space-y-6">
@@ -292,17 +293,21 @@ export function Dashboard() {
           <p className="text-sm text-gray-500 mb-2">OTIF — {format(hoje, 'MMMM', { locale: ptBR })}</p>
           <div className="flex items-end gap-3">
             <span className="text-5xl font-bold" style={{ color: otifColor }}>
-              {indicadores?.otif?.toFixed(1) || '—'}
+              {otifValor !== null ? otifValor.toFixed(1) : '—'}
             </span>
-            <span className="text-xl text-gray-400 mb-1">%</span>
+            {otifValor !== null && <span className="text-xl text-gray-400 mb-1">%</span>}
           </div>
           <div className="mt-3 bg-gray-100 rounded-full h-2.5">
             <div
               className="h-2.5 rounded-full transition-all"
-              style={{ width: `${Math.min(indicadores?.otif || 0, 100)}%`, backgroundColor: otifColor }}
+              style={{ width: `${Math.min(otifValor || 0, 100)}%`, backgroundColor: otifColor }}
             />
           </div>
-          <p className="text-xs text-gray-400 mt-1.5">Meta: 95%</p>
+          <p className="text-xs text-gray-400 mt-1.5">
+            {otifValor === null
+              ? 'Sem OVs expedidas no período'
+              : `Meta: 95% · ${indicadores?.pedidos_expedidos} OV(s) expedida(s)`}
+          </p>
         </div>
 
         {/* Taxa de divergência */}

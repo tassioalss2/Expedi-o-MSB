@@ -689,41 +689,57 @@ def obter_dashboard_operacional() -> dict:
 def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
     db = get_service_db()
 
+    # Busca OVs coletadas/expedidas no período pelo atualizado_em
     expedidos = db.table("pedidos").select("*")\
         .eq("status", StatusPedido.EXPEDIDO.value)\
         .gte("atualizado_em", f"{data_inicio.isoformat()}T00:00:00")\
         .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
         .execute().data
 
+    # OTIF: OVs expedidas até a data prevista de entrega
     no_prazo = sum(
         1 for p in expedidos
-        if p.get("data_real_coleta") and p["data_real_coleta"][:10] <= p["data_prevista_entrega"]
+        if p.get("atualizado_em") and p["atualizado_em"][:10] <= p["data_prevista_entrega"]
     )
-    otif = (no_prazo / len(expedidos) * 100) if expedidos else 0
+    otif = round(no_prazo / len(expedidos) * 100, 2) if expedidos else None
 
-    # Taxa de divergência via ocorrências
+    # Taxa de divergência: ocorrências de estoque / total expedido
     ocorrencias_div = db.table("ocorrencias").select("id")\
         .eq("tipo", "Divergência de Estoque")\
         .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
         .execute().data
-    taxa_div = (len(ocorrencias_div) / max(len(expedidos), 1)) * 100
+    taxa_div = round(len(ocorrencias_div) / max(len(expedidos), 1) * 100, 2) if expedidos else None
 
-    # Taxa de retrabalho — todas as ocorrências são retrabalho
+    # Taxa de retrabalho
     ocorrencias_ret = db.table("ocorrencias").select("id")\
         .eq("retrabalho", True)\
         .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
         .execute().data
-    taxa_retrab = (len(ocorrencias_ret) / max(len(expedidos), 1)) * 100
+    taxa_retrab = round(len(ocorrencias_ret) / max(len(expedidos), 1) * 100, 2) if expedidos else None
 
+    # Backlog: OVs ativas em qualquer etapa do fluxo (exceto finalizadas)
+    statuses_ativos = [
+        StatusPedido.AGUARD_CREDITO.value,
+        StatusPedido.LIBERADO.value,
+        StatusPedido.EM_INVENTARIO.value,
+        StatusPedido.AGUARD_VERIFICACAO.value,
+        StatusPedido.DIVERGENCIA.value,
+        StatusPedido.AGUARD_TRATATIVA.value,
+        StatusPedido.EM_PROCESSO_SISTEMICO.value,
+        StatusPedido.AGUARD_FATURAMENTO.value,
+        StatusPedido.FATURADO.value,
+        StatusPedido.AGUARD_COLETA.value,
+        StatusPedido.BLOQUEADO.value,
+    ]
     backlog = db.table("pedidos").select("id")\
-        .not_.in_("status", [StatusPedido.EXPEDIDO.value, StatusPedido.CANCELADO.value])\
+        .in_("status", statuses_ativos)\
         .execute().data
 
     return {
-        "otif": round(otif, 2),
-        "taxa_divergencia": round(taxa_div, 2),
-        "taxa_retrabalho": round(taxa_retrab, 2),
-        "lead_time_medio_horas": 0,  # calcular via separacoes + conferencias
+        "otif": otif,
+        "taxa_divergencia": taxa_div if taxa_div is not None else 0,
+        "taxa_retrabalho": taxa_retrab if taxa_retrab is not None else 0,
+        "lead_time_medio_horas": 0,
         "pedidos_expedidos": len(expedidos),
         "backlog": len(backlog),
         "aderencia_cutoff": None,
