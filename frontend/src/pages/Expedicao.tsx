@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, Upload, RefreshCw, Info, X } from 'lucide-react'
+import { Search, Plus, Upload, RefreshCw, Info, X, ChevronRight, CornerDownLeft } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -264,12 +264,17 @@ function InfoEtapaModal({ status, cfg, onClose }: { status: string; cfg: any; on
   )
 }
 
+const KANBAN_LAYOUT: StatusPedido[][] = [
+  ['AGUARD_CREDITO', 'LIBERADO', 'EM_INVENTARIO'],
+  ['AGUARD_VERIFICACAO', 'EM_PROCESSO_SISTEMICO', 'AGUARD_FATURAMENTO'],
+  ['FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'],
+]
+
 function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedido: (p: Pedido) => void }) {
   const [infoAberta, setInfoAberta] = useState<string | null>(null)
-  const hoje = new Date().toISOString().slice(0, 10) // 'YYYY-MM-DD'
+  const hoje = new Date().toISOString().slice(0, 10)
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
     let lista = pedidos.filter((p) => p.status === status)
-    // Expedido: só mostra coletas do dia atual
     if (status === 'EXPEDIDO') {
       lista = lista.filter((p) => p.atualizado_em?.slice(0, 10) === hoje)
     }
@@ -278,37 +283,61 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
   }, {})
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 min-h-0">
-      {ORDEM_KANBAN.map((status) => {
-        const cfg = STATUS_CONFIG[status]
-        const lista = agrupado[status] || []
-        return (
-          <div key={status} className="flex-shrink-0 w-64">
-            <div
-              className="rounded-t-lg px-3 py-2 flex items-center justify-between cursor-pointer group"
-              style={{ backgroundColor: cfg.cor, color: cfg.corTexto }}
-              onClick={() => setInfoAberta(status)}
-              title="Clique para ver detalhes desta etapa"
-            >
-              <span className="text-sm font-semibold flex items-center gap-1.5">
-                {cfg.icone} {cfg.label}
-                <Info size={13} className="opacity-50 group-hover:opacity-100 transition-opacity" />
-              </span>
-              <span className="text-xs font-bold bg-white bg-opacity-40 rounded-full px-2 py-0.5">
-                {lista.length}
-              </span>
-            </div>
-            <div className="bg-gray-100 rounded-b-lg p-2 space-y-2 min-h-[200px] max-h-[calc(100vh-280px)] overflow-y-auto">
-              {lista.length === 0 && (
-                <p className="text-xs text-gray-400 text-center py-4">Nenhum pedido</p>
-              )}
-              {lista.map((p) => (
-                <CardPedido key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
-              ))}
-            </div>
+    <div className="flex flex-col gap-2 h-full">
+      {KANBAN_LAYOUT.map((row, rowIdx) => (
+        <Fragment key={rowIdx}>
+          <div className="flex gap-2 items-stretch flex-1 min-h-0">
+            {row.map((status, colIdx) => {
+              const cfg = STATUS_CONFIG[status]
+              const lista = agrupado[status] || []
+              return (
+                <Fragment key={status}>
+                  <div className="flex-1 min-w-0 flex flex-col min-h-0">
+                    <div
+                      className="rounded-t-lg px-3 py-2 flex items-center justify-between cursor-pointer group flex-shrink-0"
+                      style={{ backgroundColor: cfg.cor, color: cfg.corTexto }}
+                      onClick={() => setInfoAberta(status)}
+                      title="Clique para ver detalhes desta etapa"
+                    >
+                      <span className="text-sm font-semibold flex items-center gap-1 min-w-0">
+                        <span className="flex-shrink-0">{cfg.icone}</span>
+                        <span className="truncate">{cfg.label}</span>
+                        <Info size={12} className="opacity-50 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                      </span>
+                      <span className="text-xs font-bold bg-white bg-opacity-40 rounded-full px-2 py-0.5 flex-shrink-0 ml-1">
+                        {lista.length}
+                      </span>
+                    </div>
+                    <div className="bg-gray-100 rounded-b-lg p-2 space-y-2 overflow-y-auto flex-1">
+                      {lista.length === 0 && (
+                        <p className="text-xs text-gray-400 text-center py-3">Nenhum pedido</p>
+                      )}
+                      {lista.map((p) => (
+                        <CardPedido key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
+                      ))}
+                    </div>
+                  </div>
+                  {colIdx < row.length - 1 && (
+                    <div className="flex-shrink-0 flex items-start pt-3">
+                      <ChevronRight size={16} className="text-gray-300" />
+                    </div>
+                  )}
+                </Fragment>
+              )
+            })}
           </div>
-        )
-      })}
+          {rowIdx < KANBAN_LAYOUT.length - 1 && (
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex-1 border-t border-dashed border-gray-200" />
+              <div className="flex items-center gap-1 text-xs text-gray-400 bg-white border border-gray-200 rounded-full px-2.5 py-0.5 flex-shrink-0">
+                <CornerDownLeft size={11} />
+                <span>próxima etapa</span>
+              </div>
+              <div className="flex-1 border-t border-dashed border-gray-200" />
+            </div>
+          )}
+        </Fragment>
+      ))}
       {infoAberta && (
         <InfoEtapaModal
           status={infoAberta}
@@ -482,7 +511,7 @@ export function Expedicao() {
       {isLoading ? (
         <div className="flex-1 flex items-center justify-center text-gray-400">Carregando...</div>
       ) : view === 'kanban' ? (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden min-h-0">
           <KanbanView pedidos={pedidosFiltrados} onClickPedido={(p) => navigate(`/expedicao/${p.id}`)} />
         </div>
       ) : (
