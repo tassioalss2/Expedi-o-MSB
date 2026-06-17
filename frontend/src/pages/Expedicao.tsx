@@ -8,7 +8,7 @@ import api from '../lib/api'
 import type { Pedido, StatusPedido } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
-import { ORDEM_KANBAN, STATUS_CONFIG } from '../lib/statusConfig'
+import { ORDEM_KANBAN, STATUS_CONFIG, resolveNomeTransportadora } from '../lib/statusConfig'
 import toast from 'react-hot-toast'
 
 type View = 'lista' | 'kanban'
@@ -141,7 +141,7 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
         <p className="text-xs text-blue-600 font-medium mb-1">📄 NF {pedido.numero_nf}</p>
       )}
       {pedido.transportadora_nome && (
-        <p className="text-xs text-gray-500 font-medium mb-1">🚚 {pedido.transportadora_nome}</p>
+        <p className="text-xs text-gray-500 font-medium mb-1">🚚 {resolveNomeTransportadora(pedido.transportadora_nome, pedido.observacoes)}</p>
       )}
       <div className="flex items-center justify-between">
         <span className={`text-xs ${atrasado ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
@@ -348,7 +348,7 @@ function ListaView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedid
               <td className={`px-4 py-3 ${p.atrasado ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>
                 {p.atrasado ? '⚠ ' : ''}{new Date(p.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}
               </td>
-              <td className="px-4 py-3 text-gray-500">{p.transportadora_nome || '—'}</td>
+              <td className="px-4 py-3 text-gray-500">{resolveNomeTransportadora(p.transportadora_nome, p.observacoes) || '—'}</td>
             </tr>
           ))}
         </tbody>

@@ -16,6 +16,12 @@ import { RelatorioColetasRealizadas } from './pages/RelatorioColetasRealizadas'
 import { Relatorios } from './pages/Relatorios'
 import { InventarioContinuo } from './pages/InventarioContinuo'
 import { InventarioContagem } from './pages/InventarioContagem'
+import { PainelOperador } from './pages/esterilizacao/PainelOperador'
+import { CargaDetalhe } from './pages/esterilizacao/CargaDetalhe'
+import { Planejamento } from './pages/esterilizacao/Planejamento'
+import { NovaCarga } from './pages/esterilizacao/NovaCarga'
+import { DashboardEsterilizacao } from './pages/esterilizacao/DashboardEsterilizacao'
+import { CadastroProdutos } from './pages/esterilizacao/CadastroProdutos'
 import { useAuthStore } from './store/authStore'
 
 const qc = new QueryClient({
@@ -58,6 +64,14 @@ export default function App() {
             <Route path="cadastros" element={<Cadastros />} />
             <Route path="inventario" element={<InventarioContinuo />} />
             <Route path="inventario/contagem" element={<InventarioContagem />} />
+
+            {/* Módulo Esterilização */}
+            <Route path="esterilizacao" element={<PainelOperador />} />
+            <Route path="esterilizacao/planejamento" element={<Planejamento />} />
+            <Route path="esterilizacao/nova-carga" element={<NovaCarga />} />
+            <Route path="esterilizacao/cargas/:id" element={<CargaDetalhe />} />
+            <Route path="esterilizacao/dashboard" element={<DashboardEsterilizacao />} />
+            <Route path="esterilizacao/produtos" element={<CadastroProdutos />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

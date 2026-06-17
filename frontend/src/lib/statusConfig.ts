@@ -43,3 +43,13 @@ export const TIPO_FRETE_LABEL: Record<string, string> = {
   CIF_COM_VALOR: 'CIF com Valor NF',
   CIF_SEM_VALOR: 'CIF sem Valor NF',
 }
+
+/** Retorna o nome da transportadora, incluindo o nome real quando "OUTROS" foi selecionado. */
+export function resolveNomeTransportadora(nome?: string, observacoes?: string): string {
+  if (!nome) return ''
+  if (nome.toUpperCase().includes('OUTROS') && observacoes) {
+    const match = observacoes.match(/\[Transp\. real: ([^\]]+)\]/)
+    if (match) return `OUTROS (${match[1]})`
+  }
+  return nome
+}

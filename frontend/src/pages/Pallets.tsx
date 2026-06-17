@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { FileText, ExternalLink } from 'lucide-react'
 import api from '../lib/api'
 import { errMsg } from '../lib/errMsg'
+import { resolveNomeTransportadora } from '../lib/statusConfig'
 import toast from 'react-hot-toast'
 
 const CORES: Record<string, string> = {
@@ -209,11 +210,14 @@ export function Pallets() {
                               <span className="text-xs font-semibold text-indigo-600">NF {pp.pedidos.numero_nf}</span>
                             )}
                             {pp?.num_caixas && <p className="text-xs text-gray-400">{pp.num_caixas} cx</p>}
-                            {pallet.codigo === 'PLT-OUTROS' && (pp?.observacao || pp?.pedidos?.transportadora_nome) && (
-                              <span className="text-xs bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded font-medium">
-                                🚚 {pp.observacao || pp.pedidos.transportadora_nome}
-                              </span>
-                            )}
+                            {pallet.codigo === 'PLT-OUTROS' && pp?.pedidos?.transportadora_nome && (() => {
+                              const nomeReal = resolveNomeTransportadora(pp.pedidos.transportadora_nome, pp.pedidos.observacoes)
+                              return (
+                                <span className="text-xs bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded font-medium">
+                                  🚚 {nomeReal}
+                                </span>
+                              )
+                            })()}
                           </div>
                         </div>
                       </div>
