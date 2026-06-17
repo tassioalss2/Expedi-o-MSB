@@ -710,12 +710,13 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         .execute().data
     taxa_div = round(len(ocorrencias_div) / max(len(expedidos), 1) * 100, 2) if expedidos else None
 
-    # Taxa de retrabalho
-    ocorrencias_ret = db.table("ocorrencias").select("id")\
-        .eq("retrabalho", True)\
+    # Taxa de retrabalho — % de OVs expedidas que tiveram ao menos 1 ocorrência de retrabalho
+    ocorrencias_ret = db.table("ocorrencias").select("pedido_id")\
+        .eq("retrabalho", "true")\
         .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
         .execute().data
-    taxa_retrab = round(len(ocorrencias_ret) / max(len(expedidos), 1) * 100, 2) if expedidos else None
+    pedidos_retrabalho = len({o["pedido_id"] for o in ocorrencias_ret if o.get("pedido_id")})
+    taxa_retrab = round(pedidos_retrabalho / len(expedidos) * 100, 2) if expedidos else None
 
     # Backlog: OVs ativas em qualquer etapa do fluxo (exceto finalizadas)
     statuses_ativos = [
@@ -744,3 +745,84 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         "backlog": len(backlog),
         "aderencia_cutoff": None,
     }
+
+
+def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) -> list:
+    from datetime import date as date_cls
+    db = get_service_db()
+
+    STATUSES_ATIVOS = [
+        StatusPedido.AGUARD_CREDITO.value, StatusPedido.LIBERADO.value,
+        StatusPedido.EM_INVENTARIO.value, StatusPedido.AGUARD_VERIFICACAO.value,
+        StatusPedido.DIVERGENCIA.value, StatusPedido.AGUARD_TRATATIVA.value,
+        StatusPedido.EM_PROCESSO_SISTEMICO.value, StatusPedido.AGUARD_FATURAMENTO.value,
+        StatusPedido.FATURADO.value, StatusPedido.AGUARD_COLETA.value,
+        StatusPedido.BLOQUEADO.value,
+    ]
+
+    if metrica == "otif_atrasados":
+        expedidos = db.table("pedidos").select(
+            "numero_pedido,data_prevista_entrega,atualizado_em,clientes(nome)"
+        ).eq("status", StatusPedido.EXPEDIDO.value)\
+         .gte("atualizado_em", f"{data_inicio.isoformat()}T00:00:00")\
+         .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
+         .execute().data
+        result = []
+        for p in expedidos:
+            data_exp = p["atualizado_em"][:10]
+            data_prev = p["data_prevista_entrega"]
+            if data_exp > data_prev:
+                dias = (date_cls.fromisoformat(data_exp) - date_cls.fromisoformat(data_prev)).days
+                result.append({
+                    "numero_pedido": p["numero_pedido"],
+                    "cliente": (p.get("clientes") or {}).get("nome", "—"),
+                    "data_prevista": data_prev,
+                    "data_real": data_exp,
+                    "dias_atraso": dias,
+                })
+        return sorted(result, key=lambda x: x["dias_atraso"], reverse=True)
+
+    elif metrica == "divergencias":
+        rows = db.table("ocorrencias").select(
+            "tipo,descricao,status,criado_em,pedidos(numero_pedido,clientes(nome))"
+        ).eq("tipo", "Divergência de Estoque")\
+         .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
+         .execute().data
+        return [{
+            "numero_pedido": (r.get("pedidos") or {}).get("numero_pedido", "—"),
+            "cliente": ((r.get("pedidos") or {}).get("clientes") or {}).get("nome", "—"),
+            "data": r.get("criado_em", "")[:10],
+            "descricao": (r.get("descricao") or "—")[:120],
+            "status_ocorrencia": r.get("status", "—"),
+        } for r in rows]
+
+    elif metrica == "backlog":
+        pedidos = db.table("pedidos").select(
+            "numero_pedido,status,prioridade,data_prevista_entrega,clientes(nome)"
+        ).in_("status", STATUSES_ATIVOS).execute().data
+        hoje = date_cls.today().isoformat()
+        return sorted([{
+            "numero_pedido": p["numero_pedido"],
+            "cliente": (p.get("clientes") or {}).get("nome", "—"),
+            "status": p["status"],
+            "prioridade": p.get("prioridade", "NORMAL"),
+            "data_prevista": p["data_prevista_entrega"],
+            "atrasado": p["data_prevista_entrega"] < hoje,
+        } for p in pedidos], key=lambda x: (not x["atrasado"], x["data_prevista"]))
+
+    elif metrica == "retrabalhos":
+        rows = db.table("ocorrencias").select(
+            "tipo,descricao,status,criado_em,pedidos(numero_pedido,clientes(nome))"
+        ).eq("retrabalho", "true")\
+         .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
+         .execute().data
+        return [{
+            "numero_pedido": (r.get("pedidos") or {}).get("numero_pedido", "—"),
+            "cliente": ((r.get("pedidos") or {}).get("clientes") or {}).get("nome", "—"),
+            "tipo": r.get("tipo", "—"),
+            "data": r.get("criado_em", "")[:10],
+            "status_ocorrencia": r.get("status", "—"),
+            "descricao": (r.get("descricao") or "—")[:120],
+        } for r in rows]
+
+    return []

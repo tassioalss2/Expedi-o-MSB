@@ -414,3 +414,13 @@ def indicadores(
     _: UsuarioOut = Depends(get_current_user),
 ):
     return pedido_service.obter_indicadores(data_inicio, data_fim)
+
+
+@router.get("/dashboard/indicadores/detalhes")
+def indicadores_detalhes(
+    metrica: str = Query(...),
+    data_inicio: date = Query(...),
+    data_fim: date = Query(...),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    return pedido_service.obter_indicadores_detalhes(metrica, data_inicio, data_fim)

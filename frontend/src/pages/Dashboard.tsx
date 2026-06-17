@@ -1,8 +1,9 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { Package, AlertTriangle, CheckCircle, Clock, Plus, FileText, Timer, DollarSign, Truck } from 'lucide-react'
+import { Package, AlertTriangle, CheckCircle, Clock, Plus, FileText, Timer, DollarSign, Truck, X } from 'lucide-react'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import api from '../lib/api'
@@ -22,6 +23,150 @@ function KpiCard({ titulo, valor, sub, cor, icone: Icone }: {
         </div>
         <div className={`p-2.5 rounded-lg bg-gray-50`}>
           <Icone size={22} className={cor} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DetalheModal({ metrica, dataInicio, dataFim, onClose }: {
+  metrica: string; dataInicio: string; dataFim: string; onClose: () => void
+}) {
+  const { data, isLoading } = useQuery<any[]>({
+    queryKey: ['indicadores-detalhes', metrica, dataInicio, dataFim],
+    queryFn: () =>
+      api.get('/pedidos/dashboard/indicadores/detalhes', {
+        params: { metrica, data_inicio: dataInicio, data_fim: dataFim },
+      }).then(r => r.data),
+  })
+
+  const titulos: Record<string, string> = {
+    otif_atrasados: 'OVs Expedidas com Atraso',
+    divergencias: 'Ocorrências de Divergência',
+    backlog: 'Backlog — OVs em Aberto',
+    retrabalhos: 'Ocorrências de Retrabalho',
+  }
+
+  const STATUS_LABEL: Record<string, string> = {
+    AGUARD_CREDITO: 'Ger. Crédito', LIBERADO: 'Liberado', EM_INVENTARIO: 'Em Inventário',
+    AGUARD_VERIFICACAO: 'Aguard. Verificação', DIVERGENCIA: 'Divergência',
+    AGUARD_TRATATIVA: 'Aguard. Tratativa', EM_PROCESSO_SISTEMICO: 'Proc. Sistêmico',
+    AGUARD_FATURAMENTO: 'Aguard. Faturamento', FATURADO: 'Faturado',
+    AGUARD_COLETA: 'No Pallet', BLOQUEADO: 'Bloqueado',
+  }
+
+  const fmtDate = (d?: string) => d ? d.split('-').reverse().join('/') : '—'
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="text-lg font-bold text-gray-900">{titulos[metrica] || metrica}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100">
+            <X size={18} className="text-gray-500" />
+          </button>
+        </div>
+        <div className="overflow-auto flex-1 p-4">
+          {isLoading ? (
+            <p className="text-center text-gray-400 py-8">Carregando...</p>
+          ) : !data?.length ? (
+            <p className="text-center text-gray-400 py-8">Nenhum registro encontrado no período</p>
+          ) : metrica === 'otif_atrasados' ? (
+            <table className="w-full text-sm">
+              <thead><tr className="text-xs text-gray-500 border-b bg-gray-50">
+                <th className="text-left py-2 px-3">OV</th>
+                <th className="text-left py-2 px-3">Cliente</th>
+                <th className="text-left py-2 px-3">Previsto</th>
+                <th className="text-left py-2 px-3">Expedido</th>
+                <th className="text-right py-2 px-3">Atraso</th>
+              </tr></thead>
+              <tbody>
+                {data.map((r: any) => (
+                  <tr key={r.numero_pedido} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="py-2 px-3 font-mono font-bold text-gray-800">{r.numero_pedido}</td>
+                    <td className="py-2 px-3 text-gray-600 max-w-[200px] truncate">{r.cliente}</td>
+                    <td className="py-2 px-3 text-gray-500">{fmtDate(r.data_prevista)}</td>
+                    <td className="py-2 px-3 text-gray-500">{fmtDate(r.data_real)}</td>
+                    <td className="py-2 px-3 text-right font-bold text-red-600">{r.dias_atraso}d</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : metrica === 'divergencias' ? (
+            <table className="w-full text-sm">
+              <thead><tr className="text-xs text-gray-500 border-b bg-gray-50">
+                <th className="text-left py-2 px-3">OV</th>
+                <th className="text-left py-2 px-3">Cliente</th>
+                <th className="text-left py-2 px-3">Data</th>
+                <th className="text-left py-2 px-3">Descrição</th>
+                <th className="text-right py-2 px-3">Status</th>
+              </tr></thead>
+              <tbody>
+                {data.map((r: any, i: number) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="py-2 px-3 font-mono font-bold text-gray-800">{r.numero_pedido}</td>
+                    <td className="py-2 px-3 text-gray-600 max-w-[140px] truncate">{r.cliente}</td>
+                    <td className="py-2 px-3 text-gray-500 whitespace-nowrap">{fmtDate(r.data)}</td>
+                    <td className="py-2 px-3 text-gray-500 text-xs max-w-[200px] truncate">{r.descricao}</td>
+                    <td className="py-2 px-3 text-right text-xs">{r.status_ocorrencia}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : metrica === 'backlog' ? (
+            <table className="w-full text-sm">
+              <thead><tr className="text-xs text-gray-500 border-b bg-gray-50">
+                <th className="text-left py-2 px-3">OV</th>
+                <th className="text-left py-2 px-3">Cliente</th>
+                <th className="text-left py-2 px-3">Etapa</th>
+                <th className="text-left py-2 px-3">Prioridade</th>
+                <th className="text-right py-2 px-3">Previsto</th>
+              </tr></thead>
+              <tbody>
+                {data.map((r: any) => (
+                  <tr key={r.numero_pedido} className={`border-b border-gray-50 hover:bg-gray-50 ${r.atrasado ? 'bg-red-50' : ''}`}>
+                    <td className="py-2 px-3 font-mono font-bold text-gray-800">{r.numero_pedido}</td>
+                    <td className="py-2 px-3 text-gray-600 max-w-[160px] truncate">{r.cliente}</td>
+                    <td className="py-2 px-3 text-xs text-gray-500">{STATUS_LABEL[r.status] || r.status}</td>
+                    <td className="py-2 px-3">
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                        r.prioridade === 'CRITICA' ? 'bg-red-100 text-red-700' :
+                        r.prioridade === 'ALTA' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'
+                      }`}>{r.prioridade}</span>
+                    </td>
+                    <td className={`py-2 px-3 text-right font-semibold text-xs ${r.atrasado ? 'text-red-600' : 'text-gray-500'}`}>
+                      {r.atrasado && '⚠ '}{fmtDate(r.data_prevista)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : metrica === 'retrabalhos' ? (
+            <table className="w-full text-sm">
+              <thead><tr className="text-xs text-gray-500 border-b bg-gray-50">
+                <th className="text-left py-2 px-3">OV</th>
+                <th className="text-left py-2 px-3">Cliente</th>
+                <th className="text-left py-2 px-3">Tipo</th>
+                <th className="text-left py-2 px-3">Data</th>
+                <th className="text-right py-2 px-3">Status</th>
+              </tr></thead>
+              <tbody>
+                {data.map((r: any, i: number) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="py-2 px-3 font-mono font-bold text-gray-800">{r.numero_pedido}</td>
+                    <td className="py-2 px-3 text-gray-600 max-w-[160px] truncate">{r.cliente}</td>
+                    <td className="py-2 px-3 text-xs text-gray-600">{r.tipo}</td>
+                    <td className="py-2 px-3 text-gray-500 whitespace-nowrap">{fmtDate(r.data)}</td>
+                    <td className="py-2 px-3 text-right text-xs">{r.status_ocorrencia}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+        </div>
+        <div className="px-6 py-3 border-t text-xs text-gray-400 text-right">
+          {data?.length ?? 0} registro(s)
         </div>
       </div>
     </div>
@@ -91,6 +236,7 @@ export function Dashboard() {
 
   const otifValor = indicadores?.otif ?? null
   const otifColor = otifValor === null ? '#D1D5DB' : otifValor >= 95 ? '#22C55E' : otifValor >= 90 ? '#F59E0B' : '#EF4444'
+  const [detalheAberto, setDetalheAberto] = useState<string | null>(null)
 
   return (
     <div className="p-6 space-y-6">
@@ -287,53 +433,82 @@ export function Dashboard() {
       </div>
 
       {/* Indicadores do mês */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* OTIF */}
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-          <p className="text-sm text-gray-500 mb-2">OTIF — {format(hoje, 'MMMM', { locale: ptBR })}</p>
-          <div className="flex items-end gap-3">
-            <span className="text-5xl font-bold" style={{ color: otifColor }}>
+        <button onClick={() => setDetalheAberto('otif_atrasados')}
+          className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 text-left hover:border-blue-300 hover:shadow-md transition-all group">
+          <p className="text-sm text-gray-500 mb-2 flex items-center gap-1">
+            OTIF — {format(hoje, 'MMMM', { locale: ptBR })}
+            <span className="text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1">ver →</span>
+          </p>
+          <div className="flex items-end gap-2">
+            <span className="text-4xl font-bold" style={{ color: otifColor }}>
               {otifValor !== null ? otifValor.toFixed(1) : '—'}
             </span>
-            {otifValor !== null && <span className="text-xl text-gray-400 mb-1">%</span>}
+            {otifValor !== null && <span className="text-lg text-gray-400 mb-0.5">%</span>}
           </div>
-          <div className="mt-3 bg-gray-100 rounded-full h-2.5">
-            <div
-              className="h-2.5 rounded-full transition-all"
-              style={{ width: `${Math.min(otifValor || 0, 100)}%`, backgroundColor: otifColor }}
-            />
+          <div className="mt-3 bg-gray-100 rounded-full h-2">
+            <div className="h-2 rounded-full transition-all"
+              style={{ width: `${Math.min(otifValor || 0, 100)}%`, backgroundColor: otifColor }} />
           </div>
           <p className="text-xs text-gray-400 mt-1.5">
-            {otifValor === null
-              ? 'Sem OVs expedidas no período'
-              : `Meta: 95% · ${indicadores?.pedidos_expedidos} OV(s) expedida(s)`}
+            {otifValor === null ? 'Sem OVs expedidas' : `Meta: 95% · ${indicadores?.pedidos_expedidos} exp.`}
           </p>
-        </div>
+        </button>
 
         {/* Taxa de divergência */}
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-          <p className="text-sm text-gray-500 mb-2">Taxa de Divergência</p>
+        <button onClick={() => setDetalheAberto('divergencias')}
+          className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 text-left hover:border-orange-300 hover:shadow-md transition-all group">
+          <p className="text-sm text-gray-500 mb-2 flex items-center gap-1">
+            Taxa de Divergência
+            <span className="text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1">ver →</span>
+          </p>
           <span className="text-4xl font-bold text-orange-500">
             {indicadores?.taxa_divergencia?.toFixed(1) || '0'}%
           </span>
           <p className="text-xs text-gray-400 mt-1">Meta: ≤ 1%</p>
           <p className="text-sm text-gray-600 mt-3">
-            <span className="font-medium">{indicadores?.pedidos_expedidos || 0}</span> pedidos expedidos no período
+            <span className="font-medium">{indicadores?.pedidos_expedidos || 0}</span> exp. no período
           </p>
-        </div>
+        </button>
 
         {/* Backlog */}
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-          <p className="text-sm text-gray-500 mb-2">Backlog Total</p>
+        <button onClick={() => setDetalheAberto('backlog')}
+          className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 text-left hover:border-purple-300 hover:shadow-md transition-all group">
+          <p className="text-sm text-gray-500 mb-2 flex items-center gap-1">
+            Backlog Total
+            <span className="text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1">ver →</span>
+          </p>
           <span className="text-4xl font-bold text-purple-600">
             {indicadores?.backlog || 0}
           </span>
           <p className="text-xs text-gray-400 mt-1">pedidos em aberto</p>
-          <p className="text-sm text-gray-600 mt-3">
-            Taxa de retrabalho: <span className="font-medium">{indicadores?.taxa_retrabalho?.toFixed(1) || '0'}%</span>
+          <p className="text-sm text-gray-600 mt-3">Clique para ver detalhes</p>
+        </button>
+
+        {/* Taxa de retrabalho */}
+        <button onClick={() => setDetalheAberto('retrabalhos')}
+          className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 text-left hover:border-red-300 hover:shadow-md transition-all group">
+          <p className="text-sm text-gray-500 mb-2 flex items-center gap-1">
+            Taxa de Retrabalho
+            <span className="text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1">ver →</span>
           </p>
-        </div>
+          <span className="text-4xl font-bold text-red-500">
+            {indicadores?.taxa_retrabalho?.toFixed(1) || '0'}%
+          </span>
+          <p className="text-xs text-gray-400 mt-1">Meta: ≤ 5%</p>
+          <p className="text-sm text-gray-600 mt-3">OVs c/ retrabalho no período</p>
+        </button>
       </div>
+
+      {detalheAberto && (
+        <DetalheModal
+          metrica={detalheAberto}
+          dataInicio={inicioMes}
+          dataFim={fimMes}
+          onClose={() => setDetalheAberto(null)}
+        />
+      )}
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
