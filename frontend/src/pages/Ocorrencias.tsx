@@ -170,6 +170,7 @@ function ModalDetalhe({ oc, onClose }: { oc: any; onClose: () => void }) {
 export function Ocorrencias() {
   const qc = useQueryClient()
   const [filtroStatus, setFiltroStatus] = useState('')
+  const [filtroTipo, setFiltroTipo] = useState('')
   const [modalNova, setModalNova] = useState(false)
   const [ocSelecionada, setOcSelecionada] = useState<any | null>(null)
   const [form, setForm] = useState({ pedido_id: '', tipo: TIPOS[0], descricao: '' })
@@ -230,17 +231,31 @@ export function Ocorrencias() {
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">📊 Ocorrências por Tipo</h2>
           <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={dadosGrafico} layout="vertical" margin={{ left: 10, right: 30 }}>
+            <BarChart data={dadosGrafico} layout="vertical" margin={{ left: 10, right: 30 }}
+              style={{ cursor: 'pointer' }}>
               <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={180} />
               <Tooltip formatter={(v: any) => [`${v} ocorrência(s)`, 'Qtd']} />
-              <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                {dadosGrafico.map((_, i) => (
-                  <Cell key={i} fill={TIPO_CORES[i % TIPO_CORES.length]} />
+              <Bar dataKey="value" radius={[0, 4, 4, 0]}
+                onClick={(data: any) => setFiltroTipo(prev => prev === data.name ? '' : data.name)}>
+                {dadosGrafico.map((entry, i) => (
+                  <Cell key={i}
+                    fill={TIPO_CORES[i % TIPO_CORES.length]}
+                    opacity={filtroTipo && filtroTipo !== entry.name ? 0.3 : 1}
+                  />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          {filtroTipo && (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-gray-500">Filtrando por tipo:</span>
+              <span className="inline-flex items-center gap-1.5 bg-gray-900 text-white text-xs px-2.5 py-1 rounded-full font-medium">
+                {filtroTipo}
+                <button onClick={() => setFiltroTipo('')} className="hover:text-gray-300 text-base leading-none">✕</button>
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -258,13 +273,16 @@ export function Ocorrencias() {
 
       {/* Lista */}
       <div className="space-y-3">
-        {(ocorrencias as any[]).length === 0 && (
-          <div className="bg-white rounded-xl p-12 text-center text-gray-400 border border-gray-100">
-            <p className="text-lg">✅ Nenhuma ocorrência</p>
-          </div>
-        )}
-
-        {(ocorrencias as any[]).map((oc: any) => (
+        {(() => {
+          const lista = (ocorrencias as any[]).filter((oc: any) =>
+            !filtroTipo || oc.tipo === filtroTipo
+          )
+          if (lista.length === 0) return (
+            <div className="bg-white rounded-xl p-12 text-center text-gray-400 border border-gray-100">
+              <p className="text-lg">✅ Nenhuma ocorrência{filtroTipo ? ` do tipo "${filtroTipo}"` : ''}</p>
+            </div>
+          )
+          return lista.map((oc: any) => (
           <div key={oc.id}
             onClick={() => setOcSelecionada(oc)}
             className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 cursor-pointer hover:shadow-md hover:border-blue-200 transition-all">
@@ -294,7 +312,8 @@ export function Ocorrencias() {
               </div>
             </div>
           </div>
-        ))}
+          ))
+        })()}
       </div>
 
       {/* Modal Nova Ocorrência */}
