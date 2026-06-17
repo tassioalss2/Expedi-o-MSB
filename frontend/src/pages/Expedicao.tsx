@@ -155,62 +155,79 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
   )
 }
 
-function ChipOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void }) {
+function EntradaOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void }) {
   const atrasado = pedido.atrasado
   const critica = pedido.prioridade === 'CRITICA'
   const alta = pedido.prioridade === 'ALTA'
   const entrega = new Date(pedido.data_prevista_entrega + 'T12:00:00')
     .toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-  const clienteAbrev = (pedido.cliente_nome || pedido.cliente?.nome || '').split(' ').slice(0, 2).join(' ')
   const transp = resolveNomeTransportadora(pedido.transportadora_nome, pedido.observacoes)
-  const tooltip = [
-    pedido.numero_pedido,
-    pedido.cliente_nome || pedido.cliente?.nome,
-    pedido.numero_nf ? `NF ${pedido.numero_nf}` : '',
-    transp,
-    `Entrega: ${entrega}`,
-    atrasado ? '⚠ ATRASADO' : '',
-    formatDistanceToNow(parseISO(pedido.atualizado_em), { locale: ptBR, addSuffix: true }),
-  ].filter(Boolean).join(' · ')
+  // "OUTROS (Jamef)" → "Jamef", "BRIX" → "BRIX"
+  const transpLabel = transp ? (transp.match(/\(([^)]+)\)/)?.[1] ?? transp) : ''
+  const tempo = formatDistanceToNow(parseISO(pedido.atualizado_em), { locale: ptBR, addSuffix: false })
+  const clienteAbrev = (pedido.cliente_nome || pedido.cliente?.nome || '').split(' ').slice(0, 2).join(' ')
 
   return (
     <button
       onClick={onClick}
-      title={tooltip}
-      className={`w-full text-left px-2 py-1.5 rounded-md border transition-all
-        hover:shadow-sm hover:brightness-95 active:scale-[0.99] ${
-        atrasado
-          ? 'bg-red-100 border-red-300'
-          : critica
-          ? 'bg-orange-50 border-orange-200'
-          : alta
-          ? 'bg-amber-50 border-amber-100'
-          : 'bg-white border-gray-200'
+      title={[
+        pedido.numero_pedido,
+        pedido.cliente_nome || pedido.cliente?.nome,
+        pedido.numero_nf ? `NF ${pedido.numero_nf}` : '',
+        transp,
+        `Entrega ${entrega}`,
+        atrasado ? '⚠ ATRASADO' : '',
+        tempo,
+      ].filter(Boolean).join(' · ')}
+      className={`w-full flex items-center gap-1.5 px-2 py-[5px] rounded border text-left
+        transition-all hover:shadow-sm hover:brightness-95 active:scale-[0.99] ${
+        atrasado        ? 'bg-red-100 border-red-200' :
+        critica         ? 'bg-orange-50 border-orange-200' :
+        alta            ? 'bg-amber-50 border-amber-100' :
+                          'bg-white border-gray-200'
       }`}
     >
-      <div className="flex items-center justify-between gap-1">
-        <span className={`font-bold text-xs truncate ${atrasado ? 'text-red-800' : 'text-gray-900'}`}>
-          {atrasado && <span className="mr-0.5">⚠</span>}
-          {pedido.numero_pedido}
-          {(pedido.remessa_numero ?? 1) > 1 && (
-            <span className="text-purple-600 ml-0.5 text-[10px]">R{pedido.remessa_numero}</span>
-          )}
+      {/* Indicador de prioridade / atraso */}
+      <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${
+        atrasado  ? 'bg-red-500' :
+        critica   ? 'bg-orange-500' :
+        alta      ? 'bg-amber-400' :
+                    'bg-gray-200'
+      }`} />
+
+      {/* OV# */}
+      <span className={`font-bold text-xs flex-shrink-0 ${atrasado ? 'text-red-800' : 'text-gray-900'}`}>
+        {pedido.numero_pedido}
+        {(pedido.remessa_numero ?? 1) > 1 && (
+          <span className="text-purple-600 text-[10px] ml-0.5">R{pedido.remessa_numero}</span>
+        )}
+      </span>
+
+      {/* Cliente — ocupa o espaço restante */}
+      <span className="text-[10px] text-gray-500 truncate flex-1 min-w-0">{clienteAbrev}</span>
+
+      {/* NF */}
+      {pedido.numero_nf && (
+        <span className="text-[10px] text-blue-600 flex-shrink-0 font-medium bg-blue-50 px-1 rounded">
+          NF{pedido.numero_nf}
         </span>
-        <span className={`text-[10px] flex-shrink-0 font-medium ${atrasado ? 'text-red-600' : 'text-gray-400'}`}>
-          {entrega}
+      )}
+
+      {/* Transportadora */}
+      {transpLabel && (
+        <span className="text-[10px] text-gray-500 flex-shrink-0 max-w-[52px] truncate bg-gray-100 px-1 rounded"
+          title={transp}>
+          {transpLabel}
         </span>
-      </div>
-      <div className="flex items-center justify-between gap-1 mt-0.5">
-        <span className="text-[10px] text-gray-500 truncate">{clienteAbrev}</span>
-        {pedido.numero_nf
-          ? <span className="text-[10px] text-blue-600 flex-shrink-0 font-medium">NF{pedido.numero_nf}</span>
-          : critica
-          ? <span className="text-[10px] text-orange-500 flex-shrink-0 font-bold">CRÍTICA</span>
-          : alta
-          ? <span className="text-[10px] text-amber-600 flex-shrink-0">ALTA</span>
-          : null
-        }
-      </div>
+      )}
+
+      {/* Data */}
+      <span className={`text-[10px] flex-shrink-0 font-semibold ${atrasado ? 'text-red-600' : 'text-gray-400'}`}>
+        {atrasado ? '⚠ ' : ''}{entrega}
+      </span>
+
+      {/* Tempo */}
+      <span className="text-[10px] text-gray-300 flex-shrink-0 hidden xl:inline">{tempo}</span>
     </button>
   )
 }
@@ -368,12 +385,12 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
                         {lista.length}
                       </span>
                     </div>
-                    <div className="bg-gray-100 rounded-b-lg p-1.5 grid grid-cols-2 gap-1 overflow-y-auto flex-1 content-start">
+                    <div className="bg-gray-100 rounded-b-lg p-1.5 flex flex-col gap-0.5 overflow-y-auto flex-1">
                       {lista.length === 0 && (
-                        <p className="text-xs text-gray-400 text-center py-3 col-span-2">—</p>
+                        <p className="text-xs text-gray-400 text-center py-3">—</p>
                       )}
                       {lista.map((p) => (
-                        <ChipOV key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
+                        <EntradaOV key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
                       ))}
                     </div>
                   </div>
