@@ -401,10 +401,17 @@ def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletReques
         if status_pallet not in ("realizado", "cancelado", None):
             raise HTTPException(status_code=400, detail="Pedido já está em um pallet")
 
+    # Auto-preenche num_caixas da cubagem se não informado
+    num_caixas = payload.num_caixas
+    if num_caixas is None:
+        cub = db.table("cubagem").select("num_caixas").eq("pedido_id", pedido["id"]).execute()
+        if cub.data:
+            num_caixas = cub.data[0].get("num_caixas")
+
     insert_data: dict = {
         "pallet_id": pallet_id,
         "pedido_id": pedido["id"],
-        "num_caixas": payload.num_caixas,
+        "num_caixas": num_caixas,
         "adicionado_em": _agora(),
     }
     if payload.observacao:

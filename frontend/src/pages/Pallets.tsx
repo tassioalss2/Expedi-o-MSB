@@ -28,7 +28,6 @@ export function Pallets() {
   const qc = useQueryClient()
   const [modal, setModal] = useState<string | null>(null)
   const [ovInput, setOvInput] = useState('')
-  const [numCaixas, setNumCaixas] = useState('')
   const [modoColeta, setModoColeta] = useState<string | null>(null) // pallet_id em modo coleta
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set())
 
@@ -50,7 +49,6 @@ export function Pallets() {
     mutationFn: (palletId: string) =>
       api.post(`/pallets/${palletId}/pedidos`, {
         pedido_id: ovInput,
-        num_caixas: numCaixas ? Number(numCaixas) : null,
       }),
     onSuccess: () => {
       toast.success('OV adicionada!')
@@ -58,7 +56,6 @@ export function Pallets() {
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       setModal(null)
       setOvInput('')
-      setNumCaixas('')
     },
     onError: (e: any) => toast.error(errMsg(e, 'Erro ao adicionar OV')),
   })
@@ -246,7 +243,7 @@ export function Pallets() {
                 ) : (
                   <>
                     <button
-                      onClick={() => { setModal(pallet.id); setOvInput(''); setNumCaixas('') }}
+                      onClick={() => { setModal(pallet.id); setOvInput('') }}
                       className="flex-1 text-xs py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
                     >
                       + Adicionar OV
@@ -272,30 +269,18 @@ export function Pallets() {
           <div className="bg-white rounded-2xl w-full max-w-sm">
             <div className="p-5 border-b">
               <h2 className="text-lg font-bold">Adicionar OV ao Pallet</h2>
-              <p className="text-sm text-gray-500">OV precisa estar com status <strong>FATURADO</strong></p>
+              <p className="text-sm text-gray-500">OV precisa estar com status <strong>FATURADO</strong> · nº de caixas preenchido automaticamente da cubagem</p>
             </div>
-            <div className="p-5 space-y-4">
-              <div>
-                <label className="text-sm font-medium text-gray-700">Número da OV *</label>
-                <input
-                  type="text"
-                  value={ovInput}
-                  onChange={e => setOvInput(e.target.value.toUpperCase())}
-                  className="w-full border rounded-lg px-3 py-3 text-lg mt-1 font-mono"
-                  placeholder="OV015374"
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-700">Nº de Caixas</label>
-                <input
-                  type="number"
-                  value={numCaixas}
-                  onChange={e => setNumCaixas(e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
-                  placeholder="Ex: 2"
-                />
-              </div>
+            <div className="p-5">
+              <label className="text-sm font-medium text-gray-700">Número da OV *</label>
+              <input
+                type="text"
+                value={ovInput}
+                onChange={e => setOvInput(e.target.value.toUpperCase())}
+                className="w-full border rounded-lg px-3 py-3 text-lg mt-1 font-mono"
+                placeholder="OV015374"
+                autoFocus
+              />
             </div>
             <div className="p-5 border-t flex gap-2">
               <button onClick={() => setModal(null)} className="flex-1 py-2.5 border rounded-lg text-sm">
