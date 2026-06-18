@@ -1112,7 +1112,6 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
 function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [palletId, setPalletId] = useState('')
-  const [numCaixas, setNumCaixas] = useState('')
   const [transportadoraOutros, setTransportadoraOutros] = useState('')
 
   const { data: pallets = [] } = useQuery({
@@ -1134,7 +1133,6 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
   const mutation = useMutation({
     mutationFn: () => api.post(`/pallets/${palletId}/pedidos`, {
       pedido_id: pedido.numero_pedido,
-      num_caixas: numCaixas ? Number(numCaixas) : null,
       observacao: isOutros && transportadoraOutros.trim() ? transportadoraOutros.trim() : undefined,
     }),
     onSuccess: () => {
@@ -1197,14 +1195,6 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
             </div>
           )}
 
-          {palletId && (
-            <div>
-              <label className="text-sm font-medium text-gray-700">Nº de Caixas desta OV</label>
-              <input type="number" value={numCaixas} onChange={e => setNumCaixas(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
-                placeholder="Ex: 2" />
-            </div>
-          )}
         </div>
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
