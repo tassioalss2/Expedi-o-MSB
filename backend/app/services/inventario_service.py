@@ -359,8 +359,42 @@ def listar_pallets(status: str | None = None) -> list:
         p["pedidos"] = pedidos
         p["total_caixas"] = sum(pp.get("num_caixas") or 0 for pp in pedidos)
         p["transportadora_nome"] = p.get("transportadoras", {}).get("nome") if p.get("transportadoras") else None
+        # Pallets temporários de transportadora real usam observacao como nome
+        if not p["transportadora_nome"] and p.get("observacao"):
+            p["transportadora_nome"] = p["observacao"]
+            p["pallet_temp"] = True
 
     return pallets
+
+
+def _extrair_transportadora_real(observacoes: str | None) -> str | None:
+    """Extrai o nome da transportadora real do campo observacoes (padrão [Transp. real: X])."""
+    import re
+    if not observacoes:
+        return None
+    m = re.search(r'\[Transp\. real: ([^\]]+)\]', observacoes)
+    return m.group(1).strip() if m else None
+
+
+def _obter_ou_criar_pallet_temp(db, nome_transportadora: str) -> str:
+    """Retorna o id de um pallet temporário ativo para esta transportadora, criando um se necessário."""
+    existentes = db.table("pallets").select("id, status")\
+        .eq("observacao", nome_transportadora).execute().data
+    ativo = next((p for p in (existentes or [])
+                  if p.get("status") not in ("COLETADO", "FECHADO", "CANCELADO")), None)
+    if ativo:
+        return ativo["id"]
+    # Cria novo pallet temporário com código sequencial
+    todos = db.table("pallets").select("codigo").execute().data
+    num = len(todos) + 1
+    codigo = f"PLT-{str(num).zfill(4)}"
+    novo = db.table("pallets").insert({
+        "codigo": codigo,
+        "status": "ABERTO",
+        "observacao": nome_transportadora,
+        "criado_em": _agora(),
+    }).execute().data[0]
+    return novo["id"]
 
 
 def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletRequest, usuario: UsuarioOut) -> dict:
@@ -391,6 +425,12 @@ def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletReques
             status_code=422,
             detail=f"Pedido '{pedido['numero_pedido']}' precisa estar FATURADO (status atual: {pedido['status']})"
         )
+
+    # Se a OV tem transportadora real (campo Transp. real em observacoes),
+    # redireciona automaticamente para o pallet temporário dessa transportadora
+    transp_real = _extrair_transportadora_real(pedido.get("observacoes"))
+    if transp_real:
+        pallet_id = _obter_ou_criar_pallet_temp(db, transp_real)
 
     # Verifica se já está em algum pallet ATIVO (ignora pallets já coletados/cancelados)
     existente = db.table("pallet_pedidos").select("id, pallet_id").eq("pedido_id", pedido["id"]).execute()

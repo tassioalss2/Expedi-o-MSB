@@ -128,17 +128,25 @@ export function Pallets() {
         {todos.map((pallet: any) => {
           if (!pallet) return null
           const nome = pallet.transportadora_nome || ''
-          const cor = CORES[nome] || 'bg-gray-500'
+          const isTemp = pallet.pallet_temp === true
+          const cor = CORES[nome] || (isTemp ? 'bg-indigo-600' : 'bg-gray-500')
           const pedidos: any[] = pallet.pedidos || []
 
           return (
             <div key={pallet.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
               <div className={`${cor} px-4 py-3 flex justify-between items-center`}>
-                <div>
-                  <p className="font-bold text-white text-sm">{nome || pallet.codigo}</p>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-bold text-white text-sm truncate">{nome || pallet.codigo}</p>
+                    {isTemp && (
+                      <span className="flex-shrink-0 text-[10px] font-semibold bg-white bg-opacity-25 text-white px-1.5 py-0.5 rounded-full">
+                        TEMP
+                      </span>
+                    )}
+                  </div>
                   <p className="text-white text-xs opacity-75">{pallet.codigo}</p>
                 </div>
-                <span className="text-white font-bold text-2xl">{pedidos.length}</span>
+                <span className="text-white font-bold text-2xl ml-2 flex-shrink-0">{pedidos.length}</span>
               </div>
 
               {modoColeta === pallet.id && (
