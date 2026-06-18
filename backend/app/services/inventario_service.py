@@ -341,27 +341,48 @@ def criar_pallet(payload: PalletCreate, usuario: UsuarioOut) -> dict:
     return result
 
 
-def _migrar_outros_para_temp(db) -> bool:
-    """Move OVs em PLT-OUTROS que têm [Transp. real: X] para pallets temporários.
-    Retorna True se alguma migração ocorreu (para forçar re-fetch)."""
+FIXO_CARRIER_MAP = {
+    'BRIX': 'PLT-BRIX',
+    'RR CARGO': 'PLT-RR CARGO',
+    'CORREIOS': 'PLT-CORREIOS',
+}
+
+
+def _resolver_pallet_por_carrier(db, carrier: str) -> str | None:
+    """Retorna o pallet_id correto para um nome de transportadora.
+    Pallets fixos conhecidos → usa o fixo. Outros → cria/reutiliza temp."""
+    upper = carrier.upper()
+    if upper in FIXO_CARRIER_MAP:
+        row = db.table("pallets").select("id").eq("codigo", FIXO_CARRIER_MAP[upper]).execute().data
+        return row[0]["id"] if row else None
+    return _obter_ou_criar_pallet_temp(db, carrier)
+
+
+def _migrar_outros_para_temp(db) -> None:
+    """Move todas as OVs em PLT-OUTROS para o pallet correto de cada transportadora.
+    Cobre dois casos: [Transp. real: X] em observacoes OU transportadora_nome direto."""
     import re
     plt_outros = db.table("pallets").select("id").eq("codigo", "PLT-OUTROS").execute().data
     if not plt_outros:
-        return False
+        return
     plt_outros_id = plt_outros[0]["id"]
     pps = db.table("pallet_pedidos").select(
-        "id, pedidos(observacoes)"
+        "id, pedidos(observacoes, transportadoras(nome))"
     ).eq("pallet_id", plt_outros_id).eq("status", "AGUARDANDO").execute().data
-    migrou = False
     for pp in (pps or []):
-        obs = ((pp.get("pedidos") or {}).get("observacoes") or "")
+        ped = pp.get("pedidos") or {}
+        obs = ped.get("observacoes") or ""
+        transp_nome = ((ped.get("transportadoras") or {}).get("nome") or "")
+        # Prioridade 1: [Transp. real: X] em observacoes
         m = re.search(r'\[Transp\. real: ([^\]]+)\]', obs)
-        if m:
-            carrier = m.group(1).strip()
-            target_id = _obter_ou_criar_pallet_temp(db, carrier)
-            db.table("pallet_pedidos").update({"pallet_id": target_id}).eq("id", pp["id"]).execute()
-            migrou = True
-    return migrou
+        carrier = m.group(1).strip() if m else None
+        # Prioridade 2: nome direto da transportadora (ex: "RR CARGO" linkado diretamente)
+        if not carrier and transp_nome and transp_nome.upper() != 'OUTROS':
+            carrier = transp_nome
+        if carrier:
+            target_id = _resolver_pallet_por_carrier(db, carrier)
+            if target_id:
+                db.table("pallet_pedidos").update({"pallet_id": target_id}).eq("id", pp["id"]).execute()
 
 
 def listar_pallets(status: str | None = None) -> list:
@@ -451,11 +472,18 @@ def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletReques
             detail=f"Pedido '{pedido['numero_pedido']}' precisa estar FATURADO (status atual: {pedido['status']})"
         )
 
-    # Se a OV tem transportadora real (campo Transp. real em observacoes),
-    # redireciona automaticamente para o pallet temporário dessa transportadora
+    # Redireciona para o pallet correto conforme transportadora da OV
     transp_real = _extrair_transportadora_real(pedido.get("observacoes"))
+    if not transp_real and pedido.get("transportadora_id"):
+        t = db.table("transportadoras").select("nome").eq("id", pedido["transportadora_id"]).execute().data
+        if t:
+            nome_t = (t[0].get("nome") or "").upper()
+            if nome_t and nome_t != "OUTROS":
+                transp_real = t[0].get("nome")
     if transp_real:
-        pallet_id = _obter_ou_criar_pallet_temp(db, transp_real)
+        target_id = _resolver_pallet_por_carrier(db, transp_real)
+        if target_id:
+            pallet_id = target_id
 
     # Verifica se já está em algum pallet ATIVO (ignora pallets já coletados/cancelados)
     existente = db.table("pallet_pedidos").select("id, pallet_id").eq("pedido_id", pedido["id"]).execute()
