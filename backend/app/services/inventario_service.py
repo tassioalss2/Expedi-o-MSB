@@ -341,8 +341,35 @@ def criar_pallet(payload: PalletCreate, usuario: UsuarioOut) -> dict:
     return result
 
 
+def _migrar_outros_para_temp(db) -> bool:
+    """Move OVs em PLT-OUTROS que têm [Transp. real: X] para pallets temporários.
+    Retorna True se alguma migração ocorreu (para forçar re-fetch)."""
+    import re
+    plt_outros = db.table("pallets").select("id").eq("codigo", "PLT-OUTROS").execute().data
+    if not plt_outros:
+        return False
+    plt_outros_id = plt_outros[0]["id"]
+    pps = db.table("pallet_pedidos").select(
+        "id, pedidos(observacoes)"
+    ).eq("pallet_id", plt_outros_id).eq("status", "AGUARDANDO").execute().data
+    migrou = False
+    for pp in (pps or []):
+        obs = ((pp.get("pedidos") or {}).get("observacoes") or "")
+        m = re.search(r'\[Transp\. real: ([^\]]+)\]', obs)
+        if m:
+            carrier = m.group(1).strip()
+            target_id = _obter_ou_criar_pallet_temp(db, carrier)
+            db.table("pallet_pedidos").update({"pallet_id": target_id}).eq("id", pp["id"]).execute()
+            migrou = True
+    return migrou
+
+
 def listar_pallets(status: str | None = None) -> list:
     db = get_service_db()
+
+    # Migra OVs legadas em PLT-OUTROS para seus pallets temporários
+    _migrar_outros_para_temp(db)
+
     query = db.table("pallets").select("*, transportadoras(id, nome)")
     if status:
         query = query.eq("status", status)
@@ -352,14 +379,12 @@ def listar_pallets(status: str | None = None) -> list:
         pedidos = db.table("pallet_pedidos").select(
             "*, pedidos(numero_pedido, numero_nf, status, observacoes, transportadora_id, transportadoras(nome), clientes(nome))"
         ).eq("pallet_id", p["id"]).eq("status", "AGUARDANDO").execute().data
-        # Adiciona transportadora_nome direto no pedido para facilitar frontend
         for pp in pedidos:
             if pp.get("pedidos") and pp["pedidos"].get("transportadoras"):
                 pp["pedidos"]["transportadora_nome"] = pp["pedidos"]["transportadoras"].get("nome")
         p["pedidos"] = pedidos
         p["total_caixas"] = sum(pp.get("num_caixas") or 0 for pp in pedidos)
         p["transportadora_nome"] = p.get("transportadoras", {}).get("nome") if p.get("transportadoras") else None
-        # Pallets temporários de transportadora real usam observacao como nome
         if not p["transportadora_nome"] and p.get("observacao"):
             p["transportadora_nome"] = p["observacao"]
             p["pallet_temp"] = True
