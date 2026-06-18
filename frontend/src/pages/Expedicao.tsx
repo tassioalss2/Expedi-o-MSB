@@ -426,42 +426,83 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
   )
 }
 
+const ORDEM_LISTA: StatusPedido[] = [
+  'AGUARD_CREDITO', 'LIBERADO', 'EM_INVENTARIO', 'AGUARD_VERIFICACAO',
+  'DIVERGENCIA', 'AGUARD_TRATATIVA', 'EM_PROCESSO_SISTEMICO',
+  'AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO',
+  'BLOQUEADO', 'CANCELADO',
+]
+
 function ListaView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedido: (p: Pedido) => void }) {
+  if (pedidos.length === 0) return (
+    <div className="py-16 text-center text-gray-400">Nenhum pedido encontrado</div>
+  )
+
+  const agrupado = ORDEM_LISTA.reduce<Record<string, Pedido[]>>((acc, status) => {
+    const lista = pedidos
+      .filter(p => p.status === status)
+      .sort((a, b) => Number(b.atrasado) - Number(a.atrasado) || a.data_prevista_entrega.localeCompare(b.data_prevista_entrega))
+    if (lista.length > 0) acc[status] = lista
+    return acc
+  }, {})
+
+  // statuses fora da ordem padrão
+  pedidos.forEach(p => {
+    if (!ORDEM_LISTA.includes(p.status as StatusPedido) && !agrupado[p.status]) {
+      agrupado[p.status] = pedidos.filter(x => x.status === p.status)
+    }
+  })
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-50 border-b border-gray-100">
-          <tr>
-            <th className="text-left px-4 py-3 text-gray-600 font-semibold">Pedido</th>
-            <th className="text-left px-4 py-3 text-gray-600 font-semibold">Cliente</th>
-            <th className="text-left px-4 py-3 text-gray-600 font-semibold">Status</th>
-            <th className="text-left px-4 py-3 text-gray-600 font-semibold">Prioridade</th>
-            <th className="text-left px-4 py-3 text-gray-600 font-semibold">Entrega Prev.</th>
-            <th className="text-left px-4 py-3 text-gray-600 font-semibold">Transportadora</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-50">
-          {pedidos.map((p) => (
-            <tr
-              key={p.id}
-              onClick={() => onClickPedido(p)}
-              className={`cursor-pointer hover:bg-blue-50 transition-colors ${p.atrasado ? 'bg-red-50' : ''}`}
-            >
-              <td className="px-4 py-3 font-bold text-gray-900">{p.numero_pedido}</td>
-              <td className="px-4 py-3 text-gray-600">{p.cliente_nome || p.cliente?.nome}</td>
-              <td className="px-4 py-3"><StatusBadge status={p.status} size="sm" /></td>
-              <td className="px-4 py-3"><PrioridadeBadge prioridade={p.prioridade} /></td>
-              <td className={`px-4 py-3 ${p.atrasado ? 'text-red-600 font-semibold' : 'text-gray-600'}`}>
-                {p.atrasado ? '⚠ ' : ''}{new Date(p.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}
-              </td>
-              <td className="px-4 py-3 text-gray-500">{resolveNomeTransportadora(p.transportadora_nome, p.observacoes) || '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {pedidos.length === 0 && (
-        <div className="py-16 text-center text-gray-400">Nenhum pedido encontrado</div>
-      )}
+    <div className="space-y-3">
+      {Object.entries(agrupado).map(([status, lista]) => {
+        const cfg = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG]
+        const atrasados = lista.filter(p => p.atrasado).length
+        return (
+          <div key={status} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 flex-shrink-0"
+              style={{ backgroundColor: cfg?.cor || '#F3F4F6', color: cfg?.corTexto || '#374151' }}>
+              <span className="font-bold text-sm flex items-center gap-1.5">
+                <span>{cfg?.icone}</span>
+                <span>{cfg?.label || status}</span>
+              </span>
+              <div className="flex items-center gap-2">
+                {atrasados > 0 && (
+                  <span className="text-[11px] font-bold bg-red-500 text-white px-2 py-0.5 rounded-full">
+                    ⚠ {atrasados} atrasada{atrasados > 1 ? 's' : ''}
+                  </span>
+                )}
+                <span className="text-xs font-bold bg-black bg-opacity-10 rounded-full px-2 py-0.5">
+                  {lista.length} OV{lista.length > 1 ? 's' : ''}
+                </span>
+              </div>
+            </div>
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-gray-50">
+                {lista.map(p => (
+                  <tr key={p.id} onClick={() => onClickPedido(p)}
+                    className={`cursor-pointer hover:bg-blue-50 transition-colors ${p.atrasado ? 'bg-red-50' : ''}`}>
+                    <td className="px-4 py-2.5 font-bold text-gray-900 w-28">
+                      {p.numero_pedido}
+                      {(p.remessa_numero ?? 1) > 1 && (
+                        <span className="ml-1 text-[10px] font-bold text-purple-700 bg-purple-100 px-1 rounded">R{p.remessa_numero}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-600">{p.cliente_nome || p.cliente?.nome}</td>
+                    <td className="px-4 py-2.5 w-24"><PrioridadeBadge prioridade={p.prioridade} /></td>
+                    <td className={`px-4 py-2.5 w-32 font-medium text-sm ${p.atrasado ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
+                      {p.atrasado ? '⚠ ' : ''}{new Date(p.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-400 text-sm w-36 truncate">
+                      {resolveNomeTransportadora(p.transportadora_nome, p.observacoes) || '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -592,7 +633,9 @@ export function Expedicao() {
           <KanbanView pedidos={pedidosFiltrados} onClickPedido={(p) => navigate(`/expedicao/${p.id}`)} />
         </div>
       ) : (
-        <ListaView pedidos={pedidosFiltrados} onClickPedido={(p) => navigate(`/expedicao/${p.id}`)} />
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <ListaView pedidos={pedidosFiltrados} onClickPedido={(p) => navigate(`/expedicao/${p.id}`)} />
+        </div>
       )}
     </div>
   )
