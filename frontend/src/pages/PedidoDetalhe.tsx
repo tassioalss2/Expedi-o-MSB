@@ -1296,6 +1296,7 @@ export function PedidoDetalhe() {
   const [valorProdutos, setValorProdutos] = useState('')
   const [valorFrete, setValorFrete] = useState('')
   const [novaDataEntrega, setNovaDataEntrega] = useState('')
+  const [codigoRastreio, setCodigoRastreio] = useState('')
   const [reimprimindoEspelho, setReimprimindoEspelho] = useState(false)
 
   const { data: pedido, isLoading } = useQuery<Pedido>({
@@ -1331,6 +1332,8 @@ export function PedidoDetalhe() {
     ? ((Number(valorProdutos) || 0) + (Number(valorFrete) || 0))
     : (valorNf ? Number(valorNf) : null)
 
+  const isCorreios = pedido?.transportadora?.nome === 'CORREIOS'
+
   const faturarMutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${id}/faturamento`, {
       numero_nf: nf,
@@ -1338,6 +1341,7 @@ export function PedidoDetalhe() {
       valor_produtos: isCIF && valorProdutos ? Number(valorProdutos) : null,
       valor_frete: isCIF && valorFrete ? Number(valorFrete) : null,
       data_prevista_entrega: novaDataEntrega || null,
+      codigo_rastreio: isCorreios && codigoRastreio.trim() ? codigoRastreio.trim() : undefined,
     }),
     onSuccess: async () => {
       toast.success('NF registrada!')
@@ -1528,6 +1532,9 @@ export function PedidoDetalhe() {
             } />
             <Linha label="Transportadora" valor={pedido.transportadora?.nome || pedido.transportadora_nome} />
             <Linha label="NF" valor={pedido.numero_nf} />
+            {pedido.codigo_rastreio && (
+              <Linha label="📮 Rastreio" valor={pedido.codigo_rastreio} />
+            )}
             {(pedido as any).valor_produtos != null && (
               <Linha label="💰 Valor Produtos" valor={`R$ ${Number((pedido as any).valor_produtos).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
             )}
@@ -1852,6 +1859,23 @@ export function PedidoDetalhe() {
                 <input type="text" value={nf} onChange={e => setNf(e.target.value)}
                   className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono" placeholder="000001" />
               </div>
+
+              {/* Código de rastreio — só Correios */}
+              {isCorreios && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 space-y-1">
+                  <label className="text-sm font-semibold text-yellow-800">
+                    📮 Código de Rastreio (Correios)
+                  </label>
+                  <input
+                    type="text"
+                    value={codigoRastreio}
+                    onChange={e => setCodigoRastreio(e.target.value.toUpperCase())}
+                    className="w-full border border-yellow-300 rounded-lg px-3 py-2.5 text-sm mt-1 font-mono focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                    placeholder="AA000000000BR"
+                  />
+                  <p className="text-xs text-yellow-600">Cartão de postagem para rastreamento</p>
+                </div>
+              )}
 
               {/* FOB — campo único */}
               {!isCIF && (

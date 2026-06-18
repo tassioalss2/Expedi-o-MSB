@@ -185,6 +185,7 @@ class PedidoOut(BaseModel):
     data_real_coleta: Optional[datetime]
     numero_nf: Optional[str]
     valor_nf: Optional[float]
+    codigo_rastreio: Optional[str] = None
     observacoes: Optional[str]
     criado_em: datetime
     atualizado_em: datetime
@@ -277,6 +278,7 @@ class FaturamentoRequest(BaseModel):
     valor_frete: Optional[float] = None     # CIF: custo do frete separado
     chave_nfe: Optional[str] = None
     data_prevista_entrega: Optional[date] = None  # permite corrigir a data ao registrar NF
+    codigo_rastreio: Optional[str] = None  # só Correios
 
 
 # ── Coleta ────────────────────────────────────────────────────────────────────

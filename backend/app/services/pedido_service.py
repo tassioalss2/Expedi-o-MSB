@@ -529,6 +529,8 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
     }
     if payload.data_prevista_entrega:
         update_data["data_prevista_entrega"] = payload.data_prevista_entrega.isoformat()
+    if payload.codigo_rastreio:
+        update_data["codigo_rastreio"] = payload.codigo_rastreio
 
     db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
 

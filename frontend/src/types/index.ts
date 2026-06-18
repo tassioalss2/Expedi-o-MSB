@@ -84,6 +84,7 @@ export interface Pedido {
   data_real_coleta?: string
   numero_nf?: string
   valor_nf?: number
+  codigo_rastreio?: string
   observacoes?: string
   atrasado: boolean
   criado_em: string
