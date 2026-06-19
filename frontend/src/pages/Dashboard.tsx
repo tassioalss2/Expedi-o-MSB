@@ -238,6 +238,7 @@ export function Dashboard() {
   const otifColor = otifValor === null ? '#D1D5DB' : otifValor >= 95 ? '#22C55E' : otifValor >= 90 ? '#F59E0B' : '#EF4444'
   const [detalheAberto, setDetalheAberto] = useState<string | null>(null)
   const [periodoHorario, setPeriodoHorario] = useState(30)
+  const [horaClicada, setHoraClicada] = useState<number | null>(null)
 
   const inicioHorario = (() => {
     const d = new Date(hoje)
@@ -251,6 +252,14 @@ export function Dashboard() {
       params: { data_inicio: inicioHorario, data_fim: fimMes },
     }).then(r => r.data),
     refetchInterval: 120000,
+  })
+
+  const { data: ovsHora = [], isFetching: carregandoOvs } = useQuery<any[]>({
+    queryKey: ['horario-criacao-detalhe', horaClicada, periodoHorario],
+    queryFn: () => api.get('/pedidos/dashboard/horario-criacao/detalhe', {
+      params: { hora: horaClicada, data_inicio: inicioHorario, data_fim: fimMes },
+    }).then(r => r.data),
+    enabled: horaClicada !== null,
   })
 
   return (
@@ -600,9 +609,12 @@ export function Dashboard() {
                 <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={1} />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                 <Tooltip formatter={(v: any) => [`${v} OVs`, 'Criadas']} />
-                <Bar dataKey="total" radius={[3, 3, 0, 0]}>
+                <Bar dataKey="total" radius={[3, 3, 0, 0]} style={{ cursor: 'pointer' }}
+                  onClick={(data: any) => data?.total > 0 && setHoraClicada(data.hora)}>
                   {horarioData.map((entry, index) => (
-                    <Cell key={index} fill={entry.total === maxTotal && maxTotal > 0 ? '#F59E0B' : '#6366F1'} />
+                    <Cell key={index}
+                      fill={horaClicada === entry.hora ? '#1D4ED8' : entry.total === maxTotal && maxTotal > 0 ? '#F59E0B' : '#6366F1'}
+                    />
                   ))}
                 </Bar>
               </BarChart>
@@ -610,6 +622,68 @@ export function Dashboard() {
           </div>
         )
       })()}
+
+      {/* Modal drill-down por hora */}
+      {horaClicada !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
+            <div className="p-5 border-b flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold">OVs criadas às {String(horaClicada).padStart(2, '0')}h</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Últimos {periodoHorario} dias</p>
+              </div>
+              <button onClick={() => setHoraClicada(null)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {carregandoOvs ? (
+                <p className="text-center text-gray-400 py-8 text-sm">Carregando...</p>
+              ) : ovsHora.length === 0 ? (
+                <p className="text-center text-gray-400 py-8 text-sm">Nenhuma OV neste horário</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">OV</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Cliente</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Status</th>
+                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Horário</th>
+                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Data</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {ovsHora.map((ov: any) => {
+                      const cfg = STATUS_CONFIG[ov.status as keyof typeof STATUS_CONFIG]
+                      return (
+                        <tr key={ov.numero_pedido + ov.data}
+                          onClick={() => { setHoraClicada(null); navigate(`/expedicao/${ov.numero_pedido}`) }}
+                          className="hover:bg-gray-50 cursor-pointer">
+                          <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700">{ov.numero_pedido}</td>
+                          <td className="px-4 py-2.5 text-gray-700 max-w-[160px] truncate">{ov.cliente}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+                              style={{ background: cfg?.cor || '#E5E7EB', color: cfg?.corTexto || '#374151' }}>
+                              {cfg?.icone} {cfg?.label || ov.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono text-gray-600">{ov.horario}</td>
+                          <td className="px-4 py-2.5 text-right text-gray-400 text-xs">
+                            {new Date(ov.data + 'T12:00:00').toLocaleDateString('pt-BR')}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="p-3 border-t text-xs text-gray-400 text-right">
+              {ovsHora.length} OV(s) neste horário
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

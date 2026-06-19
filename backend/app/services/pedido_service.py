@@ -856,3 +856,39 @@ def obter_horario_criacao(data_inicio: Optional[date] = None, data_fim: Optional
             pass
 
     return [{"hora": h, "label": f"{h:02d}h", "total": contagem[h]} for h in range(24)]
+
+
+def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None, data_fim: Optional[date] = None) -> list:
+    from datetime import timedelta
+    db = get_service_db()
+    hoje = date.today()
+    inicio = data_inicio or (hoje - timedelta(days=29))
+    fim = data_fim or hoje
+
+    resultado = db.table("pedidos").select(
+        "numero_pedido, status, criado_em, clientes(nome)"
+    ).neq("status", "CANCELADO")\
+        .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
+        .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
+
+    ovs = []
+    for row in resultado.data:
+        ts_str = row.get("criado_em")
+        if not ts_str:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            hora_brt = (ts.hour - 3) % 24
+            if hora_brt == hora:
+                min_brt = ts.minute
+                ovs.append({
+                    "numero_pedido": row["numero_pedido"],
+                    "cliente": (row.get("clientes") or {}).get("nome", "—"),
+                    "status": row["status"],
+                    "horario": f"{hora_brt:02d}:{min_brt:02d}",
+                    "data": ts_str[:10],
+                })
+        except Exception:
+            pass
+
+    return sorted(ovs, key=lambda x: x["data"] + x["horario"])

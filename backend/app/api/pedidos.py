@@ -425,6 +425,16 @@ def horario_criacao(
     return pedido_service.obter_horario_criacao(data_inicio, data_fim)
 
 
+@router.get("/dashboard/horario-criacao/detalhe")
+def horario_criacao_detalhe(
+    hora: int = Query(..., ge=0, le=23),
+    data_inicio: Optional[date] = Query(None),
+    data_fim: Optional[date] = Query(None),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    return pedido_service.obter_horario_criacao_detalhe(hora, data_inicio, data_fim)
+
+
 @router.get("/dashboard/indicadores/detalhes")
 def indicadores_detalhes(
     metrica: str = Query(...),
