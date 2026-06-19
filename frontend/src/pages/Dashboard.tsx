@@ -5,7 +5,7 @@ import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Package, AlertTriangle, CheckCircle, Clock, Plus, FileText, Timer, DollarSign, Truck, X } from 'lucide-react'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ComposedChart, Line } from 'recharts'
 import api from '../lib/api'
 import type { DashboardOperacional, Indicadores } from '../types'
 import { STATUS_CONFIG } from '../lib/statusConfig'
@@ -260,6 +260,14 @@ export function Dashboard() {
       params: { hora: horaClicada, data_inicio: inicioHorario, data_fim: fimMes },
     }).then(r => r.data),
     enabled: horaClicada !== null,
+  })
+
+  const { data: esforcoData } = useQuery<{ complexidade: any[]; por_dia: any[] }>({
+    queryKey: ['esforco-time', periodoHorario],
+    queryFn: () => api.get('/pedidos/dashboard/esforco', {
+      params: { data_inicio: inicioHorario, data_fim: fimMes },
+    }).then(r => r.data),
+    refetchInterval: 120000,
   })
 
   return (
@@ -623,6 +631,72 @@ export function Dashboard() {
           </div>
         )
       })()}
+
+      {/* Esforço do Time */}
+      {esforcoData && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Volume por dia */}
+          <div className="lg:col-span-2 bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+            <div className="mb-1">
+              <h2 className="text-sm font-semibold text-gray-700">Volume por Dia</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Unidades expedidas e nº de OVs — últimos {periodoHorario} dias</p>
+            </div>
+            <div className="flex gap-5 mb-4 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-indigo-500 inline-block" />
+                Unidades (barra)
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-1 rounded bg-amber-400 inline-block" />
+                OVs (linha)
+              </span>
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={esforcoData.por_dia} margin={{ left: -20, bottom: 0 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 10 }}
+                  interval={periodoHorario > 30 ? 6 : periodoHorario > 14 ? 2 : 0} />
+                <YAxis yAxisId="un" orientation="left" tick={{ fontSize: 11 }} allowDecimals={false} />
+                <YAxis yAxisId="ov" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  formatter={(value: any, name: string) =>
+                    name === 'total_unidades' ? [`${value} un`, 'Unidades'] : [`${value} OVs`, 'OVs']
+                  }
+                />
+                <Bar yAxisId="un" dataKey="total_unidades" fill="#6366F1" radius={[3, 3, 0, 0]} />
+                <Line yAxisId="ov" type="monotone" dataKey="num_ovs" stroke="#F59E0B"
+                  strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Complexidade das OVs */}
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col">
+            <div className="mb-4">
+              <h2 className="text-sm font-semibold text-gray-700">Perfil das OVs</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Complexidade pelo total de unidades</p>
+            </div>
+            <div className="flex-1 space-y-4">
+              {esforcoData.complexidade.map((c: any) => (
+                <div key={c.categoria}>
+                  <div className="flex justify-between items-baseline mb-1.5">
+                    <span className="text-sm font-medium text-gray-700">{c.categoria}</span>
+                    <span className="text-xs text-gray-500">{c.total} OVs · {c.percentual}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${c.percentual}%`, background: c.cor }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 pt-4 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
+              <p>Simples: ≤ 20 unidades</p>
+              <p>Média: 21 – 100 unidades</p>
+              <p>Complexa: &gt; 100 unidades</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal drill-down por hora */}
       {horaClicada !== null && (

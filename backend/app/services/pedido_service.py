@@ -893,3 +893,71 @@ def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None,
             pass
 
     return sorted(ovs, key=lambda x: x["data"] + x["horario"])
+
+
+def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[date] = None) -> dict:
+    from datetime import timedelta
+    db = get_service_db()
+    hoje = date.today()
+    inicio = data_inicio or (hoje - timedelta(days=29))
+    fim = data_fim or hoje
+
+    resultado = db.table("pedidos").select(
+        "id, criado_em, itens_pedido(qtd_solicitada)"
+    ).neq("status", "CANCELADO")\
+        .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
+        .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
+
+    simples = media = complexa = 0
+    por_dia: dict = {}
+
+    for row in resultado.data:
+        itens = row.get("itens_pedido") or []
+        total_un = sum(float(i.get("qtd_solicitada") or 0) for i in itens)
+
+        if total_un <= 20:
+            simples += 1
+        elif total_un <= 100:
+            media += 1
+        else:
+            complexa += 1
+
+        criado_em = row.get("criado_em")
+        if criado_em:
+            try:
+                ts = datetime.fromisoformat(criado_em.replace("Z", "+00:00"))
+                ts_brt = ts - timedelta(hours=3)
+                dia = ts_brt.strftime("%Y-%m-%d")
+                if dia not in por_dia:
+                    por_dia[dia] = {"total_unidades": 0.0, "num_ovs": 0}
+                por_dia[dia]["total_unidades"] += total_un
+                por_dia[dia]["num_ovs"] += 1
+            except Exception:
+                pass
+
+    total = simples + media + complexa
+
+    dias_ordenados = []
+    d = inicio
+    while d <= fim:
+        dia_str = d.isoformat()
+        entry = por_dia.get(dia_str, {"total_unidades": 0.0, "num_ovs": 0})
+        dias_ordenados.append({
+            "data": dia_str,
+            "label": d.strftime("%d/%m"),
+            "total_unidades": round(entry["total_unidades"]),
+            "num_ovs": entry["num_ovs"],
+        })
+        d += timedelta(days=1)
+
+    return {
+        "complexidade": [
+            {"categoria": "Simples", "cor": "#22C55E", "total": simples,
+             "percentual": round(simples / total * 100) if total else 0},
+            {"categoria": "Média", "cor": "#6366F1", "total": media,
+             "percentual": round(media / total * 100) if total else 0},
+            {"categoria": "Complexa", "cor": "#F97316", "total": complexa,
+             "percentual": round(complexa / total * 100) if total else 0},
+        ],
+        "por_dia": dias_ordenados,
+    }

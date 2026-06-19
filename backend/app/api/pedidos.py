@@ -435,6 +435,15 @@ def horario_criacao_detalhe(
     return pedido_service.obter_horario_criacao_detalhe(hora, data_inicio, data_fim)
 
 
+@router.get("/dashboard/esforco")
+def esforco_time(
+    data_inicio: Optional[date] = Query(None),
+    data_fim: Optional[date] = Query(None),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    return pedido_service.obter_esforco_time(data_inicio, data_fim)
+
+
 @router.get("/dashboard/indicadores/detalhes")
 def indicadores_detalhes(
     metrica: str = Query(...),
