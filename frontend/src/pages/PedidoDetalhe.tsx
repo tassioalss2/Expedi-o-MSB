@@ -1113,6 +1113,7 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
   const qc = useQueryClient()
   const [palletId, setPalletId] = useState('')
   const [transportadoraOutros, setTransportadoraOutros] = useState('')
+  const [conferidoNF, setConferidoNF] = useState(false)
 
   const { data: pallets = [] } = useQuery({
     queryKey: ['pallets-ativos'],
@@ -1195,11 +1196,36 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
             </div>
           )}
 
+          {/* Conferência físico vs NF */}
+          <button
+            type="button"
+            onClick={() => setConferidoNF(v => !v)}
+            className={`w-full flex items-center gap-3 p-4 rounded-xl border-2 text-left transition-all ${
+              conferidoNF
+                ? 'border-green-500 bg-green-50'
+                : 'border-dashed border-gray-300 hover:border-gray-400 bg-gray-50'
+            }`}
+          >
+            <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+              conferidoNF ? 'bg-green-500 border-green-500' : 'border-gray-400'
+            }`}>
+              {conferidoNF && <span className="text-white text-xs font-bold">✓</span>}
+            </div>
+            <div>
+              <p className={`text-sm font-semibold ${conferidoNF ? 'text-green-800' : 'text-gray-600'}`}>
+                Físico confere com a Nota Fiscal *
+              </p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Verifiquei que os itens da caixa estão de acordo com o q consta na NF
+              </p>
+            </div>
+          </button>
+
         </div>
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !palletId || (isOutros && !transportadoraOutros.trim())}
+            disabled={mutation.isPending || !palletId || (isOutros && !transportadoraOutros.trim()) || !conferidoNF}
             className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-teal-500">
             {mutation.isPending ? 'Alocando...' : '📦 Confirmar Alocação'}
           </button>
