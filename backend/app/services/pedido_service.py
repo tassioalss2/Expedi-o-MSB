@@ -817,7 +817,6 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
             "tipo,descricao,status,criado_em,pedidos(numero_pedido,clientes(nome))"
         ).eq("retrabalho", "true")\
          .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
-
          .execute().data
         return [{
             "numero_pedido": (r.get("pedidos") or {}).get("numero_pedido", "—"),
