@@ -577,8 +577,9 @@ export function Dashboard() {
 
       {/* Horário de Criação das OVs */}
       {(() => {
-        const totalOvs = horarioData.reduce((a, h) => a + h.total, 0)
-        const picoEntry = horarioData.reduce((max, h) => h.total > max.total ? h : max, { hora: 0, label: '00h', total: 0 })
+        const dadosFiltrados = horarioData.filter((h: any) => h.hora >= 6)
+        const totalOvs = dadosFiltrados.reduce((a: number, h: any) => a + h.total, 0)
+        const picoEntry = dadosFiltrados.reduce((max: any, h: any) => h.total > max.total ? h : max, { hora: 6, label: '06h', total: 0 })
         const maxTotal = picoEntry.total
         return (
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
@@ -605,13 +606,13 @@ export function Dashboard() {
               )}
             </div>
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={horarioData} margin={{ left: -20, bottom: 0 }}>
+              <BarChart data={dadosFiltrados} margin={{ left: -20, bottom: 0 }}>
                 <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={1} />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                 <Tooltip formatter={(v: any) => [`${v} OVs`, 'Criadas']} />
                 <Bar dataKey="total" radius={[3, 3, 0, 0]} style={{ cursor: 'pointer' }}
                   onClick={(data: any) => data?.total > 0 && setHoraClicada(data.hora)}>
-                  {horarioData.map((entry, index) => (
+                  {dadosFiltrados.map((entry: any, index: number) => (
                     <Cell key={index}
                       fill={horaClicada === entry.hora ? '#1D4ED8' : entry.total === maxTotal && maxTotal > 0 ? '#F59E0B' : '#6366F1'}
                     />
