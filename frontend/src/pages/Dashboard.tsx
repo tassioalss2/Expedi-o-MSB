@@ -237,6 +237,21 @@ export function Dashboard() {
   const otifValor = indicadores?.otif ?? null
   const otifColor = otifValor === null ? '#D1D5DB' : otifValor >= 95 ? '#22C55E' : otifValor >= 90 ? '#F59E0B' : '#EF4444'
   const [detalheAberto, setDetalheAberto] = useState<string | null>(null)
+  const [periodoHorario, setPeriodoHorario] = useState(30)
+
+  const inicioHorario = (() => {
+    const d = new Date(hoje)
+    d.setDate(d.getDate() - (periodoHorario - 1))
+    return format(d, 'yyyy-MM-dd')
+  })()
+
+  const { data: horarioData = [] } = useQuery<any[]>({
+    queryKey: ['horario-criacao', periodoHorario],
+    queryFn: () => api.get('/pedidos/dashboard/horario-criacao', {
+      params: { data_inicio: inicioHorario, data_fim: fimMes },
+    }).then(r => r.data),
+    refetchInterval: 120000,
+  })
 
   return (
     <div className="p-6 space-y-6">
@@ -550,6 +565,51 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Horário de Criação das OVs */}
+      {(() => {
+        const totalOvs = horarioData.reduce((a, h) => a + h.total, 0)
+        const picoEntry = horarioData.reduce((max, h) => h.total > max.total ? h : max, { hora: 0, label: '00h', total: 0 })
+        const maxTotal = picoEntry.total
+        return (
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+            <div className="flex items-center justify-between mb-1">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700">Horário de Criação das OVs</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Distribuição por hora do dia (Horário de Brasília)</p>
+              </div>
+              <div className="flex gap-1">
+                {[7, 30, 90].map(d => (
+                  <button key={d} onClick={() => setPeriodoHorario(d)}
+                    className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${
+                      periodoHorario === d ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}>
+                    {d}d
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-5 mb-4 text-xs text-gray-500">
+              <span>Total no período: <strong className="text-gray-800">{totalOvs} OVs</strong></span>
+              {maxTotal > 0 && (
+                <span>Pico: <strong className="text-amber-600">{picoEntry.label} — {maxTotal} OVs</strong></span>
+              )}
+            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={horarioData} margin={{ left: -20, bottom: 0 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={1} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip formatter={(v: any) => [`${v} OVs`, 'Criadas']} />
+                <Bar dataKey="total" radius={[3, 3, 0, 0]}>
+                  {horarioData.map((entry, index) => (
+                    <Cell key={index} fill={entry.total === maxTotal && maxTotal > 0 ? '#F59E0B' : '#6366F1'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )
+      })()}
     </div>
   )
 }

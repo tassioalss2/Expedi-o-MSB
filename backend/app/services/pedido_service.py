@@ -817,6 +817,7 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
             "tipo,descricao,status,criado_em,pedidos(numero_pedido,clientes(nome))"
         ).eq("retrabalho", "true")\
          .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
+
          .execute().data
         return [{
             "numero_pedido": (r.get("pedidos") or {}).get("numero_pedido", "—"),
@@ -828,3 +829,31 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
         } for r in rows]
 
     return []
+
+
+# ── Análise Gerencial ──────────────────────────────────────────────────────────
+
+def obter_horario_criacao(data_inicio: Optional[date] = None, data_fim: Optional[date] = None) -> list:
+    from datetime import timedelta
+    db = get_service_db()
+    hoje = date.today()
+    inicio = data_inicio or (hoje - timedelta(days=29))
+    fim = data_fim or hoje
+
+    resultado = db.table("pedidos").select("criado_em").neq("status", "CANCELADO")\
+        .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
+        .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
+
+    contagem = [0] * 24
+    for row in resultado.data:
+        ts_str = row.get("criado_em")
+        if not ts_str:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            hora_brt = (ts.hour - 3) % 24  # UTC → BRT (UTC-3)
+            contagem[hora_brt] += 1
+        except Exception:
+            pass
+
+    return [{"hora": h, "label": f"{h:02d}h", "total": contagem[h]} for h in range(24)]
