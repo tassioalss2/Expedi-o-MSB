@@ -657,7 +657,7 @@ export function Dashboard() {
                       const cfg = STATUS_CONFIG[ov.status as keyof typeof STATUS_CONFIG]
                       return (
                         <tr key={ov.numero_pedido + ov.data}
-                          onClick={() => { setHoraClicada(null); navigate(`/expedicao/${ov.numero_pedido}`) }}
+                          onClick={() => { setHoraClicada(null); navigate(`/expedicao/${ov.id}`) }}
                           className="hover:bg-gray-50 cursor-pointer">
                           <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700">{ov.numero_pedido}</td>
                           <td className="px-4 py-2.5 text-gray-700 max-w-[160px] truncate">{ov.cliente}</td>

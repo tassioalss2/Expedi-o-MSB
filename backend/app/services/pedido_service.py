@@ -866,7 +866,7 @@ def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None,
     fim = data_fim or hoje
 
     resultado = db.table("pedidos").select(
-        "numero_pedido, status, criado_em, clientes(nome)"
+        "id, numero_pedido, status, criado_em, clientes(nome)"
     ).neq("status", "CANCELADO")\
         .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
@@ -882,6 +882,7 @@ def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None,
             if hora_brt == hora:
                 min_brt = ts.minute
                 ovs.append({
+                    "id": row["id"],
                     "numero_pedido": row["numero_pedido"],
                     "cliente": (row.get("clientes") or {}).get("nome", "—"),
                     "status": row["status"],
