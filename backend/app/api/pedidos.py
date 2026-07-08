@@ -317,25 +317,23 @@ async def importar_pedidos(
 
 # ── Dashboard / Indicadores ────────────────────────────────────────────────────
 
-@router.get("/dashboard/financeiro")
-def dashboard_financeiro(
-    data_inicio: Optional[date] = Query(None),
-    data_fim: Optional[date] = Query(None),
-    _: UsuarioOut = Depends(get_current_user),
-):
-    """Faturamento NF e custo de frete das notas FATURADAS no período.
+def _eh_biomedical(pedido: dict) -> bool:
+    """Transfer price = vendas para a Biomedical (empresa do grupo).
+    Identificada pelo nome do cliente. Ajuste aqui se o cadastro mudar."""
+    nome = ((pedido.get("clientes") or {}).get("nome") or "").upper()
+    return "BIOMEDICAL" in nome
 
-    Atribui cada NF ao mês em que foi de fato faturada (movimentação para
-    o status FATURADO), e não pela última atualização do pedido — que muda
-    a cada mudança de status (coleta, expedição, etc.).
+
+def _faturados_no_periodo(inicio: date, fim: date) -> dict:
+    """pedido_id -> data de faturamento (BRT, ISO) das NFs faturadas no período.
+
+    Atribui cada NF ao dia em que foi de fato faturada (movimentação para o
+    status FATURADO), e não pela última atualização do pedido — que muda a
+    cada mudança de status (coleta, expedição, etc.).
     """
     from datetime import datetime, timedelta, timezone
     from app.core.database import get_service_db
     db = get_service_db()
-
-    hoje = date.today()
-    inicio = data_inicio or date(hoje.year, hoje.month, 1)
-    fim = data_fim or hoje
 
     # Janela alargada em 1 dia para cobrir a conversão UTC->BRT nas bordas do mês.
     janela_ini = (inicio - timedelta(days=1)).isoformat()
@@ -347,7 +345,6 @@ def dashboard_financeiro(
         .gte("criado_em", f"{janela_ini}T00:00:00")\
         .lte("criado_em", f"{janela_fim}T23:59:59").execute().data
 
-    # pedido_id -> data de faturamento (BRT), mantendo o faturamento dentro do período
     faturados: dict[str, str] = {}
     for m in movs:
         ts_str = m.get("criado_em")
@@ -361,6 +358,24 @@ def dashboard_financeiro(
             continue
         if inicio <= data_brt <= fim:
             faturados[pid] = data_brt.isoformat()
+    return faturados
+
+
+@router.get("/dashboard/financeiro")
+def dashboard_financeiro(
+    data_inicio: Optional[date] = Query(None),
+    data_fim: Optional[date] = Query(None),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Faturamento NF e custo de frete das notas FATURADAS no período."""
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    hoje = date.today()
+    inicio = data_inicio or date(hoje.year, hoje.month, 1)
+    fim = data_fim or hoje
+
+    faturados = _faturados_no_periodo(inicio, fim)
 
     def _resumo(lista: list) -> dict:
         # Natureza do frete (DRE):
@@ -400,12 +415,6 @@ def dashboard_financeiro(
         "id, valor_nf, valor_produtos, valor_frete, tipo_frete, status, clientes(nome)"
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
-    # Transfer price = vendas para a Biomedical (empresa do grupo).
-    # Identificada pelo nome do cliente. Ajuste este critério se o cadastro mudar.
-    def _eh_biomedical(p: dict) -> bool:
-        nome = ((p.get("clientes") or {}).get("nome") or "").upper()
-        return "BIOMEDICAL" in nome
-
     transfer = [p for p in pedidos if _eh_biomedical(p)]
     outras = [p for p in pedidos if not _eh_biomedical(p)]
 
@@ -416,6 +425,57 @@ def dashboard_financeiro(
         "transfer_price": _resumo(transfer),
         "outras_vendas": _resumo(outras),
     }
+
+
+@router.get("/dashboard/financeiro/detalhe")
+def dashboard_financeiro_detalhe(
+    data_inicio: Optional[date] = Query(None),
+    data_fim: Optional[date] = Query(None),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Lista as NFs faturadas no período que geram os números do card financeiro.
+
+    Retorna uma linha por pedido faturado, com os campos necessários para o
+    front filtrar por grupo (transfer price / outras) e por natureza de frete.
+    """
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    hoje = date.today()
+    inicio = data_inicio or date(hoje.year, hoje.month, 1)
+    fim = data_fim or hoje
+
+    faturados = _faturados_no_periodo(inicio, fim)
+    if not faturados:
+        return []
+
+    ids = list(faturados.keys())
+    pedidos = db.table("pedidos").select(
+        "id, numero_pedido, numero_nf, valor_nf, valor_produtos, valor_frete, "
+        "tipo_frete, status, clientes(nome)"
+    ).in_("id", ids).neq("status", "CANCELADO").execute().data
+
+    linhas = []
+    for p in pedidos:
+        valor_nf = float(p.get("valor_nf") or 0)
+        valor_frete = float(p.get("valor_frete") or 0)
+        tipo_frete = p.get("tipo_frete")
+        # Só o CIF com valor embute frete na NF.
+        frete_embutido = valor_frete if tipo_frete == "CIF_COM_VALOR" else 0.0
+        linhas.append({
+            "id": p["id"],
+            "numero_pedido": p.get("numero_pedido"),
+            "numero_nf": p.get("numero_nf"),
+            "cliente": (p.get("clientes") or {}).get("nome", "—"),
+            "tipo_frete": tipo_frete,
+            "valor_nf": round(valor_nf, 2),
+            "valor_frete": round(valor_frete, 2),
+            "valor_sem_frete": round(valor_nf - frete_embutido, 2),
+            "eh_biomedical": _eh_biomedical(p),
+            "data": faturados.get(p["id"]),
+        })
+
+    return sorted(linhas, key=lambda x: (x["data"] or "", x["numero_pedido"] or ""))
 
 
 @router.get("/dashboard/tempo-separacao")

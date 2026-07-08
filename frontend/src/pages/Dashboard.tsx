@@ -207,6 +207,31 @@ export function Dashboard() {
     refetchInterval: 60000,
   })
 
+  // Drill-down do card financeiro: qual grupo de NFs está sendo detalhado
+  const [detalheFin, setDetalheFin] = useState<{ categoria: string; titulo: string } | null>(null)
+  const { data: detalheFinLista = [], isFetching: carregandoDetalheFin } = useQuery<any[]>({
+    queryKey: ['financeiro-detalhe', inicioFinanceiro, fimFinanceiro],
+    queryFn: () => api.get('/pedidos/dashboard/financeiro/detalhe', {
+      params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
+    }).then(r => r.data),
+    enabled: detalheFin !== null,
+  })
+
+  const filtrarDetalheFin = (rows: any[], categoria: string) => {
+    switch (categoria) {
+      case 'transfer': return rows.filter(r => r.eh_biomedical)
+      case 'outras': return rows.filter(r => !r.eh_biomedical)
+      case 'frete_todos': return rows.filter(r => r.valor_frete > 0)
+      case 'frete_ressarcido': return rows.filter(r => r.tipo_frete === 'CIF_COM_VALOR' && r.valor_frete > 0)
+      case 'frete_proprio': return rows.filter(r => r.tipo_frete === 'CIF_SEM_VALOR' && r.valor_frete > 0)
+      default: return rows
+    }
+  }
+  const TIPO_FRETE_LABEL: Record<string, string> = {
+    FOB: 'FOB', CIF_COM_VALOR: 'CIF c/ valor', CIF_SEM_VALOR: 'CIF s/ valor',
+  }
+  const fmtMoeda = (v: number) => `R$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+
   const { data: tempoSep } = useQuery({
     queryKey: ['tempo-separacao'],
     queryFn: () => api.get('/pedidos/dashboard/tempo-separacao').then(r => r.data),
@@ -384,20 +409,29 @@ export function Dashboard() {
             </div>
             <span className="text-xs text-gray-400">{financeiro?.qtd_nfs || 0} NF(s)</span>
           </div>
-          <p className="text-2xl font-bold text-green-600">
-            {financeiro?.total_nf
-              ? `R$ ${Number(financeiro.total_nf).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
-              : 'R$ 0,00'}
-          </p>
-          <p className="text-xs text-gray-400 mt-0.5">bruto · com frete embutido</p>
-          {financeiro && (
-            <p className="text-sm font-semibold text-gray-600 mt-1.5">
-              Sem frete: R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          <div
+            onClick={() => setDetalheFin({ categoria: 'todos', titulo: 'Faturamento — todas as NFs' })}
+            className="cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors"
+            title="Ver as NFs deste total"
+          >
+            <p className="text-2xl font-bold text-green-600">
+              {financeiro?.total_nf
+                ? `R$ ${Number(financeiro.total_nf).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                : 'R$ 0,00'}
             </p>
-          )}
+            <p className="text-xs text-gray-400 mt-0.5">bruto · com frete embutido</p>
+            {financeiro && (
+              <p className="text-sm font-semibold text-gray-600 mt-1.5">
+                Sem frete: R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
+            )}
+          </div>
           {financeiro && (
-            <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
-              <div className="flex items-start justify-between">
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+              <div
+                onClick={() => setDetalheFin({ categoria: 'transfer', titulo: 'Transfer Price (Biomedical)' })}
+                className="flex items-start justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
+              >
                 <span className="flex items-center gap-1.5 text-xs text-gray-500 pt-0.5">
                   <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
                   Transfer Price (Biomedical)
@@ -412,7 +446,10 @@ export function Dashboard() {
                   </span>
                 </span>
               </div>
-              <div className="flex items-start justify-between">
+              <div
+                onClick={() => setDetalheFin({ categoria: 'outras', titulo: 'Outras Vendas' })}
+                className="flex items-start justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
+              >
                 <span className="flex items-center gap-1.5 text-xs text-gray-500 pt-0.5">
                   <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
                   Outras Vendas
@@ -445,15 +482,24 @@ export function Dashboard() {
             </div>
             <span className="text-xs text-gray-400">{financeiro?.qtd_com_frete || 0} OV(s)</span>
           </div>
-          <p className="text-2xl font-bold text-orange-600">
-            {financeiro?.total_frete
-              ? `R$ ${Number(financeiro.total_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
-              : 'R$ 0,00'}
-          </p>
-          <p className="text-xs text-gray-400 mt-0.5">total pago às transportadoras</p>
+          <div
+            onClick={() => setDetalheFin({ categoria: 'frete_todos', titulo: 'Frete Pago — todas as OVs' })}
+            className="cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors"
+            title="Ver as OVs deste total"
+          >
+            <p className="text-2xl font-bold text-orange-600">
+              {financeiro?.total_frete
+                ? `R$ ${Number(financeiro.total_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                : 'R$ 0,00'}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">total pago às transportadoras</p>
+          </div>
           {financeiro && (
             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
-              <div className="flex items-center justify-between">
+              <div
+                onClick={() => setDetalheFin({ categoria: 'frete_ressarcido', titulo: 'Frete ressarcido (CIF c/ valor)' })}
+                className="flex items-center justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
+              >
                 <span className="flex items-center gap-1.5 text-xs text-gray-500">
                   <span className="w-2 h-2 rounded-full bg-gray-300 inline-block" />
                   Ressarcido (CIF c/ valor)
@@ -462,7 +508,10 @@ export function Dashboard() {
                   R$ {Number(financeiro.frete_ressarcido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
-              <div className="flex items-center justify-between">
+              <div
+                onClick={() => setDetalheFin({ categoria: 'frete_proprio', titulo: 'Custo líquido de frete (CIF s/ valor)' })}
+                className="flex items-center justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
+              >
                 <span className="flex items-center gap-1.5 text-xs text-gray-600 font-medium">
                   <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
                   Custo líquido (CIF s/ valor)
@@ -846,6 +895,80 @@ export function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* Modal drill-down do card financeiro */}
+      {detalheFin !== null && (() => {
+        const linhas = filtrarDetalheFin(detalheFinLista, detalheFin.categoria)
+        const ehFrete = detalheFin.categoria.startsWith('frete')
+        const somaNf = linhas.reduce((a, r) => a + (r.valor_nf || 0), 0)
+        const somaSemFrete = linhas.reduce((a, r) => a + (r.valor_sem_frete || 0), 0)
+        const somaFrete = linhas.reduce((a, r) => a + (r.valor_frete || 0), 0)
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col">
+              <div className="p-5 border-b flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold">{detalheFin.titulo}</h2>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })} · notas faturadas no mês
+                  </p>
+                </div>
+                <button onClick={() => setDetalheFin(null)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-auto">
+                {carregandoDetalheFin ? (
+                  <p className="text-center text-gray-400 py-8 text-sm">Carregando...</p>
+                ) : linhas.length === 0 ? (
+                  <p className="text-center text-gray-400 py-8 text-sm">Nenhuma NF neste grupo</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">OV</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">NF</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Cliente</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Frete</th>
+                        <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Valor NF</th>
+                        <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">
+                          {ehFrete ? 'Frete R$' : 'Sem frete'}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {linhas.map((r) => (
+                        <tr key={r.id}
+                          onClick={() => { setDetalheFin(null); navigate(`/expedicao/${r.id}`) }}
+                          className="hover:bg-gray-50 cursor-pointer">
+                          <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700">{r.numero_pedido}</td>
+                          <td className="px-4 py-2.5 font-mono text-gray-600">{r.numero_nf || '—'}</td>
+                          <td className="px-4 py-2.5 text-gray-700 max-w-[220px] truncate">
+                            {r.eh_biomedical && <span className="w-2 h-2 rounded-full bg-purple-500 inline-block mr-1.5 align-middle" />}
+                            {r.cliente}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-500 text-xs">{TIPO_FRETE_LABEL[r.tipo_frete] || r.tipo_frete || '—'}</td>
+                          <td className="px-4 py-2.5 text-right font-medium text-gray-800">{fmtMoeda(r.valor_nf)}</td>
+                          <td className="px-4 py-2.5 text-right text-gray-600">
+                            {fmtMoeda(ehFrete ? r.valor_frete : r.valor_sem_frete)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-50 sticky bottom-0 border-t-2 border-gray-200">
+                      <tr className="font-semibold text-gray-800">
+                        <td className="px-4 py-3" colSpan={4}>{linhas.length} NF(s)</td>
+                        <td className="px-4 py-3 text-right">{fmtMoeda(somaNf)}</td>
+                        <td className="px-4 py-3 text-right">{fmtMoeda(ehFrete ? somaFrete : somaSemFrete)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
