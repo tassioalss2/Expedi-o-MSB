@@ -10,6 +10,7 @@ from app.models.schemas import (
     AgendarColetaRequest,
     AlterarStatusRequest,
     BloquearPedidoRequest,
+    ComunicadoUsoCreate,
     ConfirmarColetaRequest,
     FaturamentoRequest,
     FinalizarConferenciaRequest,
@@ -31,6 +32,11 @@ router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 @router.post("", status_code=201)
 def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut = Depends(get_current_user)):
     return pedido_service.criar_pedido(payload, usuario)
+
+
+@router.post("/comunicado-uso", status_code=201)
+def criar_comunicado_uso(payload: ComunicadoUsoCreate, usuario: UsuarioOut = Depends(get_current_user)):
+    return pedido_service.criar_comunicado_uso(payload, usuario)
 
 
 @router.get("")
@@ -593,6 +599,15 @@ def horario_criacao_detalhe(
     _: UsuarioOut = Depends(get_current_user),
 ):
     return pedido_service.obter_horario_criacao_detalhe(hora, data_inicio, data_fim)
+
+
+@router.get("/faturamento/referencia")
+def faturamento_referencia(
+    cliente_id: UUID = Query(...),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Histórico de NF do cliente — usado para alertar valores fora do padrão."""
+    return pedido_service.obter_referencia_nf_cliente(str(cliente_id))
 
 
 @router.get("/dashboard/esforco")

@@ -290,6 +290,77 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     return pedido
 
 
+def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
+    """Lança um faturamento de comunicado de uso (consignado utilizado).
+
+    Cria o pedido já FATURADO, sem itens e sem etapas logísticas, e registra
+    a movimentação para FATURADO na data informada — para o dashboard atribuir
+    ao mês correto.
+    """
+    db = get_service_db()
+
+    existe = db.table("pedidos").select("id").eq("numero_pedido", payload.numero_pedido).execute()
+    if existe.data:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Já existe uma OV/lançamento com o número '{payload.numero_pedido}'.",
+        )
+
+    data_fat = payload.data_faturamento or date.today()
+    # Meio-dia UTC = 09h BRT — garante que a data BRT do faturamento seja a escolhida.
+    ts_fat = f"{data_fat.isoformat()}T12:00:00+00:00"
+
+    pedido_data = {
+        "numero_pedido":         payload.numero_pedido,
+        "cliente_id":            str(payload.cliente_id),
+        "tipo_frete":            "FOB",
+        "tipo_operacao":         "COMUNICADO_USO",
+        "status":                StatusPedido.FATURADO.value,
+        "prioridade":            "NORMAL",
+        "data_prevista_entrega": data_fat.isoformat(),
+        "numero_nf":             payload.numero_nf,
+        "valor_nf":              payload.valor_nf,
+        "valor_produtos":        payload.valor_produtos if payload.valor_produtos is not None else payload.valor_nf,
+        "observacoes":           payload.observacoes or "Comunicado de uso (consignado) — sem processo logístico",
+        "criado_por":            None,
+        "criado_em":             ts_fat,
+        "atualizado_em":         _agora(),
+    }
+    resultado = db.table("pedidos").insert(pedido_data).execute()
+    pedido = resultado.data[0]
+
+    usuarios = db.table("usuarios").select("id").limit(1).execute()
+    uid = usuarios.data[0]["id"] if usuarios.data else None
+    db.table("movimentacoes").insert({
+        "pedido_id":       pedido["id"],
+        "status_anterior": None,
+        "status_novo":     StatusPedido.FATURADO.value,
+        "usuario_id":      uid,
+        "observacao":      f"Comunicado de uso — NF {payload.numero_nf}",
+        "criado_em":       ts_fat,
+    }).execute()
+
+    return pedido
+
+
+def obter_referencia_nf_cliente(cliente_id: str) -> dict:
+    """Estatísticas do histórico de NF de um cliente — base da validação anti-erro."""
+    db = get_service_db()
+    rows = db.table("pedidos").select("valor_nf").eq("cliente_id", cliente_id)\
+        .neq("status", "CANCELADO").execute().data
+    vals = sorted(float(r["valor_nf"]) for r in rows if r.get("valor_nf"))
+    if not vals:
+        return {"qtd": 0, "mediana": None, "media": None, "maximo": None}
+    n = len(vals)
+    mediana = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
+    return {
+        "qtd": n,
+        "mediana": round(mediana, 2),
+        "media": round(sum(vals) / n, 2),
+        "maximo": round(vals[-1], 2),
+    }
+
+
 def listar_familia(numero_pedido: str) -> list[dict]:
     """Retorna todas as remessas (original + derivadas) de uma OV."""
     db = get_service_db()

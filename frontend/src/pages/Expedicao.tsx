@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, Upload, RefreshCw, Info, X, ChevronRight, CornerDownLeft } from 'lucide-react'
+import { Search, Plus, Upload, RefreshCw, Info, X, ChevronRight, CornerDownLeft, FileText } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -578,6 +578,13 @@ export function Expedicao() {
           >
             <Upload size={16} />
             Importar CSV
+          </button>
+          <button
+            onClick={() => navigate('/expedicao/comunicado-uso')}
+            className="flex items-center gap-2 px-3 py-2 border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50"
+          >
+            <FileText size={16} />
+            Comunicado de Uso
           </button>
           <button
             onClick={() => navigate('/expedicao/novo')}

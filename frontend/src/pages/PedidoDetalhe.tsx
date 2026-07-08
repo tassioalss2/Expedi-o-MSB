@@ -1351,6 +1351,13 @@ export function PedidoDetalhe() {
     enabled: !!pedido && (temFamilia || false),
   })
 
+  // Referência histórica de NF do cliente — base do alerta anti-erro de digitação
+  const { data: refNf } = useQuery<{ qtd: number; mediana: number | null; media: number | null; maximo: number | null }>({
+    queryKey: ['ref-nf', pedido?.cliente_id],
+    queryFn: () => api.get('/pedidos/faturamento/referencia', { params: { cliente_id: pedido!.cliente_id } }).then(r => r.data),
+    enabled: !!pedido?.cliente_id && modal === 'faturamento',
+  })
+
   const isCIF = pedido?.tipo_frete === 'CIF_COM_VALOR' || pedido?.tipo_frete === 'CIF_SEM_VALOR'
 
   // Para CIF: valor_nf = valor_produtos + valor_frete
@@ -1359,6 +1366,10 @@ export function PedidoDetalhe() {
     : (valorNf ? Number(valorNf) : null)
 
   const isCorreios = pedido?.transportadora?.nome === 'CORREIOS'
+
+  // Alerta anti-erro: valor da NF muito acima do padrão do cliente (>=5x a mediana)
+  const alertaValorNf = (valorNfCalculado && refNf && refNf.qtd >= 3 && refNf.mediana
+    && valorNfCalculado >= refNf.mediana * 5) ? refNf : null
 
   const faturarMutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${id}/faturamento`, {
@@ -1950,6 +1961,19 @@ export function PedidoDetalhe() {
                   )}
                 </>
               )}
+              {/* Alerta anti-erro de digitação */}
+              {alertaValorNf && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-3">
+                  <p className="text-sm font-semibold text-amber-800">⚠️ Valor bem acima do padrão deste cliente</p>
+                  <p className="text-xs text-amber-700 mt-1">
+                    Mediana das NFs deste cliente: <strong>R$ {Number(alertaValorNf.mediana).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                    {' '}· máx: R$ {Number(alertaValorNf.maximo).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.
+                    Você digitou <strong>R$ {valorNfCalculado?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>.
+                    Confira se não há um dígito a mais.
+                  </p>
+                </div>
+              )}
+
               {/* Espelhos de carga — automático pela cubagem */}
               <div className="border-t pt-4">
                 <div className="flex items-center justify-between">

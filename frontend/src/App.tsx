@@ -10,6 +10,7 @@ import { Ocorrencias } from './pages/Ocorrencias'
 import { Indicadores } from './pages/Indicadores'
 import { Cadastros } from './pages/Cadastros'
 import { NovoPedido } from './pages/NovoPedido'
+import { ComunicadoUso } from './pages/ComunicadoUso'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
 import { RelatorioColetasRealizadas } from './pages/RelatorioColetasRealizadas'
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="expedicao" element={<Expedicao />} />
             <Route path="expedicao/novo" element={<NovoPedido />} />
+            <Route path="expedicao/comunicado-uso" element={<ComunicadoUso />} />
             <Route path="expedicao/:id" element={<PedidoDetalhe />} />
             <Route path="pallets" element={<Pallets />} />
             <Route path="ocorrencias" element={<Ocorrencias />} />

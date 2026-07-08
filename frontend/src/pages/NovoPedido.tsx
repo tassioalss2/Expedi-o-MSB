@@ -6,7 +6,7 @@ import api from '../lib/api'
 import type { Cliente, Transportadora } from '../types'
 import toast from 'react-hot-toast'
 
-function ClienteAutocomplete({ value, onChange }: { value: string; onChange: (id: string, nome: string) => void }) {
+export function ClienteAutocomplete({ value, onChange }: { value: string; onChange: (id: string, nome: string) => void }) {
   const [busca, setBusca] = useState('')
   const [aberto, setAberto] = useState(false)
   const [nomeSelecionado, setNomeSelecionado] = useState(value ? '' : '')

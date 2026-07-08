@@ -175,6 +175,21 @@ class PedidoCreate(BaseModel):
     em_gerenciamento_credito: bool = False
 
 
+class ComunicadoUsoCreate(BaseModel):
+    """Faturamento de estoque consignado já utilizado pelo cliente.
+
+    Não passa por logística nem movimenta estoque (o material já está com o
+    cliente). Entra direto como FATURADO e conta no faturamento.
+    """
+    numero_pedido: str
+    cliente_id: UUID
+    numero_nf: str
+    valor_nf: float
+    valor_produtos: Optional[float] = None
+    data_faturamento: Optional[date] = None
+    observacoes: Optional[str] = None
+
+
 class PedidoOut(BaseModel):
     id: UUID
     numero_pedido: str
