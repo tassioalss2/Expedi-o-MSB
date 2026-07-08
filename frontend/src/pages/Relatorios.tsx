@@ -38,22 +38,21 @@ export function Relatorios() {
   const [expandido, setExpandido] = useState(true)
 
   const { data: pedidos = [], isLoading } = useQuery({
-    queryKey: ['relatorio-historico', dataInicio, dataFim, statusFiltro],
-    queryFn: () => api.get('/pedidos', {
-      params: statusFiltro ? { status: statusFiltro } : {}
+    queryKey: ['relatorio-faturamento', dataInicio, dataFim, statusFiltro],
+    queryFn: () => api.get('/pedidos/relatorio/faturamento', {
+      params: {
+        data_inicio: dataInicio,
+        data_fim: dataFim,
+        ...(statusFiltro ? { status: statusFiltro } : {}),
+      },
     }).then(r => r.data),
   })
 
-  // Filtra por período de atualização
-  const filtrados = (pedidos as any[]).filter(p => {
-    const dt = p.atualizado_em?.slice(0, 10)
-    return dt >= dataInicio && dt <= dataFim
-  }).sort((a: any, b: any) =>
-    new Date(b.atualizado_em).getTime() - new Date(a.atualizado_em).getTime()
-  )
+  // Já vem filtrado e ordenado pela data de faturamento (backend)
+  const filtrados = pedidos as any[]
 
   const exportarCSV = () => {
-    const header = ['OV', 'NF', 'Cliente', 'Transportadora', 'Status', 'Tipo Frete', 'Valor NF', 'Entrega Prevista', 'Atualizado Em']
+    const header = ['OV', 'NF', 'Cliente', 'Transportadora', 'Status', 'Tipo Frete', 'Valor NF', 'Entrega Prevista', 'Faturado Em']
     const linhas = filtrados.map(p => [
       p.numero_pedido,
       p.numero_nf || '',
@@ -63,7 +62,7 @@ export function Relatorios() {
       p.tipo_frete || '',
       p.valor_nf || '',
       p.data_prevista_entrega || '',
-      p.atualizado_em ? format(new Date(p.atualizado_em), 'dd/MM/yyyy HH:mm') : '',
+      p.data_faturamento ? format(new Date(p.data_faturamento + 'T12:00:00'), 'dd/MM/yyyy') : '',
     ])
     const csv = [header, ...linhas].map(r => r.join(';')).join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
@@ -184,7 +183,7 @@ export function Relatorios() {
                       <th className="px-4 py-3 font-semibold">Status</th>
                       <th className="px-4 py-3 font-semibold">Valor NF</th>
                       <th className="px-4 py-3 font-semibold">Entrega Prevista</th>
-                      <th className="px-4 py-3 font-semibold">Atualizado Em</th>
+                      <th className="px-4 py-3 font-semibold">Faturado Em</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
@@ -213,7 +212,7 @@ export function Relatorios() {
                           {p.data_prevista_entrega ? format(new Date(p.data_prevista_entrega + 'T12:00:00'), 'dd/MM/yyyy') : '—'}
                         </td>
                         <td className="px-4 py-3 text-gray-500 text-xs">
-                          {p.atualizado_em ? format(new Date(p.atualizado_em), 'dd/MM/yyyy HH:mm', { locale: ptBR }) : '—'}
+                          {p.data_faturamento ? format(new Date(p.data_faturamento + 'T12:00:00'), 'dd/MM/yyyy', { locale: ptBR }) : '—'}
                         </td>
                       </tr>
                     ))}

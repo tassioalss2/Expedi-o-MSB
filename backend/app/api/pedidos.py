@@ -519,6 +519,57 @@ def dashboard_financeiro_detalhe(
     return sorted(linhas, key=lambda x: (x["data"] or "", x["numero_pedido"] or ""))
 
 
+@router.get("/relatorio/faturamento")
+def relatorio_faturamento(
+    data_inicio: date = Query(...),
+    data_fim: date = Query(...),
+    status: Optional[str] = Query(None),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Histórico de OVs pela DATA DE FATURAMENTO (movimentação -> FATURADO, BRT).
+
+    O que importa é o dia do faturamento — não a última atualização do registro.
+    """
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    faturados = _faturados_no_periodo(data_inicio, data_fim)
+    if not faturados:
+        return []
+
+    ids = list(faturados.keys())
+    peds: list = []
+    for i in range(0, len(ids), 40):
+        peds += db.table("pedidos").select(
+            "id, numero_pedido, numero_nf, valor_nf, tipo_frete, status, "
+            "data_prevista_entrega, clientes(nome), transportadoras(nome)"
+        ).in_("id", ids[i:i + 40]).execute().data
+
+    linhas = []
+    for p in peds:
+        st = p.get("status")
+        # Com status escolhido, filtra por ele; em "Todos", exclui cancelado.
+        if status:
+            if st != status:
+                continue
+        elif st == "CANCELADO":
+            continue
+        linhas.append({
+            "id": p["id"],
+            "numero_pedido": p.get("numero_pedido"),
+            "numero_nf": p.get("numero_nf"),
+            "cliente_nome": (p.get("clientes") or {}).get("nome"),
+            "transportadora_nome": (p.get("transportadoras") or {}).get("nome"),
+            "status": st,
+            "tipo_frete": p.get("tipo_frete"),
+            "valor_nf": p.get("valor_nf"),
+            "data_prevista_entrega": p.get("data_prevista_entrega"),
+            "data_faturamento": faturados.get(p["id"]),
+        })
+
+    return sorted(linhas, key=lambda x: x["data_faturamento"] or "", reverse=True)
+
+
 @router.get("/dashboard/tempo-separacao")
 def tempo_separacao(_: UsuarioOut = Depends(get_current_user)):
     """
