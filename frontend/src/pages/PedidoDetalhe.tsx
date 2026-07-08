@@ -1133,7 +1133,8 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
 
   const mutation = useMutation({
     mutationFn: () => api.post(`/pallets/${palletId}/pedidos`, {
-      pedido_id: pedido.numero_pedido,
+      // Usa o UUID da remessa específica — evita pegar outra remessa da família (ex: R1 já expedida)
+      pedido_id: pedido.id,
       observacao: isOutros && transportadoraOutros.trim() ? transportadoraOutros.trim() : undefined,
     }),
     onSuccess: () => {

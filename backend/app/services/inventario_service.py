@@ -446,22 +446,27 @@ def _obter_ou_criar_pallet_temp(db, nome_transportadora: str) -> str:
 def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletRequest, usuario: UsuarioOut) -> dict:
     db = get_service_db()
 
-    # Busca por número de OV (ex: OV015374) ou por UUID
+    # Busca por UUID (remessa específica) ou por número de OV (ex: OV015374)
     pedido_id_str = str(payload.pedido_id)
     pedido = None
+    parece_uuid = len(pedido_id_str) == 36 and pedido_id_str.count("-") == 4
 
-    # Tenta buscar pelo número do pedido primeiro
-    por_numero = db.table("pedidos").select("*").eq("numero_pedido", pedido_id_str.upper()).execute()
-    if por_numero.data:
-        pedido = por_numero.data[0]
-    else:
-        # Tenta por UUID
+    if parece_uuid:
+        # UUID identifica a remessa exata — evita pegar outra remessa da família
         try:
             por_id = db.table("pedidos").select("*").eq("id", pedido_id_str).execute()
             if por_id.data:
                 pedido = por_id.data[0]
         except Exception:
             pass
+
+    if not pedido:
+        por_numero = db.table("pedidos").select("*").eq("numero_pedido", pedido_id_str.upper()).execute()
+        if por_numero.data:
+            # Família (R1/R2...): mesma OV em várias remessas. Prioriza a que está
+            # FATURADA (pronta p/ pallet) em vez de pegar uma já expedida.
+            faturadas = [p for p in por_numero.data if p["status"] == StatusPedido.FATURADO.value]
+            pedido = faturadas[0] if faturadas else por_numero.data[0]
 
     if not pedido:
         raise HTTPException(status_code=404, detail=f"Pedido '{pedido_id_str}' não encontrado")
