@@ -396,20 +396,22 @@ def dashboard_financeiro(
     def _resumo(lista: list) -> dict:
         # Natureza do frete (DRE):
         # - CIF_COM_VALOR: frete embutido na NF, ressarcido pelo cliente -> neutro no resultado
-        # - CIF_SEM_VALOR: frete pago pela empresa e NÃO ressarcido -> custo líquido real
-        total_nf = sum(float(p["valor_nf"] or 0) for p in lista if p.get("valor_nf"))
+        # - CIF_SEM_VALOR: frete NÃO vai na NF; foi digitado dentro do valor_nf por
+        #   hábito, mas não é faturamento -> removido do bruto e do sem-frete.
+        total_nf_bruto = sum(float(p["valor_nf"] or 0) for p in lista if p.get("valor_nf"))
         total_produtos = sum(float(p["valor_produtos"] or 0) for p in lista if p.get("valor_produtos"))
         total_frete = sum(float(p["valor_frete"] or 0) for p in lista if p.get("valor_frete"))
         frete_ressarcido = sum(float(p["valor_frete"] or 0) for p in lista
                                if p.get("valor_frete") and p.get("tipo_frete") == "CIF_COM_VALOR")
         frete_proprio = sum(float(p["valor_frete"] or 0) for p in lista
                             if p.get("valor_frete") and p.get("tipo_frete") == "CIF_SEM_VALOR")
+        # Faturamento = NF fiscal. Tira o frete CIF sem valor, que não está na NF.
+        total_nf = total_nf_bruto - frete_proprio
         return {
             "total_nf": round(total_nf, 2),
             "total_produtos": round(total_produtos, 2),
             "total_frete": round(total_frete, 2),
-            # Faturamento sem frete: só o CIF com valor embute frete na NF; nos demais
-            # tipos a NF já é só produtos. Vale para qualquer tipo de frete.
+            # Sem frete: também tira o CIF com valor (esse sim está na NF, mas é frete).
             "faturamento_sem_frete": round(total_nf - frete_ressarcido, 2),
             "frete_ressarcido": round(frete_ressarcido, 2),
             "frete_proprio": round(frete_proprio, 2),
@@ -499,8 +501,11 @@ def dashboard_financeiro_detalhe(
         valor_nf = float(p.get("valor_nf") or 0)
         valor_frete = float(p.get("valor_frete") or 0)
         tipo_frete = p.get("tipo_frete")
-        # Só o CIF com valor embute frete na NF.
-        frete_embutido = valor_frete if tipo_frete == "CIF_COM_VALOR" else 0.0
+        # CIF sem valor: frete não está na NF (foi digitado no valor_nf) -> tira do bruto.
+        frete_fora_nf = valor_frete if tipo_frete == "CIF_SEM_VALOR" else 0.0
+        # CIF com valor: frete está na NF, mas é frete -> tira só do "sem frete".
+        frete_na_nf = valor_frete if tipo_frete == "CIF_COM_VALOR" else 0.0
+        bruto = valor_nf - frete_fora_nf
         linhas.append({
             "id": p["id"],
             "numero_pedido": p.get("numero_pedido"),
@@ -509,9 +514,9 @@ def dashboard_financeiro_detalhe(
             "tipo_frete": tipo_frete,
             "tipo_operacao": p.get("tipo_operacao") or "VENDA_NORMAL",
             "eh_faturamento": _conta_faturamento(p),
-            "valor_nf": round(valor_nf, 2),
+            "valor_nf": round(bruto, 2),
             "valor_frete": round(valor_frete, 2),
-            "valor_sem_frete": round(valor_nf - frete_embutido, 2),
+            "valor_sem_frete": round(bruto - frete_na_nf, 2),
             "eh_biomedical": _eh_biomedical(p),
             "data": faturados.get(p["id"]),
         })
@@ -541,7 +546,7 @@ def relatorio_faturamento(
     peds: list = []
     for i in range(0, len(ids), 40):
         peds += db.table("pedidos").select(
-            "id, numero_pedido, numero_nf, valor_nf, tipo_frete, status, "
+            "id, numero_pedido, numero_nf, valor_nf, valor_frete, tipo_frete, status, "
             "data_prevista_entrega, clientes(nome), transportadoras(nome)"
         ).in_("id", ids[i:i + 40]).execute().data
 
@@ -554,6 +559,10 @@ def relatorio_faturamento(
                 continue
         elif st == "CANCELADO":
             continue
+        # CIF sem valor: o frete não está na NF — mostra o valor fiscal (sem esse frete).
+        valor_nf = float(p.get("valor_nf") or 0)
+        if p.get("tipo_frete") == "CIF_SEM_VALOR":
+            valor_nf -= float(p.get("valor_frete") or 0)
         linhas.append({
             "id": p["id"],
             "numero_pedido": p.get("numero_pedido"),
@@ -562,7 +571,7 @@ def relatorio_faturamento(
             "transportadora_nome": (p.get("transportadoras") or {}).get("nome"),
             "status": st,
             "tipo_frete": p.get("tipo_frete"),
-            "valor_nf": p.get("valor_nf"),
+            "valor_nf": round(valor_nf, 2),
             "data_prevista_entrega": p.get("data_prevista_entrega"),
             "data_faturamento": faturados.get(p["id"]),
         })
