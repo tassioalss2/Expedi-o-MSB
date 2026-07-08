@@ -415,14 +415,14 @@ export function Dashboard() {
             title="Ver as NFs deste total"
           >
             <p className="text-2xl font-bold text-green-600">
-              {financeiro?.total_nf
-                ? `R$ ${Number(financeiro.total_nf).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+              {financeiro?.faturamento_sem_frete
+                ? `R$ ${Number(financeiro.faturamento_sem_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
                 : 'R$ 0,00'}
             </p>
-            <p className="text-xs text-gray-400 mt-0.5">bruto · com frete embutido</p>
+            <p className="text-xs text-gray-400 mt-0.5">sem frete · só produtos</p>
             {financeiro && (
               <p className="text-sm font-semibold text-gray-600 mt-1.5">
-                Sem frete: R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                Bruto (c/ frete): R$ {Number(financeiro.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
             )}
           </div>
@@ -439,10 +439,10 @@ export function Dashboard() {
                 </span>
                 <span className="text-right">
                   <span className="block text-sm font-semibold text-purple-700">
-                    R$ {Number(financeiro.transfer_price?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {Number(financeiro.transfer_price?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                   <span className="block text-[11px] text-gray-400">
-                    sem frete: R$ {Number(financeiro.transfer_price?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    c/ frete: R$ {Number(financeiro.transfer_price?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </span>
               </div>
@@ -457,10 +457,10 @@ export function Dashboard() {
                 </span>
                 <span className="text-right">
                   <span className="block text-sm font-semibold text-green-700">
-                    R$ {Number(financeiro.outras_vendas?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {Number(financeiro.outras_vendas?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                   <span className="block text-[11px] text-gray-400">
-                    sem frete: R$ {Number(financeiro.outras_vendas?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    c/ frete: R$ {Number(financeiro.outras_vendas?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </span>
               </div>
