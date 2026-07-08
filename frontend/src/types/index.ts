@@ -78,6 +78,7 @@ export interface Pedido {
   status: StatusPedido
   prioridade: Prioridade
   tipo_frete?: TipoFrete
+  tipo_operacao?: string
   local_entrega?: string
   data_prevista_entrega: string
   data_prevista_coleta?: string

@@ -218,13 +218,16 @@ export function Dashboard() {
   })
 
   const filtrarDetalheFin = (rows: any[], categoria: string) => {
+    if (categoria === 'sem_faturamento') return rows.filter(r => !r.eh_faturamento)
+    // Demais categorias refletem só o que é faturamento (bate com os totais do card)
+    const fat = rows.filter(r => r.eh_faturamento)
     switch (categoria) {
-      case 'transfer': return rows.filter(r => r.eh_biomedical)
-      case 'outras': return rows.filter(r => !r.eh_biomedical)
-      case 'frete_todos': return rows.filter(r => r.valor_frete > 0)
-      case 'frete_ressarcido': return rows.filter(r => r.tipo_frete === 'CIF_COM_VALOR' && r.valor_frete > 0)
-      case 'frete_proprio': return rows.filter(r => r.tipo_frete === 'CIF_SEM_VALOR' && r.valor_frete > 0)
-      default: return rows
+      case 'transfer': return fat.filter(r => r.eh_biomedical)
+      case 'outras': return fat.filter(r => !r.eh_biomedical)
+      case 'frete_todos': return fat.filter(r => r.valor_frete > 0)
+      case 'frete_ressarcido': return fat.filter(r => r.tipo_frete === 'CIF_COM_VALOR' && r.valor_frete > 0)
+      case 'frete_proprio': return fat.filter(r => r.tipo_frete === 'CIF_SEM_VALOR' && r.valor_frete > 0)
+      default: return fat
     }
   }
   const TIPO_FRETE_LABEL: Record<string, string> = {
@@ -464,6 +467,21 @@ export function Dashboard() {
                   </span>
                 </span>
               </div>
+            </div>
+          )}
+          {financeiro?.sem_faturamento?.length > 0 && (
+            <div
+              onClick={() => setDetalheFin({ categoria: 'sem_faturamento', titulo: 'Operações sem faturamento' })}
+              className="mt-3 pt-3 border-t border-dashed border-gray-200 cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
+              title="NFs que passam pelo fluxo mas não são faturamento"
+            >
+              <p className="text-[11px] text-gray-400 mb-1">Não entra no faturamento (bonif./amostra/consignado)</p>
+              {financeiro.sem_faturamento.map((o: any) => (
+                <div key={o.tipo} className="flex items-center justify-between text-xs text-gray-500">
+                  <span>{o.label} <span className="text-gray-300">· {o.qtd} NF</span></span>
+                  <span className="text-gray-500">R$ {Number(o.valor_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>

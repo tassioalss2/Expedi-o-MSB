@@ -13,6 +13,7 @@ from app.models.enums import (
     StatusPedido,
     TipoDivergencia,
     TipoFrete,
+    TipoOperacao,
 )
 
 
@@ -158,6 +159,7 @@ class PedidoCreate(BaseModel):
     cliente_id: UUID
     transportadora_id: Optional[UUID] = None
     tipo_frete: TipoFrete = TipoFrete.FOB
+    tipo_operacao: TipoOperacao = TipoOperacao.VENDA_NORMAL
     local_entrega: Optional[str] = None
     data_prevista_entrega: date
     data_prevista_coleta: Optional[date] = None
@@ -186,6 +188,7 @@ class PedidoOut(BaseModel):
     numero_nf: Optional[str]
     valor_nf: Optional[float]
     codigo_rastreio: Optional[str] = None
+    tipo_operacao: Optional[TipoOperacao] = None
     observacoes: Optional[str]
     criado_em: datetime
     atualizado_em: datetime

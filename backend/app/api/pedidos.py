@@ -324,6 +324,16 @@ def _eh_biomedical(pedido: dict) -> bool:
     return "BIOMEDICAL" in nome
 
 
+# Só estas naturezas entram no faturamento; as demais (bonificação, amostra,
+# consignado) geram NF e passam pelo fluxo, mas não são faturamento.
+_OPERACOES_FATURAMENTO = {"VENDA_NORMAL", "COMUNICADO_USO"}
+
+
+def _conta_faturamento(pedido: dict) -> bool:
+    # Legado sem tipo_operacao definido é tratado como venda normal.
+    return (pedido.get("tipo_operacao") or "VENDA_NORMAL") in _OPERACOES_FATURAMENTO
+
+
 def _faturados_no_periodo(inicio: date, fim: date) -> dict:
     """pedido_id -> data de faturamento (BRT, ISO) das NFs faturadas no período.
 
@@ -401,6 +411,25 @@ def dashboard_financeiro(
             "qtd_com_frete": sum(1 for p in lista if p.get("valor_frete")),
         }
 
+    def _sem_faturamento(lista: list) -> list:
+        # Agrega as operações que NÃO entram no faturamento por natureza.
+        LABELS = {
+            "BONIFICACAO_DOACAO": "Bonificação/Doação",
+            "AMOSTRA": "Amostra",
+            "CONSIGNADO": "Consignado",
+        }
+        agg: dict = {}
+        for p in lista:
+            op = p.get("tipo_operacao") or ""
+            if op in _OPERACOES_FATURAMENTO:
+                continue
+            g = agg.setdefault(op, {"tipo": op, "label": LABELS.get(op, op or "—"), "qtd": 0, "valor_nf": 0.0})
+            g["qtd"] += 1
+            g["valor_nf"] += float(p.get("valor_nf") or 0)
+        for g in agg.values():
+            g["valor_nf"] = round(g["valor_nf"], 2)
+        return sorted(agg.values(), key=lambda x: -x["valor_nf"])
+
     if not faturados:
         vazio = _resumo([])
         return {
@@ -408,22 +437,26 @@ def dashboard_financeiro(
             **vazio,
             "transfer_price": vazio,
             "outras_vendas": vazio,
+            "sem_faturamento": [],
         }
 
     ids = list(faturados.keys())
     pedidos = db.table("pedidos").select(
-        "id, valor_nf, valor_produtos, valor_frete, tipo_frete, status, clientes(nome)"
+        "id, valor_nf, valor_produtos, valor_frete, tipo_frete, tipo_operacao, status, clientes(nome)"
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
-    transfer = [p for p in pedidos if _eh_biomedical(p)]
-    outras = [p for p in pedidos if not _eh_biomedical(p)]
+    # Só entram no faturamento venda normal e comunicado de uso.
+    faturaveis = [p for p in pedidos if _conta_faturamento(p)]
+    transfer = [p for p in faturaveis if _eh_biomedical(p)]
+    outras = [p for p in faturaveis if not _eh_biomedical(p)]
 
-    total = _resumo(pedidos)
+    total = _resumo(faturaveis)
     return {
         "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
         **total,
         "transfer_price": _resumo(transfer),
         "outras_vendas": _resumo(outras),
+        "sem_faturamento": _sem_faturamento(pedidos),
     }
 
 
@@ -452,7 +485,7 @@ def dashboard_financeiro_detalhe(
     ids = list(faturados.keys())
     pedidos = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, valor_nf, valor_produtos, valor_frete, "
-        "tipo_frete, status, clientes(nome)"
+        "tipo_frete, tipo_operacao, status, clientes(nome)"
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
     linhas = []
@@ -468,6 +501,8 @@ def dashboard_financeiro_detalhe(
             "numero_nf": p.get("numero_nf"),
             "cliente": (p.get("clientes") or {}).get("nome", "—"),
             "tipo_frete": tipo_frete,
+            "tipo_operacao": p.get("tipo_operacao") or "VENDA_NORMAL",
+            "eh_faturamento": _conta_faturamento(p),
             "valor_nf": round(valor_nf, 2),
             "valor_frete": round(valor_frete, 2),
             "valor_sem_frete": round(valor_nf - frete_embutido, 2),

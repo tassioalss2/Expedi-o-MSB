@@ -42,6 +42,23 @@ class TipoFrete(str, Enum):
     CIF_SEM_VALOR = "CIF_SEM_VALOR"
 
 
+class TipoOperacao(str, Enum):
+    """Natureza da operação da OV.
+
+    Só VENDA_NORMAL e COMUNICADO_USO contam como faturamento. As demais
+    geram NF e passam pelo fluxo, mas não são faturamento (movimentam estoque).
+    """
+    VENDA_NORMAL = "VENDA_NORMAL"
+    COMUNICADO_USO = "COMUNICADO_USO"
+    BONIFICACAO_DOACAO = "BONIFICACAO_DOACAO"
+    AMOSTRA = "AMOSTRA"
+    CONSIGNADO = "CONSIGNADO"
+
+
+# Operações que entram no faturamento
+OPERACOES_FATURAMENTO = {TipoOperacao.VENDA_NORMAL.value, TipoOperacao.COMUNICADO_USO.value}
+
+
 class Prioridade(str, Enum):
     NORMAL = "NORMAL"
     ALTA = "ALTA"
