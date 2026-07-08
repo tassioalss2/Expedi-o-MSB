@@ -428,7 +428,7 @@ export function Dashboard() {
                 <Truck size={18} className="text-orange-600" />
               </div>
               <div>
-                <p className="text-sm font-semibold text-gray-700">Custo com Frete</p>
+                <p className="text-sm font-semibold text-gray-700">Frete Pago</p>
                 <p className="text-xs text-gray-400">{format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
               </div>
             </div>
@@ -439,10 +439,31 @@ export function Dashboard() {
               ? `R$ ${Number(financeiro.total_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
               : 'R$ 0,00'}
           </p>
-          {financeiro?.total_nf > 0 && financeiro?.total_frete > 0 && (
-            <p className="text-xs text-gray-400 mt-1">
-              {((financeiro.total_frete / financeiro.total_nf) * 100).toFixed(1)}% do faturamento total
-            </p>
+          <p className="text-xs text-gray-400 mt-0.5">total pago às transportadoras</p>
+          {financeiro && (
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <span className="w-2 h-2 rounded-full bg-gray-300 inline-block" />
+                  Ressarcido (CIF c/ valor)
+                </span>
+                <span className="text-sm font-medium text-gray-500">
+                  R$ {Number(financeiro.frete_ressarcido || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-xs text-gray-600 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                  Custo líquido (CIF s/ valor)
+                </span>
+                <span className="text-sm font-bold text-red-600">
+                  R$ {Number(financeiro.frete_proprio || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-400 leading-snug pt-0.5">
+                O frete ressarcido já está no faturamento bruto e o cliente devolve — neutro no resultado. Só o custo líquido impacta a margem.
+              </p>
+            </div>
           )}
         </div>
 

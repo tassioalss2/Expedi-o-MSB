@@ -363,10 +363,17 @@ def dashboard_financeiro(
             faturados[pid] = data_brt.isoformat()
 
     def _resumo(lista: list) -> dict:
+        # Natureza do frete (DRE):
+        # - CIF_COM_VALOR: frete embutido na NF, ressarcido pelo cliente -> neutro no resultado
+        # - CIF_SEM_VALOR: frete pago pela empresa e NÃO ressarcido -> custo líquido real
         return {
             "total_nf": round(sum(float(p["valor_nf"] or 0) for p in lista if p.get("valor_nf")), 2),
             "total_produtos": round(sum(float(p["valor_produtos"] or 0) for p in lista if p.get("valor_produtos")), 2),
             "total_frete": round(sum(float(p["valor_frete"] or 0) for p in lista if p.get("valor_frete")), 2),
+            "frete_ressarcido": round(sum(float(p["valor_frete"] or 0) for p in lista
+                                          if p.get("valor_frete") and p.get("tipo_frete") == "CIF_COM_VALOR"), 2),
+            "frete_proprio": round(sum(float(p["valor_frete"] or 0) for p in lista
+                                       if p.get("valor_frete") and p.get("tipo_frete") == "CIF_SEM_VALOR"), 2),
             "qtd_nfs": sum(1 for p in lista if p.get("valor_nf")),
             "qtd_com_frete": sum(1 for p in lista if p.get("valor_frete")),
         }
