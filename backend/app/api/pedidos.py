@@ -366,14 +366,22 @@ def dashboard_financeiro(
         # Natureza do frete (DRE):
         # - CIF_COM_VALOR: frete embutido na NF, ressarcido pelo cliente -> neutro no resultado
         # - CIF_SEM_VALOR: frete pago pela empresa e NÃO ressarcido -> custo líquido real
+        total_nf = sum(float(p["valor_nf"] or 0) for p in lista if p.get("valor_nf"))
+        total_produtos = sum(float(p["valor_produtos"] or 0) for p in lista if p.get("valor_produtos"))
+        total_frete = sum(float(p["valor_frete"] or 0) for p in lista if p.get("valor_frete"))
+        frete_ressarcido = sum(float(p["valor_frete"] or 0) for p in lista
+                               if p.get("valor_frete") and p.get("tipo_frete") == "CIF_COM_VALOR")
+        frete_proprio = sum(float(p["valor_frete"] or 0) for p in lista
+                            if p.get("valor_frete") and p.get("tipo_frete") == "CIF_SEM_VALOR")
         return {
-            "total_nf": round(sum(float(p["valor_nf"] or 0) for p in lista if p.get("valor_nf")), 2),
-            "total_produtos": round(sum(float(p["valor_produtos"] or 0) for p in lista if p.get("valor_produtos")), 2),
-            "total_frete": round(sum(float(p["valor_frete"] or 0) for p in lista if p.get("valor_frete")), 2),
-            "frete_ressarcido": round(sum(float(p["valor_frete"] or 0) for p in lista
-                                          if p.get("valor_frete") and p.get("tipo_frete") == "CIF_COM_VALOR"), 2),
-            "frete_proprio": round(sum(float(p["valor_frete"] or 0) for p in lista
-                                       if p.get("valor_frete") and p.get("tipo_frete") == "CIF_SEM_VALOR"), 2),
+            "total_nf": round(total_nf, 2),
+            "total_produtos": round(total_produtos, 2),
+            "total_frete": round(total_frete, 2),
+            # Faturamento sem frete: só o CIF com valor embute frete na NF; nos demais
+            # tipos a NF já é só produtos. Vale para qualquer tipo de frete.
+            "faturamento_sem_frete": round(total_nf - frete_ressarcido, 2),
+            "frete_ressarcido": round(frete_ressarcido, 2),
+            "frete_proprio": round(frete_proprio, 2),
             "qtd_nfs": sum(1 for p in lista if p.get("valor_nf")),
             "qtd_com_frete": sum(1 for p in lista if p.get("valor_frete")),
         }

@@ -389,9 +389,10 @@ export function Dashboard() {
               ? `R$ ${Number(financeiro.total_nf).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
               : 'R$ 0,00'}
           </p>
-          {financeiro?.total_produtos > 0 && (
-            <p className="text-xs text-gray-400 mt-1">
-              Produtos: R$ {Number(financeiro.total_produtos).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+          <p className="text-xs text-gray-400 mt-0.5">bruto · com frete embutido</p>
+          {financeiro && (
+            <p className="text-sm font-semibold text-gray-600 mt-1.5">
+              Sem frete: R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
           )}
           {financeiro && (
