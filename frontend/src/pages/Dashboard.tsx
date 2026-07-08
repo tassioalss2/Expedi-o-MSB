@@ -179,6 +179,17 @@ export function Dashboard() {
   const inicioMes = format(new Date(hoje.getFullYear(), hoje.getMonth(), 1), 'yyyy-MM-dd')
   const fimMes = format(hoje, 'yyyy-MM-dd')
 
+  // Mês de referência dos cards financeiros (default: mês corrente)
+  const [mesFinanceiro, setMesFinanceiro] = useState(() => new Date(hoje.getFullYear(), hoje.getMonth(), 1))
+  const ehMesAtual = mesFinanceiro.getFullYear() === hoje.getFullYear() && mesFinanceiro.getMonth() === hoje.getMonth()
+  const inicioFinanceiro = format(new Date(mesFinanceiro.getFullYear(), mesFinanceiro.getMonth(), 1), 'yyyy-MM-dd')
+  const fimFinanceiro = ehMesAtual
+    ? format(hoje, 'yyyy-MM-dd')
+    : format(new Date(mesFinanceiro.getFullYear(), mesFinanceiro.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const mesesDisponiveis = Array.from({ length: 12 }, (_, i) =>
+    new Date(hoje.getFullYear(), hoje.getMonth() - i, 1)
+  )
+
   const { data: dash } = useQuery<DashboardOperacional>({
     queryKey: ['dashboard'],
     queryFn: () => api.get('/pedidos/dashboard/operacional').then((r) => r.data),
@@ -186,11 +197,11 @@ export function Dashboard() {
   })
 
   const { data: financeiro } = useQuery({
-    queryKey: ['financeiro', format(new Date(hoje.getFullYear(), hoje.getMonth(), 1), 'yyyy-MM-dd')],
+    queryKey: ['financeiro', inicioFinanceiro],
     queryFn: () => api.get('/pedidos/dashboard/financeiro', {
       params: {
-        data_inicio: format(new Date(hoje.getFullYear(), hoje.getMonth(), 1), 'yyyy-MM-dd'),
-        data_fim: format(hoje, 'yyyy-MM-dd'),
+        data_inicio: inicioFinanceiro,
+        data_fim: fimFinanceiro,
       }
     }).then(r => r.data),
     refetchInterval: 60000,
@@ -338,6 +349,26 @@ export function Dashboard() {
       </div>
 
       {/* Cards Financeiros */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-700">Financeiro — Notas faturadas no mês</h2>
+        <select
+          value={inicioFinanceiro}
+          onChange={(e) => {
+            const [y, m] = e.target.value.split('-').map(Number)
+            setMesFinanceiro(new Date(y, m - 1, 1))
+          }}
+          className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 cursor-pointer"
+        >
+          {mesesDisponiveis.map((d) => {
+            const val = format(d, 'yyyy-MM-dd')
+            return (
+              <option key={val} value={val}>
+                {format(d, "MMMM 'de' yyyy", { locale: ptBR })}
+              </option>
+            )
+          })}
+        </select>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Faturamento NF */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
@@ -348,7 +379,7 @@ export function Dashboard() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-gray-700">Faturamento NF</p>
-                <p className="text-xs text-gray-400">{format(new Date(hoje.getFullYear(), hoje.getMonth(), 1), 'MMMM/yyyy', { locale: ptBR })}</p>
+                <p className="text-xs text-gray-400">{format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
               </div>
             </div>
             <span className="text-xs text-gray-400">{financeiro?.qtd_nfs || 0} NF(s)</span>
@@ -374,7 +405,7 @@ export function Dashboard() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-gray-700">Custo com Frete</p>
-                <p className="text-xs text-gray-400">{format(new Date(hoje.getFullYear(), hoje.getMonth(), 1), 'MMMM/yyyy', { locale: ptBR })}</p>
+                <p className="text-xs text-gray-400">{format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
               </div>
             </div>
             <span className="text-xs text-gray-400">{financeiro?.qtd_com_frete || 0} OV(s)</span>
@@ -399,7 +430,7 @@ export function Dashboard() {
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-700">Ticket Médio por NF</p>
-              <p className="text-xs text-gray-400">{format(new Date(hoje.getFullYear(), hoje.getMonth(), 1), 'MMMM/yyyy', { locale: ptBR })}</p>
+              <p className="text-xs text-gray-400">{format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
             </div>
           </div>
           <p className="text-2xl font-bold text-blue-600">

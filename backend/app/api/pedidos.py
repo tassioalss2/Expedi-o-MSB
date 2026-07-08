@@ -323,7 +323,13 @@ def dashboard_financeiro(
     data_fim: Optional[date] = Query(None),
     _: UsuarioOut = Depends(get_current_user),
 ):
-    """Faturamento NF e custo de frete acumulados no período."""
+    """Faturamento NF e custo de frete das notas FATURADAS no período.
+
+    Atribui cada NF ao mês em que foi de fato faturada (movimentação para
+    o status FATURADO), e não pela última atualização do pedido — que muda
+    a cada mudança de status (coleta, expedição, etc.).
+    """
+    from datetime import datetime, timedelta, timezone
     from app.core.database import get_service_db
     db = get_service_db()
 
@@ -331,11 +337,42 @@ def dashboard_financeiro(
     inicio = data_inicio or date(hoje.year, hoje.month, 1)
     fim = data_fim or hoje
 
+    # Janela alargada em 1 dia para cobrir a conversão UTC->BRT nas bordas do mês.
+    janela_ini = (inicio - timedelta(days=1)).isoformat()
+    janela_fim = (fim + timedelta(days=1)).isoformat()
+
+    movs = db.table("movimentacoes").select(
+        "pedido_id, criado_em"
+    ).eq("status_novo", "FATURADO")\
+        .gte("criado_em", f"{janela_ini}T00:00:00")\
+        .lte("criado_em", f"{janela_fim}T23:59:59").execute().data
+
+    # pedido_id -> data de faturamento (BRT), mantendo o faturamento dentro do período
+    faturados: dict[str, str] = {}
+    for m in movs:
+        ts_str = m.get("criado_em")
+        pid = m.get("pedido_id")
+        if not ts_str or not pid:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            data_brt = (ts.astimezone(timezone.utc) - timedelta(hours=3)).date()
+        except Exception:
+            continue
+        if inicio <= data_brt <= fim:
+            faturados[pid] = data_brt.isoformat()
+
+    if not faturados:
+        return {
+            "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
+            "total_nf": 0.0, "total_produtos": 0.0, "total_frete": 0.0,
+            "qtd_nfs": 0, "qtd_com_frete": 0,
+        }
+
+    ids = list(faturados.keys())
     pedidos = db.table("pedidos").select(
-        "valor_nf, valor_produtos, valor_frete, tipo_frete, status"
-    ).gte("atualizado_em", f"{inicio.isoformat()}T00:00:00").lte(
-        "atualizado_em", f"{fim.isoformat()}T23:59:59"
-    ).neq("status", "CANCELADO").execute().data
+        "id, valor_nf, valor_produtos, valor_frete, tipo_frete, status"
+    ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
     total_nf = sum(float(p["valor_nf"] or 0) for p in pedidos if p.get("valor_nf"))
     total_frete = sum(float(p["valor_frete"] or 0) for p in pedidos if p.get("valor_frete"))
