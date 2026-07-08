@@ -362,31 +362,44 @@ def dashboard_financeiro(
         if inicio <= data_brt <= fim:
             faturados[pid] = data_brt.isoformat()
 
+    def _resumo(lista: list) -> dict:
+        return {
+            "total_nf": round(sum(float(p["valor_nf"] or 0) for p in lista if p.get("valor_nf")), 2),
+            "total_produtos": round(sum(float(p["valor_produtos"] or 0) for p in lista if p.get("valor_produtos")), 2),
+            "total_frete": round(sum(float(p["valor_frete"] or 0) for p in lista if p.get("valor_frete")), 2),
+            "qtd_nfs": sum(1 for p in lista if p.get("valor_nf")),
+            "qtd_com_frete": sum(1 for p in lista if p.get("valor_frete")),
+        }
+
     if not faturados:
+        vazio = _resumo([])
         return {
             "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
-            "total_nf": 0.0, "total_produtos": 0.0, "total_frete": 0.0,
-            "qtd_nfs": 0, "qtd_com_frete": 0,
+            **vazio,
+            "transfer_price": vazio,
+            "outras_vendas": vazio,
         }
 
     ids = list(faturados.keys())
     pedidos = db.table("pedidos").select(
-        "id, valor_nf, valor_produtos, valor_frete, tipo_frete, status"
+        "id, valor_nf, valor_produtos, valor_frete, tipo_frete, status, clientes(nome)"
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
-    total_nf = sum(float(p["valor_nf"] or 0) for p in pedidos if p.get("valor_nf"))
-    total_frete = sum(float(p["valor_frete"] or 0) for p in pedidos if p.get("valor_frete"))
-    total_produtos = sum(float(p["valor_produtos"] or 0) for p in pedidos if p.get("valor_produtos"))
-    qtd_com_nf = sum(1 for p in pedidos if p.get("valor_nf"))
-    qtd_com_frete = sum(1 for p in pedidos if p.get("valor_frete"))
+    # Transfer price = vendas para a Biomedical (empresa do grupo).
+    # Identificada pelo nome do cliente. Ajuste este critério se o cadastro mudar.
+    def _eh_biomedical(p: dict) -> bool:
+        nome = ((p.get("clientes") or {}).get("nome") or "").upper()
+        return "BIOMEDICAL" in nome
 
+    transfer = [p for p in pedidos if _eh_biomedical(p)]
+    outras = [p for p in pedidos if not _eh_biomedical(p)]
+
+    total = _resumo(pedidos)
     return {
         "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
-        "total_nf": round(total_nf, 2),
-        "total_produtos": round(total_produtos, 2),
-        "total_frete": round(total_frete, 2),
-        "qtd_nfs": qtd_com_nf,
-        "qtd_com_frete": qtd_com_frete,
+        **total,
+        "transfer_price": _resumo(transfer),
+        "outras_vendas": _resumo(outras),
     }
 
 

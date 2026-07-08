@@ -394,6 +394,30 @@ export function Dashboard() {
               Produtos: R$ {Number(financeiro.total_produtos).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
           )}
+          {financeiro && (
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
+                  Transfer Price (Biomedical)
+                  <span className="text-gray-300">· {financeiro.transfer_price?.qtd_nfs || 0} NF</span>
+                </span>
+                <span className="text-sm font-semibold text-purple-700">
+                  R$ {Number(financeiro.transfer_price?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                  Outras Vendas
+                  <span className="text-gray-300">· {financeiro.outras_vendas?.qtd_nfs || 0} NF</span>
+                </span>
+                <span className="text-sm font-semibold text-green-700">
+                  R$ {Number(financeiro.outras_vendas?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Custo de Frete */}
