@@ -187,6 +187,7 @@ class ComunicadoUsoCreate(BaseModel):
     cliente_id: UUID
     numero_nf: str
     valor_nf: float
+    canal: Optional[str] = None
     valor_produtos: Optional[float] = None
     data_faturamento: Optional[date] = None
     observacoes: Optional[str] = None

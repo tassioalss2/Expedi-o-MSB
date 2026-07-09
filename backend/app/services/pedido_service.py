@@ -320,6 +320,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
         "tipo_operacao":         "COMUNICADO_USO",
         "status":                StatusPedido.FATURADO.value,
         "prioridade":            "NORMAL",
+        "canal":                 payload.canal or None,
         "data_prevista_entrega": data_fat.isoformat(),
         "numero_nf":             payload.numero_nf,
         "valor_nf":              payload.valor_nf,

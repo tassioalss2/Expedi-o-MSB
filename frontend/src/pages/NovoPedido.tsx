@@ -82,7 +82,7 @@ export function NovoPedido() {
     cliente_nome: '',
     transportadora_id: '',
     tipo_frete: 'FOB',
-    tipo_operacao: 'VENDA_NORMAL',
+    tipo_operacao: '',
     canal: '',
     local_entrega: '',
     data_prevista_entrega: '',
@@ -196,6 +196,7 @@ export function NovoPedido() {
   })
 
   const podeEnviar = form.numero_pedido && form.cliente_id && form.data_prevista_entrega
+    && form.tipo_operacao && form.canal
   const podeConfirmarRecriar =
     modalRecriar.motivo.trim().length >= 5 && modalRecriar.confirmado
 
@@ -251,7 +252,8 @@ export function NovoPedido() {
           <div className="col-span-2">
             <label className="text-sm font-medium text-gray-700">Tipo de Operação *</label>
             <select value={form.tipo_operacao} onChange={e => setForm({...form, tipo_operacao: e.target.value})}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.tipo_operacao ? '' : 'border-amber-400 text-gray-400'}`}>
+              <option value="" disabled>Selecione o tipo de operação…</option>
               <option value="VENDA_NORMAL">Venda normal</option>
               <option value="COMUNICADO_USO">Comunicado de uso (consignado usado)</option>
               <option value="BONIFICACAO_DOACAO">Bonificação/Doação</option>
@@ -266,10 +268,10 @@ export function NovoPedido() {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Canal de Venda</label>
+            <label className="text-sm font-medium text-gray-700">Canal de Venda *</label>
             <select value={form.canal} onChange={e => setForm({...form, canal: e.target.value})}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
-              <option value="">— (sem canal)</option>
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.canal ? '' : 'border-amber-400 text-gray-400'}`}>
+              <option value="" disabled>Selecione o canal…</option>
               <option value="URO">Uro</option>
               <option value="VASCULAR">Vascular</option>
               <option value="REALCLOSURE">Realclosure</option>

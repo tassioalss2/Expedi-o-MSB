@@ -18,6 +18,7 @@ export function ComunicadoUso() {
     numero_nf: '',
     valor_nf: '',
     valor_produtos: '',
+    canal: '',
     data_faturamento: hoje,
     observacoes: '',
   })
@@ -28,6 +29,7 @@ export function ComunicadoUso() {
       cliente_id: form.cliente_id,
       numero_nf: form.numero_nf.trim(),
       valor_nf: Number(form.valor_nf),
+      canal: form.canal || null,
       valor_produtos: form.valor_produtos ? Number(form.valor_produtos) : null,
       data_faturamento: form.data_faturamento || null,
       observacoes: form.observacoes || null,
@@ -44,7 +46,7 @@ export function ComunicadoUso() {
     },
   })
 
-  const valido = form.numero_pedido.trim() && form.cliente_id && form.numero_nf.trim() && Number(form.valor_nf) > 0
+  const valido = form.numero_pedido.trim() && form.cliente_id && form.numero_nf.trim() && Number(form.valor_nf) > 0 && form.canal
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -94,6 +96,18 @@ export function ComunicadoUso() {
             <input type="number" step="0.01" value={form.valor_nf}
               onChange={e => setForm({ ...form, valor_nf: e.target.value })}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-sm font-medium text-gray-700">Canal de Venda *</label>
+            <select value={form.canal} onChange={e => setForm({ ...form, canal: e.target.value })}
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.canal ? '' : 'border-amber-400 text-gray-400'}`}>
+              <option value="" disabled>Selecione o canal…</option>
+              <option value="URO">Uro</option>
+              <option value="VASCULAR">Vascular</option>
+              <option value="REALCLOSURE">Realclosure</option>
+              <option value="LICITACAO">Licitação</option>
+            </select>
           </div>
 
           <div className="col-span-2">
