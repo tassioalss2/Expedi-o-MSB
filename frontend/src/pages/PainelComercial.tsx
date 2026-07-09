@@ -56,7 +56,8 @@ export function PainelComercial() {
   })
 
   const metaValor = meta?.valor ?? null
-  const realizado = financeiro?.faturamento_sem_frete || 0
+  // Meta é sobre Vendas (exclui Transfer Price / Biomedical)
+  const realizado = financeiro?.outras_vendas?.faturamento_sem_frete || 0
   const percentualMeta = metaValor && metaValor > 0 ? (realizado / metaValor) * 100 : 0
   const faltaMeta = metaValor ? metaValor - realizado : 0
   const corBarra = percentualMeta >= 100 ? 'bg-green-500' : percentualMeta < 70 ? 'bg-amber-500' : 'bg-green-500'
@@ -164,7 +165,7 @@ export function PainelComercial() {
               <p className="text-2xl font-bold text-gray-800">{fmtR$(metaValor)}</p>
             </div>
             <div className="text-right">
-              <p className="text-xs text-gray-400">Realizado</p>
+              <p className="text-xs text-gray-400">Vendas</p>
               <p className="text-xl font-bold text-green-600">{fmtR$(realizado)}</p>
             </div>
           </div>
@@ -223,21 +224,18 @@ export function PainelComercial() {
             <span className="text-xs text-gray-400">{financeiro?.qtd_nfs || 0} NF(s)</span>
           </div>
           <div
-            onClick={() => setDetalheFin({ categoria: 'todos', titulo: 'Faturamento — todas as NFs' })}
+            onClick={() => setDetalheFin({ categoria: 'outras', titulo: 'Vendas' })}
             className="cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors"
-            title="Ver as NFs deste total"
+            title="Ver as NFs de vendas"
           >
-            <p className="text-2xl font-bold text-green-600">
-              {financeiro?.faturamento_sem_frete
-                ? `R$ ${Number(financeiro.faturamento_sem_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
-                : 'R$ 0,00'}
+            <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Vendas · sem frete</p>
+            <p className="text-3xl font-bold text-green-600 leading-tight">
+              R$ {Number(financeiro?.outras_vendas?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
-            <p className="text-xs text-gray-400 mt-0.5">sem frete · só produtos</p>
-            {financeiro && (
-              <p className="text-sm font-semibold text-gray-600 mt-1.5">
-                Bruto (c/ frete): R$ {Number(financeiro.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
-            )}
+            <p className="text-xs text-gray-400 mt-0.5">
+              c/ frete: R$ {Number(financeiro?.outras_vendas?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <span className="text-gray-300"> · {financeiro?.outras_vendas?.qtd_nfs || 0} NF</span>
+            </p>
           </div>
           {financeiro && (
             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
@@ -254,27 +252,16 @@ export function PainelComercial() {
                   <span className="block text-sm font-semibold text-purple-700">
                     R$ {Number(financeiro.transfer_price?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
-                  <span className="block text-[11px] text-gray-400">
-                    c/ frete: R$ {Number(financeiro.transfer_price?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
+                  <span className="block text-[11px] text-gray-400">não entra na meta</span>
                 </span>
               </div>
               <div
-                onClick={() => setDetalheFin({ categoria: 'outras', titulo: 'Outras Vendas' })}
-                className="flex items-start justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
+                onClick={() => setDetalheFin({ categoria: 'todos', titulo: 'Faturamento — todas as NFs' })}
+                className="flex items-center justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
               >
-                <span className="flex items-center gap-1.5 text-xs text-gray-500 pt-0.5">
-                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
-                  Outras Vendas
-                  <span className="text-gray-300">· {financeiro.outras_vendas?.qtd_nfs || 0} NF</span>
-                </span>
-                <span className="text-right">
-                  <span className="block text-sm font-semibold text-green-700">
-                    R$ {Number(financeiro.outras_vendas?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <span className="block text-[11px] text-gray-400">
-                    c/ frete: R$ {Number(financeiro.outras_vendas?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
+                <span className="text-xs text-gray-400">Total faturado (Vendas + Transfer)</span>
+                <span className="text-sm font-medium text-gray-500">
+                  R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
