@@ -389,6 +389,8 @@ def listar_pedidos(
     query = db.table("pedidos").select(
         "*, clientes(id, nome), transportadoras(id, nome)"
     )
+    # Comunicado de uso não passa pela logística — não aparece no quadro operacional.
+    query = query.neq("tipo_operacao", "COMUNICADO_USO")
 
     if status_filter:
         query = query.eq("status", status_filter)
@@ -731,8 +733,11 @@ def obter_dashboard_operacional() -> dict:
     db = get_service_db()
     hoje = date.today().isoformat()
 
-    todos = db.table("pedidos").select("status, data_prevista_entrega").execute().data
+    # Comunicado de uso não é logística — fora das contagens operacionais.
+    todos = db.table("pedidos").select("status, data_prevista_entrega")\
+        .neq("tipo_operacao", "COMUNICADO_USO").execute().data
     expedidos_hoje = db.table("pedidos").select("id").eq("status", StatusPedido.EXPEDIDO.value)\
+        .neq("tipo_operacao", "COMUNICADO_USO")\
         .gte("atualizado_em", f"{hoje}T00:00:00").execute().data
     ocorrencias = db.table("ocorrencias").select("id").eq("status", "ABERTA").execute().data
 
@@ -914,6 +919,7 @@ def obter_horario_criacao(data_inicio: Optional[date] = None, data_fim: Optional
     fim = data_fim or hoje
 
     resultado = db.table("pedidos").select("criado_em").neq("status", "CANCELADO")\
+        .neq("tipo_operacao", "COMUNICADO_USO")\
         .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
 
@@ -942,6 +948,7 @@ def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None,
     resultado = db.table("pedidos").select(
         "id, numero_pedido, status, criado_em, clientes(nome)"
     ).neq("status", "CANCELADO")\
+        .neq("tipo_operacao", "COMUNICADO_USO")\
         .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
 
@@ -979,6 +986,7 @@ def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[da
     resultado = db.table("pedidos").select(
         "id, criado_em, itens_pedido(qtd_solicitada)"
     ).neq("status", "CANCELADO")\
+        .neq("tipo_operacao", "COMUNICADO_USO")\
         .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
 
