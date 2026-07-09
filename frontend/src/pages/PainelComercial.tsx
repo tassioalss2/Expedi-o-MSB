@@ -72,6 +72,14 @@ export function PainelComercial() {
     refetchInterval: 60000,
   })
 
+  const { data: vendasCanal = [] } = useQuery<Array<{ canal: string; label: string; qtd: number; valor: number }>>({
+    queryKey: ['vendas-por-canal', inicioFinanceiro, fimFinanceiro],
+    queryFn: () => api.get('/pedidos/dashboard/vendas-por-canal', {
+      params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
+    }).then(r => r.data),
+    refetchInterval: 60000,
+  })
+
   // Drill-down do card financeiro: qual grupo de NFs está sendo detalhado
   const [detalheFin, setDetalheFin] = useState<{ categoria: string; titulo: string } | null>(null)
   const { data: detalheFinLista = [], isFetching: carregandoDetalheFin } = useQuery<any[]>({
@@ -373,6 +381,45 @@ export function PainelComercial() {
               : '—'}
           </p>
         </div>
+      </div>
+
+      {/* Vendas por Canal */}
+      <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Vendas por Canal</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Sem frete · exclui Transfer Price · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
+          </div>
+        </div>
+        {vendasCanal.length === 0 ? (
+          <p className="text-center text-gray-400 py-6 text-sm">Nenhuma venda no período</p>
+        ) : (() => {
+          const total = vendasCanal.reduce((a, c) => a + (c.valor || 0), 0)
+          const maxV = vendasCanal[0]?.valor || 1
+          const CORES: Record<string, string> = {
+            URO: 'bg-indigo-500', VASCULAR: 'bg-rose-500', REALCLOSURE: 'bg-amber-500',
+            LICITACAO: 'bg-teal-500', SEM_CANAL: 'bg-gray-300',
+          }
+          return (
+            <div className="space-y-3">
+              {vendasCanal.map((c) => (
+                <div key={c.canal}>
+                  <div className="flex items-baseline justify-between gap-3 mb-1">
+                    <span className="text-sm text-gray-700 flex-1">
+                      {c.label}
+                      {c.canal === 'SEM_CANAL' && <span className="text-xs text-amber-500 ml-1">(preencher)</span>}
+                    </span>
+                    <span className="text-xs text-gray-400 tabular-nums">{c.qtd} NF · {((c.valor / total) * 100).toFixed(1)}%</span>
+                    <span className="text-sm font-semibold text-gray-800 tabular-nums w-32 text-right">{fmtR$(c.valor)}</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full ${CORES[c.canal] || 'bg-gray-300'}`} style={{ width: `${(c.valor / maxV) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Vendas por Cliente */}

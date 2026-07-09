@@ -83,6 +83,7 @@ export function NovoPedido() {
     transportadora_id: '',
     tipo_frete: 'FOB',
     tipo_operacao: 'VENDA_NORMAL',
+    canal: '',
     local_entrega: '',
     data_prevista_entrega: '',
     prioridade: 'NORMAL',
@@ -113,6 +114,7 @@ export function NovoPedido() {
   const buildBody = (extra?: Record<string, unknown>) => ({
     ...form,
     transportadora_id: form.transportadora_id || null,
+    canal: form.canal || null,
     itens: [],
     ...extra,
   })
@@ -261,6 +263,18 @@ export function NovoPedido() {
                 ⚠️ Esta operação gera NF e passa pelo fluxo, mas <strong>não entra no faturamento</strong>.
               </p>
             )}
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Canal de Venda</label>
+            <select value={form.canal} onChange={e => setForm({...form, canal: e.target.value})}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+              <option value="">— (sem canal)</option>
+              <option value="URO">Uro</option>
+              <option value="VASCULAR">Vascular</option>
+              <option value="REALCLOSURE">Realclosure</option>
+              <option value="LICITACAO">Licitação</option>
+            </select>
           </div>
 
           <div>

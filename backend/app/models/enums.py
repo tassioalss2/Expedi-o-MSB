@@ -59,6 +59,14 @@ class TipoOperacao(str, Enum):
 OPERACOES_FATURAMENTO = {TipoOperacao.VENDA_NORMAL.value, TipoOperacao.COMUNICADO_USO.value}
 
 
+class CanalVenda(str, Enum):
+    """Canal comercial responsável pela venda."""
+    URO = "URO"
+    VASCULAR = "VASCULAR"
+    REALCLOSURE = "REALCLOSURE"
+    LICITACAO = "LICITACAO"
+
+
 class Prioridade(str, Enum):
     NORMAL = "NORMAL"
     ALTA = "ALTA"

@@ -580,6 +580,49 @@ def vendas_por_cliente(
     return sorted(agg.values(), key=lambda x: -x["valor"])
 
 
+@router.get("/dashboard/vendas-por-canal")
+def vendas_por_canal(
+    data_inicio: date = Query(...),
+    data_fim: date = Query(...),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Vendas (sem frete) agrupadas por canal comercial no período.
+
+    Mesmo escopo de "Vendas": faturamento, sem Transfer Price nem Esterilize.
+    """
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    faturados = _faturados_no_periodo(data_inicio, data_fim)
+    if not faturados:
+        return []
+
+    LABELS = {"URO": "Uro", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure", "LICITACAO": "Licitação"}
+    ids = list(faturados.keys())
+    peds: list = []
+    for i in range(0, len(ids), 40):
+        peds += db.table("pedidos").select(
+            "valor_nf, valor_frete, tipo_frete, tipo_operacao, canal, status, clientes(nome)"
+        ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
+
+    agg: dict = {}
+    for p in peds:
+        nome = ((p.get("clientes") or {}).get("nome") or "").upper()
+        if "ESTERILIZE" in nome or _eh_biomedical(p) or not _conta_faturamento(p):
+            continue
+        canal = p.get("canal") or "SEM_CANAL"
+        valor = float(p.get("valor_nf") or 0)
+        if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+            valor -= float(p.get("valor_frete") or 0)
+        g = agg.setdefault(canal, {"canal": canal, "label": LABELS.get(canal, "Sem canal"), "qtd": 0, "valor": 0.0})
+        g["qtd"] += 1
+        g["valor"] += valor
+
+    for g in agg.values():
+        g["valor"] = round(g["valor"], 2)
+    return sorted(agg.values(), key=lambda x: -x["valor"])
+
+
 @router.get("/relatorio/faturamento")
 def relatorio_faturamento(
     data_inicio: date = Query(...),

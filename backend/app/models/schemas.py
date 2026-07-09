@@ -11,6 +11,7 @@ from app.models.enums import (
     ResultadoConferencia,
     StatusOcorrencia,
     StatusPedido,
+    CanalVenda,
     TipoDivergencia,
     TipoFrete,
     TipoOperacao,
@@ -160,6 +161,7 @@ class PedidoCreate(BaseModel):
     transportadora_id: Optional[UUID] = None
     tipo_frete: TipoFrete = TipoFrete.FOB
     tipo_operacao: TipoOperacao = TipoOperacao.VENDA_NORMAL
+    canal: Optional[CanalVenda] = None
     local_entrega: Optional[str] = None
     data_prevista_entrega: date
     data_prevista_coleta: Optional[date] = None
