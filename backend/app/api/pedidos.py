@@ -536,6 +536,50 @@ def dashboard_financeiro_detalhe(
     return sorted(linhas, key=lambda x: (x["data"] or "", x["numero_pedido"] or ""))
 
 
+@router.get("/dashboard/vendas-por-cliente")
+def vendas_por_cliente(
+    data_inicio: date = Query(...),
+    data_fim: date = Query(...),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Vendas (sem frete) agrupadas por cliente no período.
+
+    Escopo = Vendas: só operações de faturamento (venda normal + comunicado
+    de uso), excluindo Transfer Price (Biomedical) e Esterilize.
+    """
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    faturados = _faturados_no_periodo(data_inicio, data_fim)
+    if not faturados:
+        return []
+
+    ids = list(faturados.keys())
+    peds: list = []
+    for i in range(0, len(ids), 40):
+        peds += db.table("pedidos").select(
+            "valor_nf, valor_frete, tipo_frete, tipo_operacao, status, clientes(nome)"
+        ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
+
+    agg: dict = {}
+    for p in peds:
+        nome = ((p.get("clientes") or {}).get("nome") or "").strip()
+        if not nome or "ESTERILIZE" in nome.upper() or _eh_biomedical(p):
+            continue
+        if not _conta_faturamento(p):
+            continue
+        valor = float(p.get("valor_nf") or 0)
+        if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+            valor -= float(p.get("valor_frete") or 0)  # sem frete = só produtos
+        g = agg.setdefault(nome, {"cliente": nome, "qtd": 0, "valor": 0.0})
+        g["qtd"] += 1
+        g["valor"] += valor
+
+    for g in agg.values():
+        g["valor"] = round(g["valor"], 2)
+    return sorted(agg.values(), key=lambda x: -x["valor"])
+
+
 @router.get("/relatorio/faturamento")
 def relatorio_faturamento(
     data_inicio: date = Query(...),

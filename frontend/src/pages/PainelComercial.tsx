@@ -63,6 +63,15 @@ export function PainelComercial() {
   const corBarra = percentualMeta >= 100 ? 'bg-green-500' : percentualMeta < 70 ? 'bg-amber-500' : 'bg-green-500'
   const fmtR$ = (v: number) => `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
 
+  // Vendas por cliente (fase 2)
+  const { data: vendasCliente = [] } = useQuery<Array<{ cliente: string; qtd: number; valor: number }>>({
+    queryKey: ['vendas-por-cliente', inicioFinanceiro, fimFinanceiro],
+    queryFn: () => api.get('/pedidos/dashboard/vendas-por-cliente', {
+      params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
+    }).then(r => r.data),
+    refetchInterval: 60000,
+  })
+
   // Drill-down do card financeiro: qual grupo de NFs está sendo detalhado
   const [detalheFin, setDetalheFin] = useState<{ categoria: string; titulo: string } | null>(null)
   const { data: detalheFinLista = [], isFetching: carregandoDetalheFin } = useQuery<any[]>({
@@ -364,6 +373,54 @@ export function PainelComercial() {
               : '—'}
           </p>
         </div>
+      </div>
+
+      {/* Vendas por Cliente */}
+      <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Vendas por Cliente</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Sem frete · exclui Transfer Price · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
+          </div>
+          <span className="text-xs text-gray-400">{vendasCliente.length} cliente(s)</span>
+        </div>
+        {vendasCliente.length === 0 ? (
+          <p className="text-center text-gray-400 py-6 text-sm">Nenhuma venda no período</p>
+        ) : (() => {
+          const total = vendasCliente.reduce((a, c) => a + (c.valor || 0), 0)
+          const maxV = vendasCliente[0]?.valor || 1
+          const topN = vendasCliente.slice(0, 10)
+          const resto = vendasCliente.slice(10)
+          const restoValor = resto.reduce((a, c) => a + c.valor, 0)
+          const restoQtd = resto.reduce((a, c) => a + c.qtd, 0)
+          return (
+            <div className="space-y-2.5">
+              {topN.map((c) => (
+                <div key={c.cliente}>
+                  <div className="flex items-baseline justify-between gap-3 mb-1">
+                    <span className="text-sm text-gray-700 truncate flex-1">{c.cliente}</span>
+                    <span className="text-xs text-gray-400 tabular-nums">{c.qtd} NF · {((c.valor / total) * 100).toFixed(1)}%</span>
+                    <span className="text-sm font-semibold text-green-700 tabular-nums w-32 text-right">{fmtR$(c.valor)}</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-green-500 rounded-full" style={{ width: `${(c.valor / maxV) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+              {resto.length > 0 && (
+                <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-100 text-gray-400">
+                  <span className="text-xs flex-1">+ {resto.length} outros clientes</span>
+                  <span className="text-xs tabular-nums">{restoQtd} NF</span>
+                  <span className="text-sm font-medium tabular-nums w-32 text-right">{fmtR$(restoValor)}</span>
+                </div>
+              )}
+              <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-200">
+                <span className="text-sm font-semibold text-gray-700 flex-1">Total de Vendas</span>
+                <span className="text-sm font-bold text-green-700 tabular-nums w-32 text-right">{fmtR$(total)}</span>
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       {/* Modal drill-down do card financeiro */}
