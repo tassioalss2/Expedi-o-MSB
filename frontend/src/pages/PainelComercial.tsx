@@ -34,22 +34,22 @@ export function PainelComercial() {
     refetchInterval: 60000,
   })
 
-  // Meta do mês
+  // Metas por canal (total = soma dos canais)
   const competenciaStr = format(mesFinanceiro, 'yyyy-MM')
-  const { data: meta } = useQuery<{ competencia: string; valor: number | null }>({
+  const { data: meta } = useQuery<{ competencia: string; valor: number | null; por_canal: Record<string, number | null> }>({
     queryKey: ['meta', competenciaStr],
     queryFn: () => api.get(`/pedidos/meta?competencia=${competenciaStr}`).then(r => r.data),
   })
 
-  const [editandoMeta, setEditandoMeta] = useState(false)
+  const [editandoCanal, setEditandoCanal] = useState<string | null>(null)
   const [valorMeta, setValorMeta] = useState('')
 
   const salvarMeta = useMutation({
-    mutationFn: (valor: number) =>
-      api.put('/pedidos/meta', { competencia: competenciaStr, valor }).then(r => r.data),
+    mutationFn: (vars: { canal: string; valor: number }) =>
+      api.put('/pedidos/meta', { competencia: competenciaStr, canal: vars.canal, valor: vars.valor }).then(r => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['meta', competenciaStr] })
-      setEditandoMeta(false)
+      setEditandoCanal(null)
       toast.success('Meta salva')
     },
     onError: () => toast.error('Erro ao salvar meta'),
@@ -118,78 +118,34 @@ export function PainelComercial() {
         </p>
       </div>
 
-      {/* Meta do mês */}
+      {/* Meta do mês (total = soma das metas por canal) */}
       <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-green-50 rounded-lg">
-              <DollarSign size={18} className="text-green-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-700">Meta do mês</p>
-              <p className="text-xs text-gray-400">{format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
-            </div>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="p-2 bg-green-50 rounded-lg">
+            <DollarSign size={18} className="text-green-600" />
           </div>
-          {!editandoMeta && (
-            <button
-              onClick={() => { setValorMeta(metaValor != null ? String(metaValor) : ''); setEditandoMeta(true) }}
-              className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600"
-              title="Editar meta"
-            >
-              <Pencil size={15} />
-            </button>
-          )}
+          <div>
+            <p className="text-sm font-semibold text-gray-700">Meta do mês</p>
+            <p className="text-xs text-gray-400">Soma das metas por canal · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
+          </div>
         </div>
 
-        {editandoMeta ? (
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-sm text-gray-500">R$</span>
-            <input
-              type="number"
-              step="0.01"
-              value={valorMeta}
-              onChange={(e) => setValorMeta(e.target.value)}
-              placeholder="0,00"
-              className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-            />
-            <button
-              onClick={() => salvarMeta.mutate(Number(valorMeta))}
-              disabled={salvarMeta.isPending}
-              className="px-4 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-500 disabled:opacity-60"
-            >
-              Salvar
-            </button>
-            <button
-              onClick={() => setEditandoMeta(false)}
-              className="px-3 py-1.5 border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50"
-            >
-              Cancelar
-            </button>
-          </div>
-        ) : metaValor === null ? (
-          <div className="mb-3">
-            <button
-              onClick={() => { setValorMeta(''); setEditandoMeta(true) }}
-              className="px-4 py-2 border border-dashed border-gray-300 text-gray-500 rounded-lg text-sm font-medium hover:bg-gray-50"
-            >
-              Definir meta
-            </button>
-          </div>
+        {metaValor === null ? (
+          <p className="text-sm text-gray-400 py-2">
+            Nenhuma meta definida. Defina as metas por canal na seção <strong>Vendas por Canal</strong> abaixo.
+          </p>
         ) : (
-          <div className="flex items-end justify-between mb-3">
-            <div>
-              <p className="text-xs text-gray-400">Meta</p>
-              <p className="text-2xl font-bold text-gray-800">{fmtR$(metaValor)}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-gray-400">Vendas</p>
-              <p className="text-xl font-bold text-green-600">{fmtR$(realizado)}</p>
-            </div>
-          </div>
-        )}
-
-        {metaValor !== null && !editandoMeta && (
           <>
+            <div className="flex items-end justify-between mb-3">
+              <div>
+                <p className="text-xs text-gray-400">Meta total</p>
+                <p className="text-2xl font-bold text-gray-800">{fmtR$(metaValor)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-400">Vendas</p>
+                <p className="text-xl font-bold text-green-600">{fmtR$(realizado)}</p>
+              </div>
+            </div>
             <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
               <div
                 className={`h-2 rounded-full transition-all ${corBarra}`}
@@ -383,40 +339,94 @@ export function PainelComercial() {
         </div>
       </div>
 
-      {/* Vendas por Canal */}
+      {/* Vendas por Canal (realizado × meta) */}
       <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700">Vendas por Canal</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Sem frete · exclui Transfer Price · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
-          </div>
+        <div className="mb-4">
+          <h2 className="text-sm font-semibold text-gray-700">Vendas por Canal</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Realizado × meta · sem frete · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
         </div>
-        {vendasCanal.length === 0 ? (
-          <p className="text-center text-gray-400 py-6 text-sm">Nenhuma venda no período</p>
-        ) : (() => {
-          const total = vendasCanal.reduce((a, c) => a + (c.valor || 0), 0)
-          const maxV = vendasCanal[0]?.valor || 1
-          const CORES: Record<string, string> = {
-            URO: 'bg-indigo-500', VASCULAR: 'bg-rose-500', REALCLOSURE: 'bg-amber-500',
-            LICITACAO: 'bg-teal-500', SEM_CANAL: 'bg-gray-300',
-          }
+        {(() => {
+          const CANAIS = [
+            { key: 'URO', label: 'Uro', cor: 'bg-indigo-500' },
+            { key: 'VASCULAR', label: 'Vascular', cor: 'bg-rose-500' },
+            { key: 'REALCLOSURE', label: 'Realclosure', cor: 'bg-amber-500' },
+            { key: 'LICITACAO', label: 'Licitação', cor: 'bg-teal-500' },
+          ]
+          const de = (k: string) => vendasCanal.find(c => c.canal === k)
+          const semCanal = de('SEM_CANAL')
           return (
-            <div className="space-y-3">
-              {vendasCanal.map((c) => (
-                <div key={c.canal}>
-                  <div className="flex items-baseline justify-between gap-3 mb-1">
-                    <span className="text-sm text-gray-700 flex-1">
-                      {c.label}
-                      {c.canal === 'SEM_CANAL' && <span className="text-xs text-amber-500 ml-1">(preencher)</span>}
-                    </span>
-                    <span className="text-xs text-gray-400 tabular-nums">{c.qtd} NF · {((c.valor / total) * 100).toFixed(1)}%</span>
-                    <span className="text-sm font-semibold text-gray-800 tabular-nums w-32 text-right">{fmtR$(c.valor)}</span>
+            <div className="space-y-4">
+              {CANAIS.map((ch) => {
+                const rz = de(ch.key)?.valor || 0
+                const qtd = de(ch.key)?.qtd || 0
+                const mt = meta?.por_canal?.[ch.key] ?? null
+                const pct = mt && mt > 0 ? (rz / mt) * 100 : 0
+                const editing = editandoCanal === ch.key
+                return (
+                  <div key={ch.key}>
+                    <div className="flex items-baseline justify-between gap-2 mb-1">
+                      <span className="text-sm font-medium text-gray-700 flex-1">
+                        {ch.label}<span className="text-xs text-gray-400 font-normal ml-1.5">{qtd} NF</span>
+                      </span>
+                      {!editing && (
+                        <>
+                          <span className="text-sm font-semibold text-gray-800 tabular-nums">{fmtR$(rz)}</span>
+                          <span className="text-xs text-gray-400 tabular-nums">/ {mt != null ? fmtR$(mt) : 'sem meta'}</span>
+                          <button
+                            onClick={() => { setValorMeta(mt != null ? String(mt) : ''); setEditandoCanal(ch.key) }}
+                            className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                            title="Editar meta do canal"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {editing ? (
+                      <div className="flex items-center gap-2 my-1">
+                        <span className="text-xs text-gray-500">Meta R$</span>
+                        <input
+                          type="number" step="0.01" value={valorMeta} autoFocus
+                          onChange={(e) => setValorMeta(e.target.value)}
+                          className="flex-1 text-sm border border-gray-200 rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-green-500"
+                        />
+                        <button
+                          onClick={() => salvarMeta.mutate({ canal: ch.key, valor: Number(valorMeta) })}
+                          disabled={salvarMeta.isPending}
+                          className="px-3 py-1 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-500 disabled:opacity-60"
+                        >
+                          Salvar
+                        </button>
+                        <button
+                          onClick={() => setEditandoCanal(null)}
+                          className="px-2 py-1 border border-gray-200 text-gray-600 rounded-lg text-xs hover:bg-gray-50"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${pct >= 100 ? 'bg-green-500' : ch.cor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                        </div>
+                        {mt != null && (
+                          <div className="flex justify-between text-[11px] text-gray-400 mt-0.5">
+                            <span>{pct.toFixed(1)}% da meta</span>
+                            {rz < mt && <span>faltam {fmtR$(mt - rz)}</span>}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${CORES[c.canal] || 'bg-gray-300'}`} style={{ width: `${(c.valor / maxV) * 100}%` }} />
-                  </div>
+                )
+              })}
+              {semCanal && semCanal.valor > 0 && (
+                <div className="pt-3 border-t border-dashed border-gray-200 flex items-baseline justify-between gap-2 text-gray-500">
+                  <span className="text-sm flex-1">Sem canal <span className="text-xs text-amber-500">(preencher na OV)</span></span>
+                  <span className="text-xs text-gray-400 tabular-nums">{semCanal.qtd} NF</span>
+                  <span className="text-sm font-medium tabular-nums">{fmtR$(semCanal.valor)}</span>
                 </div>
-              ))}
+              )}
             </div>
           )
         })()}

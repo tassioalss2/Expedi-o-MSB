@@ -194,6 +194,7 @@ class ComunicadoUsoCreate(BaseModel):
 
 class MetaFaturamentoRequest(BaseModel):
     competencia: str  # 'YYYY-MM'
+    canal: str        # URO | VASCULAR | REALCLOSURE | LICITACAO
     valor: float
 
 

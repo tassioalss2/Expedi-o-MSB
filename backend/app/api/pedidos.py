@@ -48,7 +48,7 @@ def obter_meta(competencia: str = Query(...), _: UsuarioOut = Depends(get_curren
 
 @router.put("/meta")
 def definir_meta(payload: MetaFaturamentoRequest, _: UsuarioOut = Depends(get_current_user)):
-    return pedido_service.definir_meta(payload.competencia, payload.valor)
+    return pedido_service.definir_meta(payload.competencia, payload.canal, payload.valor)
 
 
 @router.get("")

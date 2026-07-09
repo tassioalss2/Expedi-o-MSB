@@ -346,21 +346,32 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     return pedido
 
 
+_CANAIS_META = ["URO", "VASCULAR", "REALCLOSURE", "LICITACAO"]
+
+
 def obter_meta(competencia: str) -> dict:
-    """Meta de faturamento de um mês (competencia 'YYYY-MM')."""
+    """Metas por canal de um mês. A meta total = soma das metas dos canais."""
     db = get_service_db()
-    r = db.table("metas_faturamento").select("competencia, valor").eq("competencia", competencia).execute().data
-    return {"competencia": competencia, "valor": float(r[0]["valor"]) if r else None}
+    rows = db.table("metas_faturamento").select("canal, valor").eq("competencia", competencia).execute().data
+    por_canal = {r.get("canal"): float(r["valor"]) for r in rows if r.get("valor") is not None}
+    tem_meta = any(por_canal.get(c) for c in _CANAIS_META)
+    total = round(sum(por_canal.get(c, 0.0) for c in _CANAIS_META), 2)
+    return {
+        "competencia": competencia,
+        "valor": total if tem_meta else None,
+        "por_canal": {c: por_canal.get(c) for c in _CANAIS_META},
+    }
 
 
-def definir_meta(competencia: str, valor: float) -> dict:
+def definir_meta(competencia: str, canal: str, valor: float) -> dict:
     db = get_service_db()
     db.table("metas_faturamento").upsert({
         "competencia": competencia,
+        "canal": canal,
         "valor": valor,
         "atualizado_em": _agora(),
     }).execute()
-    return {"competencia": competencia, "valor": valor}
+    return {"competencia": competencia, "canal": canal, "valor": valor}
 
 
 def obter_referencia_nf_cliente(cliente_id: str) -> dict:
