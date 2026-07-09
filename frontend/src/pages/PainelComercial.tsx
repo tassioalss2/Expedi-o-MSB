@@ -19,8 +19,9 @@ export function PainelComercial() {
   const fimFinanceiro = ehMesAtual
     ? format(hoje, 'yyyy-MM-dd')
     : format(new Date(mesFinanceiro.getFullYear(), mesFinanceiro.getMonth() + 1, 0), 'yyyy-MM-dd')
-  const mesesDisponiveis = Array.from({ length: 12 }, (_, i) =>
-    new Date(hoje.getFullYear(), hoje.getMonth() - i, 1)
+  // Inclui os próximos 3 meses (para planejar metas) + o atual + meses passados
+  const mesesDisponiveis = Array.from({ length: 15 }, (_, i) =>
+    new Date(hoje.getFullYear(), hoje.getMonth() + 3 - i, 1)
   )
 
   const { data: financeiro } = useQuery({
