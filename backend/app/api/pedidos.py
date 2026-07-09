@@ -505,7 +505,7 @@ def dashboard_financeiro_detalhe(
     ids = list(faturados.keys())
     pedidos = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, valor_nf, valor_produtos, valor_frete, "
-        "tipo_frete, tipo_operacao, status, clientes(nome)"
+        "tipo_frete, tipo_operacao, canal, status, clientes(nome)"
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
     linhas = []
@@ -525,6 +525,7 @@ def dashboard_financeiro_detalhe(
             "cliente": (p.get("clientes") or {}).get("nome", "—"),
             "tipo_frete": tipo_frete,
             "tipo_operacao": p.get("tipo_operacao") or "VENDA_NORMAL",
+            "canal": p.get("canal"),
             "eh_faturamento": _conta_faturamento(p),
             "valor_nf": round(bruto, 2),
             "valor_frete": round(valor_frete, 2),

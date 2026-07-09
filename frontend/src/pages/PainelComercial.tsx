@@ -93,6 +93,16 @@ export function PainelComercial() {
 
   const filtrarDetalheFin = (rows: any[], categoria: string) => {
     if (categoria === 'sem_faturamento') return rows.filter(r => !r.eh_faturamento)
+    // Vendas por canal / cliente (escopo Vendas: faturamento, sem Biomedical/Esterilize)
+    if (categoria.startsWith('canal:')) {
+      const k = categoria.slice(6)
+      return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '')
+        && (k === 'SEM_CANAL' ? !r.canal : r.canal === k))
+    }
+    if (categoria.startsWith('cliente:')) {
+      const nome = categoria.slice(8)
+      return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && r.cliente === nome)
+    }
     // Demais categorias refletem só o que é faturamento (bate com os totais do card)
     const fat = rows.filter(r => r.eh_faturamento)
     switch (categoria) {
@@ -364,7 +374,11 @@ export function PainelComercial() {
                 const pct = mt && mt > 0 ? (rz / mt) * 100 : 0
                 const editing = editandoCanal === ch.key
                 return (
-                  <div key={ch.key}>
+                  <div key={ch.key}
+                    onClick={() => { if (!editing) setDetalheFin({ categoria: `canal:${ch.key}`, titulo: `Vendas · ${ch.label}` }) }}
+                    className={editing ? '' : 'cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors'}
+                    title={editing ? undefined : 'Ver as NFs deste canal'}
+                  >
                     <div className="flex items-baseline justify-between gap-2 mb-1">
                       <span className="text-sm font-medium text-gray-700 flex-1">
                         {ch.label}<span className="text-xs text-gray-400 font-normal ml-1.5">{qtd} NF</span>
@@ -374,7 +388,7 @@ export function PainelComercial() {
                           <span className="text-sm font-semibold text-gray-800 tabular-nums">{fmtR$(rz)}</span>
                           <span className="text-xs text-gray-400 tabular-nums">/ {mt != null ? fmtR$(mt) : 'sem meta'}</span>
                           <button
-                            onClick={() => { setValorMeta(mt != null ? String(mt) : ''); setEditandoCanal(ch.key) }}
+                            onClick={(e) => { e.stopPropagation(); setValorMeta(mt != null ? String(mt) : ''); setEditandoCanal(ch.key) }}
                             className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
                             title="Editar meta do canal"
                           >
@@ -422,7 +436,11 @@ export function PainelComercial() {
                 )
               })}
               {semCanal && semCanal.valor > 0 && (
-                <div className="pt-3 border-t border-dashed border-gray-200 flex items-baseline justify-between gap-2 text-gray-500">
+                <div
+                  onClick={() => setDetalheFin({ categoria: 'canal:SEM_CANAL', titulo: 'Vendas · sem canal' })}
+                  className="pt-3 border-t border-dashed border-gray-200 flex items-baseline justify-between gap-2 text-gray-500 cursor-pointer hover:bg-gray-50 rounded-lg -mx-1 px-1 transition-colors"
+                  title="Ver as NFs sem canal"
+                >
                   <span className="text-sm flex-1">Sem canal <span className="text-xs text-amber-500">(preencher na OV)</span></span>
                   <span className="text-xs text-gray-400 tabular-nums">{semCanal.qtd} NF</span>
                   <span className="text-sm font-medium tabular-nums">{fmtR$(semCanal.valor)}</span>
@@ -454,7 +472,11 @@ export function PainelComercial() {
           return (
             <div className="space-y-2.5">
               {topN.map((c) => (
-                <div key={c.cliente}>
+                <div key={c.cliente}
+                  onClick={() => setDetalheFin({ categoria: `cliente:${c.cliente}`, titulo: c.cliente })}
+                  className="cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors"
+                  title="Ver as NFs deste cliente"
+                >
                   <div className="flex items-baseline justify-between gap-3 mb-1">
                     <span className="text-sm text-gray-700 truncate flex-1">{c.cliente}</span>
                     <span className="text-xs text-gray-400 tabular-nums">{c.qtd} NF · {((c.valor / total) * 100).toFixed(1)}%</span>
