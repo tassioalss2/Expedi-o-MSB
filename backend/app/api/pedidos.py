@@ -13,6 +13,7 @@ from app.models.schemas import (
     ComunicadoUsoCreate,
     ConfirmarColetaRequest,
     FaturamentoRequest,
+    MetaFaturamentoRequest,
     FinalizarConferenciaRequest,
     FinalizarSeparacaoRequest,
     ImportacaoResultado,
@@ -37,6 +38,17 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut = Depends(get_curren
 @router.post("/comunicado-uso", status_code=201)
 def criar_comunicado_uso(payload: ComunicadoUsoCreate, usuario: UsuarioOut = Depends(get_current_user)):
     return pedido_service.criar_comunicado_uso(payload, usuario)
+
+
+@router.get("/meta")
+def obter_meta(competencia: str = Query(...), _: UsuarioOut = Depends(get_current_user)):
+    """Meta de faturamento do mês (competencia = 'YYYY-MM')."""
+    return pedido_service.obter_meta(competencia)
+
+
+@router.put("/meta")
+def definir_meta(payload: MetaFaturamentoRequest, _: UsuarioOut = Depends(get_current_user)):
+    return pedido_service.definir_meta(payload.competencia, payload.valor)
 
 
 @router.get("")

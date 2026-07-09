@@ -190,6 +190,11 @@ class ComunicadoUsoCreate(BaseModel):
     observacoes: Optional[str] = None
 
 
+class MetaFaturamentoRequest(BaseModel):
+    competencia: str  # 'YYYY-MM'
+    valor: float
+
+
 class PedidoOut(BaseModel):
     id: UUID
     numero_pedido: str

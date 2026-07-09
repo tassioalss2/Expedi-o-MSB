@@ -343,6 +343,23 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     return pedido
 
 
+def obter_meta(competencia: str) -> dict:
+    """Meta de faturamento de um mês (competencia 'YYYY-MM')."""
+    db = get_service_db()
+    r = db.table("metas_faturamento").select("competencia, valor").eq("competencia", competencia).execute().data
+    return {"competencia": competencia, "valor": float(r[0]["valor"]) if r else None}
+
+
+def definir_meta(competencia: str, valor: float) -> dict:
+    db = get_service_db()
+    db.table("metas_faturamento").upsert({
+        "competencia": competencia,
+        "valor": valor,
+        "atualizado_em": _agora(),
+    }).execute()
+    return {"competencia": competencia, "valor": valor}
+
+
 def obter_referencia_nf_cliente(cliente_id: str) -> dict:
     """Estatísticas do histórico de NF de um cliente — base da validação anti-erro."""
     db = get_service_db()

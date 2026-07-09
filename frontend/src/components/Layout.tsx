@@ -5,28 +5,29 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   Users, LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  FlaskConical, ChevronDown, ChevronRight,
+  DollarSign, FileText,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
 
-const nav = [
-  { to: '/dashboard',  label: 'Dashboard',         icone: LayoutDashboard },
+const navLogistica = [
+  { to: '/dashboard',  label: 'Painel Operacional', icone: LayoutDashboard },
   { to: '/expedicao',  label: 'Expedição',          icone: Package },
   { to: '/pallets',    label: 'Pallets',            icone: Layers },
   { to: '/inventario', label: 'Inventário Contínuo',icone: ScanLine },
   { to: '/ocorrencias',label: 'Ocorrências',        icone: AlertTriangle },
   { to: '/indicadores',label: 'Indicadores',        icone: Activity },
   { to: '/relatorios', label: 'Relatórios',         icone: BarChart2 },
-  { to: '/cadastros',  label: 'Cadastros',          icone: ClipboardList },
-  { to: '/admin',      label: 'Usuários',           icone: Users, perfis: ['ADMIN', 'GERENCIA'] },
 ]
 
-const navEsterilizacao = [
-  { to: '/esterilizacao',            label: 'Painel do Operador' },
-  { to: '/esterilizacao/planejamento', label: 'Planejamento' },
-  { to: '/esterilizacao/dashboard',  label: 'Dashboard' },
-  { to: '/esterilizacao/produtos',   label: 'Produtos Estéreis' },
+const navComercial = [
+  { to: '/comercial',                 label: 'Painel Comercial',  icone: DollarSign },
+  { to: '/comercial/comunicado-uso',  label: 'Comunicado de Uso', icone: FileText },
+]
+
+const navGeral = [
+  { to: '/cadastros',  label: 'Cadastros',          icone: ClipboardList },
+  { to: '/admin',      label: 'Usuários',           icone: Users, perfis: ['ADMIN', 'GERENCIA'] },
 ]
 
 export function Layout() {
@@ -43,7 +44,7 @@ export function Layout() {
     navigate('/login')
   }
 
-  const navFiltrado = nav.filter(
+  const navGeralFiltrado = navGeral.filter(
     (item) => !item.perfis || item.perfis.includes(usuario?.perfil || '')
   )
 
@@ -91,50 +92,46 @@ export function Layout() {
           </button>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {navFiltrado.map(({ to, label, icone: Icone }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={fecharSidebar}
-              className={({ isActive }) =>
-                clsx(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
-                  isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                )
-              }
-            >
-              <Icone size={18} />
-              <span className="flex-1">{label}</span>
-              {to === '/expedicao' && badgeExpedicao > 0 && (
-                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
-                  {badgeExpedicao > 99 ? '99+' : badgeExpedicao}
-                </span>
-              )}
-            </NavLink>
+        {/* Nav — seções Logística e Comercial */}
+        <nav className="flex-1 p-3 overflow-y-auto">
+          {[{ titulo: 'Logística', itens: navLogistica }, { titulo: 'Comercial', itens: navComercial }].map((grupo) => (
+            <div key={grupo.titulo} className="mb-4">
+              <p className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500">
+                {grupo.titulo}
+              </p>
+              <div className="space-y-1">
+                {grupo.itens.map(({ to, label, icone: Icone }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to !== '/expedicao'}
+                    onClick={fecharSidebar}
+                    className={({ isActive }) =>
+                      clsx(
+                        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                        isActive
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                      )
+                    }
+                  >
+                    <Icone size={18} />
+                    <span className="flex-1">{label}</span>
+                    {to === '/expedicao' && badgeExpedicao > 0 && (
+                      <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                        {badgeExpedicao > 99 ? '99+' : badgeExpedicao}
+                      </span>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
 
-          {/* Módulo Esterilização — submenu */}
-          <div>
-            <button
-              onClick={() => setEsterilizacaoAberto(!esterilizacaoAberto)}
-              className={clsx(
-                'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
-                location.pathname.startsWith('/esterilizacao')
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-              )}
-            >
-              <FlaskConical size={18} />
-              <span className="flex-1 text-left">Esterilização</span>
-              {esterilizacaoAberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            {esterilizacaoAberto && (
-              <div className="ml-4 mt-1 space-y-0.5 border-l border-gray-700 pl-3">
-                {navEsterilizacao.map(({ to, label }) => (
+          {navGeralFiltrado.length > 0 && (
+            <div className="pt-2 border-t border-gray-800">
+              <div className="space-y-1 mt-2">
+                {navGeralFiltrado.map(({ to, label, icone: Icone }) => (
                   <NavLink
                     key={to}
                     to={to}
@@ -142,19 +139,20 @@ export function Layout() {
                     onClick={fecharSidebar}
                     className={({ isActive }) =>
                       clsx(
-                        'flex items-center px-2 py-2 rounded-lg text-xs transition-colors',
+                        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
                         isActive
-                          ? 'bg-blue-500/40 text-white font-semibold'
-                          : 'text-gray-400 hover:bg-gray-800 hover:text-white'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-gray-300 hover:bg-gray-800 hover:text-white'
                       )
                     }
                   >
-                    {label}
+                    <Icone size={18} />
+                    <span className="flex-1">{label}</span>
                   </NavLink>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </nav>
 
         {/* Usuário */}

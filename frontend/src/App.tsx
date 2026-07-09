@@ -11,18 +11,13 @@ import { Indicadores } from './pages/Indicadores'
 import { Cadastros } from './pages/Cadastros'
 import { NovoPedido } from './pages/NovoPedido'
 import { ComunicadoUso } from './pages/ComunicadoUso'
+import { PainelComercial } from './pages/PainelComercial'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
 import { RelatorioColetasRealizadas } from './pages/RelatorioColetasRealizadas'
 import { Relatorios } from './pages/Relatorios'
 import { InventarioContinuo } from './pages/InventarioContinuo'
 import { InventarioContagem } from './pages/InventarioContagem'
-import { PainelOperador } from './pages/esterilizacao/PainelOperador'
-import { CargaDetalhe } from './pages/esterilizacao/CargaDetalhe'
-import { Planejamento } from './pages/esterilizacao/Planejamento'
-import { NovaCarga } from './pages/esterilizacao/NovaCarga'
-import { DashboardEsterilizacao } from './pages/esterilizacao/DashboardEsterilizacao'
-import { CadastroProdutos } from './pages/esterilizacao/CadastroProdutos'
 import { useAuthStore } from './store/authStore'
 
 const qc = new QueryClient({
@@ -54,10 +49,10 @@ export default function App() {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
+            {/* Logística */}
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="expedicao" element={<Expedicao />} />
             <Route path="expedicao/novo" element={<NovoPedido />} />
-            <Route path="expedicao/comunicado-uso" element={<ComunicadoUso />} />
             <Route path="expedicao/:id" element={<PedidoDetalhe />} />
             <Route path="pallets" element={<Pallets />} />
             <Route path="ocorrencias" element={<Ocorrencias />} />
@@ -67,13 +62,9 @@ export default function App() {
             <Route path="inventario" element={<InventarioContinuo />} />
             <Route path="inventario/contagem" element={<InventarioContagem />} />
 
-            {/* Módulo Esterilização */}
-            <Route path="esterilizacao" element={<PainelOperador />} />
-            <Route path="esterilizacao/planejamento" element={<Planejamento />} />
-            <Route path="esterilizacao/nova-carga" element={<NovaCarga />} />
-            <Route path="esterilizacao/cargas/:id" element={<CargaDetalhe />} />
-            <Route path="esterilizacao/dashboard" element={<DashboardEsterilizacao />} />
-            <Route path="esterilizacao/produtos" element={<CadastroProdutos />} />
+            {/* Comercial */}
+            <Route path="comercial" element={<PainelComercial />} />
+            <Route path="comercial/comunicado-uso" element={<ComunicadoUso />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
