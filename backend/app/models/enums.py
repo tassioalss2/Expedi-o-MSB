@@ -60,11 +60,17 @@ OPERACOES_FATURAMENTO = {TipoOperacao.VENDA_NORMAL.value, TipoOperacao.COMUNICAD
 
 
 class CanalVenda(str, Enum):
-    """Canal comercial responsável pela venda."""
+    """Canal comercial responsável pela venda.
+
+    Licitação sempre entra em Uro ou Vascular (o faturamento vai pro canal
+    base); LICITACAO puro é legado.
+    """
     URO = "URO"
     VASCULAR = "VASCULAR"
     REALCLOSURE = "REALCLOSURE"
-    LICITACAO = "LICITACAO"
+    LICITACAO_URO = "LICITACAO_URO"
+    LICITACAO_VASCULAR = "LICITACAO_VASCULAR"
+    LICITACAO = "LICITACAO"  # legado (antes da separação Uro/Vascular)
 
 
 class Prioridade(str, Enum):

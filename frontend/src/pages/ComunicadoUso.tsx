@@ -106,7 +106,8 @@ export function ComunicadoUso() {
               <option value="URO">Uro</option>
               <option value="VASCULAR">Vascular</option>
               <option value="REALCLOSURE">Realclosure</option>
-              <option value="LICITACAO">Licitação</option>
+              <option value="LICITACAO_URO">Licitação - Uro</option>
+              <option value="LICITACAO_VASCULAR">Licitação - Vascular</option>
             </select>
           </div>
 

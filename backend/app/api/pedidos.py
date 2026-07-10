@@ -352,6 +352,20 @@ def _conta_faturamento(pedido: dict) -> bool:
     return (pedido.get("tipo_operacao") or "VENDA_NORMAL") in _OPERACOES_FATURAMENTO
 
 
+def _canal_base(canal: Optional[str]) -> str:
+    """Canal onde o faturamento é contabilizado. Licitação sempre cai no
+    canal base (Uro ou Vascular); LICITACAO puro é legado sem base definida."""
+    if canal == "LICITACAO_URO":
+        return "URO"
+    if canal == "LICITACAO_VASCULAR":
+        return "VASCULAR"
+    return canal or "SEM_CANAL"
+
+
+def _eh_licitacao(canal: Optional[str]) -> bool:
+    return canal in ("LICITACAO_URO", "LICITACAO_VASCULAR", "LICITACAO")
+
+
 def _faturados_no_periodo(inicio: date, fim: date) -> dict:
     """pedido_id -> data de faturamento (BRT, ISO) das NFs faturadas no período.
 
@@ -590,13 +604,15 @@ def vendas_por_canal(
     """Vendas (sem frete) agrupadas por canal comercial no período.
 
     Mesmo escopo de "Vendas": faturamento, sem Transfer Price nem Esterilize.
+    A licitação é dobrada no canal base (Uro/Vascular) e também somada num
+    total informativo à parte (quanto vendemos por licitação no mês).
     """
     from app.core.database import get_service_db
     db = get_service_db()
 
     faturados = _faturados_no_periodo(data_inicio, data_fim)
     if not faturados:
-        return []
+        return {"canais": [], "licitacao": {"qtd": 0, "valor": 0.0}}
 
     LABELS = {"URO": "Uro", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure", "LICITACAO": "Licitação"}
     ids = list(faturados.keys())
@@ -607,21 +623,29 @@ def vendas_por_canal(
         ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
 
     agg: dict = {}
+    licit = {"qtd": 0, "valor": 0.0}
     for p in peds:
         nome = ((p.get("clientes") or {}).get("nome") or "").upper()
         if "ESTERILIZE" in nome or _eh_biomedical(p) or not _conta_faturamento(p):
             continue
-        canal = p.get("canal") or "SEM_CANAL"
+        canal = _canal_base(p.get("canal"))
         valor = float(p.get("valor_nf") or 0)
         if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
             valor -= float(p.get("valor_frete") or 0)
         g = agg.setdefault(canal, {"canal": canal, "label": LABELS.get(canal, "Sem canal"), "qtd": 0, "valor": 0.0})
         g["qtd"] += 1
         g["valor"] += valor
+        if _eh_licitacao(p.get("canal")):
+            licit["qtd"] += 1
+            licit["valor"] += valor
 
     for g in agg.values():
         g["valor"] = round(g["valor"], 2)
-    return sorted(agg.values(), key=lambda x: -x["valor"])
+    licit["valor"] = round(licit["valor"], 2)
+    return {
+        "canais": sorted(agg.values(), key=lambda x: -x["valor"]),
+        "licitacao": licit,
+    }
 
 
 @router.get("/relatorio/faturamento")

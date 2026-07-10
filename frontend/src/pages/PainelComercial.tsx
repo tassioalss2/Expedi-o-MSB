@@ -73,13 +73,18 @@ export function PainelComercial() {
     refetchInterval: 60000,
   })
 
-  const { data: vendasCanal = [] } = useQuery<Array<{ canal: string; label: string; qtd: number; valor: number }>>({
+  const { data: vendasCanalResp } = useQuery<{
+    canais: Array<{ canal: string; label: string; qtd: number; valor: number }>
+    licitacao: { qtd: number; valor: number }
+  }>({
     queryKey: ['vendas-por-canal', inicioFinanceiro, fimFinanceiro],
     queryFn: () => api.get('/pedidos/dashboard/vendas-por-canal', {
       params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
     }).then(r => r.data),
     refetchInterval: 60000,
   })
+  const vendasCanal = vendasCanalResp?.canais ?? []
+  const licitacaoInfo = vendasCanalResp?.licitacao ?? { qtd: 0, valor: 0 }
 
   // Drill-down do card financeiro: qual grupo de NFs está sendo detalhado
   const [detalheFin, setDetalheFin] = useState<{ categoria: string; titulo: string } | null>(null)
@@ -96,8 +101,10 @@ export function PainelComercial() {
     // Vendas por canal / cliente (escopo Vendas: faturamento, sem Biomedical/Esterilize)
     if (categoria.startsWith('canal:')) {
       const k = categoria.slice(6)
+      // Licitação é dobrada no canal base: canal:URO inclui LICITACAO_URO, etc.
+      const base = (c?: string) => c === 'LICITACAO_URO' ? 'URO' : c === 'LICITACAO_VASCULAR' ? 'VASCULAR' : (c || 'SEM_CANAL')
       return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '')
-        && (k === 'SEM_CANAL' ? !r.canal : r.canal === k))
+        && (k === 'LICITACAO' ? /^LICITACAO/.test(r.canal || '') : base(r.canal) === k))
     }
     if (categoria.startsWith('cliente:')) {
       const nome = categoria.slice(8)
@@ -361,10 +368,10 @@ export function PainelComercial() {
             { key: 'URO', label: 'Uro', cor: 'bg-indigo-500' },
             { key: 'VASCULAR', label: 'Vascular', cor: 'bg-rose-500' },
             { key: 'REALCLOSURE', label: 'Realclosure', cor: 'bg-amber-500' },
-            { key: 'LICITACAO', label: 'Licitação', cor: 'bg-teal-500' },
           ]
           const de = (k: string) => vendasCanal.find(c => c.canal === k)
           const semCanal = de('SEM_CANAL')
+          const licitLegado = de('LICITACAO')  // OVs antigas sem base Uro/Vascular
           return (
             <div className="space-y-4">
               {CANAIS.map((ch) => {
@@ -435,6 +442,17 @@ export function PainelComercial() {
                   </div>
                 )
               })}
+              {licitLegado && licitLegado.valor > 0 && (
+                <div
+                  onClick={() => setDetalheFin({ categoria: 'canal:LICITACAO', titulo: 'Vendas · Licitação (legado)' })}
+                  className="pt-3 border-t border-dashed border-gray-200 flex items-baseline justify-between gap-2 text-gray-500 cursor-pointer hover:bg-gray-50 rounded-lg -mx-1 px-1 transition-colors"
+                  title="Ver as NFs de licitação sem base Uro/Vascular"
+                >
+                  <span className="text-sm flex-1">Licitação <span className="text-xs text-amber-500">(legado — reclassificar em Uro/Vascular)</span></span>
+                  <span className="text-xs text-gray-400 tabular-nums">{licitLegado.qtd} NF</span>
+                  <span className="text-sm font-medium tabular-nums">{fmtR$(licitLegado.valor)}</span>
+                </div>
+              )}
               {semCanal && semCanal.valor > 0 && (
                 <div
                   onClick={() => setDetalheFin({ categoria: 'canal:SEM_CANAL', titulo: 'Vendas · sem canal' })}
@@ -444,6 +462,20 @@ export function PainelComercial() {
                   <span className="text-sm flex-1">Sem canal <span className="text-xs text-amber-500">(preencher na OV)</span></span>
                   <span className="text-xs text-gray-400 tabular-nums">{semCanal.qtd} NF</span>
                   <span className="text-sm font-medium tabular-nums">{fmtR$(semCanal.valor)}</span>
+                </div>
+              )}
+              {licitacaoInfo.valor > 0 && (
+                <div
+                  onClick={() => setDetalheFin({ categoria: 'canal:LICITACAO', titulo: 'Vendas por licitação no mês' })}
+                  className="mt-1 pt-3 border-t border-gray-100 flex items-baseline justify-between gap-2 cursor-pointer hover:bg-gray-50 rounded-lg -mx-1 px-1 transition-colors"
+                  title="Total de licitação no mês (já contabilizado em Uro/Vascular) — informativo"
+                >
+                  <span className="text-xs text-gray-500 flex-1">
+                    🏛️ Vendas por licitação no mês
+                    <span className="block text-[11px] text-gray-400 font-normal">informativo · já somado em Uro/Vascular</span>
+                  </span>
+                  <span className="text-xs text-gray-400 tabular-nums">{licitacaoInfo.qtd} NF</span>
+                  <span className="text-sm font-semibold text-teal-600 tabular-nums">{fmtR$(licitacaoInfo.valor)}</span>
                 </div>
               )}
             </div>
