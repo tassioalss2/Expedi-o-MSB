@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText, Truck } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText, Truck, Pencil } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -960,6 +960,98 @@ function ModalCancelarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
   )
 }
 
+// ── Modal Alterar Tipo de Frete ──────────────────────────────────────────────
+const TIPOS_FRETE = ['FOB', 'CIF_COM_VALOR', 'CIF_SEM_VALOR'] as const
+
+function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const tipoAtual = pedido.tipo_frete || 'FOB'
+  const [tipoFrete, setTipoFrete] = useState(tipoAtual)
+  const [motivo, setMotivo] = useState('')
+  const [valorFrete, setValorFrete] = useState(pedido.valor_frete ? String(pedido.valor_frete) : '')
+  const novoEhCif = tipoFrete === 'CIF_COM_VALOR' || tipoFrete === 'CIF_SEM_VALOR'
+  const valorFreteOk = !novoEhCif || Number(valorFrete) > 0
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/alterar-tipo-frete`, {
+      tipo_frete: tipoFrete,
+      motivo: motivo.trim(),
+      valor_frete: novoEhCif ? Number(valorFrete) : null,
+    }),
+    onSuccess: (res) => {
+      const d = res.data
+      toast.success(`Tipo de frete alterado: ${TIPO_FRETE_LABEL[d.tipo_frete_anterior]} → ${TIPO_FRETE_LABEL[d.tipo_frete_novo]}`)
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['ocorrencias'] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao alterar tipo de frete'),
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md">
+        <div className="p-5 border-b bg-blue-50 rounded-t-2xl">
+          <h2 className="text-lg font-bold text-blue-800">Alterar Tipo de Frete</h2>
+          <p className="text-sm text-blue-600 mt-0.5">A alteração será registrada como ocorrência.</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-gray-50 rounded-lg p-3 text-sm">
+            <p className="text-gray-500 text-xs mb-1">Tipo de frete atual</p>
+            <p className="font-bold text-gray-800 text-base">{TIPO_FRETE_LABEL[tipoAtual]}</p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Novo tipo de frete *</label>
+            <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value as (typeof TIPOS_FRETE)[number])}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+              {TIPOS_FRETE.map(tipo => (
+                <option key={tipo} value={tipo} disabled={tipo === tipoAtual}>
+                  {TIPO_FRETE_LABEL[tipo]}{tipo === tipoAtual ? ' (atual)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {novoEhCif && (
+            <div>
+              <label className="text-sm font-medium text-gray-700">Valor do frete (R$) *</label>
+              <input type="number" step="0.01" min="0" value={valorFrete}
+                onChange={e => setValorFrete(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+              <p className="text-[11px] text-gray-400 mt-1">
+                {tipoFrete === 'CIF_COM_VALOR'
+                  ? 'CIF com valor: o frete está embutido na NF e é ressarcido pelo cliente.'
+                  : 'CIF sem valor: o frete não está na NF — é custo nosso e sai do faturamento.'}
+              </p>
+            </div>
+          )}
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Motivo da alteração *</label>
+            <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
+              placeholder="Ex.: Tipo de frete informado incorretamente na OV..." autoFocus />
+          </div>
+
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+            Uma ocorrência aberta será criada com o tipo anterior, o novo tipo e o motivo informado.
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
+          <button onClick={() => mutation.mutate()}
+            disabled={mutation.isPending || tipoFrete === tipoAtual || !motivo.trim() || !valorFreteOk}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-500">
+            {mutation.isPending ? 'Salvando...' : 'Confirmar Alteração'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal Alterar Transportadora ─────────────────────────────────────────────
 function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
@@ -1317,7 +1409,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'cancelar' | 'retornar' | 'confirmar_coleta' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'retornar' | 'confirmar_coleta' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -1561,7 +1653,15 @@ export function PedidoDetalhe() {
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <h2 className="font-semibold text-gray-800 mb-3">Dados da OV</h2>
             <Linha label="Cliente" valor={pedido.cliente?.nome || pedido.cliente_nome} />
-            <Linha label="Tipo de Frete" valor={TIPO_FRETE_LABEL[pedido.tipo_frete || 'FOB']} />
+            <div className="flex justify-between items-center py-2 border-b border-gray-50">
+              <span className="text-sm text-gray-500">Tipo de Frete</span>
+              <button onClick={() => setModal('tipo_frete')}
+                className="flex items-center gap-1.5 text-sm text-gray-900 font-medium hover:text-blue-600 group"
+                title="Alterar tipo de frete">
+                {TIPO_FRETE_LABEL[pedido.tipo_frete || 'FOB']}
+                <Pencil size={14} className="text-gray-400 group-hover:text-blue-500" />
+              </button>
+            </div>
             <Linha label="Local de Entrega" valor={pedido.local_entrega} />
             <Linha label="Entrega Prevista" valor={
               pedido.data_prevista_entrega
@@ -1713,6 +1813,14 @@ export function PedidoDetalhe() {
                 <button onClick={() => setModal('transportadora')}
                   className="w-full flex items-center gap-2 justify-center py-2 border border-orange-300 text-orange-600 rounded-lg text-sm hover:bg-orange-50">
                   🔄 Corrigir Transportadora
+                </button>
+              )}
+
+              {/* Corrigir tipo de frete — registra ocorrência */}
+              {!['CANCELADO'].includes(status) && (
+                <button onClick={() => setModal('tipo_frete')}
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-blue-300 text-blue-600 rounded-lg text-sm hover:bg-blue-50">
+                  🚚 Corrigir Frete
                 </button>
               )}
 
@@ -1875,6 +1983,7 @@ export function PedidoDetalhe() {
       {modal === 'divergencia' && <ModalTratativaDivergencia pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'pallet' && <ModalEscolherPallet pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora' && <ModalAlterarTransportadora pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'tipo_frete' && <ModalAlterarTipoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cancelar' && <ModalCancelarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}

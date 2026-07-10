@@ -14,6 +14,7 @@ from app.models.schemas import (
     VerificarFisicoRequest,
 )
 from app.services import inventario_service
+from app.models.enums import TipoFrete
 
 router = APIRouter(tags=["inventario"])
 
@@ -209,6 +210,101 @@ class AlterarTransportadoraRequest(BaseModel):
     motivo: Optional[str] = None
     registrar_ocorrencia: bool = True
     transportadora_nome_real: Optional[str] = None  # preenchido quando selecionado "OUTROS"
+
+
+class AlterarTipoFreteRequest(BaseModel):
+    tipo_frete: TipoFrete
+    motivo: str
+    valor_frete: Optional[float] = None  # obrigatório quando o novo tipo é CIF
+
+
+@router.post("/pedidos/{pedido_id}/alterar-tipo-frete")
+def alterar_tipo_frete(
+    pedido_id: UUID,
+    payload: AlterarTipoFreteRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    """Altera o tipo de frete e registra a correção como ocorrência obrigatória."""
+    from fastapi import HTTPException
+    from app.core.database import get_service_db
+    from app.services.inventario_service import _agora, _get_usuario_real
+
+    motivo = payload.motivo.strip()
+    if not motivo:
+        raise HTTPException(status_code=422, detail="Informe o motivo da alteração do tipo de frete")
+
+    db = get_service_db()
+    pedido = db.table("pedidos").select("numero_pedido,status,tipo_frete,valor_frete").eq("id", str(pedido_id)).single().execute().data
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    frete_anterior = pedido.get("tipo_frete") or TipoFrete.FOB.value
+    frete_novo = payload.tipo_frete.value
+    if frete_anterior == frete_novo:
+        raise HTTPException(status_code=400, detail="Selecione um tipo de frete diferente do atual")
+
+    # Valor do frete: obrigatório para CIF; FOB zera (cliente paga, não vai na NF).
+    eh_cif = frete_novo in (TipoFrete.CIF_COM_VALOR.value, TipoFrete.CIF_SEM_VALOR.value)
+    if eh_cif:
+        if payload.valor_frete is None or payload.valor_frete <= 0:
+            raise HTTPException(status_code=422, detail="Informe o valor do frete para o tipo CIF")
+        valor_frete_novo = round(float(payload.valor_frete), 2)
+    else:
+        valor_frete_novo = 0.0
+
+    frete_anterior_valor = float(pedido.get("valor_frete") or 0)
+
+    uid = _get_usuario_real(str(usuario.id))
+    labels = {
+        TipoFrete.FOB.value: "FOB",
+        TipoFrete.CIF_COM_VALOR.value: "CIF com Valor NF",
+        TipoFrete.CIF_SEM_VALOR.value: "CIF sem Valor NF",
+    }
+    agora = _agora()
+
+    def _brl(v: float) -> str:
+        return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    db.table("pedidos").update({
+        "tipo_frete": frete_novo,
+        "valor_frete": valor_frete_novo,
+        "atualizado_em": agora,
+    }).eq("id", str(pedido_id)).execute()
+
+    linha_valor = f"\n• Valor do frete: {_brl(valor_frete_novo)}" if eh_cif else ""
+    db.table("ocorrencias").insert({
+        "pedido_id": str(pedido_id),
+        "tipo": "Alteração de Tipo de Frete",
+        "descricao": (
+            f"Tipo de frete alterado na OV {pedido['numero_pedido']}.\n"
+            f"• De: {labels.get(frete_anterior, frete_anterior)} ({_brl(frete_anterior_valor)})\n"
+            f"• Para: {labels.get(frete_novo, frete_novo)}{linha_valor}\n"
+            f"• Motivo: {motivo}"
+        ),
+        "responsavel_id": uid,
+        "status": "ABERTA",
+        "criado_em": agora,
+    }).execute()
+
+    db.table("movimentacoes").insert({
+        "pedido_id": str(pedido_id),
+        "status_anterior": pedido["status"],
+        "status_novo": pedido["status"],
+        "usuario_id": uid,
+        "observacao": (
+            f"Tipo de frete alterado: {labels.get(frete_anterior, frete_anterior)} "
+            f"→ {labels.get(frete_novo, frete_novo)}"
+            f"{' (' + _brl(valor_frete_novo) + ')' if eh_cif else ''}. {motivo}"
+        ),
+        "criado_em": agora,
+    }).execute()
+
+    return {
+        "ok": True,
+        "tipo_frete_anterior": frete_anterior,
+        "tipo_frete_novo": frete_novo,
+        "valor_frete": valor_frete_novo,
+    }
 
 
 @router.post("/pedidos/{pedido_id}/alterar-transportadora")
