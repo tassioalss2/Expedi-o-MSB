@@ -1,10 +1,11 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import {
   DollarSign, CalendarDays, Package, Truck, AlertTriangle, Clock,
-  Plus, FileText, ArrowRight,
+  Plus, FileText, ArrowRight, X,
 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import api from '../lib/api'
@@ -57,6 +58,25 @@ export function VisaoGeral() {
     queryFn: () => api.get('/pedidos/dashboard/operacional').then(r => r.data),
     refetchInterval: 30000,
   })
+
+  // Drill-down: clicar em qualquer número abre a lista de NFs por trás dele.
+  // dia = null -> mês inteiro; dia = 'YYYY-MM-DD' -> só aquele dia.
+  const [drill, setDrill] = useState<{ titulo: string; dia: string | null } | null>(null)
+  const { data: detalheMes = [], isFetching: carregandoDetalhe } = useQuery<any[]>({
+    queryKey: ['vg-detalhe', inicioMes],
+    queryFn: () => api.get('/pedidos/dashboard/financeiro/detalhe', {
+      params: { data_inicio: inicioMes, data_fim: hojeStr },
+    }).then(r => r.data),
+    enabled: drill !== null,
+  })
+  // Escopo "Vendas": faturamento, sem Transfer Price (Biomedical) nem Esterilize.
+  const linhasDrill = drill
+    ? detalheMes
+        .filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || ''))
+        .filter(r => (drill.dia ? r.data === drill.dia : true))
+        .sort((a, b) => (b.data || '').localeCompare(a.data || ''))
+    : []
+  const totalDrill = linhasDrill.reduce((s, r) => s + (r.valor_sem_frete || 0), 0)
 
   const vendas = financeiro?.outras_vendas?.faturamento_sem_frete || 0
   const metaValor = meta?.valor ?? null
@@ -127,7 +147,11 @@ export function VisaoGeral() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Vendas do mês + meta */}
-          <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 lg:col-span-2 flex flex-col">
+          <div
+            onClick={() => setDrill({ titulo: `Vendas · ${format(hoje, 'MMMM/yyyy', { locale: ptBR })}`, dia: null })}
+            className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 lg:col-span-2 flex flex-col cursor-pointer hover:border-gray-300 hover:shadow transition-all"
+            title="Ver as NFs de vendas do mês"
+          >
             <div className="flex items-center gap-2 mb-3">
               <div className="p-2 bg-green-50 rounded-lg"><DollarSign size={18} className="text-green-600" /></div>
               <div>
@@ -154,7 +178,11 @@ export function VisaoGeral() {
           </div>
 
           {/* Faturamento de hoje */}
-          <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col">
+          <div
+            onClick={() => setDrill({ titulo: `Faturamento de hoje · ${format(hoje, "dd 'de' MMMM", { locale: ptBR })}`, dia: hojeStr })}
+            className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col cursor-pointer hover:border-gray-300 hover:shadow transition-all"
+            title="Ver as NFs faturadas hoje"
+          >
             <div className="flex items-center gap-2 mb-3">
               <div className="p-2 bg-green-50 rounded-lg"><CalendarDays size={18} className="text-green-600" /></div>
               <div>
@@ -170,7 +198,10 @@ export function VisaoGeral() {
         {/* Gráfico faturamento por dia */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 mt-4">
           <div className="flex items-baseline justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-700">Faturamento por dia</h3>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700">Faturamento por dia</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Clique numa barra para ver as NFs do dia</p>
+            </div>
             <span className="text-sm font-semibold text-gray-700 tabular-nums">Total {fmtR$(fatDiario?.total ?? 0)}</span>
           </div>
           {(fatDiario?.dias?.length ?? 0) === 0 ? (
@@ -198,7 +229,14 @@ export function VisaoGeral() {
                       </div>
                     )
                   }} />
-                <Bar dataKey="valor" radius={[4, 4, 0, 0]} maxBarSize={28}>
+                <Bar dataKey="valor" radius={[4, 4, 0, 0]} maxBarSize={28} className="cursor-pointer"
+                  onClick={(d: any) => {
+                    if (!d?.payload?.dia) return
+                    setDrill({
+                      titulo: `Faturamento · ${format(new Date(d.payload.dia + 'T00:00:00'), "dd 'de' MMMM", { locale: ptBR })}`,
+                      dia: d.payload.dia,
+                    })
+                  }}>
                   {fatDiario!.dias.map((d) => (
                     <Cell key={d.dia} fill={d.dia === hojeStr ? '#15803d' : '#22c55e'} />
                   ))}
@@ -256,6 +294,56 @@ export function VisaoGeral() {
           </div>
         )}
       </div>
+
+      {/* Drill-down: NFs por trás do número clicado */}
+      {drill && (
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setDrill(null)}>
+          <div className="bg-white w-full sm:max-w-2xl sm:rounded-xl rounded-t-2xl shadow-xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-sm font-bold text-gray-800">{drill.titulo}</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {linhasDrill.length} NF · Total {fmtR$(totalDrill)} · Vendas sem frete
+                </p>
+              </div>
+              <button onClick={() => setDrill(null)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {carregandoDetalhe ? (
+                <p className="text-sm text-gray-400 text-center py-10">Carregando…</p>
+              ) : linhasDrill.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-10">Nenhuma NF neste período.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-gray-50 text-gray-500 text-xs">
+                    <tr>
+                      <th className="text-left font-medium px-5 py-2">OV / NF</th>
+                      <th className="text-left font-medium px-2 py-2">Cliente</th>
+                      <th className="text-right font-medium px-5 py-2">Valor s/ frete</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {linhasDrill.map((r) => (
+                      <tr key={r.id} className="hover:bg-gray-50">
+                        <td className="px-5 py-2.5 whitespace-nowrap">
+                          <span className="font-mono text-gray-700">{r.numero_pedido || '—'}</span>
+                          <span className="block text-xs text-gray-400">NF {r.numero_nf || '—'} · {format(new Date(r.data + 'T00:00:00'), 'dd/MM')}</span>
+                        </td>
+                        <td className="px-2 py-2.5 text-gray-600">{r.cliente}</td>
+                        <td className="px-5 py-2.5 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">{fmtR$(r.valor_sem_frete)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
