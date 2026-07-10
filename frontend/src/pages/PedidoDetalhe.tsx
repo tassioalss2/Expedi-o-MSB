@@ -219,6 +219,21 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   const emProcessamentoRef = useRef<Set<string>>(new Set())
 
   const itens: InventarioItem[] = inv?.itens || []
+
+  // Se o lote já foi inventariado antes, a validade vem preenchida (do backend).
+  useEffect(() => {
+    if (!itens.length) return
+    setValidadeMap(prev => {
+      const novo = { ...prev }
+      let mudou = false
+      for (const it of itens) {
+        const conhecida = (it as any).validade_conhecida
+        if (conhecida && !novo[it.id]) { novo[it.id] = conhecida; mudou = true }
+      }
+      return mudou ? novo : prev
+    })
+  }, [inv])
+
   const totalItens = itens.length
   const totalConferidos = conferidos.size
   const todosConferidos = totalItens > 0 && totalConferidos === totalItens

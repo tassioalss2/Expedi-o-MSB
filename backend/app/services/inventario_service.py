@@ -80,6 +80,29 @@ def salvar_inventario(pedido_id: str, payload: InventarioSalvar, usuario: Usuari
 def listar_inventario(pedido_id: str) -> dict:
     db = get_service_db()
     itens = db.table("inventario_itens").select("*").eq("pedido_id", pedido_id).execute().data
+
+    # Puxa a última validade já registrada para cada (código, lote) — vinda das
+    # etiquetas impressas em inventários anteriores (fila_impressao). Assim, se o
+    # lote já foi inventariado, a validade vem preenchida automaticamente.
+    lotes = {(i.get("lote") or "").strip() for i in itens if i.get("lote")}
+    if lotes:
+        fila = db.table("fila_impressao").select("payload").order("criado_em", desc=True).execute().data
+        conhecida: dict[tuple, str] = {}
+        for row in fila:
+            p = row.get("payload") or {}
+            val = p.get("validade")
+            lote = (p.get("lote") or "").strip()
+            cod = (p.get("codigo") or "").strip()
+            if not val or lote not in lotes:
+                continue
+            chave = (cod, lote)
+            if chave not in conhecida:  # fila vem em ordem decrescente → 1ª = mais recente
+                conhecida[chave] = val
+        for i in itens:
+            i["validade_conhecida"] = conhecida.get(
+                ((i.get("codigo_item") or "").strip(), (i.get("lote") or "").strip())
+            )
+
     return {"pedido_id": pedido_id, "itens": itens, "total_itens": len(itens)}
 
 
