@@ -90,7 +90,7 @@ export function Layout() {
               alt="MSB — Medical System do Brasil"
               className="h-8 w-auto object-contain brightness-0 invert"
             />
-            <p className="text-gray-400 text-[10px] tracking-widest uppercase">Controle de Expedição</p>
+            <p className="text-gray-400 text-[10px] tracking-widest uppercase">Gestão Comercial & Logística</p>
           </div>
           <button
             onClick={fecharSidebar}

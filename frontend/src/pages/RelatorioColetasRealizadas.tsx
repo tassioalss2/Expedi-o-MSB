@@ -286,7 +286,7 @@ export function RelatorioColetasRealizadas() {
 
       {/* Rodapé */}
       <div className="text-xs text-gray-400 text-center pt-4 border-t print:mt-8">
-        ACE-MSB — Controle de Expedição · MSB Biomedical · Gerado em {agora}
+        ACE-MSB — Gestão Comercial & Logística · MSB Biomedical · Gerado em {agora}
       </div>
 
       <style>{`

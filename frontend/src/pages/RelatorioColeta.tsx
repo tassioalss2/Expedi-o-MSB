@@ -258,7 +258,7 @@ export function RelatorioColeta() {
 
       {/* Rodapé */}
       <div className="text-xs text-gray-400 text-center pt-4 border-t print:mt-8">
-        ACE-MSB — Controle de Expedição · MSB Biomedical · Relatório gerado em {hoje}
+        ACE-MSB — Gestão Comercial & Logística · MSB Biomedical · Relatório gerado em {hoje}
       </div>
 
       {/* CSS de impressão */}

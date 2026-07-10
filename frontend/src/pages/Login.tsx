@@ -40,7 +40,7 @@ export function Login() {
             ACE
           </div>
           <h1 className="text-white text-2xl font-bold">ACE-MSB</h1>
-          <p className="text-gray-400 text-sm mt-1">Controle de Expedição</p>
+          <p className="text-gray-400 text-sm mt-1">Gestão Comercial & Logística</p>
         </div>
 
         {/* Form */}
@@ -77,7 +77,7 @@ export function Login() {
         </form>
 
         <p className="text-center text-gray-500 text-xs mt-6">
-          MSB Biomedical — Expedição Industrial
+          MSB Biomedical — Gestão Comercial & Logística
         </p>
       </div>
     </div>
