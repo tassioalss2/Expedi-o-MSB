@@ -1,11 +1,11 @@
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
-  Users, LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, FileText,
+  LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
+  DollarSign, FileText, Home,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -27,26 +27,19 @@ const navComercial = [
 
 const navGeral = [
   { to: '/cadastros',  label: 'Cadastros',          icone: ClipboardList },
-  { to: '/admin',      label: 'Usuários',           icone: Users, perfis: ['ADMIN', 'GERENCIA'] },
 ]
 
 export function Layout() {
   const { usuario, logout } = useAuthStore()
   const navigate = useNavigate()
-  const location = useLocation()
   const [sidebarAberto, setSidebarAberto] = useState(false)
-  const [esterilizacaoAberto, setEsterilizacaoAberto] = useState(
-    location.pathname.startsWith('/esterilizacao')
-  )
 
   const handleLogout = () => {
     logout()
     navigate('/login')
   }
 
-  const navGeralFiltrado = navGeral.filter(
-    (item) => !item.perfis || item.perfis.includes(usuario?.perfil || '')
-  )
+  const navGeralFiltrado = navGeral
 
   const fecharSidebar = () => setSidebarAberto(false)
 
@@ -94,6 +87,22 @@ export function Layout() {
 
         {/* Nav — seções Logística e Comercial */}
         <nav className="flex-1 p-3 overflow-y-auto">
+          <div className="mb-4 space-y-1">
+            <NavLink
+              to="/"
+              end
+              onClick={fecharSidebar}
+              className={({ isActive }) =>
+                clsx(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                )
+              }
+            >
+              <Home size={18} />
+              <span className="flex-1">Visão Geral</span>
+            </NavLink>
+          </div>
           {[{ titulo: 'Logística', itens: navLogistica }, { titulo: 'Comercial', itens: navComercial }].map((grupo) => (
             <div key={grupo.titulo} className="mb-4">
               <p className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500">

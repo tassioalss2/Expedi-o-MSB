@@ -12,6 +12,7 @@ import { Cadastros } from './pages/Cadastros'
 import { NovoPedido } from './pages/NovoPedido'
 import { ComunicadoUso } from './pages/ComunicadoUso'
 import { PainelComercial } from './pages/PainelComercial'
+import { VisaoGeral } from './pages/VisaoGeral'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
 import { RelatorioColetasRealizadas } from './pages/RelatorioColetasRealizadas'
@@ -48,7 +49,7 @@ export default function App() {
               </PrivateRoute>
             }
           >
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<VisaoGeral />} />
             {/* Logística */}
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="expedicao" element={<Expedicao />} />
@@ -67,7 +68,7 @@ export default function App() {
             <Route path="comercial/comunicado-uso" element={<ComunicadoUso />} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
       <Toaster position="top-right" />
