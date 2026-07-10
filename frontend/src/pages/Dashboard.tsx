@@ -10,22 +10,30 @@ import api from '../lib/api'
 import type { DashboardOperacional, Indicadores } from '../types'
 import { STATUS_CONFIG } from '../lib/statusConfig'
 
-function KpiCard({ titulo, valor, sub, cor, icone: Icone }: {
-  titulo: string; valor: string | number; sub?: string; cor: string; icone: any
+function KpiCard({ titulo, valor, sub, cor, icone: Icone, onClick }: {
+  titulo: string; valor: string | number; sub?: string; cor: string; icone: any; onClick?: () => void
 }) {
-  return (
-    <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm text-gray-500">{titulo}</p>
-          <p className={`text-3xl font-bold mt-1 ${cor}`}>{valor}</p>
-          {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
-        </div>
-        <div className={`p-2.5 rounded-lg bg-gray-50`}>
-          <Icone size={22} className={cor} />
-        </div>
+  const conteudo = (
+    <div className="flex items-start justify-between">
+      <div>
+        <p className="text-sm text-gray-500 flex items-center gap-1">
+          {titulo}
+          {onClick && <span className="text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">ver →</span>}
+        </p>
+        <p className={`text-3xl font-bold mt-1 ${cor}`}>{valor}</p>
+        {sub && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+      </div>
+      <div className={`p-2.5 rounded-lg bg-gray-50`}>
+        <Icone size={22} className={cor} />
       </div>
     </div>
+  )
+  if (!onClick) return <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">{conteudo}</div>
+  return (
+    <button onClick={onClick}
+      className="group text-left bg-white rounded-xl p-5 shadow-sm border border-gray-100 hover:border-blue-300 hover:shadow-md transition-all">
+      {conteudo}
+    </button>
   )
 }
 
@@ -229,6 +237,25 @@ export function Dashboard() {
   const [periodoHorario, setPeriodoHorario] = useState(30)
   const [horaClicada, setHoraClicada] = useState<number | null>(null)
 
+  // Drill-down dos KPIs do topo: lista as OVs por trás de cada número
+  const hojeStr = format(hoje, 'yyyy-MM-dd')
+  const [kpiAberto, setKpiAberto] = useState<{ tipo: 'ativos' | 'expedidos_hoje' | 'atrasados'; titulo: string } | null>(null)
+  const { data: kpiPedidos = [], isFetching: carregandoKpi } = useQuery<any[]>({
+    queryKey: ['kpi-drill', kpiAberto?.tipo],
+    queryFn: () => {
+      const params = kpiAberto?.tipo === 'atrasados' ? { atrasados: true }
+        : kpiAberto?.tipo === 'expedidos_hoje' ? { status: 'EXPEDIDO' }
+        : {}
+      return api.get('/pedidos', { params }).then(r => r.data)
+    },
+    enabled: kpiAberto !== null,
+  })
+  const kpiLista = (kpiPedidos as any[]).filter((p) => {
+    if (kpiAberto?.tipo === 'ativos') return !['EXPEDIDO', 'CANCELADO'].includes(p.status)
+    if (kpiAberto?.tipo === 'expedidos_hoje') return (p.atualizado_em || '').slice(0, 10) === hojeStr
+    return true // atrasados já vem filtrado do backend
+  })
+
   const inicioHorario = (() => {
     const d = new Date(hoje)
     d.setDate(d.getDate() - (periodoHorario - 1))
@@ -302,6 +329,7 @@ export function Dashboard() {
           sub="pedidos ativos"
           cor="text-blue-600"
           icone={Package}
+          onClick={() => setKpiAberto({ tipo: 'ativos', titulo: 'Em Expedição — pedidos ativos' })}
         />
         <KpiCard
           titulo="Expedidos Hoje"
@@ -309,6 +337,7 @@ export function Dashboard() {
           sub="pedidos finalizados"
           cor="text-green-600"
           icone={CheckCircle}
+          onClick={() => setKpiAberto({ tipo: 'expedidos_hoje', titulo: 'Expedidos hoje' })}
         />
         <KpiCard
           titulo="Atrasados"
@@ -316,6 +345,7 @@ export function Dashboard() {
           sub="requerem atenção"
           cor={dash?.atrasados ? 'text-red-600' : 'text-gray-400'}
           icone={AlertTriangle}
+          onClick={() => setKpiAberto({ tipo: 'atrasados', titulo: 'OVs atrasadas' })}
         />
         <KpiCard
           titulo="Ocorrências Abertas"
@@ -323,6 +353,7 @@ export function Dashboard() {
           sub="sem resolução"
           cor={dash?.ocorrencias_abertas ? 'text-orange-600' : 'text-gray-400'}
           icone={Clock}
+          onClick={() => navigate('/ocorrencias')}
         />
       </div>
 
@@ -605,6 +636,69 @@ export function Dashboard() {
               <p>Média: 21 – 100 unidades</p>
               <p>Complexa: &gt; 100 unidades</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal drill-down dos KPIs do topo */}
+      {kpiAberto && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setKpiAberto(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold">{kpiAberto.titulo}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{kpiLista.length} OV(s)</p>
+              </div>
+              <button onClick={() => setKpiAberto(null)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {carregandoKpi ? (
+                <p className="text-center text-gray-400 py-8 text-sm">Carregando...</p>
+              ) : kpiLista.length === 0 ? (
+                <p className="text-center text-gray-400 py-8 text-sm">Nenhuma OV</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">OV</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Cliente</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Etapa</th>
+                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">
+                        {kpiAberto.tipo === 'expedidos_hoje' ? 'Expedido em' : 'Previsto'}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {kpiLista.map((p: any) => {
+                      const cfg = STATUS_CONFIG[p.status as keyof typeof STATUS_CONFIG]
+                      const dataDir = kpiAberto.tipo === 'expedidos_hoje'
+                        ? (p.atualizado_em ? new Date(p.atualizado_em).toLocaleDateString('pt-BR') : '—')
+                        : (p.data_prevista_entrega ? new Date(p.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR') : '—')
+                      return (
+                        <tr key={p.id}
+                          onClick={() => { setKpiAberto(null); navigate(`/expedicao/${p.id}`) }}
+                          className={`hover:bg-gray-50 cursor-pointer ${p.atrasado ? 'bg-red-50' : ''}`}>
+                          <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700 whitespace-nowrap">{p.numero_pedido}</td>
+                          <td className="px-4 py-2.5 text-gray-700 max-w-[220px] truncate">{p.cliente_nome || p.cliente?.nome || '—'}</td>
+                          <td className="px-4 py-2.5">
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+                              style={{ background: cfg?.cor || '#E5E7EB', color: cfg?.corTexto || '#374151' }}>
+                              {cfg?.icone} {cfg?.label || p.status}
+                            </span>
+                          </td>
+                          <td className={`px-4 py-2.5 text-right text-xs whitespace-nowrap ${p.atrasado ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
+                            {p.atrasado && kpiAberto.tipo !== 'expedidos_hoje' ? '⚠ ' : ''}{dataDir}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="p-3 border-t text-xs text-gray-400 text-right">{kpiLista.length} OV(s)</div>
           </div>
         </div>
       )}
