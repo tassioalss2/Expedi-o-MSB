@@ -89,11 +89,14 @@ export function PainelComercial() {
   const ritmoMeta = (rz: number, mt: number | null) => {
     if (!mt || mt <= 0) return { barra: 'bg-gray-300', rotulo: '', cor: 'text-gray-400', esperado: 0 }
     const esperado = mt * fracaoTempo
-    if (rz >= mt) return { barra: 'bg-green-500', rotulo: 'meta batida 🎉', cor: 'text-green-600', esperado }
-    if (mesFuturo || fracaoTempo === 0) return { barra: 'bg-gray-400', rotulo: 'mês não começou', cor: 'text-gray-400', esperado }
-    if (rz >= esperado) return { barra: 'bg-green-500', rotulo: 'no ritmo', cor: 'text-green-600', esperado }
-    if (rz >= esperado * 0.8) return { barra: 'bg-amber-500', rotulo: 'levemente atrás', cor: 'text-amber-600', esperado }
-    return { barra: 'bg-red-500', rotulo: 'abaixo do ritmo', cor: 'text-red-600', esperado }
+    if (rz >= mt) return { barra: 'bg-emerald-500', rotulo: 'meta batida 🎉', cor: 'text-emerald-600', esperado }
+    if (mesFuturo || fracaoTempo === 0) return { barra: 'bg-gray-300', rotulo: 'mês não começou', cor: 'text-gray-400', esperado }
+    // Avaliação suave: cedo no mês as vendas naturalmente atrasam, então o
+    // limiar é tolerante e a cor usa tons leves (verde/âmbar/laranja, sem vermelho).
+    const ratio = esperado > 0 ? rz / esperado : 1
+    if (ratio >= 0.85) return { barra: 'bg-emerald-400', rotulo: 'no ritmo', cor: 'text-emerald-600', esperado }
+    if (ratio >= 0.55) return { barra: 'bg-amber-400', rotulo: 'um pouco atrás', cor: 'text-amber-600', esperado }
+    return { barra: 'bg-orange-400', rotulo: 'atrás do ritmo', cor: 'text-orange-500', esperado }
   }
   const ritmoTotal = ritmoMeta(realizado, metaValor)
 
