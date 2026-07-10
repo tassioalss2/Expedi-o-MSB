@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { DollarSign, Truck, FileText, X, Pencil } from 'lucide-react'
+import { DollarSign, Truck, FileText, X, Pencil, CalendarDays } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
 
@@ -85,6 +86,33 @@ export function PainelComercial() {
   })
   const vendasCanal = vendasCanalResp?.canais ?? []
   const licitacaoInfo = vendasCanalResp?.licitacao ?? { qtd: 0, valor: 0 }
+
+  // Faturamento diário (Vendas sem frete) do mês selecionado — para o gráfico
+  const { data: fatDiario } = useQuery<{ dias: Array<{ dia: string; valor: number; qtd: number }>; total: number }>({
+    queryKey: ['faturamento-diario', inicioFinanceiro, fimFinanceiro],
+    queryFn: () => api.get('/pedidos/dashboard/faturamento-diario', {
+      params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
+    }).then(r => r.data),
+    refetchInterval: 60000,
+  })
+
+  // Faturamento de HOJE (indicador) — sempre o dia real, independe do mês do gráfico
+  const hojeStr = format(hoje, 'yyyy-MM-dd')
+  const { data: fatHoje } = useQuery<{ dias: Array<{ dia: string; valor: number; qtd: number }>; total: number }>({
+    queryKey: ['faturamento-hoje', hojeStr],
+    queryFn: () => api.get('/pedidos/dashboard/faturamento-diario', {
+      params: { data_inicio: hojeStr, data_fim: hojeStr },
+    }).then(r => r.data),
+    refetchInterval: 60000,
+  })
+  const vendasHoje = fatHoje?.total ?? 0
+  const qtdHoje = fatHoje?.dias?.[0]?.qtd ?? 0
+
+  // Média diária e melhor dia do mês (só dias com venda contam na média)
+  const diasComVenda = (fatDiario?.dias ?? []).filter(d => d.valor > 0)
+  const mediaDia = diasComVenda.length ? (fatDiario!.total / diasComVenda.length) : 0
+  const melhorDia = diasComVenda.reduce<{ dia: string; valor: number } | null>(
+    (acc, d) => (!acc || d.valor > acc.valor ? d : acc), null)
 
   // Drill-down do card financeiro: qual grupo de NFs está sendo detalhado
   const [detalheFin, setDetalheFin] = useState<{ categoria: string; titulo: string } | null>(null)
@@ -354,6 +382,90 @@ export function PainelComercial() {
               ? `R$ ${(Number(financeiro.total_frete) / financeiro.qtd_com_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
               : '—'}
           </p>
+        </div>
+      </div>
+
+      {/* Faturamento diário: indicador de hoje + gráfico do mês */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Indicador — Faturamento de hoje */}
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 lg:col-span-1 flex flex-col">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="p-2 bg-green-50 rounded-lg">
+              <CalendarDays size={18} className="text-green-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-700">Faturamento de hoje</p>
+              <p className="text-xs text-gray-400">{format(hoje, "dd 'de' MMMM", { locale: ptBR })}</p>
+            </div>
+          </div>
+          <p className="text-3xl font-bold text-green-600 leading-tight">{fmtR$(vendasHoje)}</p>
+          <p className="text-xs text-gray-400 mt-0.5">{qtdHoje} NF · Vendas sem frete</p>
+          <div className="mt-auto pt-3 border-t border-gray-100 space-y-1.5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs text-gray-500">Média/dia c/ venda</span>
+              <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmtR$(mediaDia)}</span>
+            </div>
+            {melhorDia && (
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs text-gray-500">Melhor dia</span>
+                <span className="text-sm font-semibold text-gray-700 tabular-nums">
+                  {format(new Date(melhorDia.dia + 'T00:00:00'), 'dd/MM')} · {fmtR$(melhorDia.valor)}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Gráfico — Faturamento por dia do mês */}
+        <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 lg:col-span-3">
+          <div className="flex items-baseline justify-between mb-3">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Faturamento por dia</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Vendas sem frete · {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })}</p>
+            </div>
+            <span className="text-sm font-semibold text-gray-700 tabular-nums">Total {fmtR$(fatDiario?.total ?? 0)}</span>
+          </div>
+          {(fatDiario?.dias?.length ?? 0) === 0 ? (
+            <div className="h-64 flex items-center justify-center text-sm text-gray-400">Sem faturamento no período</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={256}>
+              <BarChart data={fatDiario!.dias} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid vertical={false} stroke="#f1f5f9" />
+                <XAxis
+                  dataKey="dia"
+                  tickFormatter={(v: string) => v.slice(8, 10)}
+                  tick={{ fontSize: 11, fill: '#94a3b8' }}
+                  axisLine={{ stroke: '#e5e7eb' }} tickLine={false} interval="preserveStartEnd" minTickGap={8}
+                />
+                <YAxis
+                  tickFormatter={(v: number) => v >= 1000 ? `${Math.round(v / 1000)}k` : String(v)}
+                  tick={{ fontSize: 11, fill: '#94a3b8' }}
+                  axisLine={false} tickLine={false} width={44}
+                />
+                <Tooltip
+                  cursor={{ fill: 'rgba(34,197,94,0.06)' }}
+                  content={({ active, payload }: any) => {
+                    if (!active || !payload?.length) return null
+                    const p = payload[0].payload
+                    return (
+                      <div className="bg-white border border-gray-200 rounded-lg shadow-sm px-3 py-2 text-xs">
+                        <p className="font-semibold text-gray-700 mb-0.5 capitalize">
+                          {format(new Date(p.dia + 'T00:00:00'), "EEEE, dd 'de' MMM", { locale: ptBR })}
+                        </p>
+                        <p className="text-green-600 font-bold text-sm">{fmtR$(p.valor)}</p>
+                        <p className="text-gray-400">{p.qtd} NF</p>
+                      </div>
+                    )
+                  }}
+                />
+                <Bar dataKey="valor" radius={[4, 4, 0, 0]} maxBarSize={28}>
+                  {fatDiario!.dias.map((d) => (
+                    <Cell key={d.dia} fill={d.dia === hojeStr ? '#15803d' : '#22c55e'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 

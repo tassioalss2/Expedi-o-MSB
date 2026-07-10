@@ -648,6 +648,59 @@ def vendas_por_canal(
     }
 
 
+@router.get("/dashboard/faturamento-diario")
+def faturamento_diario(
+    data_inicio: date = Query(...),
+    data_fim: date = Query(...),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Vendas (sem frete) por dia de faturamento no período.
+
+    Mesmo escopo de "Vendas": faturamento, sem Transfer Price nem Esterilize.
+    Retorna a série completa de dias (com zeros) para desenhar o gráfico do mês
+    e o total do período.
+    """
+    from datetime import timedelta
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    faturados = _faturados_no_periodo(data_inicio, data_fim)
+
+    # Série completa de dias do período (dias sem venda ficam zerados no gráfico).
+    dias: dict[str, dict] = {}
+    d = data_inicio
+    while d <= data_fim:
+        iso = d.isoformat()
+        dias[iso] = {"dia": iso, "valor": 0.0, "qtd": 0}
+        d += timedelta(days=1)
+
+    if faturados:
+        ids = list(faturados.keys())
+        peds: list = []
+        for i in range(0, len(ids), 40):
+            peds += db.table("pedidos").select(
+                "id, valor_nf, valor_frete, tipo_frete, tipo_operacao, status, clientes(nome)"
+            ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
+        for p in peds:
+            nome = ((p.get("clientes") or {}).get("nome") or "").upper()
+            if "ESTERILIZE" in nome or _eh_biomedical(p) or not _conta_faturamento(p):
+                continue
+            dia = faturados.get(p["id"])
+            if dia not in dias:
+                continue
+            valor = float(p.get("valor_nf") or 0)
+            if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+                valor -= float(p.get("valor_frete") or 0)
+            dias[dia]["valor"] += valor
+            dias[dia]["qtd"] += 1
+
+    serie = sorted(dias.values(), key=lambda x: x["dia"])
+    for g in serie:
+        g["valor"] = round(g["valor"], 2)
+    total = round(sum(g["valor"] for g in serie), 2)
+    return {"dias": serie, "total": total}
+
+
 @router.get("/relatorio/faturamento")
 def relatorio_faturamento(
     data_inicio: date = Query(...),
