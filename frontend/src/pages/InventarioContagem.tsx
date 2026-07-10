@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Check, AlertTriangle, Search } from 'lucide-react'
+import { ArrowLeft, Check, AlertTriangle, Search, Printer } from 'lucide-react'
 import api from '../lib/api'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
@@ -109,6 +109,8 @@ export function InventarioContagem() {
   const [codigo, setCodigo] = useState('')
   const [descricao, setDescricao] = useState('')
   const [lote, setLote] = useState('')
+  const [validade, setValidade] = useState('')
+  const [imprimindo, setImprimindo] = useState(false)
   const [qtdSistem, setQtdSistem] = useState('')
   const [qtdFisica, setQtdFisica] = useState('')
   const [qtdVenda, setQtdVenda] = useState('')
@@ -168,12 +170,36 @@ export function InventarioContagem() {
       qc.invalidateQueries({ queryKey: ['inv-contagens'] })
       qc.invalidateQueries({ queryKey: ['inv-ciclo-aberto'] })
       // Limpa para próxima contagem (mantém operador)
-      setCodigo(''); setDescricao(''); setLote('')
+      setCodigo(''); setDescricao(''); setLote(''); setValidade('')
       setQtdSistem(''); setQtdFisica(''); setQtdVenda('')
       setMotivoId(''); setObservacao('')
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro ao salvar'),
   })
+
+  // Etiqueta de inventário: usa o estoque restante (Sistema − Venda) como qtd,
+  // igual à verificação física; cai para o físico contado se não houver restante.
+  const qtdEtiqueta = esperado > 0 ? esperado : (fis ?? sist)
+  const podeImprimir = codigo.trim() && lote.trim() && qtdEtiqueta > 0
+  const imprimirEtiqueta = async () => {
+    if (!podeImprimir || imprimindo) return
+    setImprimindo(true)
+    try {
+      await api.post('/impressao', {
+        codigo: codigo.trim(),
+        lote: lote.trim(),
+        validade: validade.trim() || undefined,
+        quantidade: qtdEtiqueta,
+        operador: operadorNome.trim() || usuario?.nome || '',
+        data_inventario: new Date().toISOString(),
+      })
+      toast.success(`🖨 Etiqueta enviada — ${codigo.trim()} (${qtdEtiqueta} un)`)
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Erro ao imprimir etiqueta')
+    } finally {
+      setImprimindo(false)
+    }
+  }
 
   if (!cicloAberto?.id) {
     return (
@@ -240,6 +266,16 @@ export function InventarioContagem() {
               value={lote}
               onChange={e => setLote(e.target.value.toUpperCase())}
               placeholder="Ex: 000051-26-01"
+              className="w-full border rounded-xl px-4 py-2.5 text-sm font-mono mt-1"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-gray-700">Validade <span className="font-normal text-gray-400">(opcional — p/ etiqueta)</span></label>
+            <input
+              type="text"
+              value={validade}
+              onChange={e => setValidade(e.target.value)}
+              placeholder="MM/AAAA"
               className="w-full border rounded-xl px-4 py-2.5 text-sm font-mono mt-1"
             />
           </div>
@@ -339,6 +375,15 @@ export function InventarioContagem() {
             )}
           </div>
         )}
+
+        {/* Imprimir etiqueta de inventário */}
+        <button
+          onClick={imprimirEtiqueta}
+          disabled={!podeImprimir || imprimindo}
+          className="w-full flex items-center justify-center gap-2 py-3 border-2 border-teal-300 text-teal-700 rounded-xl text-sm font-semibold disabled:opacity-40 hover:bg-teal-50 transition-colors">
+          <Printer size={18} />
+          {imprimindo ? 'Enviando...' : `Imprimir etiqueta${qtdEtiqueta > 0 ? ` (${qtdEtiqueta} un)` : ''}`}
+        </button>
 
         {/* Botões */}
         <div className="flex gap-3 pb-4">
