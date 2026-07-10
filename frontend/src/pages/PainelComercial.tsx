@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { DollarSign, Truck, FileText, X, Pencil, CalendarDays } from 'lucide-react'
@@ -10,8 +10,16 @@ import api from '../lib/api'
 
 export function PainelComercial() {
   const navigate = useNavigate()
+  const location = useLocation()
   const qc = useQueryClient()
   const hoje = new Date()
+
+  // Rola até a seção indicada pela âncora do menu (#faturamento, #canais, ...)
+  useEffect(() => {
+    if (!location.hash) return
+    const el = document.getElementById(location.hash.slice(1))
+    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+  }, [location.hash])
 
   // Mês de referência dos cards financeiros (default: mês corrente)
   const [mesFinanceiro, setMesFinanceiro] = useState(() => new Date(hoje.getFullYear(), hoje.getMonth(), 1))
@@ -62,8 +70,32 @@ export function PainelComercial() {
   const realizado = financeiro?.outras_vendas?.faturamento_sem_frete || 0
   const percentualMeta = metaValor && metaValor > 0 ? (realizado / metaValor) * 100 : 0
   const faltaMeta = metaValor ? metaValor - realizado : 0
-  const corBarra = percentualMeta >= 100 ? 'bg-green-500' : percentualMeta < 70 ? 'bg-amber-500' : 'bg-green-500'
-  const fmtR$ = (v: number) => `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+  const fmtR$ = (v: number) => `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  // Ritmo da meta: leva em conta os dias úteis (seg-sex) já decorridos no mês.
+  // A cor reflete se as vendas estão acompanhando o esperado até hoje.
+  const contaDiasUteis = (ini: Date, fim: Date) => {
+    let n = 0
+    const d = new Date(ini)
+    while (d <= fim) { const w = d.getDay(); if (w !== 0 && w !== 6) n++; d.setDate(d.getDate() + 1) }
+    return n
+  }
+  const mesIni = new Date(mesFinanceiro.getFullYear(), mesFinanceiro.getMonth(), 1)
+  const mesFim = new Date(mesFinanceiro.getFullYear(), mesFinanceiro.getMonth() + 1, 0)
+  const mesFuturo = mesFinanceiro > new Date(hoje.getFullYear(), hoje.getMonth(), 1)
+  const totalUteis = contaDiasUteis(mesIni, mesFim)
+  const uteisPassados = mesFuturo ? 0 : ehMesAtual ? contaDiasUteis(mesIni, hoje) : totalUteis
+  const fracaoTempo = totalUteis > 0 ? uteisPassados / totalUteis : 0
+  const ritmoMeta = (rz: number, mt: number | null) => {
+    if (!mt || mt <= 0) return { barra: 'bg-gray-300', rotulo: '', cor: 'text-gray-400', esperado: 0 }
+    const esperado = mt * fracaoTempo
+    if (rz >= mt) return { barra: 'bg-green-500', rotulo: 'meta batida 🎉', cor: 'text-green-600', esperado }
+    if (mesFuturo || fracaoTempo === 0) return { barra: 'bg-gray-400', rotulo: 'mês não começou', cor: 'text-gray-400', esperado }
+    if (rz >= esperado) return { barra: 'bg-green-500', rotulo: 'no ritmo', cor: 'text-green-600', esperado }
+    if (rz >= esperado * 0.8) return { barra: 'bg-amber-500', rotulo: 'levemente atrás', cor: 'text-amber-600', esperado }
+    return { barra: 'bg-red-500', rotulo: 'abaixo do ritmo', cor: 'text-red-600', esperado }
+  }
+  const ritmoTotal = ritmoMeta(realizado, metaValor)
 
   // Vendas por cliente (fase 2)
   const { data: vendasCliente = [] } = useQuery<Array<{ cliente: string; qtd: number; valor: number }>>({
@@ -138,6 +170,11 @@ export function PainelComercial() {
       const nome = categoria.slice(8)
       return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && r.cliente === nome)
     }
+    // Vendas de um dia específico (clique no gráfico / card "hoje")
+    if (categoria.startsWith('dia:')) {
+      const d = categoria.slice(4)
+      return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '') && r.data === d)
+    }
     // Demais categorias refletem só o que é faturamento (bate com os totais do card)
     const fat = rows.filter(r => r.eh_faturamento)
     switch (categoria) {
@@ -152,7 +189,7 @@ export function PainelComercial() {
   const TIPO_FRETE_LABEL: Record<string, string> = {
     FOB: 'FOB', CIF_COM_VALOR: 'CIF c/ valor', CIF_SEM_VALOR: 'CIF s/ valor',
   }
-  const fmtMoeda = (v: number) => `R$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+  const fmtMoeda = (v: number) => `R$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   return (
     <div className="p-6 space-y-6">
@@ -165,7 +202,7 @@ export function PainelComercial() {
       </div>
 
       {/* Meta do mês (total = soma das metas por canal) */}
-      <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+      <div id="meta" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
         <div className="flex items-center gap-2 mb-3">
           <div className="p-2 bg-green-50 rounded-lg">
             <DollarSign size={18} className="text-green-600" />
@@ -194,20 +231,28 @@ export function PainelComercial() {
             </div>
             <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
               <div
-                className={`h-2 rounded-full transition-all ${corBarra}`}
+                className={`h-2 rounded-full transition-all ${ritmoTotal.barra}`}
                 style={{ width: `${Math.min(percentualMeta, 100)}%` }}
               />
             </div>
             <div className="flex items-center justify-between mt-1.5 text-xs text-gray-400">
-              <span className="font-semibold text-gray-600">{percentualMeta.toFixed(1)}% da meta</span>
+              <span className="font-semibold text-gray-600">
+                {percentualMeta.toFixed(1)}% da meta
+                {ritmoTotal.rotulo && <span className={`ml-2 font-semibold ${ritmoTotal.cor}`}>· {ritmoTotal.rotulo}</span>}
+              </span>
               {faltaMeta > 0 && <span>Faltam {fmtR$(faltaMeta)}</span>}
             </div>
+            {!mesFuturo && metaValor > 0 && ritmoTotal.esperado > 0 && (
+              <p className="text-[11px] text-gray-400 mt-1">
+                Esperado até hoje: {fmtR$(ritmoTotal.esperado)} · {uteisPassados} de {totalUteis} dias úteis
+              </p>
+            )}
           </>
         )}
       </div>
 
       {/* Cards Financeiros */}
-      <div className="flex items-center justify-between">
+      <div id="faturamento" className="flex items-center justify-between scroll-mt-4">
         <h2 className="text-sm font-semibold text-gray-700">Financeiro — Notas faturadas no mês</h2>
         <select
           value={inicioFinanceiro}
@@ -373,13 +418,11 @@ export function PainelComercial() {
             </div>
           </div>
           <p className="text-2xl font-bold text-blue-600">
-            {financeiro?.qtd_nfs > 0
-              ? `R$ ${(Number(financeiro.total_nf) / financeiro.qtd_nfs).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
-              : 'R$ 0,00'}
+            {financeiro?.qtd_nfs > 0 ? fmtMoeda(Number(financeiro.total_nf) / financeiro.qtd_nfs) : 'R$ 0,00'}
           </p>
           <p className="text-xs text-gray-400 mt-1">
             Frete médio: {financeiro?.qtd_com_frete > 0
-              ? `R$ ${(Number(financeiro.total_frete) / financeiro.qtd_com_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+              ? fmtMoeda(Number(financeiro.total_frete) / financeiro.qtd_com_frete)
               : '—'}
           </p>
         </div>
@@ -389,17 +432,23 @@ export function PainelComercial() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Indicador — Faturamento de hoje */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 lg:col-span-1 flex flex-col">
-          <div className="flex items-center gap-2 mb-3">
-            <div className="p-2 bg-green-50 rounded-lg">
-              <CalendarDays size={18} className="text-green-600" />
+          <div
+            onClick={() => setDetalheFin({ categoria: `dia:${hojeStr}`, titulo: `Faturamento de hoje · ${format(hoje, "dd 'de' MMMM", { locale: ptBR })}` })}
+            className="cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors"
+            title="Ver as NFs faturadas hoje"
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <div className="p-2 bg-green-50 rounded-lg">
+                <CalendarDays size={18} className="text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-700">Faturamento de hoje</p>
+                <p className="text-xs text-gray-400">{format(hoje, "dd 'de' MMMM", { locale: ptBR })}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-700">Faturamento de hoje</p>
-              <p className="text-xs text-gray-400">{format(hoje, "dd 'de' MMMM", { locale: ptBR })}</p>
-            </div>
+            <p className="text-3xl font-bold text-green-600 leading-tight">{fmtR$(vendasHoje)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{qtdHoje} NF · Vendas sem frete</p>
           </div>
-          <p className="text-3xl font-bold text-green-600 leading-tight">{fmtR$(vendasHoje)}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{qtdHoje} NF · Vendas sem frete</p>
           <div className="mt-auto pt-3 border-t border-gray-100 space-y-1.5">
             <div className="flex items-baseline justify-between">
               <span className="text-xs text-gray-500">Média/dia c/ venda</span>
@@ -421,7 +470,7 @@ export function PainelComercial() {
           <div className="flex items-baseline justify-between mb-3">
             <div>
               <h2 className="text-sm font-semibold text-gray-700">Faturamento por dia</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Vendas sem frete · {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Clique numa barra para ver as NFs do dia · {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })}</p>
             </div>
             <span className="text-sm font-semibold text-gray-700 tabular-nums">Total {fmtR$(fatDiario?.total ?? 0)}</span>
           </div>
@@ -458,7 +507,14 @@ export function PainelComercial() {
                     )
                   }}
                 />
-                <Bar dataKey="valor" radius={[4, 4, 0, 0]} maxBarSize={28}>
+                <Bar dataKey="valor" radius={[4, 4, 0, 0]} maxBarSize={28} className="cursor-pointer"
+                  onClick={(d: any) => {
+                    if (!d?.payload?.dia) return
+                    setDetalheFin({
+                      categoria: `dia:${d.payload.dia}`,
+                      titulo: `Faturamento · ${format(new Date(d.payload.dia + 'T00:00:00'), "dd 'de' MMMM", { locale: ptBR })}`,
+                    })
+                  }}>
                   {fatDiario!.dias.map((d) => (
                     <Cell key={d.dia} fill={d.dia === hojeStr ? '#15803d' : '#22c55e'} />
                   ))}
@@ -470,7 +526,7 @@ export function PainelComercial() {
       </div>
 
       {/* Vendas por Canal (realizado × meta) */}
-      <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+      <div id="canais" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
         <div className="mb-4">
           <h2 className="text-sm font-semibold text-gray-700">Vendas por Canal</h2>
           <p className="text-xs text-gray-400 mt-0.5">Realizado × meta · sem frete · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
@@ -491,6 +547,7 @@ export function PainelComercial() {
                 const qtd = de(ch.key)?.qtd || 0
                 const mt = meta?.por_canal?.[ch.key] ?? null
                 const pct = mt && mt > 0 ? (rz / mt) * 100 : 0
+                const ritmo = ritmoMeta(rz, mt)
                 const editing = editandoCanal === ch.key
                 return (
                   <div key={ch.key}
@@ -541,11 +598,14 @@ export function PainelComercial() {
                     ) : (
                       <>
                         <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${pct >= 100 ? 'bg-green-500' : ch.cor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                          <div className={`h-full rounded-full ${ritmo.barra}`} style={{ width: `${Math.min(pct, 100)}%` }} />
                         </div>
                         {mt != null && (
                           <div className="flex justify-between text-[11px] text-gray-400 mt-0.5">
-                            <span>{pct.toFixed(1)}% da meta</span>
+                            <span>
+                              {pct.toFixed(1)}% da meta
+                              {ritmo.rotulo && <span className={`ml-1.5 font-semibold ${ritmo.cor}`}>· {ritmo.rotulo}</span>}
+                            </span>
                             {rz < mt && <span>faltam {fmtR$(mt - rz)}</span>}
                           </div>
                         )}
@@ -596,7 +656,7 @@ export function PainelComercial() {
       </div>
 
       {/* Vendas por Cliente */}
-      <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+      <div id="clientes" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="text-sm font-semibold text-gray-700">Vendas por Cliente</h2>
@@ -679,6 +739,7 @@ export function PainelComercial() {
                       <tr>
                         <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">OV</th>
                         <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">NF</th>
+                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Faturado em</th>
                         <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Cliente</th>
                         <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Frete</th>
                         <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Valor NF</th>
@@ -694,6 +755,9 @@ export function PainelComercial() {
                           className="hover:bg-gray-50 cursor-pointer">
                           <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700">{r.numero_pedido}</td>
                           <td className="px-4 py-2.5 font-mono text-gray-600">{r.numero_nf || '—'}</td>
+                          <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+                            {r.data ? format(new Date(r.data + 'T00:00:00'), 'dd/MM/yyyy') : '—'}
+                          </td>
                           <td className="px-4 py-2.5 text-gray-700 max-w-[220px] truncate">
                             {r.eh_biomedical && <span className="w-2 h-2 rounded-full bg-purple-500 inline-block mr-1.5 align-middle" />}
                             {r.cliente}
@@ -708,7 +772,7 @@ export function PainelComercial() {
                     </tbody>
                     <tfoot className="bg-gray-50 sticky bottom-0 border-t-2 border-gray-200">
                       <tr className="font-semibold text-gray-800">
-                        <td className="px-4 py-3" colSpan={4}>{linhas.length} NF(s)</td>
+                        <td className="px-4 py-3" colSpan={5}>{linhas.length} NF(s)</td>
                         <td className="px-4 py-3 text-right">{fmtMoeda(somaNf)}</td>
                         <td className="px-4 py-3 text-right">{fmtMoeda(ehFrete ? somaFrete : somaSemFrete)}</td>
                       </tr>

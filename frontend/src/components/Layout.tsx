@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../lib/api'
@@ -10,7 +10,12 @@ import {
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
 
-const navLogistica = [
+type NavItem = {
+  to: string; label: string; icone: any
+  subs?: Array<{ hash: string; label: string }>
+}
+
+const navLogistica: NavItem[] = [
   { to: '/dashboard',  label: 'Painel Operacional', icone: LayoutDashboard },
   { to: '/expedicao',  label: 'Expedição',          icone: Package },
   { to: '/pallets',    label: 'Pallets',            icone: Layers },
@@ -20,9 +25,17 @@ const navLogistica = [
   { to: '/relatorios', label: 'Relatórios',         icone: BarChart2 },
 ]
 
-const navComercial = [
-  { to: '/comercial',                 label: 'Painel Comercial',  icone: DollarSign },
-  { to: '/comercial/comunicado-uso',  label: 'Comunicado de Uso', icone: FileText },
+const navComercial: NavItem[] = [
+  {
+    to: '/comercial', label: 'Painel Comercial', icone: DollarSign,
+    subs: [
+      { hash: '#meta', label: 'Meta do mês' },
+      { hash: '#faturamento', label: 'Faturamento' },
+      { hash: '#canais', label: 'Vendas por Canal' },
+      { hash: '#clientes', label: 'Vendas por Cliente' },
+    ],
+  },
+  { to: '/comercial/comunicado-uso', label: 'Comunicado de Uso', icone: FileText },
 ]
 
 const navGeral = [
@@ -32,6 +45,7 @@ const navGeral = [
 export function Layout() {
   const { usuario, logout } = useAuthStore()
   const navigate = useNavigate()
+  const location = useLocation()
   const [sidebarAberto, setSidebarAberto] = useState(false)
 
   const handleLogout = () => {
@@ -109,29 +123,50 @@ export function Layout() {
                 {grupo.titulo}
               </p>
               <div className="space-y-1">
-                {grupo.itens.map(({ to, label, icone: Icone }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    end={to !== '/expedicao'}
-                    onClick={fecharSidebar}
-                    className={({ isActive }) =>
-                      clsx(
-                        'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
-                        isActive
-                          ? 'bg-blue-600 text-white'
-                          : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                      )
-                    }
-                  >
-                    <Icone size={18} />
-                    <span className="flex-1">{label}</span>
-                    {to === '/expedicao' && badgeExpedicao > 0 && (
-                      <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
-                        {badgeExpedicao > 99 ? '99+' : badgeExpedicao}
-                      </span>
+                {grupo.itens.map(({ to, label, icone: Icone, subs }) => (
+                  <div key={to}>
+                    <NavLink
+                      to={to}
+                      end={to !== '/expedicao'}
+                      onClick={fecharSidebar}
+                      className={({ isActive }) =>
+                        clsx(
+                          'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                          isActive
+                            ? 'bg-blue-600 text-white'
+                            : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                        )
+                      }
+                    >
+                      <Icone size={18} />
+                      <span className="flex-1">{label}</span>
+                      {to === '/expedicao' && badgeExpedicao > 0 && (
+                        <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">
+                          {badgeExpedicao > 99 ? '99+' : badgeExpedicao}
+                        </span>
+                      )}
+                    </NavLink>
+                    {subs && (
+                      <div className="mt-0.5 mb-1 ml-4 pl-3 border-l border-gray-700 space-y-0.5">
+                        {subs.map((s) => {
+                          const ativo = location.pathname === to && location.hash === s.hash
+                          return (
+                            <Link
+                              key={s.hash}
+                              to={`${to}${s.hash}`}
+                              onClick={fecharSidebar}
+                              className={clsx(
+                                'block px-3 py-1.5 rounded-lg text-[13px] transition-colors',
+                                ativo ? 'text-white bg-gray-800' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                              )}
+                            >
+                              {s.label}
+                            </Link>
+                          )
+                        })}
+                      </div>
                     )}
-                  </NavLink>
+                  </div>
                 ))}
               </div>
             </div>

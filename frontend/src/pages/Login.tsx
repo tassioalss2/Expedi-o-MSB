@@ -13,7 +13,7 @@ export function Login() {
 
   // Modo dev — pula login automaticamente
   useEffect(() => {
-    navigate('/dashboard', { replace: true })
+    navigate('/', { replace: true })
   }, [])
 
 
@@ -23,7 +23,7 @@ export function Login() {
     try {
       const { data } = await api.post('/auth/login', { email, senha })
       setAuth(data.usuario, data.access_token)
-      navigate('/dashboard')
+      navigate('/')
     } catch {
       toast.error('Email ou senha inválidos')
     } finally {
