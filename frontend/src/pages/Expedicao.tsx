@@ -143,6 +143,7 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
       {pedido.transportadora_nome && (
         <p className="text-xs text-gray-500 font-medium mb-1">🚚 {resolveNomeTransportadora(pedido.transportadora_nome, pedido.observacoes)}</p>
       )}
+      {pedido.tipo_frete && <div className="mb-1.5"><FreteBadge tipo={pedido.tipo_frete} /></div>}
       <div className="flex items-center justify-between">
         <span className={`text-xs ${atrasado ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
           {atrasado ? '⚠ ATRASADO' : `Entrega: ${new Date(pedido.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}`}
@@ -433,6 +434,18 @@ const ORDEM_LISTA: StatusPedido[] = [
   'BLOQUEADO', 'CANCELADO',
 ]
 
+const FRETE_BADGE: Record<string, { label: string; classe: string }> = {
+  FOB:           { label: 'FOB',          classe: 'bg-gray-100 text-gray-600' },
+  CIF_COM_VALOR: { label: 'CIF c/ valor', classe: 'bg-blue-50 text-blue-700' },
+  CIF_SEM_VALOR: { label: 'CIF s/ valor', classe: 'bg-amber-50 text-amber-700' },
+}
+
+function FreteBadge({ tipo }: { tipo?: string }) {
+  if (!tipo) return <span className="text-gray-300">—</span>
+  const cfg = FRETE_BADGE[tipo] || { label: tipo, classe: 'bg-gray-100 text-gray-600' }
+  return <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${cfg.classe}`}>{cfg.label}</span>
+}
+
 function ListaView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedido: (p: Pedido) => void }) {
   if (pedidos.length === 0) return (
     <div className="py-16 text-center text-gray-400">Nenhum pedido encontrado</div>
@@ -493,6 +506,7 @@ function ListaView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedid
                     <td className={`px-4 py-2.5 w-32 font-medium text-sm ${p.atrasado ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
                       {p.atrasado ? '⚠ ' : ''}{new Date(p.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}
                     </td>
+                    <td className="px-4 py-2.5 w-28"><FreteBadge tipo={p.tipo_frete} /></td>
                     <td className="px-4 py-2.5 text-gray-400 text-sm w-36 truncate">
                       {resolveNomeTransportadora(p.transportadora_nome, p.observacoes) || '—'}
                     </td>
