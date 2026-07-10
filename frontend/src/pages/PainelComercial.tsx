@@ -106,6 +106,15 @@ export function PainelComercial() {
     refetchInterval: 60000,
   })
 
+  // Vendas por produto (quantidade) — vem da coluna "Venda" do inventário contínuo
+  const { data: vendasProduto = [] } = useQuery<Array<{ codigo: string; descricao: string | null; qtd: number; contagens: number }>>({
+    queryKey: ['vendas-por-produto', inicioFinanceiro, fimFinanceiro],
+    queryFn: () => api.get('/pedidos/dashboard/vendas-por-produto', {
+      params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
+    }).then(r => r.data),
+    refetchInterval: 60000,
+  })
+
   const { data: vendasCanalResp } = useQuery<{
     canais: Array<{ canal: string; label: string; qtd: number; valor: number }>
     licitacao: { qtd: number; valor: number }
@@ -701,6 +710,56 @@ export function PainelComercial() {
               <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-200">
                 <span className="text-sm font-semibold text-gray-700 flex-1">Total de Vendas</span>
                 <span className="text-sm font-bold text-green-700 tabular-nums w-32 text-right">{fmtR$(total)}</span>
+              </div>
+            </div>
+          )
+        })()}
+      </div>
+
+      {/* Vendas por Produto (quantidade) — do inventário contínuo */}
+      <div id="produtos" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-sm font-semibold text-gray-700">Vendas por Produto</h2>
+          <span className="text-xs text-gray-400">{vendasProduto.length} produto(s)</span>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">
+          Quantidade vendida (coluna “Venda” do inventário contínuo) · por data da contagem · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}
+        </p>
+        {vendasProduto.length === 0 ? (
+          <p className="text-center text-gray-400 py-6 text-sm">Nenhuma venda registrada no período</p>
+        ) : (() => {
+          const totalQtd = vendasProduto.reduce((a, p) => a + (p.qtd || 0), 0)
+          const maxQ = vendasProduto[0]?.qtd || 1
+          const topN = vendasProduto.slice(0, 10)
+          const resto = vendasProduto.slice(10)
+          const restoQtd = resto.reduce((a, p) => a + p.qtd, 0)
+          const fmtQtd = (n: number) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
+          return (
+            <div className="space-y-2.5">
+              {topN.map((p) => (
+                <div key={p.codigo}>
+                  <div className="flex items-baseline justify-between gap-3 mb-1">
+                    <span className="text-sm text-gray-700 truncate flex-1">
+                      <span className="font-mono text-xs text-gray-500">{p.codigo}</span>
+                      {p.descricao && <span className="text-gray-500"> · {p.descricao}</span>}
+                    </span>
+                    <span className="text-xs text-gray-400 tabular-nums">{((p.qtd / totalQtd) * 100).toFixed(1)}%</span>
+                    <span className="text-sm font-semibold text-indigo-700 tabular-nums w-24 text-right">{fmtQtd(p.qtd)} un</span>
+                  </div>
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(p.qtd / maxQ) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+              {resto.length > 0 && (
+                <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-100 text-gray-400">
+                  <span className="text-xs flex-1">+ {resto.length} outros produtos</span>
+                  <span className="text-sm font-medium tabular-nums w-24 text-right">{fmtQtd(restoQtd)} un</span>
+                </div>
+              )}
+              <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-200">
+                <span className="text-sm font-semibold text-gray-700 flex-1">Total de unidades</span>
+                <span className="text-sm font-bold text-indigo-700 tabular-nums w-24 text-right">{fmtQtd(totalQtd)} un</span>
               </div>
             </div>
           )

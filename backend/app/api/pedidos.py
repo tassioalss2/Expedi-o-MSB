@@ -701,6 +701,55 @@ def faturamento_diario(
     return {"dias": serie, "total": total}
 
 
+@router.get("/dashboard/vendas-por-produto")
+def vendas_por_produto(
+    data_inicio: date = Query(...),
+    data_fim: date = Query(...),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Quantidade vendida por produto, a partir da coluna "Venda" do inventário
+    contínuo (inventario_contagens.qtd_venda), agrupada por código de produto.
+
+    Atenção: o período é pela DATA DA CONTAGEM (contado_em), não pela data de
+    faturamento da NF — é uma medida de unidades vendidas, não de R$.
+    """
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    ini = f"{data_inicio.isoformat()}T00:00:00"
+    fim = f"{data_fim.isoformat()}T23:59:59"
+    contagens = db.table("inventario_contagens").select(
+        "codigo_produto, descricao_produto, qtd_venda, contado_em"
+    ).gte("contado_em", ini).lte("contado_em", fim).execute().data
+
+    # Descrição pelo cadastro de produtos (a contagem nem sempre traz).
+    produtos = db.table("produtos").select("codigo, descricao").execute().data
+    desc_por_codigo = {p["codigo"]: p.get("descricao") for p in produtos if p.get("codigo")}
+
+    agg: dict = {}
+    for c in contagens:
+        qtd = float(c.get("qtd_venda") or 0)
+        if qtd <= 0:
+            continue
+        cod = (c.get("codigo_produto") or "").strip()
+        if not cod:
+            continue
+        g = agg.setdefault(cod, {
+            "codigo": cod,
+            "descricao": c.get("descricao_produto") or desc_por_codigo.get(cod) or None,
+            "qtd": 0.0,
+            "contagens": 0,
+        })
+        g["qtd"] += qtd
+        g["contagens"] += 1
+        if not g["descricao"]:
+            g["descricao"] = c.get("descricao_produto") or desc_por_codigo.get(cod)
+
+    for g in agg.values():
+        g["qtd"] = round(g["qtd"], 2)
+    return sorted(agg.values(), key=lambda x: -x["qtd"])
+
+
 @router.get("/relatorio/faturamento")
 def relatorio_faturamento(
     data_inicio: date = Query(...),

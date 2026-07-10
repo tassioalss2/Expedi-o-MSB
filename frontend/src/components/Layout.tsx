@@ -33,6 +33,7 @@ const navComercial: NavItem[] = [
       { hash: '#faturamento', label: 'Faturamento' },
       { hash: '#canais', label: 'Vendas por Canal' },
       { hash: '#clientes', label: 'Vendas por Cliente' },
+      { hash: '#produtos', label: 'Vendas por Produto' },
     ],
   },
   { to: '/comercial/comunicado-uso', label: 'Comunicado de Uso', icone: FileText },
