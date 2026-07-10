@@ -176,6 +176,12 @@ class PedidoCreate(BaseModel):
     # OV em gerenciamento de crédito — inicia no status AGUARD_CREDITO
     em_gerenciamento_credito: bool = False
 
+    @field_validator("numero_pedido")
+    @classmethod
+    def _strip_numero_pedido(cls, v: str) -> str:
+        # Evita espaços sobrando que criam "OVs fantasma" (ex.: 'OV015619 ').
+        return v.strip() if v else v
+
 
 class ComunicadoUsoCreate(BaseModel):
     """Faturamento de estoque consignado já utilizado pelo cliente.
@@ -191,6 +197,11 @@ class ComunicadoUsoCreate(BaseModel):
     valor_produtos: Optional[float] = None
     data_faturamento: Optional[date] = None
     observacoes: Optional[str] = None
+
+    @field_validator("numero_pedido", "numero_nf")
+    @classmethod
+    def _strip_identificadores(cls, v: str) -> str:
+        return v.strip() if v else v
 
 
 class MetaFaturamentoRequest(BaseModel):
