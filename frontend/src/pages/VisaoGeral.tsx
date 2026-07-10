@@ -78,6 +78,14 @@ export function VisaoGeral() {
     : []
   const totalDrill = linhasDrill.reduce((s, r) => s + (r.valor_sem_frete || 0), 0)
 
+  // Drill-down da logística: clicar numa etapa mostra as OVs naquele status.
+  const [drillStatus, setDrillStatus] = useState<{ status: string; label: string } | null>(null)
+  const { data: pedidosStatus = [], isFetching: carregandoStatus } = useQuery<any[]>({
+    queryKey: ['vg-pedidos-status', drillStatus?.status],
+    queryFn: () => api.get('/pedidos', { params: { status: drillStatus!.status } }).then(r => r.data),
+    enabled: drillStatus !== null,
+  })
+
   const vendas = financeiro?.outras_vendas?.faturamento_sem_frete || 0
   const metaValor = meta?.valor ?? null
   const pctMeta = metaValor && metaValor > 0 ? (vendas / metaValor) * 100 : 0
@@ -277,17 +285,18 @@ export function VisaoGeral() {
               {statusAbertos.map((s) => {
                 const cfg = STATUS_CONFIG[s.status as StatusPedido]
                 return (
-                  <div key={s.status}
-                    className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm"
+                  <button key={s.status}
+                    onClick={() => setDrillStatus({ status: s.status, label: cfg?.label || s.status })}
+                    className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm cursor-pointer hover:ring-2 hover:ring-black/10 transition-all"
                     style={{ backgroundColor: cfg?.cor || '#F3F4F6', color: cfg?.corTexto || '#374151' }}
-                    title={cfg?.descricao}>
+                    title={`${cfg?.descricao || ''} — clique para ver as OVs`}>
                     <span>{cfg?.icone}</span>
                     <span className="font-medium">{cfg?.label || s.status}</span>
                     <span className="font-bold tabular-nums">{s.quantidade}</span>
                     {s.atrasados > 0 && (
                       <span className="text-[11px] font-semibold bg-white/50 rounded px-1">{s.atrasados} atras.</span>
                     )}
-                  </div>
+                  </button>
                 )
               })}
             </div>
@@ -339,6 +348,53 @@ export function VisaoGeral() {
                     ))}
                   </tbody>
                 </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drill-down da logística: OVs em uma etapa/status */}
+      {drillStatus && (
+        <div className="fixed inset-0 bg-black/40 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setDrillStatus(null)}>
+          <div className="bg-white w-full sm:max-w-2xl sm:rounded-xl rounded-t-2xl shadow-xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-sm font-bold text-gray-800">Etapa · {drillStatus.label}</h3>
+                <p className="text-xs text-gray-400 mt-0.5">{pedidosStatus.length} OV(s)</p>
+              </div>
+              <button onClick={() => setDrillStatus(null)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {carregandoStatus ? (
+                <p className="text-sm text-gray-400 text-center py-10">Carregando…</p>
+              ) : pedidosStatus.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-10">Nenhuma OV nesta etapa.</p>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {pedidosStatus.map((p) => (
+                    <button key={p.id}
+                      onClick={() => { setDrillStatus(null); navigate(`/expedicao/${p.id}`) }}
+                      className="w-full text-left px-5 py-2.5 hover:bg-gray-50 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="font-mono text-sm text-gray-700">{p.numero_pedido || '—'}</span>
+                        <span className="block text-xs text-gray-500 truncate">{p.cliente_nome || '—'}</span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        {p.atrasado && (
+                          <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">atrasado</span>
+                        )}
+                        <span className="block text-xs text-gray-400 mt-0.5">
+                          {p.data_prevista_entrega ? format(new Date(p.data_prevista_entrega + 'T00:00:00'), 'dd/MM') : '—'}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </div>
