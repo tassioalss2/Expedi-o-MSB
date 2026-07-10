@@ -87,6 +87,7 @@ export interface Pedido {
   data_real_coleta?: string
   numero_nf?: string
   valor_nf?: number
+  data_faturamento?: string
   codigo_rastreio?: string
   observacoes?: string
   atrasado: boolean

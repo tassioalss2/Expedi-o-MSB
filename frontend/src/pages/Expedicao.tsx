@@ -162,6 +162,10 @@ function EntradaOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void })
   const alta = pedido.prioridade === 'ALTA'
   const entrega = new Date(pedido.data_prevista_entrega + 'T12:00:00')
     .toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  // Quando a OV já foi faturada, mostra a data do faturamento (não a entrega prevista)
+  const dataFat = pedido.data_faturamento
+    ? new Date(pedido.data_faturamento + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+    : null
   const transp = resolveNomeTransportadora(pedido.transportadora_nome, pedido.observacoes)
   // "OUTROS (Jamef)" → "Jamef", "BRIX" → "BRIX"
   const transpLabel = transp ? (transp.match(/\(([^)]+)\)/)?.[1] ?? transp) : ''
@@ -176,7 +180,7 @@ function EntradaOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void })
         pedido.cliente_nome || pedido.cliente?.nome,
         pedido.numero_nf ? `NF ${pedido.numero_nf}` : '',
         transp,
-        `Entrega ${entrega}`,
+        dataFat ? `Faturado ${dataFat}` : `Entrega ${entrega}`,
         atrasado ? '⚠ ATRASADO' : '',
         tempo,
       ].filter(Boolean).join(' · ')}
@@ -222,9 +226,9 @@ function EntradaOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void })
         </span>
       )}
 
-      {/* Data */}
-      <span className={`text-[10px] flex-shrink-0 font-semibold ${atrasado ? 'text-red-600' : 'text-gray-400'}`}>
-        {atrasado ? '⚠ ' : ''}{entrega}
+      {/* Data — faturamento (se já faturado) ou entrega prevista */}
+      <span className={`text-[10px] flex-shrink-0 font-semibold ${dataFat ? 'text-gray-500' : atrasado ? 'text-red-600' : 'text-gray-400'}`}>
+        {dataFat ? dataFat : `${atrasado ? '⚠ ' : ''}${entrega}`}
       </span>
 
       {/* Tempo */}

@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -446,6 +446,26 @@ def listar_pedidos(
         )
         p["cliente_nome"] = p.get("clientes", {}).get("nome", "") if p.get("clientes") else ""
         p["transportadora_nome"] = p.get("transportadoras", {}).get("nome") if p.get("transportadoras") else None
+
+    # Data de faturamento (movimentação -> FATURADO, BRT) por pedido.
+    ids = [p["id"] for p in pedidos]
+    fat: dict[str, str] = {}
+    for i in range(0, len(ids), 40):
+        movs = db.table("movimentacoes").select("pedido_id, criado_em")\
+            .eq("status_novo", "FATURADO").in_("pedido_id", ids[i:i + 40]).execute().data
+        for m in movs:
+            ts = m.get("criado_em")
+            pid = m.get("pedido_id")
+            if not ts or not pid:
+                continue
+            try:
+                d = (datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc) - timedelta(hours=3)).date().isoformat()
+            except Exception:
+                continue
+            if pid not in fat or d > fat[pid]:
+                fat[pid] = d
+    for p in pedidos:
+        p["data_faturamento"] = fat.get(p["id"])
 
     if atrasados is not None:
         pedidos = [p for p in pedidos if p["atrasado"] == atrasados]
