@@ -284,6 +284,7 @@ export function Dashboard() {
   const inicioEsforco = format(new Date(mesEsforco.getFullYear(), mesEsforco.getMonth(), 1), 'yyyy-MM-dd')
   const fimEsforco = ehMesAtualEsf ? fimMes : format(new Date(mesEsforco.getFullYear(), mesEsforco.getMonth() + 1, 0), 'yyyy-MM-dd')
   const mesesEsforco = Array.from({ length: 12 }, (_, i) => new Date(hoje.getFullYear(), hoje.getMonth() - i, 1))
+  const [esforcoDrill, setEsforcoDrill] = useState<{ titulo: string; sub: string; ovs: any[] } | null>(null)
 
   const { data: esforcoData } = useQuery<{ complexidade: any[]; por_dia: any[] }>({
     queryKey: ['esforco-time', inicioEsforco, fimEsforco],
@@ -645,7 +646,12 @@ export function Dashboard() {
                         </div>
                       )
                     }} />
-                  <Bar dataKey="total_unidades" fill="#6366F1" radius={[3, 3, 0, 0]} maxBarSize={26} />
+                  <Bar dataKey="total_unidades" fill="#6366F1" radius={[3, 3, 0, 0]} maxBarSize={26}
+                    cursor="pointer"
+                    onClick={(d: any) => {
+                      if (!d?.num_ovs) return
+                      setEsforcoDrill({ titulo: `Volume de ${d.label}`, sub: `${fmtInt(d.total_unidades)} un · ${d.num_ovs} OV${d.num_ovs === 1 ? '' : 's'}`, ovs: d.ovs || [] })
+                    }} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -659,16 +665,19 @@ export function Dashboard() {
             </div>
             <div className="flex-1 space-y-4">
               {esforcoData.complexidade.map((c: any) => (
-                <div key={c.categoria}>
+                <button key={c.categoria} type="button"
+                  disabled={!c.total}
+                  onClick={() => setEsforcoDrill({ titulo: `OVs ${c.categoria}`, sub: `${c.total} OV${c.total === 1 ? '' : 's'} · ${c.percentual}%`, ovs: c.ovs || [] })}
+                  className="w-full text-left group disabled:cursor-default">
                   <div className="flex justify-between items-baseline mb-1.5">
-                    <span className="text-sm font-medium text-gray-700">{c.categoria}</span>
+                    <span className="text-sm font-medium text-gray-700 group-enabled:group-hover:text-indigo-600">{c.categoria}</span>
                     <span className="text-xs text-gray-500">{c.total} OVs · {c.percentual}%</span>
                   </div>
                   <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
                     <div className="h-full rounded-full transition-all duration-500"
                       style={{ width: `${c.percentual}%`, background: c.cor }} />
                   </div>
-                </div>
+                </button>
               ))}
             </div>
             <div className="mt-5 pt-4 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
@@ -681,6 +690,52 @@ export function Dashboard() {
         </div>
         )
       })()}
+
+      {/* Modal drill-down do Esforço (volume por dia / complexidade) */}
+      {esforcoDrill && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setEsforcoDrill(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold">{esforcoDrill.titulo}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{esforcoDrill.sub}</p>
+              </div>
+              <button onClick={() => setEsforcoDrill(null)} className="p-1.5 hover:bg-gray-100 rounded-lg">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {esforcoDrill.ovs.length === 0 ? (
+                <p className="text-center text-gray-400 py-8 text-sm">Nenhuma OV</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">OV</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Cliente</th>
+                      <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500">Criada</th>
+                      <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Unidades</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {[...esforcoDrill.ovs].sort((a, b) => (b.unidades || 0) - (a.unidades || 0)).map((o: any) => (
+                      <tr key={o.id || o.numero}
+                        onClick={() => { if (o.id) { setEsforcoDrill(null); navigate(`/expedicao/${o.id}`) } }}
+                        className={`hover:bg-gray-50 ${o.id ? 'cursor-pointer' : ''}`}>
+                        <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700 whitespace-nowrap">{o.numero}</td>
+                        <td className="px-4 py-2.5 text-gray-700 max-w-[260px] truncate">{o.cliente || '—'}</td>
+                        <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">{o.dia || '—'}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums font-medium text-gray-700">{Number(o.unidades || 0).toLocaleString('pt-BR')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="p-3 border-t text-xs text-gray-400 text-right">{esforcoDrill.ovs.length} OV(s)</div>
+          </div>
+        </div>
+      )}
 
       {/* Modal drill-down dos KPIs do topo */}
       {kpiAberto && (

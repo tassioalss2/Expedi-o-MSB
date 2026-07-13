@@ -1039,62 +1039,83 @@ def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[da
     # Unidades por OV = soma de qtd_venda dos itens do inventário (itens_pedido
     # não é populado). É a quantidade efetivamente separada/vendida da OV.
     resultado = db.table("pedidos").select(
-        "id, criado_em, inventario_itens(qtd_venda)"
+        "id, numero_pedido, criado_em, clientes(nome), inventario_itens(qtd_venda)"
     ).neq("status", "CANCELADO")\
         .neq("tipo_operacao", "COMUNICADO_USO")\
         .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
 
-    simples = media = complexa = 0
+    simples: list = []
+    media: list = []
+    complexa: list = []
     por_dia: dict = {}
 
     for row in resultado.data:
         itens = row.get("inventario_itens") or []
         total_un = sum(float(i.get("qtd_venda") or 0) for i in itens)
 
-        if total_un <= 20:
-            simples += 1
-        elif total_un <= 100:
-            media += 1
-        else:
-            complexa += 1
-
         criado_em = row.get("criado_em")
+        dia = None
+        label_dia = None
         if criado_em:
             try:
                 ts = datetime.fromisoformat(criado_em.replace("Z", "+00:00"))
                 ts_brt = ts - timedelta(hours=3)
                 dia = ts_brt.strftime("%Y-%m-%d")
-                if dia not in por_dia:
-                    por_dia[dia] = {"total_unidades": 0.0, "num_ovs": 0}
-                por_dia[dia]["total_unidades"] += total_un
-                por_dia[dia]["num_ovs"] += 1
+                label_dia = ts_brt.strftime("%d/%m")
             except Exception:
                 pass
 
-    total = simples + media + complexa
+        cliente = (row.get("clientes") or {}).get("nome")
+        ov = {
+            "id": row.get("id"),
+            "numero": row.get("numero_pedido"),
+            "cliente": cliente,
+            "unidades": round(total_un),
+            "dia": label_dia,
+        }
+
+        if total_un <= 20:
+            simples.append(ov)
+        elif total_un <= 100:
+            media.append(ov)
+        else:
+            complexa.append(ov)
+
+        if dia:
+            if dia not in por_dia:
+                por_dia[dia] = {"total_unidades": 0.0, "num_ovs": 0, "ovs": []}
+            por_dia[dia]["total_unidades"] += total_un
+            por_dia[dia]["num_ovs"] += 1
+            por_dia[dia]["ovs"].append(ov)
+
+    total = len(simples) + len(media) + len(complexa)
 
     dias_ordenados = []
     d = inicio
     while d <= fim:
         dia_str = d.isoformat()
-        entry = por_dia.get(dia_str, {"total_unidades": 0.0, "num_ovs": 0})
+        entry = por_dia.get(dia_str, {"total_unidades": 0.0, "num_ovs": 0, "ovs": []})
         dias_ordenados.append({
             "data": dia_str,
             "label": d.strftime("%d/%m"),
             "total_unidades": round(entry["total_unidades"]),
             "num_ovs": entry["num_ovs"],
+            "ovs": entry["ovs"],
         })
         d += timedelta(days=1)
 
+    def _pct(n):
+        return round(n / total * 100) if total else 0
+
     return {
         "complexidade": [
-            {"categoria": "Simples", "cor": "#22C55E", "total": simples,
-             "percentual": round(simples / total * 100) if total else 0},
-            {"categoria": "Média", "cor": "#6366F1", "total": media,
-             "percentual": round(media / total * 100) if total else 0},
-            {"categoria": "Complexa", "cor": "#F97316", "total": complexa,
-             "percentual": round(complexa / total * 100) if total else 0},
+            {"categoria": "Simples", "cor": "#22C55E", "total": len(simples),
+             "percentual": _pct(len(simples)), "ovs": simples},
+            {"categoria": "Média", "cor": "#6366F1", "total": len(media),
+             "percentual": _pct(len(media)), "ovs": media},
+            {"categoria": "Complexa", "cor": "#F97316", "total": len(complexa),
+             "percentual": _pct(len(complexa)), "ovs": complexa},
         ],
         "por_dia": dias_ordenados,
     }
