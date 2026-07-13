@@ -5,6 +5,7 @@ import { ArrowLeft, FileText } from 'lucide-react'
 import api from '../lib/api'
 import toast from 'react-hot-toast'
 import { ClienteAutocomplete } from './NovoPedido'
+import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 
 export function ComunicadoUso() {
   const navigate = useNavigate()
@@ -23,6 +24,8 @@ export function ComunicadoUso() {
     observacoes: '',
   })
 
+  const [itens, setItens] = useState<ItemLinha[]>([])
+
   const mutation = useMutation({
     mutationFn: () => api.post('/pedidos/comunicado-uso', {
       numero_pedido: form.numero_pedido.trim(),
@@ -33,6 +36,7 @@ export function ComunicadoUso() {
       valor_produtos: form.valor_produtos ? Number(form.valor_produtos) : null,
       data_faturamento: form.data_faturamento || null,
       observacoes: form.observacoes || null,
+      itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd })),
     }),
     onSuccess: () => {
       toast.success('Comunicado de uso faturado!')
@@ -109,6 +113,12 @@ export function ComunicadoUso() {
               <option value="LICITACAO_URO">Licitação - Uro</option>
               <option value="LICITACAO_VASCULAR">Licitação - Vascular</option>
             </select>
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-sm font-medium text-gray-700">Itens</label>
+            <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade.</p>
+            <ItensPedido value={itens} onChange={setItens} />
           </div>
 
           <div className="col-span-2">

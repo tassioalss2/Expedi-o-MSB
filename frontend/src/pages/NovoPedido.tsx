@@ -5,6 +5,7 @@ import { ArrowLeft, Search } from 'lucide-react'
 import api from '../lib/api'
 import type { Cliente, Transportadora } from '../types'
 import toast from 'react-hot-toast'
+import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 
 export function ClienteAutocomplete({ value, onChange }: { value: string; onChange: (id: string, nome: string) => void }) {
   const [busca, setBusca] = useState('')
@@ -91,6 +92,8 @@ export function NovoPedido() {
     em_gerenciamento_credito: false,
   })
 
+  const [itens, setItens] = useState<ItemLinha[]>([])
+
   // Estado do modal de recriação de OV cancelada
   const [modalRecriar, setModalRecriar] = useState({
     visivel: false,
@@ -115,7 +118,7 @@ export function NovoPedido() {
     ...form,
     transportadora_id: form.transportadora_id || null,
     canal: form.canal || null,
-    itens: [],
+    itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd })),
     ...extra,
   })
 
@@ -310,6 +313,12 @@ export function NovoPedido() {
             <input type="text" value={form.local_entrega} onChange={e => setForm({...form, local_entrega: e.target.value})}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
               placeholder="Ex: São Paulo SP" />
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-sm font-medium text-gray-700">Itens da OV</label>
+            <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade.</p>
+            <ItensPedido value={itens} onChange={setItens} />
           </div>
 
           <div className="col-span-2">

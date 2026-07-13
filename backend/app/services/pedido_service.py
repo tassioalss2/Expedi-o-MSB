@@ -333,6 +333,19 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
 
+    # Itens (informativos — o comunicado já entra FATURADO, sem separação)
+    itens = [
+        {
+            "pedido_id":      pedido["id"],
+            "produto_id":     str(item.produto_id),
+            "qtd_solicitada": item.qtd_solicitada,
+            "status_item":    "OK",
+        }
+        for item in (getattr(payload, "itens", None) or [])
+    ]
+    if itens:
+        db.table("itens_pedido").insert(itens).execute()
+
     usuarios = db.table("usuarios").select("id").limit(1).execute()
     uid = usuarios.data[0]["id"] if usuarios.data else None
     db.table("movimentacoes").insert({

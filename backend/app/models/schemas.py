@@ -201,6 +201,7 @@ class ComunicadoUsoCreate(BaseModel):
     valor_produtos: Optional[float] = None
     data_faturamento: Optional[date] = None
     observacoes: Optional[str] = None
+    itens: list[ItemPedidoCreate] = []
 
     @field_validator("numero_pedido", "numero_nf")
     @classmethod
