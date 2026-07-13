@@ -1032,11 +1032,14 @@ def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[da
     from datetime import timedelta
     db = get_service_db()
     hoje = date.today()
-    inicio = data_inicio or (hoje - timedelta(days=29))
+    # Default: mês corrente (não os últimos 30 dias).
+    inicio = data_inicio or date(hoje.year, hoje.month, 1)
     fim = data_fim or hoje
 
+    # Unidades por OV = soma de qtd_venda dos itens do inventário (itens_pedido
+    # não é populado). É a quantidade efetivamente separada/vendida da OV.
     resultado = db.table("pedidos").select(
-        "id, criado_em, itens_pedido(qtd_solicitada)"
+        "id, criado_em, inventario_itens(qtd_venda)"
     ).neq("status", "CANCELADO")\
         .neq("tipo_operacao", "COMUNICADO_USO")\
         .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
@@ -1046,8 +1049,8 @@ def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[da
     por_dia: dict = {}
 
     for row in resultado.data:
-        itens = row.get("itens_pedido") or []
-        total_un = sum(float(i.get("qtd_solicitada") or 0) for i in itens)
+        itens = row.get("inventario_itens") or []
+        total_un = sum(float(i.get("qtd_venda") or 0) for i in itens)
 
         if total_un <= 20:
             simples += 1

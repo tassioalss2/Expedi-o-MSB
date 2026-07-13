@@ -5,7 +5,7 @@ import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { Package, AlertTriangle, CheckCircle, Clock, Plus, FileText, Timer, X } from 'lucide-react'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ComposedChart, Line } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ComposedChart, Line, CartesianGrid } from 'recharts'
 import api from '../lib/api'
 import type { DashboardOperacional, Indicadores } from '../types'
 import { STATUS_CONFIG } from '../lib/statusConfig'
@@ -278,10 +278,17 @@ export function Dashboard() {
     enabled: horaClicada !== null,
   })
 
+  // Esforço do time (volume + complexidade) — por mês, default mês corrente
+  const [mesEsforco, setMesEsforco] = useState(() => new Date(hoje.getFullYear(), hoje.getMonth(), 1))
+  const ehMesAtualEsf = mesEsforco.getFullYear() === hoje.getFullYear() && mesEsforco.getMonth() === hoje.getMonth()
+  const inicioEsforco = format(new Date(mesEsforco.getFullYear(), mesEsforco.getMonth(), 1), 'yyyy-MM-dd')
+  const fimEsforco = ehMesAtualEsf ? fimMes : format(new Date(mesEsforco.getFullYear(), mesEsforco.getMonth() + 1, 0), 'yyyy-MM-dd')
+  const mesesEsforco = Array.from({ length: 12 }, (_, i) => new Date(hoje.getFullYear(), hoje.getMonth() - i, 1))
+
   const { data: esforcoData } = useQuery<{ complexidade: any[]; por_dia: any[] }>({
-    queryKey: ['esforco-time', periodoHorario],
+    queryKey: ['esforco-time', inicioEsforco, fimEsforco],
     queryFn: () => api.get('/pedidos/dashboard/esforco', {
-      params: { data_inicio: inicioHorario, data_fim: fimMes },
+      params: { data_inicio: inicioEsforco, data_fim: fimEsforco },
     }).then(r => r.data),
     refetchInterval: 120000,
   })
@@ -575,47 +582,80 @@ export function Dashboard() {
       })()}
 
       {/* Esforço do Time */}
-      {esforcoData && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      {esforcoData && (() => {
+        const totalUn = esforcoData.por_dia.reduce((a: number, d: any) => a + (d.total_unidades || 0), 0)
+        const totalOvs = esforcoData.por_dia.reduce((a: number, d: any) => a + (d.num_ovs || 0), 0)
+        const nDias = esforcoData.por_dia.length
+        const fmtInt = (n: number) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
+        return (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-700">Esforço do Time</h2>
+            <select
+              value={inicioEsforco}
+              onChange={(e) => { const [y, m] = e.target.value.split('-').map(Number); setMesEsforco(new Date(y, m - 1, 1)) }}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              {mesesEsforco.map((d) => {
+                const val = format(d, 'yyyy-MM-dd')
+                return <option key={val} value={val}>{format(d, "MMMM 'de' yyyy", { locale: ptBR })}</option>
+              })}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* Volume por dia */}
           <div className="lg:col-span-2 bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-            <div className="mb-1">
-              <h2 className="text-sm font-semibold text-gray-700">Volume por Dia</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Unidades expedidas e nº de OVs — últimos {periodoHorario} dias</p>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700">Volume por Dia</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Unidades separadas por dia · {format(mesEsforco, "MMMM 'de' yyyy", { locale: ptBR })}</p>
+              </div>
+              <div className="flex gap-5 text-right">
+                <div>
+                  <p className="text-[11px] text-gray-400 uppercase tracking-wide">Unidades</p>
+                  <p className="text-lg font-bold text-indigo-600 tabular-nums">{fmtInt(totalUn)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-gray-400 uppercase tracking-wide">OVs</p>
+                  <p className="text-lg font-bold text-gray-700 tabular-nums">{fmtInt(totalOvs)}</p>
+                </div>
+              </div>
             </div>
-            <div className="flex gap-5 mb-4 text-xs text-gray-500">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-indigo-500 inline-block" />
-                Unidades (barra)
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1 rounded bg-amber-400 inline-block" />
-                OVs (linha)
-              </span>
-            </div>
-            <ResponsiveContainer width="100%" height={200}>
-              <ComposedChart data={esforcoData.por_dia} margin={{ left: -20, bottom: 0 }}>
-                <XAxis dataKey="label" tick={{ fontSize: 10 }}
-                  interval={periodoHorario > 30 ? 6 : periodoHorario > 14 ? 2 : 0} />
-                <YAxis yAxisId="un" orientation="left" tick={{ fontSize: 11 }} allowDecimals={false} />
-                <YAxis yAxisId="ov" orientation="right" tick={{ fontSize: 11 }} allowDecimals={false} />
-                <Tooltip
-                  formatter={(value: any, name: string) =>
-                    name === 'total_unidades' ? [`${value} un`, 'Unidades'] : [`${value} OVs`, 'OVs']
-                  }
-                />
-                <Bar yAxisId="un" dataKey="total_unidades" fill="#6366F1" radius={[3, 3, 0, 0]} />
-                <Line yAxisId="ov" type="monotone" dataKey="num_ovs" stroke="#F59E0B"
-                  strokeWidth={2} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
+            {totalUn === 0 ? (
+              <div className="h-56 flex items-center justify-center text-sm text-gray-400">Sem volume no período</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={224}>
+                <BarChart data={esforcoData.por_dia} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={{ stroke: '#e5e7eb' }}
+                    tickLine={false} interval={nDias > 20 ? 2 : nDias > 10 ? 1 : 0} minTickGap={4} />
+                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} axisLine={false} tickLine={false}
+                    allowDecimals={false} width={40}
+                    tickFormatter={(v: number) => v >= 1000 ? `${Math.round(v / 1000)}k` : String(v)} />
+                  <Tooltip cursor={{ fill: 'rgba(99,102,241,0.06)' }}
+                    content={({ active, payload }: any) => {
+                      if (!active || !payload?.length) return null
+                      const p = payload[0].payload
+                      return (
+                        <div className="bg-white border border-gray-200 rounded-lg shadow-sm px-3 py-2 text-xs">
+                          <p className="font-semibold text-gray-700 mb-0.5">{p.label}</p>
+                          <p className="text-indigo-600 font-bold text-sm">{fmtInt(p.total_unidades)} un</p>
+                          <p className="text-gray-400">{p.num_ovs} OV{p.num_ovs === 1 ? '' : 's'}</p>
+                        </div>
+                      )
+                    }} />
+                  <Bar dataKey="total_unidades" fill="#6366F1" radius={[3, 3, 0, 0]} maxBarSize={26} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
           {/* Complexidade das OVs */}
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col">
             <div className="mb-4">
-              <h2 className="text-sm font-semibold text-gray-700">Perfil das OVs</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Complexidade pelo total de unidades</p>
+              <h3 className="text-sm font-semibold text-gray-700">Perfil das OVs</h3>
+              <p className="text-xs text-gray-400 mt-0.5">Complexidade pelo total de unidades · {esforcoData.complexidade.reduce((a: number, c: any) => a + c.total, 0)} OVs</p>
             </div>
             <div className="flex-1 space-y-4">
               {esforcoData.complexidade.map((c: any) => (
@@ -637,8 +677,10 @@ export function Dashboard() {
               <p>Complexa: &gt; 100 unidades</p>
             </div>
           </div>
+          </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* Modal drill-down dos KPIs do topo */}
       {kpiAberto && (
