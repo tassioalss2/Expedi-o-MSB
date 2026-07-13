@@ -32,6 +32,20 @@ export function Cadastros() {
     queryKey: ['produtos'], queryFn: () => api.get('/produtos').then((r) => r.data), enabled: tab === 'produtos',
   })
 
+  // Setores do motivo: os 4 padrões + os que já foram cadastrados via "Outro".
+  const SETOR_LABELS: Record<string, string> = {
+    TRANSPORTADORA: 'Correção de Transportadora',
+    COMERCIAL: 'Comercial',
+    LOGISTICA: 'Logística',
+    CLIENTE: 'Cliente',
+  }
+  const SETORES_BASE = ['TRANSPORTADORA', 'COMERCIAL', 'LOGISTICA', 'CLIENTE']
+  const setoresCustom = Array.from(
+    new Set((motivos as any[]).map((m) => m.tipo).filter((t: string) => t && !SETORES_BASE.includes(t)))
+  ) as string[]
+  const setores = [...SETORES_BASE, ...setoresCustom]
+  const rotuloSetor = (s: string) => SETOR_LABELS[s] || s
+
   const CAMPOS: Record<Exclude<Tab, 'motivos'>, { key: string; label: string; required?: boolean; type?: string }[]> = {
     clientes: [
       { key: 'codigo', label: 'Código', required: true },
@@ -54,9 +68,13 @@ export function Cadastros() {
   }
 
   const saveMutation = useMutation({
-    mutationFn: () => tab === 'motivos'
-      ? api.post('/motivos-ocorrencia', { tipo: form.tipo || 'TRANSPORTADORA', descricao: form.descricao })
-      : api.post(`/${tab}`, form),
+    mutationFn: () => {
+      if (tab === 'motivos') {
+        const tipoFinal = form.tipo === '__OUTRO__' ? (form.novoSetor || '').trim() : (form.tipo || 'TRANSPORTADORA')
+        return api.post('/motivos-ocorrencia', { tipo: tipoFinal, descricao: form.descricao })
+      }
+      return api.post(`/${tab}`, form)
+    },
     onSuccess: () => {
       toast.success('Cadastro salvo!')
       qc.invalidateQueries({ queryKey: [tab] })
@@ -65,6 +83,16 @@ export function Cadastros() {
     },
     onError: () => toast.error('Erro ao salvar'),
   })
+
+  const salvarMotivo = () => {
+    if (form.tipo === '__OUTRO__' && !(form.novoSetor || '').trim()) {
+      toast.error('Identifique o setor'); return
+    }
+    if (!(form.descricao || '').trim()) {
+      toast.error('Informe a descrição do motivo'); return
+    }
+    saveMutation.mutate()
+  }
 
   const abrirModal = () => {
     setForm({})
@@ -183,15 +211,22 @@ export function Cadastros() {
               {tab === 'motivos' ? (
                 <>
                   <div>
-                    <label className="text-sm text-gray-600">Tipo *</label>
+                    <label className="text-sm text-gray-600">Setor *</label>
                     <select value={form.tipo || 'TRANSPORTADORA'} onChange={e => setForm({...form, tipo: e.target.value})}
                       className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
-                      <option value="TRANSPORTADORA">Correção de Transportadora</option>
-                      <option value="COMERCIAL">Comercial</option>
-                      <option value="LOGISTICA">Logística</option>
-                      <option value="CLIENTE">Cliente</option>
+                      {setores.map((s) => <option key={s} value={s}>{rotuloSetor(s)}</option>)}
+                      <option value="__OUTRO__">➕ Outro (novo setor)…</option>
                     </select>
                   </div>
+                  {form.tipo === '__OUTRO__' && (
+                    <div>
+                      <label className="text-sm text-gray-600">Identifique o setor *</label>
+                      <input type="text" value={form.novoSetor || ''} onChange={e => setForm({...form, novoSetor: e.target.value})}
+                        className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
+                        placeholder="Ex: Financeiro" autoFocus />
+                      <p className="text-xs text-gray-400 mt-1">O setor será salvo e passará a aparecer na lista automaticamente.</p>
+                    </div>
+                  )}
                   <div>
                     <label className="text-sm text-gray-600">Descrição do motivo *</label>
                     <input type="text" value={form.descricao || ''} onChange={e => setForm({...form, descricao: e.target.value})}
@@ -214,7 +249,7 @@ export function Cadastros() {
             <div className="p-5 border-t flex gap-2 justify-end">
               <button onClick={() => setModal(false)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
               <button
-                onClick={() => saveMutation.mutate()}
+                onClick={() => tab === 'motivos' ? salvarMotivo() : saveMutation.mutate()}
                 disabled={saveMutation.isPending}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50"
               >
