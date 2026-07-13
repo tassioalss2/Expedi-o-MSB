@@ -38,9 +38,11 @@ export function Login() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white text-2xl font-bold mx-auto mb-3 shadow-lg shadow-blue-600/30">
-            ACE
-          </div>
+          <img
+            src="/msb-logo.png"
+            alt="MSB — Medical System do Brasil"
+            className="h-12 w-auto object-contain mx-auto mb-4 brightness-0 invert"
+          />
           <h1 className="text-white text-2xl font-bold">ACE-MSB</h1>
           <p className="text-gray-400 text-sm mt-1">Gestão Comercial &amp; Logística</p>
         </div>
