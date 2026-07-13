@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, FileText, Home,
+  DollarSign, FileText, Home, Users,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -54,7 +54,12 @@ export function Layout() {
     navigate('/login')
   }
 
-  const navGeralFiltrado = navGeral
+  const navGeralFiltrado: NavItem[] = [
+    ...navGeral,
+    ...(usuario?.perfil === 'ADMIN'
+      ? [{ to: '/usuarios', label: 'Gestão de Usuários', icone: Users }]
+      : []),
+  ]
 
   const fecharSidebar = () => setSidebarAberto(false)
 

@@ -19,6 +19,7 @@ import { RelatorioColetasRealizadas } from './pages/RelatorioColetasRealizadas'
 import { Relatorios } from './pages/Relatorios'
 import { InventarioContinuo } from './pages/InventarioContinuo'
 import { InventarioContagem } from './pages/InventarioContagem'
+import { Usuarios } from './pages/Usuarios'
 import { useAuthStore } from './store/authStore'
 
 const qc = new QueryClient({
@@ -28,6 +29,12 @@ const qc = new QueryClient({
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const autenticado = useAuthStore((s) => !!s.token && !!s.usuario)
   if (!autenticado) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const ehAdmin = useAuthStore((s) => s.usuario?.perfil === 'ADMIN')
+  if (!ehAdmin) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -64,6 +71,7 @@ export default function App() {
             <Route path="cadastros" element={<Cadastros />} />
             <Route path="inventario" element={<InventarioContinuo />} />
             <Route path="inventario/contagem" element={<InventarioContagem />} />
+            <Route path="usuarios" element={<AdminRoute><Usuarios /></AdminRoute>} />
 
             {/* Comercial */}
             <Route path="comercial" element={<PainelComercial />} />

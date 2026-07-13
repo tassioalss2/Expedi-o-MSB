@@ -54,6 +54,10 @@ class UsuarioUpdate(BaseModel):
     ativo: Optional[bool] = None
 
 
+class SenhaUpdate(BaseModel):
+    nova_senha: str
+
+
 # ── Cliente ───────────────────────────────────────────────────────────────────
 
 class ClienteCreate(BaseModel):

@@ -62,17 +62,10 @@ def require_perfil(*perfis: PerfilUsuario):
 
 
 def lider_ou_superior(usuario: UsuarioOut = Depends(get_current_user)) -> UsuarioOut:
-    """Permite apenas Líder, Supervisor, Gerência e Admin."""
-    permitidos = {
-        PerfilUsuario.LIDER.value,
-        PerfilUsuario.SUPERVISOR.value,
-        PerfilUsuario.GERENCIA.value,
-        PerfilUsuario.ADMIN.value,
-    }
-    perfil = usuario.perfil.value if hasattr(usuario.perfil, "value") else usuario.perfil
-    if perfil not in permitidos:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Ação restrita a líderes ou superiores",
-        )
+    """Ações de escrita do operacional/comercial.
+
+    Política atual: acesso uniforme — todos os 5 perfis podem operar.
+    Basta estar autenticado. Mantido como dependência própria para que,
+    se um dia algum perfil precisar ser restringido, seja um único ponto.
+    """
     return usuario

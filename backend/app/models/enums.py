@@ -80,14 +80,26 @@ class Prioridade(str, Enum):
 
 
 class PerfilUsuario(str, Enum):
-    OPERADOR = "OPERADOR"
-    CONFERENTE = "CONFERENTE"
-    LIDER = "LIDER"
-    SUPERVISOR = "SUPERVISOR"
-    FATURAMENTO = "FATURAMENTO"
-    QUALIDADE = "QUALIDADE"
-    GERENCIA = "GERENCIA"
+    """Perfis de acesso do app (5 tipos).
+
+    Política atual: todos os perfis enxergam e operam tudo no sistema;
+    a única área restrita é a Gestão de Usuários, exclusiva do ADMIN.
+    """
+    LOGISTICA = "LOGISTICA"
+    OPERACOES_VENDAS = "OPERACOES_VENDAS"
+    COMERCIAL = "COMERCIAL"
+    DIRETORIA = "DIRETORIA"
     ADMIN = "ADMIN"
+
+
+# Rótulos amigáveis para exibição
+PERFIL_LABELS = {
+    PerfilUsuario.LOGISTICA.value: "Logística",
+    PerfilUsuario.OPERACOES_VENDAS.value: "Operações de Vendas",
+    PerfilUsuario.COMERCIAL.value: "Comercial",
+    PerfilUsuario.DIRETORIA.value: "Diretoria",
+    PerfilUsuario.ADMIN.value: "Admin / TI",
+}
 
 
 class TipoDivergencia(str, Enum):
