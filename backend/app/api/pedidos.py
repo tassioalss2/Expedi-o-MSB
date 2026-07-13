@@ -81,6 +81,16 @@ def obter_pedido(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return pedido_service.obter_pedido(str(pedido_id))
 
 
+@router.get("/{pedido_id}/movimentacoes")
+def listar_movimentacoes(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    from app.core.database import get_service_db
+    db = get_service_db()
+    rows = db.table("movimentacoes").select(
+        "status_anterior, status_novo, criado_em"
+    ).eq("pedido_id", str(pedido_id)).order("criado_em").execute().data
+    return rows
+
+
 @router.patch("/{pedido_id}/status")
 def alterar_status(
     pedido_id: UUID,

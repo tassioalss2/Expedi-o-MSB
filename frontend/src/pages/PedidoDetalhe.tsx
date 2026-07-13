@@ -1451,6 +1451,12 @@ export function PedidoDetalhe() {
     enabled: !!id && !!pedido && ['AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'].includes(pedido?.status || ''),
   })
 
+  const { data: movimentacoes = [] } = useQuery<Array<{ status_novo: string; criado_em: string }>>({
+    queryKey: ['movimentacoes', id],
+    queryFn: () => api.get(`/pedidos/${id}/movimentacoes`).then(r => r.data),
+    enabled: !!id && !!pedido,
+  })
+
   // Família de remessas (original + derivadas) — carrega se houver remessa_numero ou pedido_pai_id
   const temFamilia = !!(pedido?.pedido_pai_id || (pedido?.remessa_numero && pedido.remessa_numero > 1))
   const { data: familia = [] } = useQuery<any[]>({
@@ -1550,6 +1556,32 @@ export function PedidoDetalhe() {
   const ORDEM = ETAPAS.map(e => e.key)
   const idxAtual = ORDEM.indexOf(status)
 
+  // Timestamp da 1ª vez que cada status foi atingido (movimentacoes vem ordenado asc)
+  const primeiraOcorrencia: Record<string, string> = {}
+  for (const m of movimentacoes) {
+    if (m.status_novo && !(m.status_novo in primeiraOcorrencia)) primeiraOcorrencia[m.status_novo] = m.criado_em
+  }
+  const tsEtapa = (key: string): Date | null => {
+    const t = key === 'LIBERADO' ? (primeiraOcorrencia['LIBERADO'] || pedido.criado_em) : primeiraOcorrencia[key]
+    return t ? new Date(t) : null
+  }
+  const fmtDuracao = (ms: number): string => {
+    const min = Math.round(ms / 60000)
+    if (min < 1) return '<1min'
+    if (min < 60) return `${min}min`
+    const h = Math.floor(min / 60), rm = min % 60
+    if (h < 24) return rm ? `${h}h ${rm}min` : `${h}h`
+    const d = Math.floor(h / 24), rh = h % 24
+    return rh ? `${d}d ${rh}h` : `${d}d`
+  }
+  // Duração da transição entre a etapa i e a i+1 (null se alguma não tiver timestamp)
+  const duracaoEntre = (i: number): string | null => {
+    const a = tsEtapa(ORDEM[i]), b = tsEtapa(ORDEM[i + 1])
+    if (!a || !b) return null
+    const ms = b.getTime() - a.getTime()
+    return ms >= 0 ? fmtDuracao(ms) : null
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       {/* Header */}
@@ -1628,9 +1660,21 @@ export function PedidoDetalhe() {
                     {etapa.label}
                   </span>
                 </div>
-                {i < ETAPAS.length - 1 && (
-                  <div className={`w-8 h-0.5 mb-4 ${concluido ? 'bg-green-400' : 'bg-gray-200'}`} />
-                )}
+                {i < ETAPAS.length - 1 && (() => {
+                  const dur = duracaoEntre(i)
+                  return (
+                    <div className="relative w-16 mb-4">
+                      <div className={`h-0.5 w-full ${concluido ? 'bg-green-400' : 'bg-gray-200'}`} />
+                      {dur && (
+                        <span className={`absolute -top-4 left-1/2 -translate-x-1/2 text-[10px] leading-none whitespace-nowrap ${
+                          concluido ? 'text-gray-500' : 'text-blue-600 font-medium'
+                        }`}>
+                          {dur}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )
           })}

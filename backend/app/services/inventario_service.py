@@ -565,6 +565,7 @@ def confirmar_coleta_pallet(pallet_id: str, usuario: UsuarioOut, pedido_ids: lis
         a_coletar = [pp for pp in todos if pp["id"] in pedido_ids]
 
     agora = _agora()
+    uid = _get_usuario_real(str(usuario.id))
     expedidos = 0
     for pp in a_coletar:
         try:
@@ -572,6 +573,15 @@ def confirmar_coleta_pallet(pallet_id: str, usuario: UsuarioOut, pedido_ids: lis
                 "status": StatusPedido.EXPEDIDO.value,
                 "atualizado_em": agora,
             }).eq("id", pp["pedido_id"]).execute()
+            # Registra a movimentação para EXPEDIDO (alimenta a linha do tempo da OV)
+            db.table("movimentacoes").insert({
+                "pedido_id":       pp["pedido_id"],
+                "status_anterior": StatusPedido.AGUARD_COLETA.value,
+                "status_novo":     StatusPedido.EXPEDIDO.value,
+                "usuario_id":      uid,
+                "observacao":      "Coleta confirmada — OV expedida",
+                "criado_em":       agora,
+            }).execute()
             # Marca como coletado (não deleta — mantém histórico)
             db.table("pallet_pedidos").update({
                 "coletado_em": agora,
