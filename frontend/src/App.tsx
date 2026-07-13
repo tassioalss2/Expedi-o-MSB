@@ -26,6 +26,8 @@ const qc = new QueryClient({
 })
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
+  const autenticado = useAuthStore((s) => !!s.token && !!s.usuario)
+  if (!autenticado) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 

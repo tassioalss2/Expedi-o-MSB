@@ -9,9 +9,19 @@ interface AuthState {
   isAuthenticated: () => boolean
 }
 
+// Hidrata a partir do localStorage (mantém a sessão ao recarregar a página).
+function carregarUsuario(): Usuario | null {
+  try {
+    const raw = localStorage.getItem('ace_usuario')
+    return raw ? (JSON.parse(raw) as Usuario) : null
+  } catch {
+    return null
+  }
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
-  usuario: { id: '00000000-0000-0000-0000-000000000001', nome: 'Administrador', email: 'admin@msb.com.br', perfil: 'ADMIN' as any, ativo: true },
-  token: 'dev-token',
+  usuario: carregarUsuario(),
+  token: localStorage.getItem('ace_token'),
 
   setAuth: (usuario, token) => {
     localStorage.setItem('ace_token', token)
