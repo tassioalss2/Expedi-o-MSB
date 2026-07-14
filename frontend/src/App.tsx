@@ -20,6 +20,7 @@ import { Relatorios } from './pages/Relatorios'
 import { InventarioContinuo } from './pages/InventarioContinuo'
 import { InventarioContagem } from './pages/InventarioContagem'
 import { Usuarios } from './pages/Usuarios'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAuthStore } from './store/authStore'
 
 const qc = new QueryClient({
@@ -42,6 +43,7 @@ export default function App() {
   return (
     <QueryClientProvider client={qc}>
       <BrowserRouter>
+        <ErrorBoundary>
         <Routes>
           <Route path="/login" element={<Login />} />
 
@@ -80,6 +82,7 @@ export default function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
       <Toaster position="top-right" />
     </QueryClientProvider>

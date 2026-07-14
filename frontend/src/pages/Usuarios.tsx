@@ -17,6 +17,16 @@ const PERFIL_COR: Record<PerfilUsuario, string> = {
   ADMIN: 'bg-gray-800 text-white',
 }
 
+// Extrai SEMPRE uma string do erro — nunca passar array/objeto ao toast
+// (o detail de validação 422 do FastAPI é uma lista de objetos e quebraria o render).
+function msgErro(e: any, fallback: string): string {
+  const d = e?.response?.data?.detail
+  if (typeof d === 'string') return d
+  if (Array.isArray(d)) return d[0]?.msg || fallback
+  if (d && typeof d === 'object') return d.msg || d.message || fallback
+  return fallback
+}
+
 export function Usuarios() {
   const qc = useQueryClient()
   const { usuario: eu } = useAuthStore()
@@ -34,7 +44,7 @@ export function Usuarios() {
   const toggleAtivo = useMutation({
     mutationFn: (u: Usuario) => api.patch(`/auth/usuarios/${u.id}`, { ativo: !u.ativo }),
     onSuccess: () => { invalidar(); toast.success('Status atualizado') },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao atualizar'),
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao atualizar')),
   })
 
   return (
@@ -151,7 +161,7 @@ function ModalNovo({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   const criar = useMutation({
     mutationFn: () => api.post('/auth/usuarios', { nome: nome.trim(), email: email.trim(), senha, perfil }),
     onSuccess: () => { toast.success('Usuário criado'); onSaved(); onClose() },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao criar'),
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao criar')),
   })
 
   const valido = nome.trim() && email.trim() && senha.length >= 6
@@ -182,7 +192,7 @@ function ModalEditar({ usuario, souEu, onClose, onSaved }: { usuario: Usuario; s
   const salvar = useMutation({
     mutationFn: () => api.patch(`/auth/usuarios/${usuario.id}`, { nome: nome.trim(), perfil }),
     onSuccess: () => { toast.success('Usuário atualizado'); onSaved(); onClose() },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao salvar'),
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar')),
   })
 
   return (
@@ -211,7 +221,7 @@ function ModalSenha({ usuario, onClose }: { usuario: Usuario; onClose: () => voi
   const reset = useMutation({
     mutationFn: () => api.post(`/auth/usuarios/${usuario.id}/senha`, { nova_senha: senha }),
     onSuccess: () => { toast.success('Senha redefinida'); onClose() },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao redefinir'),
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao redefinir')),
   })
 
   return (
