@@ -85,6 +85,41 @@ def salvar_inventario(pedido_id: str, payload: InventarioSalvar, usuario: Usuari
     return listar_inventario(pedido_id)
 
 
+def ultimo_inventario_lote(codigo: str, lote: str) -> Optional[dict]:
+    """Último inventário registrado para um (código, lote).
+
+    Retorna o estoque que sobrou (base − venda) para pré-preencher a Qtd Sistema
+    do próximo inventário do mesmo lote (inventário contínuo).
+    """
+    codigo = (codigo or "").strip()
+    lote = (lote or "").strip()
+    if not codigo or not lote:
+        return None
+
+    db = get_service_db()
+    rows = db.table("inventario_itens").select("*")\
+        .eq("codigo_item", codigo).eq("lote", lote)\
+        .order("criado_em", desc=True).limit(1).execute().data
+    if not rows:
+        return None
+
+    it = rows[0]
+    sistemico = float(it.get("qtd_sistemico") or 0)
+    fisico = it.get("qtd_fisico")
+    fisico = float(fisico) if fisico is not None else None
+    venda = float(it.get("qtd_venda") or 0)
+    base = fisico if fisico is not None else sistemico
+    return {
+        "codigo_item": codigo,
+        "lote": lote,
+        "qtd_sistemico": round(sistemico),
+        "qtd_fisico": round(fisico) if fisico is not None else None,
+        "qtd_venda": round(venda),
+        "estoque": round(base - venda),
+        "criado_em": it.get("criado_em"),
+    }
+
+
 def listar_inventario(pedido_id: str) -> dict:
     db = get_service_db()
     itens = db.table("inventario_itens").select("*").eq("pedido_id", pedido_id).execute().data

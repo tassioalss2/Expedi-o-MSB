@@ -88,6 +88,23 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
     setItens(novo)
   }
 
+  // Ao preencher o lote, puxa o estoque que sobrou no último inventário desse
+  // (código, lote) e usa como Qtd Sistema (inventário contínuo).
+  const puxarEstoqueLote = async (i: number) => {
+    const it = itens[i]
+    if (!it.codigo_item || !it.lote?.trim()) return
+    try {
+      const { data } = await api.get('/inventario/ultimo-lote', {
+        params: { codigo: it.codigo_item, lote: it.lote.trim() },
+      })
+      if (data && data.estoque != null) {
+        setItens(prev => prev.map((row, idx) => idx === i ? { ...row, qtd_sistemico: data.estoque } : row))
+        const quando = data.criado_em ? new Date(data.criado_em).toLocaleDateString('pt-BR') : ''
+        toast.success(`Estoque do último inventário (${quando}) puxado: ${data.estoque}`, { duration: 3000 })
+      }
+    } catch { /* silencioso — lote ainda não inventariado */ }
+  }
+
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/inventario`, { itens }),
     onSuccess: () => {
@@ -145,6 +162,7 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
                     <td className="py-2 pr-3">
                       <input type="text" value={item.lote}
                         onChange={e => update(i, 'lote', e.target.value)}
+                        onBlur={() => puxarEstoqueLote(i)}
                         className="w-32 border rounded px-2 py-1 text-sm"
                         placeholder="Ex: 000049-26-01" />
                     </td>

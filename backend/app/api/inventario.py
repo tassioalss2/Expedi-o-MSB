@@ -30,6 +30,15 @@ def salvar_inventario(
     return inventario_service.salvar_inventario(str(pedido_id), payload, usuario)
 
 
+@router.get("/inventario/ultimo-lote")
+def ultimo_inventario_lote(
+    codigo: str = Query(...),
+    lote: str = Query(...),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    return inventario_service.ultimo_inventario_lote(codigo, lote)
+
+
 @router.get("/pedidos/{pedido_id}/inventario")
 def listar_inventario(
     pedido_id: UUID,
