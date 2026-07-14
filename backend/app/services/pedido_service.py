@@ -882,11 +882,41 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         .in_("status", statuses_ativos)\
         .execute().data
 
+    # Lead time médio (separação → expedição): horas entre a criação da OV e a
+    # expedição. Usa o timestamp real do EXPEDIDO (movimentação) quando houver,
+    # senão cai para atualizado_em.
+    def _parse_ts(ts):
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+        except Exception:
+            return None
+
+    ids_exp = [p["id"] for p in expedidos]
+    exp_mov: dict = {}
+    if ids_exp:
+        movs = db.table("movimentacoes").select("pedido_id, criado_em")\
+            .eq("status_novo", StatusPedido.EXPEDIDO.value).in_("pedido_id", ids_exp).execute().data
+        for m in movs:
+            pid = m.get("pedido_id")
+            ts = m.get("criado_em")
+            if pid and ts and (pid not in exp_mov or ts < exp_mov[pid]):
+                exp_mov[pid] = ts
+
+    leads = []
+    for p in expedidos:
+        inicio = _parse_ts(p.get("criado_em"))
+        fim = _parse_ts(exp_mov.get(p["id"]) or p.get("atualizado_em"))
+        if inicio and fim:
+            h = (fim - inicio).total_seconds() / 3600
+            if h >= 0:
+                leads.append(h)
+    lead_time = round(sum(leads) / len(leads), 1) if leads else 0
+
     return {
         "otif": otif,
         "taxa_divergencia": taxa_div if taxa_div is not None else 0,
         "taxa_retrabalho": taxa_retrab if taxa_retrab is not None else 0,
-        "lead_time_medio_horas": 0,
+        "lead_time_medio_horas": lead_time,
         "pedidos_expedidos": len(expedidos),
         "backlog": len(backlog),
         "aderencia_cutoff": None,
