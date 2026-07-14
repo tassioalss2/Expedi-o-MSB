@@ -1001,6 +1001,60 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
             "descricao": (r.get("descricao") or "—")[:120],
         } for r in rows]
 
+    elif metrica == "expedidos":
+        expedidos = db.table("pedidos").select(
+            "numero_pedido,data_prevista_entrega,atualizado_em,clientes(nome)"
+        ).eq("status", StatusPedido.EXPEDIDO.value)\
+         .gte("atualizado_em", f"{data_inicio.isoformat()}T00:00:00")\
+         .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
+         .execute().data
+        result = []
+        for p in expedidos:
+            data_exp = (p.get("atualizado_em") or "")[:10]
+            result.append({
+                "numero_pedido": p["numero_pedido"],
+                "cliente": (p.get("clientes") or {}).get("nome", "—"),
+                "data_expedicao": data_exp,
+                "data_prevista": p.get("data_prevista_entrega", "—"),
+                "no_prazo": bool(data_exp and data_exp <= (p.get("data_prevista_entrega") or "")),
+            })
+        return sorted(result, key=lambda x: x["data_expedicao"], reverse=True)
+
+    elif metrica == "lead_time":
+        def _p(ts):
+            try:
+                return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+            except Exception:
+                return None
+        expedidos = db.table("pedidos").select(
+            "id,numero_pedido,criado_em,atualizado_em,clientes(nome)"
+        ).eq("status", StatusPedido.EXPEDIDO.value)\
+         .gte("atualizado_em", f"{data_inicio.isoformat()}T00:00:00")\
+         .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
+         .execute().data
+        ids = [p["id"] for p in expedidos]
+        exp_mov: dict = {}
+        if ids:
+            movs = db.table("movimentacoes").select("pedido_id, criado_em")\
+                .eq("status_novo", StatusPedido.EXPEDIDO.value).in_("pedido_id", ids).execute().data
+            for m in movs:
+                pid, ts = m.get("pedido_id"), m.get("criado_em")
+                if pid and ts and (pid not in exp_mov or ts < exp_mov[pid]):
+                    exp_mov[pid] = ts
+        result = []
+        for p in expedidos:
+            inicio = _p(p.get("criado_em"))
+            fim = _p(exp_mov.get(p["id"]) or p.get("atualizado_em"))
+            horas = round((fim - inicio).total_seconds() / 3600, 1) if inicio and fim and fim >= inicio else None
+            result.append({
+                "numero_pedido": p["numero_pedido"],
+                "cliente": (p.get("clientes") or {}).get("nome", "—"),
+                "entrada": (p.get("criado_em") or "")[:16].replace("T", " "),
+                "expedido": (exp_mov.get(p["id"]) or p.get("atualizado_em") or "")[:16].replace("T", " "),
+                "horas": horas,
+            })
+        return sorted(result, key=lambda x: (x["horas"] is None, -(x["horas"] or 0)))
+
     return []
 
 
