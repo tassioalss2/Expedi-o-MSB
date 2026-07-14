@@ -199,7 +199,7 @@ export function NovoPedido() {
   })
 
   const podeEnviar = form.numero_pedido && form.cliente_id && form.data_prevista_entrega
-    && form.tipo_operacao && form.canal
+    && form.tipo_operacao && form.canal && itens.length > 0
   const podeConfirmarRecriar =
     modalRecriar.motivo.trim().length >= 5 && modalRecriar.confirmado
 
@@ -316,9 +316,12 @@ export function NovoPedido() {
           </div>
 
           <div className="col-span-2">
-            <label className="text-sm font-medium text-gray-700">Itens da OV</label>
-            <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade.</p>
+            <label className="text-sm font-medium text-gray-700">Itens da OV *</label>
+            <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade. Adicione ao menos um item.</p>
             <ItensPedido value={itens} onChange={setItens} />
+            {itens.length === 0 && (
+              <p className="text-xs text-amber-600 mt-1">Adicione pelo menos um item para cadastrar a OV.</p>
+            )}
           </div>
 
           <div className="col-span-2">

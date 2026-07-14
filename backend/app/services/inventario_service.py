@@ -46,6 +46,14 @@ def salvar_inventario(pedido_id: str, payload: InventarioSalvar, usuario: Usuari
                                  StatusPedido.AGUARD_TRATATIVA.value):
         raise HTTPException(status_code=422, detail="Pedido não está disponível para inventário")
 
+    # Regra de negócio: a quantidade de venda nunca pode ser zero.
+    for item in payload.itens:
+        if not item.qtd_venda or item.qtd_venda <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Quantidade de venda deve ser maior que zero (item {item.codigo_item or '—'}).",
+            )
+
     # Remove itens anteriores e reinsere
     db.table("inventario_itens").delete().eq("pedido_id", pedido_id).execute()
 

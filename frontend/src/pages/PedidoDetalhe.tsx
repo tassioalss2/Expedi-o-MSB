@@ -98,7 +98,7 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro ao salvar inventário'),
   })
 
-  const podeEnviar = itens.every(i => i.codigo_item && i.lote)
+  const podeEnviar = itens.every(i => i.codigo_item && i.lote && i.qtd_venda > 0)
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
@@ -121,7 +121,7 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
                 <th className="pb-2 pr-3">Lote *</th>
                 <th className="pb-2 pr-3 text-right">Qtd Sistema</th>
                 <th className="pb-2 pr-3 text-right">Qtd Físico</th>
-                <th className="pb-2 pr-3 text-right">Qtd Venda</th>
+                <th className="pb-2 pr-3 text-right">Qtd Venda *</th>
                 <th className="pb-2 pr-3 text-right text-blue-600">Estoque</th>
                 <th className="pb-2 pr-3">Obs.</th>
                 <th className="pb-2"></th>
@@ -160,9 +160,10 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
                         placeholder="—" />
                     </td>
                     <td className="py-2 pr-3">
-                      <input type="number" value={item.qtd_venda} min={0}
+                      <input type="number" value={item.qtd_venda || ''} min={1}
                         onChange={e => update(i, 'qtd_venda', Number(e.target.value))}
-                        className="w-20 border rounded px-2 py-1 text-sm text-right" />
+                        placeholder="obrigatório"
+                        className={`w-20 border rounded px-2 py-1 text-sm text-right ${item.qtd_venda > 0 ? '' : 'border-amber-400 bg-amber-50'}`} />
                     </td>
                     <td className={`py-2 pr-3 text-right font-bold ${estoque < 0 ? 'text-red-600' : 'text-blue-600'}`}>
                       {estoque}
@@ -187,7 +188,10 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
           </table>
         </div>
 
-        <div className="p-5 border-t flex gap-2 justify-end">
+        <div className="p-5 border-t flex items-center justify-end gap-3">
+          {!podeEnviar && (
+            <span className="text-xs text-amber-600">Preencha código, lote e <strong>Qtd Venda &gt; 0</strong> em todos os itens.</span>
+          )}
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !podeEnviar}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
