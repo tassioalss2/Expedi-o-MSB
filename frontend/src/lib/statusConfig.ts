@@ -44,6 +44,23 @@ export const TIPO_FRETE_LABEL: Record<string, string> = {
   CIF_SEM_VALOR: 'CIF sem Valor NF',
 }
 
+export const OPERACAO_LABEL: Record<string, string> = {
+  VENDA_NORMAL: 'Venda normal',
+  COMUNICADO_USO: 'Comunicado de uso',
+  BONIFICACAO_DOACAO: 'Bonificação/Doação',
+  AMOSTRA: 'Amostra',
+  CONSIGNADO: 'Consignado',
+}
+
+export const CANAL_LABEL: Record<string, string> = {
+  URO: 'Uro',
+  VASCULAR: 'Vascular',
+  REALCLOSURE: 'Realclosure',
+  LICITACAO_URO: 'Licitação - Uro',
+  LICITACAO_VASCULAR: 'Licitação - Vascular',
+  LICITACAO: 'Licitação',
+}
+
 /** Retorna o nome da transportadora, incluindo o nome real quando "OUTROS" foi selecionado. */
 export function resolveNomeTransportadora(nome?: string, observacoes?: string): string {
   if (!nome) return ''

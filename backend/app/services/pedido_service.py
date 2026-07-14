@@ -360,6 +360,49 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     return pedido
 
 
+def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut) -> dict:
+    """Reativa uma OV cancelada: volta para LIBERADO e registra ocorrência auditável."""
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+
+    if pedido["status"] != StatusPedido.CANCELADO.value:
+        raise HTTPException(status_code=400, detail="Só é possível reativar OVs canceladas")
+    if not motivo or len(motivo.strip()) < 5:
+        raise HTTPException(status_code=400, detail="Informe o motivo da reativação (mín. 5 caracteres)")
+
+    from app.services.inventario_service import _get_usuario_real
+    uid = _get_usuario_real(str(usuario.id))
+    agora = _agora()
+    motivo = motivo.strip()
+
+    db.table("pedidos").update({
+        "status": StatusPedido.LIBERADO.value,
+        "atualizado_em": agora,
+    }).eq("id", pedido_id).execute()
+
+    db.table("ocorrencias").insert({
+        "pedido_id":      pedido_id,
+        "tipo":           "OV Reativada após Cancelamento",
+        "descricao": (
+            f"OV {pedido['numero_pedido']} reativada (voltou de CANCELADO para LIBERADO).\n"
+            f"Motivo: {motivo}"
+        ),
+        "responsavel_id": uid,
+        "status":         "FECHADA",
+        "resolucao":      motivo,
+        "resolvido_por":  uid,
+        "resolvido_em":   agora,
+        "criado_em":      agora,
+    }).execute()
+
+    _registrar_movimentacao(
+        pedido_id, "CANCELADO", StatusPedido.LIBERADO.value, uid,
+        f"OV reativada após cancelamento. Motivo: {motivo}"
+    )
+
+    return db.table("pedidos").select("*").eq("id", pedido_id).execute().data[0]
+
+
 _CANAIS_META = ["URO", "VASCULAR", "REALCLOSURE", "LICITACAO"]
 
 

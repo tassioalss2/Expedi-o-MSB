@@ -8,7 +8,7 @@ import api from '../lib/api'
 import type { InventarioItem, Pedido, Cubagem } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
-import { TIPO_FRETE_LABEL } from '../lib/statusConfig'
+import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
 import { useAuthStore } from '../store/authStore'
@@ -975,6 +975,65 @@ function ModalCancelarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
   )
 }
 
+function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [motivo, setMotivo] = useState('')
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/reativar`, { motivo: motivo.trim() }),
+    onSuccess: () => {
+      toast.success('OV reativada — voltou para "OV Recebida" e a ocorrência foi registrada.')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['ocorrencias'] })
+      qc.invalidateQueries({ queryKey: ['movimentacoes', pedido.id] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao reativar OV'),
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md">
+        <div className="p-5 border-b bg-blue-50 rounded-t-2xl">
+          <h2 className="text-lg font-bold text-blue-700">↩️ Reativar OV — {pedido.numero_pedido}</h2>
+          <p className="text-sm text-blue-600 mt-0.5">A OV cancelada voltará para o início do fluxo (OV Recebida).</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+            <p><span className="text-gray-500">Cliente:</span> <strong>{pedido.cliente?.nome || pedido.cliente_nome}</strong></p>
+            <p><span className="text-gray-500">Status atual:</span> <strong>Cancelado</strong></p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Motivo da reativação *</label>
+            <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="Ex: cancelamento indevido — vendas confirmou que o pedido segue" autoFocus />
+            {motivo.trim().length > 0 && motivo.trim().length < 5 && (
+              <p className="text-xs text-red-500 mt-1">Descreva o motivo com mais detalhes (mín. 5 caracteres)</p>
+            )}
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-600">
+            📋 Uma <strong>ocorrência</strong> será registrada com o motivo, e a movimentação (Cancelado → OV Recebida) fica no histórico.
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Voltar</button>
+          <button
+            onClick={() => mutation.mutate()}
+            disabled={mutation.isPending || motivo.trim().length < 5}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-700"
+          >
+            {mutation.isPending ? 'Reativando...' : 'Confirmar Reativação'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal Alterar Tipo de Frete ──────────────────────────────────────────────
 const TIPOS_FRETE = ['FOB', 'CIF_COM_VALOR', 'CIF_SEM_VALOR'] as const
 
@@ -1424,7 +1483,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'retornar' | 'confirmar_coleta' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -1712,6 +1771,8 @@ export function PedidoDetalhe() {
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <h2 className="font-semibold text-gray-800 mb-3">Dados da OV</h2>
             <Linha label="Cliente" valor={pedido.cliente?.nome || pedido.cliente_nome} />
+            <Linha label="Tipo de Operação" valor={pedido.tipo_operacao ? (OPERACAO_LABEL[pedido.tipo_operacao] || pedido.tipo_operacao) : null} />
+            <Linha label="Canal de Venda" valor={pedido.canal ? (CANAL_LABEL[pedido.canal] || pedido.canal) : null} />
             <div className="flex justify-between items-center py-2 border-b border-gray-50">
               <span className="text-sm text-gray-500">Tipo de Frete</span>
               <button onClick={() => setModal('tipo_frete')}
@@ -2028,8 +2089,16 @@ export function PedidoDetalhe() {
           )}
 
           {status === 'CANCELADO' && (
-            <div className="bg-gray-100 rounded-xl p-3 text-center text-sm text-gray-500">
-              ❌ OV Cancelada
+            <div className="space-y-2">
+              <div className="bg-gray-100 rounded-xl p-3 text-center text-sm text-gray-500">
+                ❌ OV Cancelada
+              </div>
+              <button
+                onClick={() => setModal('reativar')}
+                className="w-full py-2.5 border-2 border-blue-200 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50 hover:border-blue-400 transition-colors"
+              >
+                ↩️ Reativar OV
+              </button>
             </div>
           )}
         </div>
@@ -2044,6 +2113,7 @@ export function PedidoDetalhe() {
       {modal === 'transportadora' && <ModalAlterarTransportadora pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'tipo_frete' && <ModalAlterarTipoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cancelar' && <ModalCancelarOV pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'reativar' && <ModalReativarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (
