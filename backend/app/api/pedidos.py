@@ -937,6 +937,16 @@ def gargalo_etapas(
     return pedido_service.obter_gargalo_etapas(data_inicio, data_fim)
 
 
+@router.post("/alertas/varredura")
+def alertas_varredura(
+    horas_parada: int = Query(24, ge=1),
+    enviar: bool = Query(True),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Varre OVs paradas há +N horas e (opcional) envia resumo ao Teams."""
+    return pedido_service.varredura_alertas(horas_parada, enviar)
+
+
 @router.get("/dashboard/indicadores/detalhes")
 def indicadores_detalhes(
     metrica: str = Query(...),

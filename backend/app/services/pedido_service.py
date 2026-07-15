@@ -29,6 +29,19 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _enviar_teams(texto: str) -> None:
+    """Envia uma mensagem ao canal Teams da expedição (silencioso se não houver webhook)."""
+    from app.core.config import settings
+    webhook = settings.teams_webhook_expedicao
+    if not webhook:
+        return
+    import requests as _req
+    try:
+        _req.post(webhook, json={"text": texto}, timeout=5)
+    except Exception:
+        pass
+
+
 def _notificar_teams_nova_ov(pedido: dict, cliente_nome: str) -> None:
     """Envia notificação ao canal Teams da expedição quando uma nova OV é criada."""
     from app.core.config import settings
@@ -578,6 +591,14 @@ def alterar_status(pedido_id: str, novo_status: str, usuario: UsuarioOut,
         cliente_res = get_service_db().table("clientes").select("nome").eq("id", pedido["cliente_id"]).execute()
         cliente_nome = cliente_res.data[0]["nome"] if cliente_res.data else ""
         _notificar_teams_nova_ov(pedido, cliente_nome)
+
+    # Alertas Teams para eventos que exigem atenção imediata
+    cli = pedido.get("cliente_nome", "")
+    obs = f"\n📝 {observacao}" if observacao else ""
+    if novo_status == StatusPedido.DIVERGENCIA.value:
+        _enviar_teams(f"⚠️ **Divergência aberta — {pedido['numero_pedido']}**\n\n👤 Cliente: **{cli}**{obs}")
+    elif novo_status == StatusPedido.BLOQUEADO.value:
+        _enviar_teams(f"🔒 **OV bloqueada — {pedido['numero_pedido']}**\n\n👤 Cliente: **{cli}**{obs}")
 
     return obter_pedido(pedido_id)
 
@@ -1331,3 +1352,47 @@ def obter_gargalo_etapas(data_inicio: Optional[date] = None, data_fim: Optional[
     validos = [e for e in etapas if e["media_horas"] is not None]
     gargalo = max(validos, key=lambda e: e["media_horas"])["etapa"] if validos else None
     return {"etapas": etapas, "gargalo": gargalo}
+
+
+def varredura_alertas(horas_parada: int = 24, enviar: bool = True) -> dict:
+    """Encontra OVs ativas paradas há mais de X horas e envia um resumo ao Teams."""
+    from datetime import timedelta, timezone
+    db = get_service_db()
+
+    statuses_ativos = [
+        StatusPedido.AGUARD_CREDITO.value, StatusPedido.LIBERADO.value,
+        StatusPedido.EM_INVENTARIO.value, StatusPedido.AGUARD_VERIFICACAO.value,
+        StatusPedido.DIVERGENCIA.value, StatusPedido.AGUARD_TRATATIVA.value,
+        StatusPedido.EM_PROCESSO_SISTEMICO.value, StatusPedido.AGUARD_FATURAMENTO.value,
+        StatusPedido.FATURADO.value, StatusPedido.BLOQUEADO.value,
+    ]
+    limite = datetime.now(timezone.utc) - timedelta(hours=horas_parada)
+    limite_str = limite.strftime("%Y-%m-%dT%H:%M:%S")
+    rows = db.table("pedidos").select("numero_pedido, status, atualizado_em, clientes(nome)")\
+        .in_("status", statuses_ativos).neq("tipo_operacao", "COMUNICADO_USO")\
+        .lte("atualizado_em", limite_str)\
+        .order("atualizado_em").execute().data
+
+    def _horas(ts):
+        try:
+            t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return round((datetime.now(timezone.utc) - t).total_seconds() / 3600)
+        except Exception:
+            return 0
+
+    paradas = [{
+        "numero_pedido": r["numero_pedido"],
+        "status": r["status"],
+        "cliente": (r.get("clientes") or {}).get("nome", ""),
+        "horas": _horas(r.get("atualizado_em")),
+    } for r in rows]
+
+    if enviar and paradas:
+        linhas = "\n".join(
+            f"• {p['numero_pedido']} ({p['cliente']}) — {p['status']} · parada há {p['horas']}h"
+            for p in paradas[:20]
+        )
+        extra = f"\n…e mais {len(paradas) - 20}." if len(paradas) > 20 else ""
+        _enviar_teams(f"🕗 **{len(paradas)} OV(s) paradas há +{horas_parada}h**\n\n{linhas}{extra}")
+
+    return {"paradas": len(paradas), "horas_parada": horas_parada, "ovs": paradas}
