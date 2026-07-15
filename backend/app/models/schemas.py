@@ -202,6 +202,47 @@ class ComunicadoUsoCreate(BaseModel):
     data_faturamento: Optional[date] = None
     observacoes: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
+    empenho_id: Optional[UUID] = None
+
+
+# ── Licitações / Empenhos ──────────────────────────────────────────────────────
+
+class EmpenhoItemCreate(BaseModel):
+    produto_id: UUID
+    qtd_empenhada: float
+    valor_unitario: float = 0
+
+    @field_validator("qtd_empenhada")
+    @classmethod
+    def _qtd_pos(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Quantidade empenhada deve ser maior que zero")
+        return v
+
+
+class EmpenhoCreate(BaseModel):
+    numero: str
+    cliente_id: UUID
+    data_empenho: Optional[date] = None
+    vigencia: Optional[date] = None
+    observacao: Optional[str] = None
+    itens: list[EmpenhoItemCreate] = []
+
+    @field_validator("numero")
+    @classmethod
+    def _strip_numero(cls, v: str) -> str:
+        return v.strip() if v else v
+
+
+class ConsumoEmpenhoCreate(BaseModel):
+    """Comunicado de uso que consome saldo de um empenho."""
+    numero_pedido: str
+    numero_nf: str
+    valor_nf: float
+    data_faturamento: Optional[date] = None
+    canal: Optional[str] = None
+    observacoes: Optional[str] = None
+    itens: list[ItemPedidoCreate] = []
 
     @field_validator("numero_pedido", "numero_nf")
     @classmethod

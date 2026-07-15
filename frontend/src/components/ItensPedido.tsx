@@ -5,13 +5,16 @@ import toast from 'react-hot-toast'
 import api from '../lib/api'
 import type { Produto } from '../types'
 
-export type ItemLinha = { produto_id: string; codigo: string; descricao: string; qtd: number }
+export type ItemLinha = { produto_id: string; codigo: string; descricao: string; qtd: number; valor?: number }
 
-export function ItensPedido({ value, onChange }: { value: ItemLinha[]; onChange: (itens: ItemLinha[]) => void }) {
+export function ItensPedido({ value, onChange, comValor = false }: {
+  value: ItemLinha[]; onChange: (itens: ItemLinha[]) => void; comValor?: boolean
+}) {
   const [busca, setBusca] = useState('')
   const [aberto, setAberto] = useState(false)
   const [selecionado, setSelecionado] = useState<Produto | null>(null)
   const [qtd, setQtd] = useState('')
+  const [valor, setValor] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const qtdRef = useRef<HTMLInputElement>(null)
 
@@ -40,6 +43,7 @@ export function ItensPedido({ value, onChange }: { value: ItemLinha[]; onChange:
     setSelecionado(null)
     setBusca('')
     setQtd('')
+    setValor('')
   }
 
   const adicionar = () => {
@@ -49,7 +53,9 @@ export function ItensPedido({ value, onChange }: { value: ItemLinha[]; onChange:
     if (value.some(i => i.produto_id === selecionado.id)) {
       toast.error('Este item já foi adicionado'); return
     }
-    onChange([...value, { produto_id: selecionado.id, codigo: selecionado.codigo, descricao: selecionado.descricao, qtd: q }])
+    const linha: ItemLinha = { produto_id: selecionado.id, codigo: selecionado.codigo, descricao: selecionado.descricao, qtd: q }
+    if (comValor) linha.valor = Number(valor) || 0
+    onChange([...value, linha])
     limpar()
   }
 
@@ -57,6 +63,9 @@ export function ItensPedido({ value, onChange }: { value: ItemLinha[]; onChange:
 
   const atualizarQtd = (produto_id: string, novaQtd: number) =>
     onChange(value.map(i => i.produto_id === produto_id ? { ...i, qtd: novaQtd } : i))
+
+  const atualizarValor = (produto_id: string, novoValor: number) =>
+    onChange(value.map(i => i.produto_id === produto_id ? { ...i, valor: novoValor } : i))
 
   return (
     <div className="space-y-2">
@@ -99,8 +108,17 @@ export function ItensPedido({ value, onChange }: { value: ItemLinha[]; onChange:
           onChange={e => setQtd(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); adicionar() } }}
           placeholder="Qtd"
-          className="w-24 border rounded-lg px-3 py-2.5 text-sm"
+          className="w-20 border rounded-lg px-3 py-2.5 text-sm"
         />
+        {comValor && (
+          <input
+            type="number" min="0" step="0.01" value={valor}
+            onChange={e => setValor(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); adicionar() } }}
+            placeholder="Valor un."
+            className="w-28 border rounded-lg px-3 py-2.5 text-sm"
+          />
+        )}
         <button type="button" onClick={adicionar} disabled={!selecionado}
           className="flex items-center gap-1 px-3 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg text-sm font-medium whitespace-nowrap">
           <Plus size={16} /> Add
@@ -128,6 +146,14 @@ export function ItensPedido({ value, onChange }: { value: ItemLinha[]; onChange:
                 onChange={e => atualizarQtd(i.produto_id, Number(e.target.value))}
                 className="w-20 border rounded-lg px-2 py-1 text-sm text-right"
               />
+              {comValor && (
+                <input
+                  type="number" min="0" step="0.01" value={i.valor ?? 0}
+                  onChange={e => atualizarValor(i.produto_id, Number(e.target.value))}
+                  className="w-28 border rounded-lg px-2 py-1 text-sm text-right"
+                  title="Valor unitário"
+                />
+              )}
               <button type="button" onClick={() => remover(i.produto_id)}
                 className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg">
                 <Trash2 size={15} />
@@ -136,7 +162,10 @@ export function ItensPedido({ value, onChange }: { value: ItemLinha[]; onChange:
           ))}
           <div className="flex justify-between px-3 py-2 bg-gray-50 text-xs text-gray-500">
             <span>{value.length} item(ns)</span>
-            <span>Total: <strong className="text-gray-700">{value.reduce((a, i) => a + (i.qtd || 0), 0)}</strong> un</span>
+            <span>
+              Total: <strong className="text-gray-700">{value.reduce((a, i) => a + (i.qtd || 0), 0)}</strong> un
+              {comValor && <> · <strong className="text-gray-700">{value.reduce((a, i) => a + (i.qtd || 0) * (i.valor || 0), 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</strong></>}
+            </span>
           </div>
         </div>
       )}

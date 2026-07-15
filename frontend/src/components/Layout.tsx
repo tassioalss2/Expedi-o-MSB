@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, FileText, Home, Users,
+  DollarSign, FileText, Home, Users, Gavel,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -121,6 +121,20 @@ export function Layout() {
             >
               <Home size={18} />
               <span className="flex-1">Visão Geral</span>
+            </NavLink>
+            <NavLink
+              to="/licitacoes"
+              end
+              onClick={fecharSidebar}
+              className={({ isActive }) =>
+                clsx(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                )
+              }
+            >
+              <Gavel size={18} />
+              <span className="flex-1">Licitações</span>
             </NavLink>
           </div>
           {[{ titulo: 'Logística', itens: navLogistica }, { titulo: 'Comercial', itens: navComercial }].map((grupo) => (

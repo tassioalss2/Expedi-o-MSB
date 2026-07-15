@@ -343,6 +343,9 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
         "criado_em":             ts_fat,
         "atualizado_em":         _agora(),
     }
+    _emp = getattr(payload, "empenho_id", None)
+    if _emp:
+        pedido_data["empenho_id"] = str(_emp)
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
 
