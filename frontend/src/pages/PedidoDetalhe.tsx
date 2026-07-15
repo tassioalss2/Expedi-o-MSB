@@ -75,11 +75,23 @@ function ProdutoAutocomplete({ value, onChange }: {
 // ── Modal Inventário Contínuo ─────────────────────────────────────────────────
 function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
-  const [itens, setItens] = useState<Omit<InventarioItem, 'id' | 'pedido_id' | 'qtd_estoque' | 'status_item'>[]>([
-    { codigo_item: '', lote: '', qtd_sistemico: 0, qtd_fisico: undefined, qtd_venda: 0, observacao: '' }
-  ])
+  const linhaVazia = { codigo_item: '', lote: '', qtd_sistemico: 0, qtd_fisico: undefined as number | undefined, qtd_venda: 0, observacao: '' }
+  // Pré-carrega os itens cadastrados na criação da OV (código + quantidade → Qtd Venda).
+  const [itens, setItens] = useState<Omit<InventarioItem, 'id' | 'pedido_id' | 'qtd_estoque' | 'status_item'>[]>(() => {
+    const doPedido = ((pedido.itens || []) as any[]).filter(it => (it.produtos?.codigo || it.produto?.codigo))
+    if (doPedido.length === 0) return [{ ...linhaVazia }]
+    return doPedido.map(it => ({
+      codigo_item: it.produtos?.codigo || it.produto?.codigo || '',
+      lote: '',
+      qtd_sistemico: 0,
+      qtd_fisico: undefined,
+      qtd_venda: Number(it.qtd_solicitada) || 0,
+      observacao: it.produtos?.descricao || it.produto?.descricao || '',
+    }))
+  })
+  const preCarregado = ((pedido.itens || []) as any[]).some(it => (it.produtos?.codigo || it.produto?.codigo))
 
-  const addLinha = () => setItens([...itens, { codigo_item: '', lote: '', qtd_sistemico: 0, qtd_fisico: undefined, qtd_venda: 0, observacao: '' }])
+  const addLinha = () => setItens([...itens, { ...linhaVazia }])
   const removeLinha = (i: number) => setItens(itens.filter((_, idx) => idx !== i))
 
   const update = (i: number, campo: string, valor: any) => {
@@ -123,7 +135,11 @@ function ModalInventario({ pedido, onClose }: { pedido: Pedido; onClose: () => v
         <div className="p-5 border-b flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold">📦 Inventário Contínuo — {pedido.numero_pedido}</h2>
-            <p className="text-sm text-gray-500 mt-0.5">Preencha código, lote e quantidades de cada item</p>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {preCarregado
+                ? 'Itens da OV pré-carregados (código e Qtd Venda). Informe o lote — a Qtd Sistema vem do último inventário.'
+                : 'Preencha código, lote e quantidades de cada item'}
+            </p>
           </div>
           <button onClick={addLinha} className="flex items-center gap-1 text-sm text-blue-600 hover:underline">
             <Plus size={16} /> Adicionar item
