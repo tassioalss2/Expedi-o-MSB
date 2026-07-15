@@ -22,6 +22,9 @@ create table if not exists empenho_itens (
   valor_unitario numeric not null default 0
 );
 
+-- Canal de venda do empenho (adicionado depois; rode se a tabela já existir).
+alter table empenhos add column if not exists canal text;
+
 -- Vínculo do comunicado de uso (pedido FATURADO) ao empenho que ele consome.
 alter table pedidos add column if not exists empenho_id uuid references empenhos(id);
 

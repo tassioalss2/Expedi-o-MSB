@@ -122,20 +122,6 @@ export function Layout() {
               <Home size={18} />
               <span className="flex-1">Visão Geral</span>
             </NavLink>
-            <NavLink
-              to="/licitacoes"
-              end
-              onClick={fecharSidebar}
-              className={({ isActive }) =>
-                clsx(
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
-                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-                )
-              }
-            >
-              <Gavel size={18} />
-              <span className="flex-1">Licitações</span>
-            </NavLink>
           </div>
           {[{ titulo: 'Logística', itens: navLogistica }, { titulo: 'Comercial', itens: navComercial }].map((grupo) => (
             <div key={grupo.titulo} className="mb-4">
@@ -191,6 +177,24 @@ export function Layout() {
               </div>
             </div>
           ))}
+
+          {/* Licitações — fora do Comercial, logo abaixo dele */}
+          <div className="mb-4 space-y-1">
+            <NavLink
+              to="/licitacoes"
+              end
+              onClick={fecharSidebar}
+              className={({ isActive }) =>
+                clsx(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                )
+              }
+            >
+              <Gavel size={18} />
+              <span className="flex-1">Licitações</span>
+            </NavLink>
+          </div>
 
           {navGeralFiltrado.length > 0 && (
             <div className="pt-2 border-t border-gray-800">

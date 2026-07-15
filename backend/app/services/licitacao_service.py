@@ -70,6 +70,7 @@ def criar_empenho(payload: EmpenhoCreate) -> dict:
     emp = db.table("empenhos").insert({
         "numero": payload.numero,
         "cliente_id": str(payload.cliente_id),
+        "canal": payload.canal,
         "data_empenho": payload.data_empenho.isoformat() if payload.data_empenho else None,
         "vigencia": payload.vigencia.isoformat() if payload.vigencia else None,
         "observacao": payload.observacao,
@@ -116,6 +117,7 @@ def listar_empenhos() -> list:
             "numero": e["numero"],
             "cliente": (e.get("clientes") or {}).get("nome", "—"),
             "cliente_id": e.get("cliente_id"),
+            "canal": e.get("canal"),
             "data_empenho": e.get("data_empenho"),
             "vigencia": e.get("vigencia"),
             "observacao": e.get("observacao"),
@@ -167,6 +169,7 @@ def obter_empenho(empenho_id: str) -> dict:
         "numero": e["numero"],
         "cliente": (e.get("clientes") or {}).get("nome", "—"),
         "cliente_id": e.get("cliente_id"),
+        "canal": e.get("canal"),
         "data_empenho": e.get("data_empenho"),
         "vigencia": e.get("vigencia"),
         "observacao": e.get("observacao"),

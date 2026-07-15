@@ -223,6 +223,7 @@ class EmpenhoItemCreate(BaseModel):
 class EmpenhoCreate(BaseModel):
     numero: str
     cliente_id: UUID
+    canal: Optional[str] = None
     data_empenho: Optional[date] = None
     vigencia: Optional[date] = None
     observacao: Optional[str] = None

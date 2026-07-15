@@ -5,6 +5,9 @@ import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
+import { CANAL_LABEL } from '../lib/statusConfig'
+
+const CANAIS = ['LICITACAO_URO', 'LICITACAO_VASCULAR', 'URO', 'VASCULAR', 'REALCLOSURE']
 
 const fmtBRL = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const fmtData = (d?: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—'
@@ -74,6 +77,7 @@ export function Licitacoes() {
                   <div>
                     <p className="font-mono font-bold text-gray-800">{e.numero}</p>
                     <p className="text-sm text-gray-600 truncate max-w-[240px]">{e.cliente}</p>
+                    {e.canal && <p className="text-xs text-gray-400 mt-0.5">Canal: {CANAL_LABEL[e.canal] || e.canal}</p>}
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.cor}`}>{cfg.label}</span>
                 </div>
@@ -124,6 +128,7 @@ function ModalNovoEmpenho({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const [numero, setNumero] = useState('')
   const [clienteId, setClienteId] = useState('')
   const [clienteNome, setClienteNome] = useState('')
+  const [canal, setCanal] = useState('LICITACAO_URO')
   const [dataEmpenho, setDataEmpenho] = useState(hoje)
   const [vigencia, setVigencia] = useState('')
   const [observacao, setObservacao] = useState('')
@@ -133,6 +138,7 @@ function ModalNovoEmpenho({ onClose, onSaved }: { onClose: () => void; onSaved: 
     mutationFn: () => api.post('/licitacoes/empenhos', {
       numero: numero.trim(),
       cliente_id: clienteId,
+      canal,
       data_empenho: dataEmpenho || null,
       vigencia: vigencia || null,
       observacao: observacao || null,
@@ -156,6 +162,11 @@ function ModalNovoEmpenho({ onClose, onSaved }: { onClose: () => void; onSaved: 
           {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
         </Campo>
         <div className="grid grid-cols-2 gap-3">
+          <Campo label="Canal de venda *">
+            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
+              {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+            </select>
+          </Campo>
           <Campo label="Vigência (até)"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
         </div>
         <Campo label="Observação"><input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
@@ -201,7 +212,10 @@ function ModalEmpenho({ id, onClose, onChanged }: { id: string; onClose: () => v
       <div className="flex-1 overflow-y-auto">
         <div className="px-5 py-4 bg-gray-50 border-b">
           <p className="text-sm text-gray-700 font-medium">{emp.cliente}</p>
-          <p className="text-xs text-gray-400">Empenhado {fmtData(emp.data_empenho)} · Vigência {fmtData(emp.vigencia)}</p>
+          <p className="text-xs text-gray-400">
+            {emp.canal && <>Canal: {CANAL_LABEL[emp.canal] || emp.canal} · </>}
+            Empenhado {fmtData(emp.data_empenho)} · Vigência {fmtData(emp.vigencia)}
+          </p>
           <div className="grid grid-cols-3 gap-3 mt-3">
             <div><p className="text-[11px] text-gray-400 uppercase">Empenhado</p><p className="text-base font-bold text-gray-800">{fmtBRL(emp.empenhado_valor)}</p></div>
             <div><p className="text-[11px] text-gray-400 uppercase">Faturado</p><p className="text-base font-bold text-emerald-600">{fmtBRL(emp.faturado_valor)}</p></div>
@@ -280,7 +294,7 @@ function ModalConsumo({ emp, onClose, onSaved }: { emp: any; onClose: () => void
   const [nf, setNf] = useState('')
   const [valor, setValor] = useState('')
   const [data, setData] = useState(hoje)
-  const [canal, setCanal] = useState('LICITACAO_URO')
+  const [canal, setCanal] = useState(emp.canal || 'LICITACAO_URO')
   const [qtds, setQtds] = useState<Record<string, string>>({})
 
   const registrar = useMutation({
