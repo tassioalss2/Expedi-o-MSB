@@ -1847,6 +1847,44 @@ export function PedidoDetalhe() {
             {pedido.observacoes && <Linha label="Obs." valor={pedido.observacoes} />}
           </div>
 
+          {/* Itens da OV (cadastrados na criação) */}
+          {(() => {
+            const itensOV = ((pedido.itens || []) as any[]).filter(it => (it.produtos?.codigo || it.produto?.codigo))
+            if (itensOV.length === 0) return null
+            const totalUn = itensOV.reduce((a, it) => a + (Number(it.qtd_solicitada) || 0), 0)
+            return (
+              <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+                <h2 className="font-semibold text-gray-800 mb-3">Itens da OV</h2>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-gray-500 border-b">
+                        <th className="pb-2 pr-3">Código</th>
+                        <th className="pb-2 pr-3">Descrição</th>
+                        <th className="pb-2 text-right">Qtd</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {itensOV.map((it, i) => (
+                        <tr key={i}>
+                          <td className="py-2 pr-3 font-mono font-medium text-gray-800">{it.produtos?.codigo || it.produto?.codigo}</td>
+                          <td className="py-2 pr-3 text-gray-600">{it.produtos?.descricao || it.produto?.descricao || '—'}</td>
+                          <td className="py-2 text-right tabular-nums text-gray-800">{Number(it.qtd_solicitada) || 0}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t">
+                        <td className="pt-2 text-xs text-gray-400" colSpan={2}>{itensOV.length} item(ns)</td>
+                        <td className="pt-2 text-right text-xs text-gray-500">Total: <strong className="text-gray-700">{totalUn}</strong> un</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
           {/* Cubagem */}
           {!['LIBERADO','EM_INVENTARIO','AGUARD_VERIFICACAO','DIVERGENCIA','AGUARD_TRATATIVA','CANCELADO'].includes(status) && (
             <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
