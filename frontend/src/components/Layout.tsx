@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, FileText, Home, Users, Gavel,
+  DollarSign, FileText, Home, Users, Gavel, Handshake,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -178,7 +178,7 @@ export function Layout() {
             </div>
           ))}
 
-          {/* Licitações — fora do Comercial, logo abaixo dele */}
+          {/* Licitações + CRM — fora do Comercial, logo abaixo dele */}
           <div className="mb-4 space-y-1">
             <NavLink
               to="/licitacoes"
@@ -193,6 +193,20 @@ export function Layout() {
             >
               <Gavel size={18} />
               <span className="flex-1">Licitações</span>
+            </NavLink>
+            <NavLink
+              to="/crm"
+              end
+              onClick={fecharSidebar}
+              className={({ isActive }) =>
+                clsx(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                )
+              }
+            >
+              <Handshake size={18} />
+              <span className="flex-1">CRM</span>
             </NavLink>
           </div>
 

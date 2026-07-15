@@ -21,6 +21,7 @@ import { InventarioContinuo } from './pages/InventarioContinuo'
 import { InventarioContagem } from './pages/InventarioContagem'
 import { Usuarios } from './pages/Usuarios'
 import { Licitacoes } from './pages/Licitacoes'
+import { Crm } from './pages/crm/Crm'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAuthStore } from './store/authStore'
 
@@ -76,6 +77,7 @@ export default function App() {
             <Route path="inventario/contagem" element={<InventarioContagem />} />
             <Route path="usuarios" element={<AdminRoute><Usuarios /></AdminRoute>} />
             <Route path="licitacoes" element={<Licitacoes />} />
+            <Route path="crm" element={<Crm />} />
 
             {/* Comercial */}
             <Route path="comercial" element={<PainelComercial />} />

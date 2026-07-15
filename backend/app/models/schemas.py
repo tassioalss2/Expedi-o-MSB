@@ -308,6 +308,94 @@ class DemandaConcluir(BaseModel):
     itens: list[DemandaItem] = []
 
 
+# ── CRM ──────────────────────────────────────────────────────────────────────────
+class ContatoCreate(BaseModel):
+    nome: str
+    cargo: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    observacao: Optional[str] = None
+
+
+class ContatoUpdate(BaseModel):
+    nome: Optional[str] = None
+    cargo: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    observacao: Optional[str] = None
+
+
+class OportunidadeItem(BaseModel):
+    produto_id: Optional[UUID] = None
+    codigo: Optional[str] = None
+    descricao: Optional[str] = None
+    qtd: float = 0
+    valor_unitario: float = 0
+
+
+class OportunidadeCreate(BaseModel):
+    titulo: str
+    cliente_id: Optional[UUID] = None
+    contato_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    estagio: str = "LEAD"
+    valor_estimado: Optional[float] = None
+    probabilidade: Optional[int] = None
+    origem: Optional[str] = None
+    previsao_fechamento: Optional[date] = None
+    itens: list[OportunidadeItem] = []
+
+
+class OportunidadeUpdate(BaseModel):
+    titulo: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    contato_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    estagio: Optional[str] = None
+    valor_estimado: Optional[float] = None
+    probabilidade: Optional[int] = None
+    origem: Optional[str] = None
+    previsao_fechamento: Optional[date] = None
+    itens: Optional[list[OportunidadeItem]] = None
+
+
+class PerderRequest(BaseModel):
+    motivo: str
+
+
+class AtividadeCreate(BaseModel):
+    oportunidade_id: Optional[UUID] = None
+    contato_id: Optional[UUID] = None
+    cliente_id: Optional[UUID] = None
+    tipo: str = "TAREFA"
+    titulo: str
+    descricao: Optional[str] = None
+    data_hora: Optional[datetime] = None
+
+
+class AtividadeUpdate(BaseModel):
+    tipo: Optional[str] = None
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    data_hora: Optional[datetime] = None
+    concluida: Optional[bool] = None
+
+
+class NotaCreate(BaseModel):
+    texto: str
+
+
+class GerarOVRequest(BaseModel):
+    numero_pedido: str
+    tipo_frete: str = "FOB"
+    data_prevista_entrega: date
+    local_entrega: Optional[str] = None
+
+
 class MetaFaturamentoRequest(BaseModel):
     competencia: str  # 'YYYY-MM'
     canal: str        # URO | VASCULAR | REALCLOSURE | LICITACAO

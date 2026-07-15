@@ -1,0 +1,554 @@
+import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  Plus, Search, Target, Trophy, XCircle, Trash2, Pencil, Package,
+  Clock, MessageSquare, CalendarPlus, CheckCircle2, ExternalLink,
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import api from '../../lib/api'
+import { ClienteAutocomplete } from '../NovoPedido'
+import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
+import { CANAL_LABEL } from '../../lib/statusConfig'
+import {
+  ESTAGIOS, ESTAGIOS_PIPELINE, ESTAGIO_MAP, ORIGENS, TIPOS_ATIVIDADE, TIPO_ATIV_MAP,
+  fmtBRL, fmtBRLcurto, fmtData, fmtDataHora, prazoCor, msgErro, type EstagioKey,
+} from '../../lib/crm'
+import { ModalBase, Campo, inputCls } from './CrmShared'
+
+const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE', 'LICITACAO_URO', 'LICITACAO_VASCULAR']
+
+export function CrmPipeline() {
+  const qc = useQueryClient()
+  const [novo, setNovo] = useState(false)
+  const [detalheId, setDetalheId] = useState<string | null>(null)
+  const [arrastando, setArrastando] = useState<string | null>(null)
+  const [busca, setBusca] = useState('')
+  const [canal, setCanal] = useState('')
+
+  const { data: opps = [], isLoading } = useQuery<any[]>({
+    queryKey: ['crm-opps'],
+    queryFn: () => api.get('/crm/oportunidades').then(r => r.data),
+    refetchInterval: 20000,
+  })
+
+  const invalidar = () => {
+    qc.invalidateQueries({ queryKey: ['crm-opps'] })
+    qc.invalidateQueries({ queryKey: ['crm-dashboard'] })
+  }
+
+  const mover = useMutation({
+    mutationFn: ({ id, estagio }: { id: string; estagio: string }) => api.patch(`/crm/oportunidades/${id}`, { estagio }),
+    onSuccess: invalidar,
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao mover'), { duration: 5000 }),
+  })
+
+  const filtradas = useMemo(() => {
+    const b = busca.trim().toLowerCase()
+    return opps.filter(o => {
+      if (canal && o.canal !== canal) return false
+      if (b && !`${o.titulo || ''} ${o.cliente || ''}`.toLowerCase().includes(b)) return false
+      return true
+    })
+  }, [opps, busca, canal])
+
+  const porEstagio = (e: string) => filtradas.filter(o => o.estagio === e)
+
+  const onDrop = (estagio: EstagioKey) => {
+    const id = arrastando
+    setArrastando(null)
+    if (!id) return
+    const o = opps.find(x => x.id === id)
+    if (!o || o.estagio === estagio) return
+    mover.mutate({ id, estagio })
+  }
+
+  const totalPonderado = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_ponderado || 0), 0)
+  const totalPipe = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_estimado || 0), 0)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+        <div className="flex items-center gap-2 flex-1">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar oportunidade ou cliente…"
+              className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
+          </div>
+          <select value={canal} onChange={e => setCanal(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
+            <option value="">Todos os canais</option>
+            {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-right hidden md:block">
+            <p className="text-xs text-gray-400">Pipeline aberto · previsão ponderada</p>
+            <p className="text-sm font-semibold text-gray-700">{fmtBRL(totalPipe)} · <span className="text-emerald-600">{fmtBRL(totalPonderado)}</span></p>
+          </div>
+          <button onClick={() => setNovo(true)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg whitespace-nowrap">
+            <Plus size={16} /> Nova oportunidade
+          </button>
+        </div>
+      </div>
+
+      {isLoading ? (
+        <p className="text-center text-gray-400 py-10 text-sm">Carregando funil…</p>
+      ) : (
+        <div className="overflow-x-auto pb-2">
+          <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${ESTAGIOS_PIPELINE.length}, minmax(230px, 1fr))` }}>
+            {ESTAGIOS_PIPELINE.map(ek => {
+              const cfg = ESTAGIO_MAP[ek]
+              const cards = porEstagio(ek)
+              const soma = cards.reduce((a, o) => a + (o.valor_estimado || 0), 0)
+              return (
+                <div key={ek}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={() => onDrop(ek)}
+                  className="bg-gray-50 rounded-xl border border-gray-100 flex flex-col min-h-[400px]">
+                  <div className={`h-1 rounded-t-xl ${cfg.coluna}`} />
+                  <div className="px-3 py-2 flex items-center justify-between">
+                    <span className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${cfg.ponto}`} /> {cfg.label}
+                    </span>
+                    <span className="text-[11px] text-gray-400">{cards.length} · {fmtBRLcurto(soma)}</span>
+                  </div>
+                  <div className="px-2 pb-2 space-y-2 flex-1 overflow-y-auto">
+                    {cards.map(o => (
+                      <CardOpp key={o.id} o={o} onDragStart={() => setArrastando(o.id)} onClick={() => setDetalheId(o.id)} />
+                    ))}
+                    {cards.length === 0 && (
+                      <div className="text-[11px] text-gray-300 text-center py-6 border-2 border-dashed border-gray-200 rounded-lg">
+                        arraste aqui
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {novo && <ModalOportunidadeForm onClose={() => setNovo(false)} onSaved={invalidar} />}
+      {detalheId && <ModalDetalheOportunidade id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar} />}
+    </div>
+  )
+}
+
+function CardOpp({ o, onDragStart, onClick }: { o: any; onDragStart: () => void; onClick: () => void }) {
+  const cfg = ESTAGIO_MAP[o.estagio]
+  return (
+    <div draggable onDragStart={onDragStart} onClick={onClick}
+      className="bg-white rounded-lg border border-gray-200 shadow-sm p-2.5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">
+      <p className="text-sm font-medium text-gray-800 leading-tight line-clamp-2">{o.titulo}</p>
+      {o.cliente && <p className="text-xs text-gray-500 mt-0.5 truncate">{o.cliente}</p>}
+      <div className="flex items-center justify-between mt-1.5">
+        <span className="text-sm font-semibold text-gray-700">{fmtBRL(o.valor_estimado)}</span>
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${cfg?.chip || ''}`}>{o.probabilidade}%</span>
+      </div>
+      <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
+        {o.canal && <span className="text-gray-400">{CANAL_LABEL[o.canal] || o.canal}</span>}
+        {o.previsao_fechamento && <span className={`flex items-center gap-1 ${prazoCor(o.previsao_fechamento)}`}><Clock size={11} /> {fmtData(o.previsao_fechamento)}</span>}
+        {o.atividades_pendentes > 0 && <span className="flex items-center gap-1 text-blue-500"><CalendarPlus size={11} /> {o.atividades_pendentes}</span>}
+      </div>
+    </div>
+  )
+}
+
+// ── Form (criar / editar) ────────────────────────────────────────────────────────
+export function ModalOportunidadeForm({ oportunidade, onClose, onSaved }: {
+  oportunidade?: any; onClose: () => void; onSaved: (data?: any) => void
+}) {
+  const edicao = !!oportunidade
+  const [titulo, setTitulo] = useState(oportunidade?.titulo || '')
+  const [clienteId, setClienteId] = useState(oportunidade?.cliente_id || '')
+  const [clienteNome, setClienteNome] = useState(oportunidade?.cliente || '')
+  const [contatoId, setContatoId] = useState(oportunidade?.contato_id || '')
+  const [canal, setCanal] = useState(oportunidade?.canal || '')
+  const [estagio, setEstagio] = useState<string>(oportunidade?.estagio || 'LEAD')
+  const [valor, setValor] = useState(oportunidade?.valor_estimado ? String(oportunidade.valor_estimado) : '')
+  const [previsao, setPrevisao] = useState(oportunidade?.previsao_fechamento || '')
+  const [origem, setOrigem] = useState(oportunidade?.origem || '')
+  const [itens, setItens] = useState<ItemLinha[]>(
+    (oportunidade?.itens || []).filter((i: any) => i.produto_id).map((i: any) => ({
+      produto_id: i.produto_id, codigo: i.codigo || '', descricao: i.descricao || '',
+      qtd: Number(i.qtd) || 0, valor: Number(i.valor_unitario) || 0,
+    }))
+  )
+
+  const { data: contatos = [] } = useQuery<any[]>({
+    queryKey: ['crm-contatos', clienteId],
+    queryFn: () => api.get('/crm/contatos', { params: { cliente_id: clienteId } }).then(r => r.data),
+    enabled: !!clienteId,
+  })
+
+  const totalItens = itens.reduce((a, i) => a + i.qtd * (i.valor || 0), 0)
+
+  const salvar = useMutation({
+    mutationFn: () => {
+      const body: any = {
+        titulo: titulo.trim(),
+        cliente_id: clienteId || null,
+        contato_id: contatoId || null,
+        canal: canal || null,
+        estagio,
+        valor_estimado: valor ? Number(valor) : (totalItens > 0 ? totalItens : null),
+        previsao_fechamento: previsao || null,
+        origem: origem || null,
+        itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor_unitario: i.valor || 0 })),
+      }
+      return edicao
+        ? api.patch(`/crm/oportunidades/${oportunidade.id}`, body)
+        : api.post('/crm/oportunidades', body)
+    },
+    onSuccess: (res) => { toast.success(edicao ? 'Oportunidade atualizada' : 'Oportunidade criada'); onSaved(res.data); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar'), { duration: 5000 }),
+  })
+
+  return (
+    <ModalBase titulo={edicao ? 'Editar oportunidade' : 'Nova oportunidade'} onClose={onClose}>
+      <div className="p-5 space-y-3 overflow-y-auto">
+        <Campo label="Título *">
+          <input value={titulo} onChange={e => setTitulo(e.target.value)} className={inputCls} placeholder="Ex: Pregão 042/2026 — cateteres vasculares" />
+        </Campo>
+        <Campo label="Cliente / Órgão">
+          <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome); setContatoId('') }} />
+          {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
+        </Campo>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Contato">
+            <select value={contatoId} onChange={e => setContatoId(e.target.value)} className={inputCls} disabled={!clienteId}>
+              <option value="">{clienteId ? '— nenhum —' : 'selecione o cliente'}</option>
+              {contatos.map(c => <option key={c.id} value={c.id}>{c.nome}{c.cargo ? ` (${c.cargo})` : ''}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Canal">
+            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
+              <option value="">A definir…</option>
+              {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Estágio">
+            <select value={estagio} onChange={e => setEstagio(e.target.value)} className={inputCls}>
+              {ESTAGIOS.filter(e => e.key !== 'PERDIDO').map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Origem">
+            <select value={origem} onChange={e => setOrigem(e.target.value)} className={inputCls}>
+              <option value="">—</option>
+              {ORIGENS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Valor estimado (R$)">
+            <input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)} className={inputCls}
+              placeholder={totalItens > 0 ? `dos itens: ${fmtBRL(totalItens)}` : '0,00'} />
+          </Campo>
+          <Campo label="Previsão de fechamento">
+            <input type="date" value={previsao} onChange={e => setPrevisao(e.target.value)} className={inputCls} />
+          </Campo>
+        </div>
+        <div>
+          <label className="text-sm text-gray-600">Itens / produtos (opcional)</label>
+          <p className="text-xs text-gray-400 mb-1.5">Se preencher com valor, o valor estimado é calculado automaticamente.</p>
+          <ItensPedido value={itens} onChange={setItens} comValor />
+        </div>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => salvar.mutate()} disabled={!titulo.trim() || salvar.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {salvar.isPending ? 'Salvando…' : edicao ? 'Salvar' : 'Criar oportunidade'}
+        </button>
+      </div>
+    </ModalBase>
+  )
+}
+
+// ── Detalhe da oportunidade ────────────────────────────────────────────────────────
+function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+  const qc = useQueryClient()
+  const navigate = useNavigate()
+  const [editar, setEditar] = useState(false)
+  const [perder, setPerder] = useState(false)
+  const [gerarOV, setGerarOV] = useState(false)
+  const [nota, setNota] = useState('')
+  const [novaAtiv, setNovaAtiv] = useState(false)
+
+  const { data: o } = useQuery<any>({
+    queryKey: ['crm-opp', id],
+    queryFn: () => api.get(`/crm/oportunidades/${id}`).then(r => r.data),
+  })
+
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['crm-opp', id] }); onChanged() }
+
+  const mover = useMutation({
+    mutationFn: (estagio: string) => api.patch(`/crm/oportunidades/${id}`, { estagio }),
+    onSuccess: refresh, onError: (e: any) => toast.error(msgErro(e, 'Erro ao mover'), { duration: 5000 }),
+  })
+  const ganhar = useMutation({
+    mutationFn: () => api.post(`/crm/oportunidades/${id}/ganhar`),
+    onSuccess: () => { toast.success('🏆 Oportunidade ganha!'); refresh() },
+  })
+  const addNota = useMutation({
+    mutationFn: () => api.post(`/crm/oportunidades/${id}/notas`, { texto: nota.trim() }),
+    onSuccess: () => { setNota(''); refresh() },
+  })
+  const excluir = useMutation({
+    mutationFn: () => api.delete(`/crm/oportunidades/${id}`),
+    onSuccess: () => { toast.success('Oportunidade removida'); onChanged(); onClose() },
+  })
+  const concluirAtiv = useMutation({
+    mutationFn: ({ aid, c }: { aid: string; c: boolean }) => api.post(`/crm/atividades/${aid}/concluir?concluida=${c}`),
+    onSuccess: refresh,
+  })
+
+  if (!o) return <ModalBase titulo="Oportunidade" onClose={onClose}><p className="p-8 text-center text-gray-400 text-sm">Carregando…</p></ModalBase>
+
+  const cfg = ESTAGIO_MAP[o.estagio]
+  const fechada = o.estagio === 'GANHO' || o.estagio === 'PERDIDO'
+  const timeline = [...(o.notas || [])]
+
+  return (
+    <ModalBase titulo={<span className="flex items-center gap-2"><Target size={17} /> {o.titulo}</span>} onClose={onClose} max="max-w-3xl">
+      <div className="flex-1 overflow-y-auto">
+        {/* Cabeçalho */}
+        <div className="px-5 py-4 bg-gray-50 border-b">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm text-gray-700 font-medium">{o.cliente || 'Sem cliente'}</p>
+              {o.contato && <p className="text-xs text-gray-500">{o.contato.nome}{o.contato.cargo ? ` · ${o.contato.cargo}` : ''}{o.contato.telefone ? ` · ${o.contato.telefone}` : ''}</p>}
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400 mt-1">
+                {o.canal && <span>{CANAL_LABEL[o.canal] || o.canal}</span>}
+                {o.origem && <span>Origem: {o.origem}</span>}
+                {o.previsao_fechamento && <span className={prazoCor(o.previsao_fechamento)}>Previsão: {fmtData(o.previsao_fechamento)}</span>}
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xl font-bold text-gray-800">{fmtBRL(o.valor_estimado)}</p>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${cfg?.chip || ''}`}>{cfg?.label} · {o.probabilidade}%</span>
+              <p className="text-[11px] text-gray-400 mt-0.5">ponderado {fmtBRL(o.valor_ponderado)}</p>
+            </div>
+          </div>
+
+          {/* Régua de estágios */}
+          {!fechada && (
+            <div className="flex gap-1 mt-3">
+              {ESTAGIOS.filter(e => !['GANHO', 'PERDIDO'].includes(e.key)).map(e => (
+                <button key={e.key} onClick={() => mover.mutate(e.key)}
+                  className={`flex-1 text-[11px] py-1.5 rounded ${o.estagio === e.key ? `${e.coluna} text-white font-medium` : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
+                  {e.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {o.estagio === 'PERDIDO' && o.motivo_perda && (
+            <div className="mt-3 text-xs bg-red-50 text-red-700 rounded-lg p-2">Perdida — {o.motivo_perda}</div>
+          )}
+          {o.estagio === 'GANHO' && (
+            <div className="mt-3 text-xs bg-emerald-50 text-emerald-700 rounded-lg p-2 flex items-center justify-between">
+              <span>🏆 Ganha em {fmtData(o.ganho_em)}</span>
+              {o.gerado_ov_ref
+                ? <button onClick={() => o.gerado_ov_id && navigate(`/expedicao/${o.gerado_ov_id}`)} className="underline flex items-center gap-1"><ExternalLink size={12} /> OV {o.gerado_ov_ref}</button>
+                : <button onClick={() => setGerarOV(true)} className="flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded"><Package size={12} /> Gerar OV</button>}
+            </div>
+          )}
+        </div>
+
+        {/* Ações rápidas */}
+        <div className="px-5 py-3 border-b flex flex-wrap gap-2">
+          <button onClick={() => setEditar(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 border rounded-lg text-gray-600 hover:bg-gray-50"><Pencil size={14} /> Editar</button>
+          {!fechada && <button onClick={() => ganhar.mutate()} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"><Trophy size={14} /> Ganhar</button>}
+          {!fechada && <button onClick={() => setPerder(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"><XCircle size={14} /> Perder</button>}
+          <button onClick={() => setNovaAtiv(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 border rounded-lg text-gray-600 hover:bg-gray-50"><CalendarPlus size={14} /> Atividade</button>
+          <button onClick={() => { if (confirm('Remover esta oportunidade?')) excluir.mutate() }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 text-gray-400 hover:text-red-600 ml-auto"><Trash2 size={14} /> Remover</button>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-0 divide-x divide-gray-100">
+          {/* Coluna esquerda: itens + atividades */}
+          <div className="p-5 space-y-4">
+            {(o.itens || []).length > 0 && (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Package size={15} /> Itens</h3>
+                <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+                  {o.itens.map((it: any, i: number) => (
+                    <div key={i} className="flex justify-between px-3 py-1.5 text-sm">
+                      <span><span className="font-mono text-gray-700">{it.codigo || '—'}</span> <span className="text-gray-500">{it.descricao}</span></span>
+                      <span className="text-gray-600 tabular-nums">{it.qtd} × {fmtBRL(it.valor_unitario)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><CalendarPlus size={15} /> Atividades</h3>
+              {(o.atividades || []).length === 0 ? (
+                <p className="text-xs text-gray-400">Nenhuma atividade agendada.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {o.atividades.map((a: any) => (
+                    <div key={a.id} className={`flex items-start gap-2 text-sm p-2 rounded-lg border ${a.concluida ? 'bg-gray-50 border-gray-100' : 'border-gray-200'}`}>
+                      <button onClick={() => concluirAtiv.mutate({ aid: a.id, c: !a.concluida })} className="mt-0.5">
+                        <CheckCircle2 size={16} className={a.concluida ? 'text-emerald-500' : 'text-gray-300 hover:text-emerald-500'} />
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className={`${a.concluida ? 'line-through text-gray-400' : 'text-gray-700'}`}>
+                          {TIPO_ATIV_MAP[a.tipo]?.icone} {a.titulo}
+                        </p>
+                        {a.data_hora && <p className={`text-[11px] ${!a.concluida ? prazoCor(a.data_hora) : 'text-gray-400'}`}>{fmtDataHora(a.data_hora)}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Coluna direita: timeline */}
+          <div className="p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><MessageSquare size={15} /> Timeline</h3>
+            <div className="flex gap-2 mb-3">
+              <input value={nota} onChange={e => setNota(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && nota.trim()) addNota.mutate() }}
+                placeholder="Escreva uma nota e Enter…" className="flex-1 border rounded-lg px-3 py-2 text-sm" />
+              <button onClick={() => nota.trim() && addNota.mutate()} disabled={!nota.trim()}
+                className="px-3 py-2 text-sm bg-blue-600 disabled:opacity-40 text-white rounded-lg">Add</button>
+            </div>
+            <div className="space-y-3">
+              {timeline.length === 0 && <p className="text-xs text-gray-400">Sem registros ainda.</p>}
+              {timeline.map((n: any) => (
+                <div key={n.id} className="flex gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${n.tipo === 'EVENTO' ? 'bg-blue-400' : 'bg-gray-300'}`} />
+                  <div className="flex-1">
+                    <p className={`text-sm ${n.tipo === 'EVENTO' ? 'text-gray-500 italic' : 'text-gray-700'}`}>{n.texto}</p>
+                    <p className="text-[11px] text-gray-400">{fmtDataHora(n.criado_em)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {editar && <ModalOportunidadeForm oportunidade={o} onClose={() => setEditar(false)} onSaved={refresh} />}
+      {perder && <ModalPerder id={id} onClose={() => setPerder(false)} onSaved={refresh} />}
+      {gerarOV && <ModalGerarOV opp={o} onClose={() => setGerarOV(false)} onSaved={refresh} />}
+      {novaAtiv && <ModalNovaAtividade oportunidadeId={id} clienteId={o.cliente_id} onClose={() => setNovaAtiv(false)} onSaved={refresh} />}
+    </ModalBase>
+  )
+}
+
+function ModalPerder({ id, onClose, onSaved }: { id: string; onClose: () => void; onSaved: () => void }) {
+  const [motivo, setMotivo] = useState('')
+  const m = useMutation({
+    mutationFn: () => api.post(`/crm/oportunidades/${id}/perder`, { motivo: motivo.trim() }),
+    onSuccess: () => { toast.success('Oportunidade marcada como perdida'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro'), { duration: 5000 }),
+  })
+  return (
+    <ModalBase titulo="Marcar como perdida" onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <p className="text-sm text-gray-500">Registrar o motivo ajuda a analisar as perdas depois.</p>
+        <Campo label="Motivo da perda *">
+          <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)} className={inputCls} placeholder="Ex: preço acima do concorrente; prazo de entrega; perdeu o pregão" autoFocus />
+        </Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => m.mutate()} disabled={motivo.trim().length < 3 || m.isPending}
+          className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-medium rounded-lg">Confirmar perda</button>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalGerarOV({ opp, onClose, onSaved }: { opp: any; onClose: () => void; onSaved: () => void }) {
+  const navigate = useNavigate()
+  const hoje = new Date().toISOString().slice(0, 10)
+  const [numero, setNumero] = useState('')
+  const [tipoFrete, setTipoFrete] = useState('FOB')
+  const [dataEntrega, setDataEntrega] = useState('')
+  const [local, setLocal] = useState('')
+  const temItens = (opp.itens || []).some((i: any) => i.produto_id && i.qtd > 0)
+
+  const m = useMutation({
+    mutationFn: () => api.post(`/crm/oportunidades/${opp.id}/gerar-ov`, {
+      numero_pedido: numero.trim(), tipo_frete: tipoFrete, data_prevista_entrega: dataEntrega || null, local_entrega: local || null,
+    }),
+    onSuccess: (res) => {
+      toast.success('OV gerada no fluxo logístico!'); onSaved(); onClose()
+      const ov = res.data?.gerado_ov_id
+      if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao gerar OV'), { duration: 6000 }),
+  })
+
+  return (
+    <ModalBase titulo="Gerar OV a partir da oportunidade" onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        {!temItens && <div className="text-xs bg-amber-50 text-amber-700 rounded-lg p-2">⚠️ A oportunidade não tem itens com produto/quantidade. Edite e adicione antes de gerar a OV.</div>}
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
+          <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Tipo de frete">
+            <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value)} className={inputCls}>
+              <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
+            </select>
+          </Campo>
+          <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        </div>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => m.mutate()} disabled={!numero.trim() || !dataEntrega || !temItens || m.isPending}
+          className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {m.isPending ? 'Gerando…' : 'Gerar OV'}
+        </button>
+      </div>
+    </ModalBase>
+  )
+}
+
+export function ModalNovaAtividade({ oportunidadeId, clienteId, onClose, onSaved }: {
+  oportunidadeId?: string; clienteId?: string; onClose: () => void; onSaved: () => void
+}) {
+  const [tipo, setTipo] = useState('LIGACAO')
+  const [titulo, setTitulo] = useState('')
+  const [dataHora, setDataHora] = useState('')
+  const [descricao, setDescricao] = useState('')
+
+  const m = useMutation({
+    mutationFn: () => api.post('/crm/atividades', {
+      oportunidade_id: oportunidadeId || null,
+      cliente_id: clienteId || null,
+      tipo, titulo: titulo.trim(),
+      data_hora: dataHora ? new Date(dataHora).toISOString() : null,
+      descricao: descricao || null,
+    }),
+    onSuccess: () => { toast.success('Atividade agendada'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao agendar'), { duration: 5000 }),
+  })
+
+  return (
+    <ModalBase titulo="Nova atividade" onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <div className="grid grid-cols-5 gap-1.5">
+          {TIPOS_ATIVIDADE.map(t => (
+            <button key={t.key} onClick={() => setTipo(t.key)}
+              className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border text-[11px] ${tipo === t.key ? 'bg-blue-50 border-blue-400 text-blue-700' : 'border-gray-200 text-gray-500'}`}>
+              <span className="text-base">{t.icone}</span> {t.label}
+            </button>
+          ))}
+        </div>
+        <Campo label="Título *"><input value={titulo} onChange={e => setTitulo(e.target.value)} className={inputCls} placeholder="Ex: Ligar para confirmar proposta" autoFocus /></Campo>
+        <Campo label="Data e hora"><input type="datetime-local" value={dataHora} onChange={e => setDataHora(e.target.value)} className={inputCls} /></Campo>
+        <Campo label="Descrição"><textarea rows={2} value={descricao} onChange={e => setDescricao(e.target.value)} className={inputCls} /></Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => m.mutate()} disabled={!titulo.trim() || m.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">Agendar</button>
+      </div>
+    </ModalBase>
+  )
+}
