@@ -21,6 +21,12 @@ const DETALHE_COLS: Record<string, { key: string; label: string; tipo?: 'bool_pr
     { key: 'data_prevista', label: 'Previsto' }, { key: 'data_real', label: 'Expedido' },
     { key: 'dias_atraso', label: 'Atraso (dias)' },
   ],
+  otif_falhas: [
+    { key: 'numero_pedido', label: 'OV' }, { key: 'cliente', label: 'Cliente' },
+    { key: 'motivo', label: 'Motivo' }, { key: 'data_prevista', label: 'Previsto' },
+    { key: 'data_real', label: 'Expedido' }, { key: 'pedido_un', label: 'Pedido (un)' },
+    { key: 'separado_un', label: 'Separado (un)' },
+  ],
   divergencias: [
     { key: 'numero_pedido', label: 'OV' }, { key: 'cliente', label: 'Cliente' },
     { key: 'data', label: 'Data' }, { key: 'descricao', label: 'Descrição' },
@@ -90,8 +96,19 @@ export function Indicadores() {
     enabled: !!drill?.metrica,
   })
 
+  const { data: financeiro } = useQuery<any>({
+    queryKey: ['financeiro-ind', dataInicio, dataFim],
+    queryFn: () => api.get('/pedidos/dashboard/financeiro', {
+      params: { data_inicio: dataInicio, data_fim: dataFim },
+    }).then((r) => r.data),
+  })
+
   const div = indicadores?.taxa_divergencia || 0
   const retr = indicadores?.taxa_retrabalho || 0
+  const fatSemFrete = financeiro?.faturamento_sem_frete || 0
+  const freteProprio = financeiro?.frete_proprio || 0
+  const fretePct = fatSemFrete > 0 ? (freteProprio / fatSemFrete) * 100 : 0
+  const brl = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   return (
     <div className="p-6 space-y-6">
@@ -112,10 +129,10 @@ export function Indicadores() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <MetaBar valor={indicadores?.otif || 0} meta={95} label="OTIF"
             onClick={() => setDrill({
-              titulo: 'OTIF', valorTexto: `${(indicadores?.otif || 0).toFixed(1)}%`,
-              fonte: 'OVs com status EXPEDIDO cuja expedição (atualizado_em) caiu no período selecionado.',
-              formula: 'OTIF = (OVs expedidas até a data prevista de entrega ÷ total de OVs expedidas) × 100.',
-              metrica: 'otif_atrasados', listaLabel: 'OVs expedidas com atraso (as que reduzem o OTIF)',
+              titulo: 'OTIF (On Time In Full)', valorTexto: `${(indicadores?.otif || 0).toFixed(1)}%`,
+              fonte: `OVs com status EXPEDIDO no período. On Time = ${(indicadores?.otif_on_time ?? 0).toFixed(1)}% · In Full = ${(indicadores?.otif_in_full ?? 0).toFixed(1)}%.`,
+              formula: 'OTIF = (OVs expedidas no prazo E completas ÷ total expedidas) × 100. On Time: expedida até a data prevista. In Full: unidades separadas ≥ unidades pedidas na OV (OVs sem itens cadastrados não são penalizadas).',
+              metrica: 'otif_falhas', listaLabel: 'OVs que furaram o OTIF (atraso e/ou incompletas)',
             })} />
           <MetaBar valor={100 - div} meta={99} label="Acuracidade da Expedição"
             onClick={() => setDrill({
@@ -124,7 +141,7 @@ export function Indicadores() {
               formula: 'Acuracidade = 100 − Taxa de Divergência. Taxa de Divergência = (ocorrências de divergência ÷ OVs expedidas) × 100.',
               metrica: 'divergencias', listaLabel: 'Ocorrências de divergência de estoque',
             })} />
-          <MetaBar valor={100 - retr} meta={99.5} label="Pedidos sem Retrabalho"
+          <MetaBar valor={100 - retr} meta={99.1} label="Pedidos sem Retrabalho"
             onClick={() => setDrill({
               titulo: 'Pedidos sem Retrabalho', valorTexto: `${(100 - retr).toFixed(1)}%`,
               fonte: 'Ocorrências marcadas como retrabalho no período vs OVs expedidas.',
@@ -138,7 +155,7 @@ export function Indicadores() {
       </div>
 
       {/* Números absolutos */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {[
           {
             label: 'Pedidos Expedidos', valor: `${indicadores?.pedidos_expedidos || 0}`, sub: 'no período', cor: 'text-blue-600',
@@ -174,6 +191,14 @@ export function Indicadores() {
               metrica: 'lead_time', listaLabel: 'Lead time por OV (maiores primeiro)',
             } as Drill,
           },
+          {
+            label: '% Frete / Venda', valor: `${fretePct.toFixed(1)}%`, sub: 'meta ≤ 1,6%', cor: fretePct <= 1.6 ? 'text-green-600' : 'text-red-600',
+            drill: {
+              titulo: '% Frete / Venda', valorTexto: `${fretePct.toFixed(1)}%`,
+              fonte: 'Frete próprio (CIF sem valor na NF — o frete que a empresa absorve, não ressarcido pelo cliente) das notas faturadas no período.',
+              formula: `% Frete/Venda = frete próprio ÷ faturamento (sem frete) × 100. No período: R$ ${brl(freteProprio)} ÷ R$ ${brl(fatSemFrete)}.`,
+            } as Drill,
+          },
         ].map((item) => (
           <button key={item.label} type="button" onClick={() => setDrill(item.drill)}
             className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 text-left hover:border-blue-300 hover:shadow transition">
@@ -202,7 +227,8 @@ export function Indicadores() {
                 { nome: 'OTIF', formula: '(Entregues no prazo e completos / Total) × 100', meta: '≥ 95%', freq: 'Diária' },
                 { nome: 'Acuracidade', formula: '(Pedidos sem divergência / Total) × 100', meta: '≥ 99%', freq: 'Diária' },
                 { nome: 'Taxa de Divergência', formula: '(Pedidos com div. / Total conferidos) × 100', meta: '≤ 1%', freq: 'Diária' },
-                { nome: 'Taxa de Retrabalho', formula: '(Pedidos com retrabalho / Total separados) × 100', meta: '≤ 0,5%', freq: 'Diária' },
+                { nome: 'Taxa de Retrabalho', formula: '(Pedidos com retrabalho / Total separados) × 100', meta: '≤ 0,9%', freq: 'Diária' },
+                { nome: '% Frete / Venda', formula: '(Frete próprio / Faturamento sem frete) × 100', meta: '≤ 1,6%', freq: 'Mensal' },
                 { nome: 'Aderência ao Cut-off', formula: '(Faturados antes do cut-off / Total a faturar) × 100', meta: '≥ 90%', freq: 'Diária' },
                 { nome: 'Lead Time Separação', formula: 'Hora fim separação − Hora início separação', meta: '≤ 4h', freq: 'Por pedido' },
                 { nome: 'Backlog', formula: 'Pedidos ativos ≠ EXPEDIDO ou CANCELADO', meta: 'Tendência ↓', freq: 'Tempo real' },

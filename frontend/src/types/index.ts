@@ -187,6 +187,8 @@ export interface DashboardOperacional {
 
 export interface Indicadores {
   otif: number
+  otif_on_time?: number
+  otif_in_full?: number
   taxa_divergencia: number
   taxa_retrabalho: number
   lead_time_medio_horas: number

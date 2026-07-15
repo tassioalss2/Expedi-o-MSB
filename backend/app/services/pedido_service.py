@@ -906,12 +906,37 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
         .execute().data
 
-    # OTIF: OVs expedidas até a data prevista de entrega
-    no_prazo = sum(
-        1 for p in expedidos
-        if p.get("atualizado_em") and p["atualizado_em"][:10] <= p["data_prevista_entrega"]
-    )
-    otif = round(no_prazo / len(expedidos) * 100, 2) if expedidos else None
+    # OTIF = On Time In Full.
+    #  - On Time: expedida até a data prevista de entrega.
+    #  - In Full: unidades separadas (inventário) >= unidades pedidas (itens da OV).
+    #    OVs sem itens cadastrados na criação entram como "in full" (não há dado que
+    #    prove falta) — a medida fica mais precisa conforme os itens são preenchidos.
+    exp_ids = [p["id"] for p in expedidos]
+    pedidas: dict = {}
+    separadas: dict = {}
+    for i in range(0, len(exp_ids), 80):
+        lote = exp_ids[i:i + 80]
+        if not lote:
+            continue
+        for it in db.table("itens_pedido").select("pedido_id, qtd_solicitada").in_("pedido_id", lote).execute().data:
+            pedidas[it["pedido_id"]] = pedidas.get(it["pedido_id"], 0.0) + float(it.get("qtd_solicitada") or 0)
+        for it in db.table("inventario_itens").select("pedido_id, qtd_venda").in_("pedido_id", lote).execute().data:
+            separadas[it["pedido_id"]] = separadas.get(it["pedido_id"], 0.0) + float(it.get("qtd_venda") or 0)
+
+    def _on_time(p):
+        return bool(p.get("atualizado_em") and p["atualizado_em"][:10] <= p["data_prevista_entrega"])
+
+    def _in_full(p):
+        ped = pedidas.get(p["id"])
+        if not ped:
+            return True
+        return separadas.get(p["id"], 0.0) >= ped - 0.001
+
+    n_exp = len(expedidos)
+    otif_n = sum(1 for p in expedidos if _on_time(p) and _in_full(p))
+    otif = round(otif_n / n_exp * 100, 2) if n_exp else None
+    otif_on_time = round(sum(1 for p in expedidos if _on_time(p)) / n_exp * 100, 2) if n_exp else None
+    otif_in_full = round(sum(1 for p in expedidos if _in_full(p)) / n_exp * 100, 2) if n_exp else None
 
     # Taxa de divergência: ocorrências de estoque / total expedido
     ocorrencias_div = db.table("ocorrencias").select("id")\
@@ -978,6 +1003,8 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
 
     return {
         "otif": otif,
+        "otif_on_time": otif_on_time,
+        "otif_in_full": otif_in_full,
         "taxa_divergencia": taxa_div if taxa_div is not None else 0,
         "taxa_retrabalho": taxa_retrab if taxa_retrab is not None else 0,
         "lead_time_medio_horas": lead_time,
@@ -1021,6 +1048,47 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
                     "dias_atraso": dias,
                 })
         return sorted(result, key=lambda x: x["dias_atraso"], reverse=True)
+
+    elif metrica == "otif_falhas":
+        expedidos = db.table("pedidos").select(
+            "id,numero_pedido,data_prevista_entrega,atualizado_em,clientes(nome)"
+        ).eq("status", StatusPedido.EXPEDIDO.value)\
+         .gte("atualizado_em", f"{data_inicio.isoformat()}T00:00:00")\
+         .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
+         .execute().data
+        exp_ids = [p["id"] for p in expedidos]
+        pedidas: dict = {}
+        separadas: dict = {}
+        for i in range(0, len(exp_ids), 80):
+            lote = exp_ids[i:i + 80]
+            if not lote:
+                continue
+            for it in db.table("itens_pedido").select("pedido_id, qtd_solicitada").in_("pedido_id", lote).execute().data:
+                pedidas[it["pedido_id"]] = pedidas.get(it["pedido_id"], 0.0) + float(it.get("qtd_solicitada") or 0)
+            for it in db.table("inventario_itens").select("pedido_id, qtd_venda").in_("pedido_id", lote).execute().data:
+                separadas[it["pedido_id"]] = separadas.get(it["pedido_id"], 0.0) + float(it.get("qtd_venda") or 0)
+        result = []
+        for p in expedidos:
+            data_exp = (p.get("atualizado_em") or "")[:10]
+            data_prev = p.get("data_prevista_entrega") or ""
+            on_time = bool(data_exp and data_prev and data_exp <= data_prev)
+            ped = pedidas.get(p["id"])
+            sep = separadas.get(p["id"], 0.0)
+            in_full = True if not ped else sep >= ped - 0.001
+            if on_time and in_full:
+                continue
+            motivo = "Atrasado + Incompleto" if (not on_time and not in_full) else ("Atrasado" if not on_time else "Incompleto")
+            result.append({
+                "numero_pedido": p["numero_pedido"],
+                "cliente": (p.get("clientes") or {}).get("nome", "—"),
+                "motivo": motivo,
+                "data_prevista": data_prev,
+                "data_real": data_exp,
+                "pedido_un": round(ped) if ped else "—",
+                "separado_un": round(sep) if ped else "—",
+            })
+        ordem = {"Atrasado + Incompleto": 0, "Incompleto": 1, "Atrasado": 2}
+        return sorted(result, key=lambda x: ordem.get(x["motivo"], 9))
 
     elif metrica == "divergencias":
         rows = db.table("ocorrencias").select(
