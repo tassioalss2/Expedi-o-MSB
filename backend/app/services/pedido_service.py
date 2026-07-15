@@ -376,8 +376,26 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     return pedido
 
 
-def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut) -> dict:
-    """Reativa uma OV cancelada: volta para LIBERADO e registra ocorrência auditável."""
+# Campos da OV que podem ser editados no momento da reativação
+_CAMPOS_EDITAVEIS_REATIVAR = {
+    "numero_pedido", "cliente_id", "transportadora_id", "tipo_frete", "valor_frete",
+    "tipo_operacao", "canal", "local_entrega", "data_prevista_entrega",
+    "data_prevista_coleta", "prioridade", "observacoes",
+}
+
+_CAMPOS_LABEL_REATIVAR = {
+    "numero_pedido": "Nº da OV", "cliente_id": "Cliente", "transportadora_id": "Transportadora",
+    "tipo_frete": "Tipo de frete", "valor_frete": "Valor do frete", "tipo_operacao": "Tipo de operação",
+    "canal": "Canal de venda", "local_entrega": "Local de entrega", "data_prevista_entrega": "Data prevista de entrega",
+    "data_prevista_coleta": "Data prevista de coleta", "prioridade": "Prioridade", "observacoes": "Observações",
+}
+
+
+def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut, dados: Optional[dict] = None) -> dict:
+    """Reativa uma OV cancelada: volta para LIBERADO e registra ocorrência auditável.
+
+    `dados` (opcional) permite editar campos da OV na mesma ação (data, cliente, canal, etc.).
+    """
     db = get_service_db()
     pedido = obter_pedido(pedido_id)
 
@@ -391,18 +409,45 @@ def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut) -> dict:
     agora = _agora()
     motivo = motivo.strip()
 
-    db.table("pedidos").update({
-        "status": StatusPedido.LIBERADO.value,
-        "atualizado_em": agora,
-    }).eq("id", pedido_id).execute()
+    # Monta as alterações de campos (apenas os que realmente mudaram)
+    update: dict = {"status": StatusPedido.LIBERADO.value, "atualizado_em": agora}
+    alteracoes: list[str] = []
+    if dados:
+        campos = {k: v for k, v in dados.items() if k in _CAMPOS_EDITAVEIS_REATIVAR}
+
+        novo_numero = campos.get("numero_pedido")
+        if novo_numero:
+            novo_numero = str(novo_numero).strip().upper()
+            if novo_numero != pedido.get("numero_pedido"):
+                conflito = db.table("pedidos").select("id").eq("numero_pedido", novo_numero)\
+                    .neq("status", StatusPedido.CANCELADO.value).neq("id", pedido_id).execute().data
+                if conflito:
+                    raise HTTPException(status_code=409, detail=f"Já existe uma OV ativa com o número '{novo_numero}'.")
+            campos["numero_pedido"] = novo_numero
+
+        for campo, valor in campos.items():
+            atual = pedido.get(campo)
+            if valor == "":
+                valor = None
+            if valor != atual:
+                update[campo] = valor
+                de = atual if atual not in (None, "") else "—"
+                para = valor if valor not in (None, "") else "—"
+                alteracoes.append(f"{_CAMPOS_LABEL_REATIVAR.get(campo, campo)}: {de} → {para}")
+
+    db.table("pedidos").update(update).eq("id", pedido_id).execute()
+
+    desc = (
+        f"OV {update.get('numero_pedido', pedido['numero_pedido'])} reativada "
+        f"(voltou de CANCELADO para LIBERADO).\nMotivo: {motivo}"
+    )
+    if alteracoes:
+        desc += "\n\nAlterações aplicadas na reativação:\n- " + "\n- ".join(alteracoes)
 
     db.table("ocorrencias").insert({
         "pedido_id":      pedido_id,
         "tipo":           "OV Reativada após Cancelamento",
-        "descricao": (
-            f"OV {pedido['numero_pedido']} reativada (voltou de CANCELADO para LIBERADO).\n"
-            f"Motivo: {motivo}"
-        ),
+        "descricao":      desc,
         "responsavel_id": uid,
         "status":         "FECHADA",
         "resolucao":      motivo,

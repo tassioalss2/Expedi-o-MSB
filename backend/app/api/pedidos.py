@@ -102,6 +102,7 @@ def alterar_status(
 
 class ReativarRequest(BaseModel):
     motivo: str
+    dados: Optional[dict] = None
 
 
 @router.post("/{pedido_id}/reativar")
@@ -110,7 +111,7 @@ def reativar_pedido(
     payload: ReativarRequest,
     usuario: UsuarioOut = Depends(get_current_user),
 ):
-    return pedido_service.reativar_pedido(str(pedido_id), payload.motivo, usuario)
+    return pedido_service.reativar_pedido(str(pedido_id), payload.motivo, usuario, payload.dados)
 
 
 class RetornarEtapaRequest(BaseModel):

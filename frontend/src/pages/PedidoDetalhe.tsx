@@ -5,7 +5,8 @@ import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText,
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
-import type { InventarioItem, Pedido, Cubagem } from '../types'
+import type { InventarioItem, Pedido, Cubagem, Transportadora } from '../types'
+import { ClienteAutocomplete } from './NovoPedido'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL } from '../lib/statusConfig'
@@ -1016,36 +1017,74 @@ function ModalCancelarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
 function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [motivo, setMotivo] = useState('')
+  const [editar, setEditar] = useState(false)
+
+  const [form, setForm] = useState({
+    numero_pedido: pedido.numero_pedido || '',
+    cliente_id: pedido.cliente_id || '',
+    cliente_nome: pedido.cliente?.nome || pedido.cliente_nome || '',
+    transportadora_id: pedido.transportadora_id || '',
+    tipo_frete: (pedido.tipo_frete || 'FOB') as string,
+    tipo_operacao: pedido.tipo_operacao || '',
+    canal: pedido.canal || '',
+    prioridade: (pedido.prioridade || 'NORMAL') as string,
+    data_prevista_entrega: pedido.data_prevista_entrega || '',
+    local_entrega: pedido.local_entrega || '',
+    observacoes: pedido.observacoes || '',
+  })
+
+  const { data: transportadoras = [] } = useQuery<Transportadora[]>({
+    queryKey: ['transportadoras'],
+    queryFn: () => api.get('/transportadoras').then(r => r.data),
+    enabled: editar,
+  })
 
   const mutation = useMutation({
-    mutationFn: () => api.post(`/pedidos/${pedido.id}/reativar`, { motivo: motivo.trim() }),
+    mutationFn: () => {
+      const dados = editar
+        ? {
+            numero_pedido: form.numero_pedido,
+            cliente_id: form.cliente_id,
+            transportadora_id: form.transportadora_id || null,
+            tipo_frete: form.tipo_frete,
+            tipo_operacao: form.tipo_operacao,
+            canal: form.canal || null,
+            prioridade: form.prioridade,
+            data_prevista_entrega: form.data_prevista_entrega,
+            local_entrega: form.local_entrega,
+            observacoes: form.observacoes,
+          }
+        : undefined
+      return api.post(`/pedidos/${pedido.id}/reativar`, { motivo: motivo.trim(), dados })
+    },
     onSuccess: () => {
-      toast.success('OV reativada — voltou para "OV Recebida" e a ocorrência foi registrada.')
+      toast.success('OV reativada — voltou para o início do fluxo e a ocorrência foi registrada.')
       qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       qc.invalidateQueries({ queryKey: ['ocorrencias'] })
       qc.invalidateQueries({ queryKey: ['movimentacoes', pedido.id] })
       onClose()
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao reativar OV'),
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : 'Erro ao reativar OV')
+    },
   })
+
+  const dadosOk = !editar || (!!form.numero_pedido.trim() && !!form.cliente_id
+    && !!form.data_prevista_entrega && !!form.tipo_operacao)
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
-        <div className="p-5 border-b bg-blue-50 rounded-t-2xl">
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b bg-blue-50 rounded-t-2xl sticky top-0">
           <h2 className="text-lg font-bold text-blue-700">↩️ Reativar OV — {pedido.numero_pedido}</h2>
           <p className="text-sm text-blue-600 mt-0.5">A OV cancelada voltará para o início do fluxo (OV Recebida).</p>
         </div>
         <div className="p-5 space-y-4">
-          <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
-            <p><span className="text-gray-500">Cliente:</span> <strong>{pedido.cliente?.nome || pedido.cliente_nome}</strong></p>
-            <p><span className="text-gray-500">Status atual:</span> <strong>Cancelado</strong></p>
-          </div>
-
           <div>
             <label className="text-sm font-medium text-gray-700">Motivo da reativação *</label>
-            <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)}
+            <textarea rows={2} value={motivo} onChange={e => setMotivo(e.target.value)}
               className="w-full border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
               placeholder="Ex: cancelamento indevido — vendas confirmou que o pedido segue" autoFocus />
             {motivo.trim().length > 0 && motivo.trim().length < 5 && (
@@ -1053,15 +1092,123 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
             )}
           </div>
 
+          {/* Toggle: editar dados da OV */}
+          <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors ${
+            editar ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'
+          }`}>
+            <input type="checkbox" checked={editar} onChange={e => setEditar(e.target.checked)}
+              className="mt-0.5 w-4 h-4 accent-blue-600 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-gray-800">✏️ Alterar dados da OV ao reativar</p>
+              <p className="text-xs text-gray-500 mt-0.5">Marque para corrigir data, cliente, canal e demais informações antes de reativar.</p>
+            </div>
+          </label>
+
+          {editar && (
+            <div className="grid grid-cols-2 gap-3 border-t pt-4">
+              <div className="col-span-2">
+                <label className="text-xs font-medium text-gray-600">Número da OV *</label>
+                <input type="text" value={form.numero_pedido}
+                  onChange={e => setForm({ ...form, numero_pedido: e.target.value.toUpperCase() })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1 font-mono" />
+              </div>
+
+              <div className="col-span-2">
+                <label className="text-xs font-medium text-gray-600">Cliente *</label>
+                <ClienteAutocomplete value={form.cliente_id}
+                  onChange={(id, nome) => setForm({ ...form, cliente_id: id, cliente_nome: nome })} />
+                <p className="text-xs text-gray-500 mt-1">
+                  Atual: <strong>{form.cliente_nome || '—'}</strong>
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tipo de Frete</label>
+                <select value={form.tipo_frete} onChange={e => setForm({ ...form, tipo_frete: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
+                  <option value="FOB">FOB</option>
+                  <option value="CIF_COM_VALOR">CIF com Valor NF</option>
+                  <option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-600">Prioridade</label>
+                <select value={form.prioridade} onChange={e => setForm({ ...form, prioridade: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
+                  <option value="NORMAL">Normal</option>
+                  <option value="ALTA">Alta</option>
+                  <option value="CRITICA">🔴 Crítica</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-600">Tipo de Operação *</label>
+                <select value={form.tipo_operacao} onChange={e => setForm({ ...form, tipo_operacao: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
+                  <option value="" disabled>Selecione…</option>
+                  <option value="VENDA_NORMAL">Venda normal</option>
+                  <option value="COMUNICADO_USO">Comunicado de uso</option>
+                  <option value="BONIFICACAO_DOACAO">Bonificação/Doação</option>
+                  <option value="AMOSTRA">Amostra</option>
+                  <option value="CONSIGNADO">Consignado</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-600">Canal de Venda</label>
+                <select value={form.canal} onChange={e => setForm({ ...form, canal: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
+                  <option value="">—</option>
+                  <option value="URO">Uro</option>
+                  <option value="VASCULAR">Vascular</option>
+                  <option value="REALCLOSURE">Realclosure</option>
+                  <option value="LICITACAO_URO">Licitação - Uro</option>
+                  <option value="LICITACAO_VASCULAR">Licitação - Vascular</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-600">Data Prevista de Entrega *</label>
+                <input type="date" value={form.data_prevista_entrega}
+                  onChange={e => setForm({ ...form, data_prevista_entrega: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+              </div>
+
+              <div>
+                <label className="text-xs font-medium text-gray-600">Transportadora</label>
+                <select value={form.transportadora_id} onChange={e => setForm({ ...form, transportadora_id: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
+                  <option value="">A definir...</option>
+                  {transportadoras.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                </select>
+              </div>
+
+              <div className="col-span-2">
+                <label className="text-xs font-medium text-gray-600">Local de Entrega</label>
+                <input type="text" value={form.local_entrega}
+                  onChange={e => setForm({ ...form, local_entrega: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1" placeholder="Ex: São Paulo SP" />
+              </div>
+
+              <div className="col-span-2">
+                <label className="text-xs font-medium text-gray-600">Observações</label>
+                <textarea rows={2} value={form.observacoes}
+                  onChange={e => setForm({ ...form, observacoes: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+              </div>
+            </div>
+          )}
+
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-600">
-            📋 Uma <strong>ocorrência</strong> será registrada com o motivo, e a movimentação (Cancelado → OV Recebida) fica no histórico.
+            📋 Uma <strong>ocorrência</strong> será registrada com o motivo{editar ? ' e todas as alterações aplicadas' : ''}, e a movimentação (Cancelado → OV Recebida) fica no histórico.
           </div>
         </div>
-        <div className="p-5 border-t flex gap-2 justify-end">
+        <div className="p-5 border-t flex gap-2 justify-end sticky bottom-0 bg-white">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Voltar</button>
           <button
             onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || motivo.trim().length < 5}
+            disabled={mutation.isPending || motivo.trim().length < 5 || !dadosOk}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-700"
           >
             {mutation.isPending ? 'Reativando...' : 'Confirmar Reativação'}
