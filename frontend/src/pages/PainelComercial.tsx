@@ -100,6 +100,15 @@ export function PainelComercial() {
   }
   const ritmoTotal = ritmoMeta(realizado, metaValor)
 
+  // Projeção de fechamento: extrapola o realizado pelo ritmo de dias úteis.
+  // Só faz sentido no mês corrente e em andamento (0 < fração < 1).
+  const projecao = ehMesAtual && fracaoTempo > 0 && fracaoTempo < 1 ? realizado / fracaoTempo : null
+  const projPct = projecao != null && metaValor && metaValor > 0 ? (projecao / metaValor) * 100 : null
+  const projCor = projPct == null ? 'text-gray-600'
+    : projPct >= 100 ? 'text-emerald-600'
+    : projPct >= 80 ? 'text-emerald-500'
+    : projPct >= 60 ? 'text-amber-600' : 'text-orange-500'
+
   // Vendas por cliente (fase 2)
   const { data: vendasCliente = [] } = useQuery<Array<{ cliente: string; qtd: number; valor: number }>>({
     queryKey: ['vendas-por-cliente', inicioFinanceiro, fimFinanceiro],
@@ -258,6 +267,20 @@ export function PainelComercial() {
               <p className="text-[11px] text-gray-400 mt-1">
                 Esperado até hoje: {fmtR$(ritmoTotal.esperado)} · {uteisPassados} de {totalUteis} dias úteis
               </p>
+            )}
+            {projecao != null && (
+              <div className="mt-3 pt-3 border-t border-gray-100 flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] text-gray-400 uppercase tracking-wide">Projeção de fechamento</p>
+                  <p className={`text-lg font-bold ${projCor}`}>
+                    {fmtR$(projecao)}
+                    {projPct != null && <span className="text-xs font-medium ml-1.5">({projPct.toFixed(0)}% da meta)</span>}
+                  </p>
+                </div>
+                <p className="text-[11px] text-gray-400 text-right max-w-[48%] mt-0.5">
+                  Estimativa pelo ritmo atual — proporcional aos dias úteis já decorridos.
+                </p>
+              </div>
             )}
           </>
         )}
