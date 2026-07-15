@@ -2,6 +2,7 @@
 Serviços para Inventário Contínuo, Cubagem e Pallets
 """
 from datetime import datetime, timezone
+from typing import Optional
 from uuid import UUID
 import uuid as uuid_module
 
