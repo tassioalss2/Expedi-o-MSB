@@ -3,8 +3,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from app.core.deps import get_current_user
-from app.models.schemas import ConsumoEmpenhoCreate, EmpenhoCreate, UsuarioOut
-from app.services import licitacao_service
+from app.models.schemas import (
+    ConsumoEmpenhoCreate,
+    DemandaConcluir,
+    DemandaCreate,
+    DemandaUpdate,
+    EmpenhoCreate,
+    UsuarioOut,
+)
+from app.services import licitacao_demanda_service, licitacao_service
 
 router = APIRouter(prefix="/licitacoes", tags=["licitacoes"])
 
@@ -36,3 +43,39 @@ def registrar_consumo(
 @router.delete("/empenhos/{empenho_id}")
 def excluir_empenho(empenho_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_service.excluir_empenho(str(empenho_id))
+
+
+# ── Painel de demandas (triagem Kanban) ─────────────────────────────────────────
+
+@router.get("/demandas")
+def listar_demandas(_: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.listar_demandas()
+
+
+@router.post("/demandas", status_code=201)
+def criar_demanda(payload: DemandaCreate, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.criar_demanda(payload)
+
+
+@router.get("/demandas/{demanda_id}")
+def obter_demanda(demanda_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.obter_demanda(str(demanda_id))
+
+
+@router.patch("/demandas/{demanda_id}")
+def atualizar_demanda(demanda_id: UUID, payload: DemandaUpdate, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.atualizar_demanda(str(demanda_id), payload)
+
+
+@router.post("/demandas/{demanda_id}/concluir")
+def concluir_demanda(
+    demanda_id: UUID,
+    payload: DemandaConcluir,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    return licitacao_demanda_service.concluir_demanda(str(demanda_id), payload, usuario)
+
+
+@router.delete("/demandas/{demanda_id}")
+def excluir_demanda(demanda_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.excluir_demanda(str(demanda_id))

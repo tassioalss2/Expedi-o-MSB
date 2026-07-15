@@ -251,6 +251,63 @@ class ConsumoEmpenhoCreate(BaseModel):
         return v.strip() if v else v
 
 
+# ── Painel de Demandas de Licitação ─────────────────────────────────────────────
+class DemandaItem(BaseModel):
+    """Item preliminar capturado no e-mail (opcional na triagem)."""
+    produto_id: Optional[UUID] = None
+    codigo: Optional[str] = None
+    descricao: Optional[str] = None
+    qtd: float = 0
+    valor: float = 0
+
+
+class DemandaCreate(BaseModel):
+    tipo_operacao: str            # VENDA_DIRETA | CONSIGNACAO | COMUNICADO_USO
+    numero: Optional[str] = None
+    cliente_id: UUID
+    canal: Optional[str] = None
+    prazo: Optional[date] = None
+    prioridade: str = "NORMAL"
+    observacao: Optional[str] = None
+    itens: list[DemandaItem] = []
+
+
+class DemandaUpdate(BaseModel):
+    tipo_operacao: Optional[str] = None
+    etapa: Optional[str] = None
+    numero: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    prazo: Optional[date] = None
+    prioridade: Optional[str] = None
+    observacao: Optional[str] = None
+    responsavel_id: Optional[UUID] = None
+    itens: Optional[list[DemandaItem]] = None
+
+
+class DemandaConcluir(BaseModel):
+    """Dados para gerar o artefato ao concluir a demanda.
+
+    Os campos usados dependem do tipo de operação da demanda:
+    - VENDA_DIRETA → cria OV (numero_pedido, tipo_frete, data_prevista_entrega, itens)
+    - CONSIGNACAO → cria empenho (numero, vigencia, data_empenho, itens com valor)
+    - COMUNICADO_USO → registra comunicado (numero_pedido, numero_nf, valor_nf; empenho_id opcional)
+    """
+    numero: Optional[str] = None
+    numero_pedido: Optional[str] = None
+    tipo_frete: Optional[str] = None
+    data_prevista_entrega: Optional[date] = None
+    local_entrega: Optional[str] = None
+    vigencia: Optional[date] = None
+    data_empenho: Optional[date] = None
+    numero_nf: Optional[str] = None
+    valor_nf: Optional[float] = None
+    data_faturamento: Optional[date] = None
+    empenho_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    itens: list[DemandaItem] = []
+
+
 class MetaFaturamentoRequest(BaseModel):
     competencia: str  # 'YYYY-MM'
     canal: str        # URO | VASCULAR | REALCLOSURE | LICITACAO
