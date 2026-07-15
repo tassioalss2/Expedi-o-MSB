@@ -1201,7 +1201,11 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
           )}
 
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-600">
-            📋 Uma <strong>ocorrência</strong> será registrada com o motivo{editar ? ' e todas as alterações aplicadas' : ''}, e a movimentação (Cancelado → OV Recebida) fica no histórico.
+            {(editar ? form.tipo_operacao : pedido.tipo_operacao) === 'COMUNICADO_USO' ? (
+              <>📋 Como é um <strong>Comunicado de Uso</strong>, a OV volta direto para <strong>Faturado</strong> (sem passar pelo processo logístico). Uma ocorrência será registrada{editar ? ' com as alterações aplicadas' : ''}.</>
+            ) : (
+              <>📋 Uma <strong>ocorrência</strong> será registrada com o motivo{editar ? ' e todas as alterações aplicadas' : ''}, e a movimentação (Cancelado → OV Recebida) fica no histórico.</>
+            )}
           </div>
         </div>
         <div className="p-5 border-t flex gap-2 justify-end sticky bottom-0 bg-white">

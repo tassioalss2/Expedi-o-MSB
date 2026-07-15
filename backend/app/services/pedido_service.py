@@ -410,7 +410,7 @@ def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut, dados: Opt
     motivo = motivo.strip()
 
     # Monta as alterações de campos (apenas os que realmente mudaram)
-    update: dict = {"status": StatusPedido.LIBERADO.value, "atualizado_em": agora}
+    update: dict = {"atualizado_em": agora}
     alteracoes: list[str] = []
     if dados:
         campos = {k: v for k, v in dados.items() if k in _CAMPOS_EDITAVEIS_REATIVAR}
@@ -435,11 +435,18 @@ def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut, dados: Opt
                 para = valor if valor not in (None, "") else "—"
                 alteracoes.append(f"{_CAMPOS_LABEL_REATIVAR.get(campo, campo)}: {de} → {para}")
 
+    # Comunicado de uso não tem processo logístico — volta direto a FATURADO.
+    tipo_op_final = update.get("tipo_operacao", pedido.get("tipo_operacao"))
+    eh_comunicado = tipo_op_final == "COMUNICADO_USO"
+    destino = StatusPedido.FATURADO.value if eh_comunicado else StatusPedido.LIBERADO.value
+    destino_label = "FATURADO (sem processo logístico)" if eh_comunicado else "OV Recebida"
+    update["status"] = destino
+
     db.table("pedidos").update(update).eq("id", pedido_id).execute()
 
     desc = (
         f"OV {update.get('numero_pedido', pedido['numero_pedido'])} reativada "
-        f"(voltou de CANCELADO para LIBERADO).\nMotivo: {motivo}"
+        f"(voltou de CANCELADO para {destino_label}).\nMotivo: {motivo}"
     )
     if alteracoes:
         desc += "\n\nAlterações aplicadas na reativação:\n- " + "\n- ".join(alteracoes)
@@ -457,7 +464,7 @@ def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut, dados: Opt
     }).execute()
 
     _registrar_movimentacao(
-        pedido_id, "CANCELADO", StatusPedido.LIBERADO.value, uid,
+        pedido_id, "CANCELADO", destino, uid,
         f"OV reativada após cancelamento. Motivo: {motivo}"
     )
 
