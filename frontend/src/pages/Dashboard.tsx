@@ -294,6 +294,14 @@ export function Dashboard() {
     refetchInterval: 120000,
   })
 
+  const { data: gargalo } = useQuery<{ etapas: any[]; gargalo: string | null }>({
+    queryKey: ['gargalo-etapas', inicioEsforco, fimEsforco],
+    queryFn: () => api.get('/pedidos/dashboard/gargalo-etapas', {
+      params: { data_inicio: inicioEsforco, data_fim: fimEsforco },
+    }).then(r => r.data),
+    refetchInterval: 120000,
+  })
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -688,6 +696,49 @@ export function Dashboard() {
           </div>
           </div>
         </div>
+        )
+      })()}
+
+      {/* Tempo médio por etapa (gargalo) */}
+      {gargalo && gargalo.etapas.some((e: any) => e.media_horas != null) && (() => {
+        const fmtDur = (h: number | null) => {
+          if (h == null) return '—'
+          if (h < 1) return `${Math.round(h * 60)}min`
+          if (h < 24) { const H = Math.floor(h), m = Math.round((h - H) * 60); return m ? `${H}h ${m}min` : `${H}h` }
+          const d = Math.floor(h / 24), rh = Math.round(h % 24); return rh ? `${d}d ${rh}h` : `${d}d`
+        }
+        const maxH = Math.max(...gargalo.etapas.map((e: any) => e.media_horas || 0), 0.1)
+        return (
+          <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-gray-700">Tempo Médio por Etapa</h3>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Onde as OVs mais esperam · {format(mesEsforco, "MMMM 'de' yyyy", { locale: ptBR })} · a etapa mais longa é o gargalo
+              </p>
+            </div>
+            <div className="space-y-3">
+              {gargalo.etapas.map((e: any) => {
+                const isGargalo = e.etapa === gargalo.gargalo
+                const pct = e.media_horas != null ? Math.max((e.media_horas / maxH) * 100, 2) : 0
+                return (
+                  <div key={e.etapa}>
+                    <div className="flex justify-between items-baseline mb-1.5">
+                      <span className={`text-sm ${isGargalo ? 'font-semibold text-orange-600' : 'text-gray-700'}`}>
+                        {e.etapa}{isGargalo ? ' · gargalo 🚩' : ''}
+                      </span>
+                      <span className={`text-sm font-medium ${isGargalo ? 'text-orange-600' : 'text-gray-600'}`}>
+                        {fmtDur(e.media_horas)} <span className="text-xs text-gray-400">({e.n_ovs} OVs)</span>
+                      </span>
+                    </div>
+                    <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                      <div className="h-full rounded-full transition-all duration-500"
+                        style={{ width: `${pct}%`, background: isGargalo ? '#F97316' : '#6366F1' }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         )
       })()}
 

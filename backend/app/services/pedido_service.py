@@ -1259,3 +1259,75 @@ def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[da
         ],
         "por_dia": dias_ordenados,
     }
+
+
+def obter_gargalo_etapas(data_inicio: Optional[date] = None, data_fim: Optional[date] = None) -> dict:
+    """Tempo médio que as OVs passam em cada etapa do fluxo (identifica o gargalo).
+
+    Baseado nas movimentações: para cada OV, mede o intervalo entre atingir uma
+    etapa e a seguinte, e tira a média por etapa sobre as OVs do período.
+    """
+    db = get_service_db()
+    hoje = date.today()
+    inicio = data_inicio or date(hoje.year, hoje.month, 1)
+    fim = data_fim or hoje
+
+    pedidos = db.table("pedidos").select("id, criado_em").neq("status", "CANCELADO")\
+        .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
+        .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute().data
+    ids = [p["id"] for p in pedidos]
+    criado_map = {p["id"]: p.get("criado_em") for p in pedidos}
+
+    movs_by_ped: dict = {}
+    for i in range(0, len(ids), 80):
+        lote = ids[i:i + 80]
+        if not lote:
+            continue
+        rows = db.table("movimentacoes").select("pedido_id, status_novo, criado_em")\
+            .in_("pedido_id", lote).order("criado_em").execute().data
+        for m in rows:
+            movs_by_ped.setdefault(m["pedido_id"], []).append(m)
+
+    def _p(ts):
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+        except Exception:
+            return None
+
+    TRANSICOES = [
+        ("LIBERADO", "EM_INVENTARIO", "OV Recebida → Inventário"),
+        ("EM_INVENTARIO", "AGUARD_VERIFICACAO", "Inventário → Verificação"),
+        ("AGUARD_VERIFICACAO", "EM_PROCESSO_SISTEMICO", "Verificação → D365"),
+        ("EM_PROCESSO_SISTEMICO", "AGUARD_FATURAMENTO", "D365 → Faturamento"),
+        ("AGUARD_FATURAMENTO", "FATURADO", "Faturamento → Pallet"),
+        ("FATURADO", "EXPEDIDO", "Pallet → Expedido"),
+    ]
+    acc = {t[2]: {"soma": 0.0, "n": 0} for t in TRANSICOES}
+
+    for pid in ids:
+        primeiro: dict = {}
+        for m in movs_by_ped.get(pid, []):
+            s = m.get("status_novo")
+            if s and s not in primeiro:
+                primeiro[s] = m.get("criado_em")
+        if "LIBERADO" not in primeiro and criado_map.get(pid):
+            primeiro["LIBERADO"] = criado_map[pid]
+        for a, b, label in TRANSICOES:
+            ta, tb = _p(primeiro.get(a)), _p(primeiro.get(b))
+            if ta and tb:
+                h = (tb - ta).total_seconds() / 3600
+                if h >= 0:
+                    acc[label]["soma"] += h
+                    acc[label]["n"] += 1
+
+    etapas = []
+    for a, b, label in TRANSICOES:
+        n = acc[label]["n"]
+        etapas.append({
+            "etapa": label,
+            "media_horas": round(acc[label]["soma"] / n, 1) if n else None,
+            "n_ovs": n,
+        })
+    validos = [e for e in etapas if e["media_horas"] is not None]
+    gargalo = max(validos, key=lambda e: e["media_horas"])["etapa"] if validos else None
+    return {"etapas": etapas, "gargalo": gargalo}

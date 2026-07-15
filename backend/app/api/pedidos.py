@@ -928,6 +928,15 @@ def esforco_time(
     return pedido_service.obter_esforco_time(data_inicio, data_fim)
 
 
+@router.get("/dashboard/gargalo-etapas")
+def gargalo_etapas(
+    data_inicio: Optional[date] = Query(None),
+    data_fim: Optional[date] = Query(None),
+    _: UsuarioOut = Depends(get_current_user),
+):
+    return pedido_service.obter_gargalo_etapas(data_inicio, data_fim)
+
+
 @router.get("/dashboard/indicadores/detalhes")
 def indicadores_detalhes(
     metrica: str = Query(...),
