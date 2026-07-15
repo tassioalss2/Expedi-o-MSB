@@ -1,0 +1,188 @@
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, FileText, Printer, Trash2, Send, CheckCircle2, XCircle } from 'lucide-react'
+import toast from 'react-hot-toast'
+import api from '../../lib/api'
+import { ClienteAutocomplete } from '../NovoPedido'
+import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
+import { CANAL_LABEL } from '../../lib/statusConfig'
+import { fmtBRL, fmtData, msgErro } from '../../lib/crm'
+import { ModalBase, Campo, inputCls } from './CrmShared'
+
+const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE', 'LICITACAO_URO', 'LICITACAO_VASCULAR']
+const STATUS: Record<string, { label: string; cor: string }> = {
+  RASCUNHO: { label: 'Rascunho', cor: 'bg-gray-100 text-gray-600' },
+  ENVIADA: { label: 'Enviada', cor: 'bg-blue-100 text-blue-700' },
+  ACEITA: { label: 'Aceita', cor: 'bg-emerald-100 text-emerald-700' },
+  RECUSADA: { label: 'Recusada', cor: 'bg-red-100 text-red-700' },
+}
+
+export function CrmCotacoes() {
+  const qc = useQueryClient()
+  const [modal, setModal] = useState<any | 'novo' | null>(null)
+
+  const { data: cotacoes = [], isLoading } = useQuery<any[]>({
+    queryKey: ['crm-cotacoes'],
+    queryFn: () => api.get('/crm/cotacoes').then(r => r.data),
+  })
+  const invalidar = () => {
+    qc.invalidateQueries({ queryKey: ['crm-cotacoes'] })
+    qc.invalidateQueries({ queryKey: ['crm-opps'] })
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-400">{cotacoes.length} cotação(ões) · gere propostas comerciais e acompanhe a resposta</p>
+        <button onClick={() => setModal('novo')} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
+          <Plus size={16} /> Nova cotação
+        </button>
+      </div>
+
+      {isLoading ? (
+        <p className="text-center text-gray-400 py-10 text-sm">Carregando…</p>
+      ) : cotacoes.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">
+          Nenhuma cotação ainda. Clique em <strong>Nova cotação</strong> ou gere a partir de uma oportunidade.
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
+          {cotacoes.map(c => {
+            const st = STATUS[c.status] || STATUS.RASCUNHO
+            const vencida = c.validade && new Date(c.validade + 'T12:00:00') < new Date() && c.status !== 'ACEITA'
+            return (
+              <div key={c.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer" onClick={() => setModal(c)}>
+                <FileText size={18} className="text-gray-300 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 font-mono">{c.numero}</p>
+                  <p className="text-xs text-gray-500 truncate">{c.cliente || 'Sem cliente'}</p>
+                </div>
+                <div className="text-right hidden sm:block">
+                  <p className="text-sm font-semibold text-gray-700">{fmtBRL(c.valor_total)}</p>
+                  {c.validade && <p className={`text-[11px] ${vencida ? 'text-red-500' : 'text-gray-400'}`}>val. {fmtData(c.validade)}</p>}
+                </div>
+                <span className={`text-[11px] px-2 py-0.5 rounded-full ${st.cor}`}>{st.label}</span>
+                <button onClick={(e) => { e.stopPropagation(); window.open(`/crm/cotacao/${c.id}/imprimir`, '_blank') }}
+                  className="p-1.5 text-gray-400 hover:text-blue-600" title="Imprimir proposta"><Printer size={16} /></button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {modal && <ModalCotacao cotacao={modal === 'novo' ? undefined : modal} onClose={() => setModal(null)} onSaved={invalidar} />}
+    </div>
+  )
+}
+
+export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?: any; prefill?: any; onClose: () => void; onSaved: () => void }) {
+  const edicao = !!cotacao?.id
+  const base = cotacao || prefill || {}
+  const [clienteId, setClienteId] = useState(base.cliente_id || '')
+  const [clienteNome, setClienteNome] = useState(base.cliente || '')
+  const [canal, setCanal] = useState(base.canal || '')
+  const [validade, setValidade] = useState(base.validade || '')
+  const [condPagamento, setCondPagamento] = useState(base.condicao_pagamento || '')
+  const [prazoEntrega, setPrazoEntrega] = useState(base.prazo_entrega || '')
+  const [frete, setFrete] = useState(base.frete ? String(base.frete) : '')
+  const [descPct, setDescPct] = useState(base.desconto_pct ? String(base.desconto_pct) : '')
+  const [observacao, setObservacao] = useState(base.observacao || '')
+  const [status, setStatus] = useState(base.status || 'RASCUNHO')
+  const [itens, setItens] = useState<ItemLinha[]>(
+    (base.itens || []).filter((i: any) => i.produto_id).map((i: any) => ({
+      produto_id: i.produto_id, codigo: i.codigo || '', descricao: i.descricao || '',
+      qtd: Number(i.qtd) || 0, valor: Number(i.valor_unitario) || 0,
+    }))
+  )
+
+  const bruto = itens.reduce((a, i) => a + i.qtd * (i.valor || 0), 0)
+  const total = bruto * (1 - (Number(descPct) || 0) / 100) + (Number(frete) || 0)
+
+  const salvar = useMutation({
+    mutationFn: () => {
+      const body: any = {
+        cliente_id: clienteId || null, canal: canal || null,
+        validade: validade || null, condicao_pagamento: condPagamento || null, prazo_entrega: prazoEntrega || null,
+        frete: Number(frete) || 0, desconto_pct: Number(descPct) || 0, observacao: observacao || null,
+        oportunidade_id: base.oportunidade_id || null,
+        itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor_unitario: i.valor || 0 })),
+        ...(edicao ? { status } : {}),
+      }
+      return edicao ? api.patch(`/crm/cotacoes/${cotacao.id}`, body) : api.post('/crm/cotacoes', body)
+    },
+    onSuccess: (res) => {
+      toast.success(edicao ? 'Cotação atualizada' : 'Cotação criada'); onSaved()
+      if (!edicao && res.data?.id) window.open(`/crm/cotacao/${res.data.id}/imprimir`, '_blank')
+      onClose()
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar'), { duration: 5000 }),
+  })
+  const mudarStatus = useMutation({
+    mutationFn: (novo: string) => api.patch(`/crm/cotacoes/${cotacao.id}`, { status: novo }),
+    onSuccess: (res) => { setStatus(res.data.status); toast.success('Status atualizado'); onSaved() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro'), { duration: 4000 }),
+  })
+  const excluir = useMutation({
+    mutationFn: () => api.delete(`/crm/cotacoes/${cotacao.id}`),
+    onSuccess: () => { toast.success('Cotação removida'); onSaved(); onClose() },
+  })
+
+  return (
+    <ModalBase titulo={edicao ? `Cotação ${cotacao.numero}` : 'Nova cotação'} onClose={onClose} max="max-w-3xl">
+      <div className="p-5 space-y-3 overflow-y-auto">
+        {edicao && (
+          <div className="flex flex-wrap items-center gap-2 pb-2 border-b">
+            <span className={`text-xs px-2 py-1 rounded-full ${STATUS[status]?.cor}`}>{STATUS[status]?.label}</span>
+            <div className="flex gap-1.5 flex-wrap">
+              {status === 'RASCUNHO' && <button onClick={() => mudarStatus.mutate('ENVIADA')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-blue-600 text-white"><Send size={12} /> Marcar enviada</button>}
+              {status !== 'ACEITA' && <button onClick={() => mudarStatus.mutate('ACEITA')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-emerald-600 text-white"><CheckCircle2 size={12} /> Aceita</button>}
+              {status !== 'RECUSADA' && <button onClick={() => mudarStatus.mutate('RECUSADA')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-600"><XCircle size={12} /> Recusada</button>}
+              <button onClick={() => window.open(`/crm/cotacao/${cotacao.id}/imprimir`, '_blank')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border text-gray-600"><Printer size={12} /> Imprimir</button>
+            </div>
+          </div>
+        )}
+
+        <Campo label="Cliente / Órgão">
+          <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
+          {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
+        </Campo>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Campo label="Canal">
+            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
+              <option value="">—</option>{CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Validade"><input type="date" value={validade} onChange={e => setValidade(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Cond. pagamento"><input value={condPagamento} onChange={e => setCondPagamento(e.target.value)} className={inputCls} placeholder="Ex: 30 dias" /></Campo>
+          <Campo label="Prazo de entrega"><input value={prazoEntrega} onChange={e => setPrazoEntrega(e.target.value)} className={inputCls} placeholder="Ex: 5 dias úteis" /></Campo>
+        </div>
+
+        <div>
+          <label className="text-sm text-gray-600">Itens da proposta *</label>
+          <p className="text-xs text-gray-400 mb-1.5">Produto, quantidade e valor unitário.</p>
+          <ItensPedido value={itens} onChange={setItens} comValor />
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 items-end">
+          <Campo label="Desconto geral (%)"><input type="number" step="0.1" value={descPct} onChange={e => setDescPct(e.target.value)} className={inputCls} placeholder="0" /></Campo>
+          <Campo label="Frete (R$)"><input type="number" step="0.01" value={frete} onChange={e => setFrete(e.target.value)} className={inputCls} placeholder="0,00" /></Campo>
+          <div className="bg-gray-50 rounded-lg p-3 text-right">
+            <p className="text-[11px] text-gray-400">Total da proposta</p>
+            <p className="text-lg font-bold text-gray-800">{fmtBRL(total)}</p>
+          </div>
+        </div>
+        <Campo label="Observações"><textarea rows={2} value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} placeholder="Condições comerciais, garantia, etc." /></Campo>
+      </div>
+      <div className="p-4 border-t flex items-center justify-between">
+        {edicao ? <button onClick={() => { if (confirm('Remover cotação?')) excluir.mutate() }} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600"><Trash2 size={15} /> Remover</button> : <span />}
+        <div className="flex gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Fechar</button>
+          <button onClick={() => salvar.mutate()} disabled={itens.length === 0 || salvar.isPending}
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+            {salvar.isPending ? 'Salvando…' : edicao ? 'Salvar' : 'Criar e imprimir'}
+          </button>
+        </div>
+      </div>
+    </ModalBase>
+  )
+}

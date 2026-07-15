@@ -22,6 +22,7 @@ import { InventarioContagem } from './pages/InventarioContagem'
 import { Usuarios } from './pages/Usuarios'
 import { Licitacoes } from './pages/Licitacoes'
 import { Crm } from './pages/crm/Crm'
+import { CotacaoImprimir } from './pages/crm/CotacaoImprimir'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAuthStore } from './store/authStore'
 
@@ -52,6 +53,7 @@ export default function App() {
           {/* Relatórios — sem sidebar */}
           <Route path="/relatorio/coleta" element={<RelatorioColeta />} />
           <Route path="/relatorio/coletas-realizadas" element={<RelatorioColetasRealizadas />} />
+          <Route path="/crm/cotacao/:id/imprimir" element={<PrivateRoute><CotacaoImprimir /></PrivateRoute>} />
 
           {/* App principal — com sidebar */}
           <Route

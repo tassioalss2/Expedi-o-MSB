@@ -396,6 +396,75 @@ class GerarOVRequest(BaseModel):
     local_entrega: Optional[str] = None
 
 
+# ── CRM · Leads ────────────────────────────────────────────────────────────────
+class LeadCreate(BaseModel):
+    empresa: str
+    contato_nome: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    cnpj: Optional[str] = None
+    canal: Optional[str] = None
+    origem: Optional[str] = None
+    valor_potencial: Optional[float] = 0
+    observacao: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+
+
+class LeadUpdate(BaseModel):
+    empresa: Optional[str] = None
+    contato_nome: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+    cnpj: Optional[str] = None
+    canal: Optional[str] = None
+    origem: Optional[str] = None
+    valor_potencial: Optional[float] = None
+    status: Optional[str] = None
+    observacao: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    motivo_descarte: Optional[str] = None
+
+
+# ── CRM · Cotações ────────────────────────────────────────────────────────────────
+class CotacaoItem(BaseModel):
+    produto_id: Optional[UUID] = None
+    codigo: Optional[str] = None
+    descricao: Optional[str] = None
+    qtd: float = 0
+    valor_unitario: float = 0
+    desconto_pct: float = 0
+
+
+class CotacaoCreate(BaseModel):
+    numero: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    contato_id: Optional[UUID] = None
+    oportunidade_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    validade: Optional[date] = None
+    condicao_pagamento: Optional[str] = None
+    prazo_entrega: Optional[str] = None
+    frete: float = 0
+    desconto_pct: float = 0
+    observacao: Optional[str] = None
+    itens: list[CotacaoItem] = []
+
+
+class CotacaoUpdate(BaseModel):
+    numero: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    contato_id: Optional[UUID] = None
+    canal: Optional[str] = None
+    validade: Optional[date] = None
+    condicao_pagamento: Optional[str] = None
+    prazo_entrega: Optional[str] = None
+    frete: Optional[float] = None
+    desconto_pct: Optional[float] = None
+    observacao: Optional[str] = None
+    status: Optional[str] = None
+    itens: Optional[list[CotacaoItem]] = None
+
+
 class MetaFaturamentoRequest(BaseModel):
     competencia: str  # 'YYYY-MM'
     canal: str        # URO | VASCULAR | REALCLOSURE | LICITACAO

@@ -9,14 +9,23 @@ from app.models.schemas import (
     AtividadeUpdate,
     ContatoCreate,
     ContatoUpdate,
+    CotacaoCreate,
+    CotacaoUpdate,
     GerarOVRequest,
+    LeadCreate,
+    LeadUpdate,
     NotaCreate,
     OportunidadeCreate,
     OportunidadeUpdate,
     PerderRequest,
     UsuarioOut,
 )
-from app.services import crm_service
+from app.services import (
+    crm_cotacao_service,
+    crm_inteligencia_service,
+    crm_leads_service,
+    crm_service,
+)
 
 router = APIRouter(prefix="/crm", tags=["crm"])
 
@@ -139,3 +148,66 @@ def concluir_atividade(
 @router.delete("/atividades/{atividade_id}")
 def excluir_atividade(atividade_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return crm_service.excluir_atividade(str(atividade_id))
+
+
+# ── Leads ────────────────────────────────────────────────────────────────────────
+@router.get("/leads")
+def listar_leads(status: Optional[str] = Query(None), _: UsuarioOut = Depends(get_current_user)):
+    return crm_leads_service.listar_leads(status)
+
+
+@router.post("/leads", status_code=201)
+def criar_lead(payload: LeadCreate, _: UsuarioOut = Depends(get_current_user)):
+    return crm_leads_service.criar_lead(payload)
+
+
+@router.get("/leads/{lead_id}")
+def obter_lead(lead_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return crm_leads_service.obter_lead(str(lead_id))
+
+
+@router.patch("/leads/{lead_id}")
+def atualizar_lead(lead_id: UUID, payload: LeadUpdate, _: UsuarioOut = Depends(get_current_user)):
+    return crm_leads_service.atualizar_lead(str(lead_id), payload)
+
+
+@router.post("/leads/{lead_id}/converter")
+def converter_lead(lead_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_leads_service.converter_lead(str(lead_id), usuario)
+
+
+@router.delete("/leads/{lead_id}")
+def excluir_lead(lead_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return crm_leads_service.excluir_lead(str(lead_id))
+
+
+# ── Cotações ─────────────────────────────────────────────────────────────────────
+@router.get("/cotacoes")
+def listar_cotacoes(status: Optional[str] = Query(None), _: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.listar_cotacoes(status)
+
+
+@router.post("/cotacoes", status_code=201)
+def criar_cotacao(payload: CotacaoCreate, usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.criar_cotacao(payload, usuario)
+
+
+@router.get("/cotacoes/{cotacao_id}")
+def obter_cotacao(cotacao_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.obter_cotacao(str(cotacao_id))
+
+
+@router.patch("/cotacoes/{cotacao_id}")
+def atualizar_cotacao(cotacao_id: UUID, payload: CotacaoUpdate, usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.atualizar_cotacao(str(cotacao_id), payload, usuario)
+
+
+@router.delete("/cotacoes/{cotacao_id}")
+def excluir_cotacao(cotacao_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.excluir_cotacao(str(cotacao_id))
+
+
+# ── Inteligência de mercado ──────────────────────────────────────────────────────
+@router.get("/inteligencia")
+def inteligencia(dias_inatividade: int = Query(90), _: UsuarioOut = Depends(get_current_user)):
+    return crm_inteligencia_service.dashboard_inteligencia(dias_inatividade)

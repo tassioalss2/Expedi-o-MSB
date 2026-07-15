@@ -157,21 +157,22 @@ function CardOpp({ o, onDragStart, onClick }: { o: any; onDragStart: () => void;
 }
 
 // ── Form (criar / editar) ────────────────────────────────────────────────────────
-export function ModalOportunidadeForm({ oportunidade, onClose, onSaved }: {
-  oportunidade?: any; onClose: () => void; onSaved: (data?: any) => void
+export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved }: {
+  oportunidade?: any; prefill?: any; onClose: () => void; onSaved: (data?: any) => void
 }) {
-  const edicao = !!oportunidade
-  const [titulo, setTitulo] = useState(oportunidade?.titulo || '')
-  const [clienteId, setClienteId] = useState(oportunidade?.cliente_id || '')
-  const [clienteNome, setClienteNome] = useState(oportunidade?.cliente || '')
-  const [contatoId, setContatoId] = useState(oportunidade?.contato_id || '')
-  const [canal, setCanal] = useState(oportunidade?.canal || '')
-  const [estagio, setEstagio] = useState<string>(oportunidade?.estagio || 'LEAD')
-  const [valor, setValor] = useState(oportunidade?.valor_estimado ? String(oportunidade.valor_estimado) : '')
-  const [previsao, setPrevisao] = useState(oportunidade?.previsao_fechamento || '')
-  const [origem, setOrigem] = useState(oportunidade?.origem || '')
+  const edicao = !!oportunidade?.id
+  const base = oportunidade || prefill || {}
+  const [titulo, setTitulo] = useState(base.titulo || '')
+  const [clienteId, setClienteId] = useState(base.cliente_id || '')
+  const [clienteNome, setClienteNome] = useState(base.cliente || '')
+  const [contatoId, setContatoId] = useState(base.contato_id || '')
+  const [canal, setCanal] = useState(base.canal || '')
+  const [estagio, setEstagio] = useState<string>(base.estagio || 'LEAD')
+  const [valor, setValor] = useState(base.valor_estimado ? String(base.valor_estimado) : '')
+  const [previsao, setPrevisao] = useState(base.previsao_fechamento || '')
+  const [origem, setOrigem] = useState(base.origem || '')
   const [itens, setItens] = useState<ItemLinha[]>(
-    (oportunidade?.itens || []).filter((i: any) => i.produto_id).map((i: any) => ({
+    (base.itens || []).filter((i: any) => i.produto_id).map((i: any) => ({
       produto_id: i.produto_id, codigo: i.codigo || '', descricao: i.descricao || '',
       qtd: Number(i.qtd) || 0, valor: Number(i.valor_unitario) || 0,
     }))
