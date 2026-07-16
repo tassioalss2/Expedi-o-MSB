@@ -70,6 +70,7 @@ def _serializar(d: dict) -> dict:
         "gerado_id": d.get("gerado_id"),
         "gerado_ref": d.get("gerado_ref"),
         "ov_status": None,
+        "ov_itens": None,
         "criado_em": d.get("criado_em"),
         "concluido_em": d.get("concluido_em"),
     }
@@ -77,19 +78,35 @@ def _serializar(d: dict) -> dict:
 
 def _anexar_ov_status(db, demandas: list) -> None:
     """Para demandas vinculadas a uma OV (gerado_tipo PEDIDO/COMUNICADO), busca o
-    status atual da OV para o card espelhar o fluxo logístico ao vivo."""
+    status atual e os itens reais da OV para o card espelhar o fluxo logístico ao
+    vivo e comparar as quantidades da triagem (previsto) com as da OV (realizado)."""
     ids = [d.get("gerado_id") for d in demandas if d.get("gerado_tipo") in ("PEDIDO", "COMUNICADO") and d.get("gerado_id")]
     if not ids:
         return
     status_map: dict = {}
+    itens_map: dict = {}
     for i in range(0, len(ids), 80):
         lote = ids[i:i + 80]
         rows = db.table("pedidos").select("id, status").in_("id", lote).execute().data
         for p in rows:
             status_map[p["id"]] = p.get("status")
+        itrows = db.table("itens_pedido")\
+            .select("pedido_id, produto_id, qtd_solicitada, produtos(codigo, descricao)")\
+            .in_("pedido_id", lote).execute().data
+        for it in itrows:
+            prod = it.get("produtos") or {}
+            itens_map.setdefault(it["pedido_id"], []).append({
+                "produto_id": it.get("produto_id"),
+                "codigo": prod.get("codigo"),
+                "descricao": prod.get("descricao"),
+                "qtd": float(it.get("qtd_solicitada") or 0),
+            })
     for d in demandas:
-        if d.get("gerado_id") in status_map:
-            d["ov_status"] = status_map[d["gerado_id"]]
+        gid = d.get("gerado_id")
+        if gid in status_map:
+            d["ov_status"] = status_map[gid]
+        if gid in itens_map:
+            d["ov_itens"] = itens_map[gid]
 
 
 def listar_demandas() -> list:

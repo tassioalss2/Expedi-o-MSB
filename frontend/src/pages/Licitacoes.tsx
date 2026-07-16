@@ -79,6 +79,25 @@ const normEtapa = (e?: string) => (e === 'NOVO' || e === 'ANALISE') ? 'RECEBIDO'
 const diasParado = (iso?: string) => iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : 0
 const ovStatusLabel = (s?: string) => s ? (STATUS_CONFIG[s as keyof typeof STATUS_CONFIG]?.label || s) : ''
 
+// Une itens da triagem (previsto) com os da OV (realizado) por produto, calculando o saldo.
+function mesclarItens(triagem: any[], ov: any[]) {
+  const mapa = new Map<string, { produto_id: string; codigo?: string; descricao?: string; triagem: number; ov: number; saldo: number }>()
+  const chave = (it: any, i: number) => String(it.produto_id || it.codigo || i)
+  triagem.forEach((it, i) => {
+    const k = chave(it, i)
+    mapa.set(k, { produto_id: it.produto_id, codigo: it.codigo, descricao: it.descricao, triagem: Number(it.qtd) || 0, ov: 0, saldo: 0 })
+  })
+  ov.forEach((it, i) => {
+    const k = chave(it, i)
+    const cur = mapa.get(k)
+    if (cur) { cur.ov += Number(it.qtd) || 0; cur.codigo = cur.codigo || it.codigo; cur.descricao = cur.descricao || it.descricao }
+    else mapa.set(k, { produto_id: it.produto_id, codigo: it.codigo, descricao: it.descricao, triagem: 0, ov: Number(it.qtd) || 0, saldo: 0 })
+  })
+  const linhas = Array.from(mapa.values())
+  linhas.forEach(l => { l.saldo = Math.max(0, l.triagem - l.ov) })
+  return linhas
+}
+
 const PRIO_CFG: Record<string, { label: string; cor: string }> = {
   CRITICA: { label: '🔴 Crítica', cor: 'bg-red-100 text-red-700' },
   ALTA: { label: '⚡ Alta', cor: 'bg-amber-100 text-amber-700' },
@@ -283,10 +302,15 @@ function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir }: {
           {!concluida && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`}>⏳ há {parado}d</span>}
         </div>
         {d.ov_status && (
-          <div className="mt-1.5">
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
             <span className="inline-flex items-center gap-1 text-[11px] bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5">
               🔗 {d.gerado_ref} · {ovStatusLabel(d.ov_status)}
             </span>
+            {d.ov_itens && mesclarItens(d.itens || [], d.ov_itens).some(l => l.saldo > 0) && (
+              <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5">
+                ⚠️ saldo a faturar
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -474,7 +498,7 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar }: {
           </div>
         </div>
 
-        {(d.itens || []).length > 0 && (
+        {(d.itens || []).length > 0 && !d.ov_itens && (
           <div>
             <label className="text-xs font-medium text-gray-500">Itens ({d.itens.length})</label>
             <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 mt-1">
@@ -487,6 +511,42 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar }: {
             </div>
           </div>
         )}
+
+        {/* Comparativo triagem (previsto) × OV (realizado) — mostra o saldo que ainda não saiu */}
+        {d.ov_itens && (() => {
+          const linhas = mesclarItens(d.itens || [], d.ov_itens || [])
+          const temSaldo = linhas.some(l => l.saldo > 0)
+          return (
+            <div>
+              <label className="text-xs font-medium text-gray-500">Triagem (pedido) × OV {d.gerado_ref} (faturado)</label>
+              <div className="border border-gray-100 rounded-lg overflow-hidden mt-1">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-[11px] uppercase text-gray-400">
+                      <th className="text-left font-medium px-3 py-1.5">Item</th>
+                      <th className="text-right font-medium px-2 py-1.5">Pedido</th>
+                      <th className="text-right font-medium px-2 py-1.5">OV</th>
+                      <th className="text-right font-medium px-3 py-1.5">Saldo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {linhas.map((l, idx) => (
+                      <tr key={idx}>
+                        <td className="px-3 py-1.5"><span className="font-mono text-gray-700">{l.codigo || '—'}</span> <span className="text-gray-500 text-xs">{l.descricao}</span></td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-gray-600">{l.triagem}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums text-indigo-600">{l.ov}</td>
+                        <td className={`px-3 py-1.5 text-right tabular-nums font-semibold ${l.saldo > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{l.saldo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {temSaldo
+                ? <p className="text-xs text-amber-600 mt-1.5">⚠️ Entrega parcial — ainda há saldo a faturar. Gere outra OV para o que falta.</p>
+                : <p className="text-xs text-emerald-600 mt-1.5">✔ A OV cobriu todo o pedido.</p>}
+            </div>
+          )
+        })()}
 
         {/* Vínculo com a OV real (espelha o status do fluxo logístico) */}
         <div className="border border-indigo-100 bg-indigo-50/50 rounded-lg p-3">
