@@ -300,6 +300,7 @@ class DemandaUpdate(BaseModel):
     prioridade: Optional[str] = None
     observacao: Optional[str] = None
     responsavel_id: Optional[UUID] = None
+    ref_externa: Optional[str] = None
     itens: Optional[list[DemandaItem]] = None
 
 

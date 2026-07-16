@@ -10,7 +10,7 @@ import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
-import { CANAL_LABEL } from '../lib/statusConfig'
+import { CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 
 const CANAIS = ['LICITACAO_URO', 'LICITACAO_VASCULAR', 'URO', 'VASCULAR', 'REALCLOSURE']
 
@@ -69,12 +69,15 @@ const TIPOS: {
 const TIPO_MAP = Object.fromEntries(TIPOS.map(t => [t.key, t]))
 
 const ETAPAS: { key: string; label: string }[] = [
-  { key: 'NOVO', label: 'Novo' },
-  { key: 'ANALISE', label: 'Em análise' },
-  { key: 'PROCESSANDO', label: 'Processando' },
+  { key: 'RECEBIDO', label: 'Recebido' },
+  { key: 'PROCESSANDO', label: 'Em processamento (D365)' },
   { key: 'CONCLUIDO', label: 'Concluído' },
 ]
-const ETAPAS_ABERTAS = ['NOVO', 'ANALISE', 'PROCESSANDO']
+const ETAPAS_ABERTAS = ['RECEBIDO', 'PROCESSANDO']
+// Compatibilidade com etapas antigas
+const normEtapa = (e?: string) => (e === 'NOVO' || e === 'ANALISE') ? 'RECEBIDO' : (e || 'RECEBIDO')
+const diasParado = (iso?: string) => iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : 0
+const ovStatusLabel = (s?: string) => s ? (STATUS_CONFIG[s as keyof typeof STATUS_CONFIG]?.label || s) : ''
 
 const PRIO_CFG: Record<string, { label: string; cor: string }> = {
   CRITICA: { label: '🔴 Crítica', cor: 'bg-red-100 text-red-700' },
@@ -122,7 +125,8 @@ function PainelDemandas() {
   const qc = useQueryClient()
   const [modalNovo, setModalNovo] = useState<TipoKey | null>(null)
   const [detalheId, setDetalheId] = useState<string | null>(null)
-  const [concluir, setConcluir] = useState<any | null>(null)
+  const [concluirManual, setConcluirManual] = useState<any | null>(null)
+  const [gerar, setGerar] = useState<any | null>(null)
   const [busca, setBusca] = useState('')
   const [canalFiltro, setCanalFiltro] = useState('')
   const [colapsadas, setColapsadas] = useState<Record<string, boolean>>({})
@@ -153,10 +157,10 @@ function PainelDemandas() {
     })
   }, [demandas, busca, canalFiltro])
 
-  const porTipoEtapa = (tipo: string, etapa: string) => filtradas.filter(d => d.tipo_operacao === tipo && d.etapa === etapa)
+  const porTipoEtapa = (tipo: string, etapa: string) => filtradas.filter(d => d.tipo_operacao === tipo && normEtapa(d.etapa) === etapa)
 
   const avancar = (d: any) => {
-    const idx = ETAPAS_ABERTAS.indexOf(d.etapa)
+    const idx = ETAPAS_ABERTAS.indexOf(normEtapa(d.etapa))
     if (idx >= 0 && idx < ETAPAS_ABERTAS.length - 1) mover.mutate({ id: d.id, etapa: ETAPAS_ABERTAS[idx + 1] })
   }
 
@@ -188,7 +192,7 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 Sem arrastar: use <strong>Avançar</strong> para mover a etapa e <strong>Processar</strong> para gerar o registro definitivo (contrato / comunicado).
+        💡 Organize o que chegou: <strong>Avançar</strong> quando começar a lançar no D365 e <strong>Concluir</strong> quando terminar (anote o nº do doc do D365). Nada some do painel até você concluir.
       </div>
 
       {isLoading ? (
@@ -211,7 +215,7 @@ function PainelDemandas() {
                 </button>
 
                 {!colaps && (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-gray-100">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-gray-100">
                     {ETAPAS.map(etapa => {
                       const cards = porTipoEtapa(tipo.key, etapa.key)
                       return (
@@ -225,7 +229,7 @@ function PainelDemandas() {
                               <CardDemanda key={d.id} d={d} tipo={tipo}
                                 onClick={() => setDetalheId(d.id)}
                                 onAvancar={() => avancar(d)}
-                                onProcessar={() => setConcluir(d)} />
+                                onConcluir={() => setConcluirManual(d)} />
                             ))}
                             {cards.length === 0 && (
                               <div className="text-[11px] text-gray-300 text-center py-3">—</div>
@@ -245,20 +249,25 @@ function PainelDemandas() {
       {modalNovo && <ModalNovaDemanda tipoInicial={modalNovo} onClose={() => setModalNovo(null)} onSaved={invalidar} />}
       {detalheId && (
         <ModalDetalheDemanda id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar}
-          onConcluir={(d) => { setDetalheId(null); setConcluir(d) }} />
+          onConcluir={(d) => { setDetalheId(null); setConcluirManual(d) }}
+          onGerar={(d) => { setDetalheId(null); setGerar(d) }} />
       )}
-      {concluir && <ModalConcluir demanda={concluir} onClose={() => setConcluir(null)} onSaved={invalidar} />}
+      {concluirManual && <ModalConcluirManual demanda={concluirManual} onClose={() => setConcluirManual(null)} onSaved={invalidar} />}
+      {gerar && <ModalConcluir demanda={gerar} onClose={() => setGerar(null)} onSaved={invalidar} />}
     </div>
   )
 }
 
-function CardDemanda({ d, tipo, onClick, onAvancar, onProcessar }: {
-  d: any; tipo: any; onClick: () => void; onAvancar: () => void; onProcessar: () => void
+function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir }: {
+  d: any; tipo: any; onClick: () => void; onAvancar: () => void; onConcluir: () => void
 }) {
   const prio = PRIO_CFG[d.prioridade] || PRIO_CFG.NORMAL
   const nItens = (d.itens || []).length
-  const concluida = d.etapa === 'CONCLUIDO'
-  const podeAvancar = d.etapa !== 'PROCESSANDO' && !concluida
+  const etapa = normEtapa(d.etapa)
+  const concluida = etapa === 'CONCLUIDO'
+  const podeAvancar = etapa === 'RECEBIDO'
+  const parado = diasParado(d.criado_em)
+  const refFeito = d.ref_externa || d.gerado_ref
   return (
     <div className={`bg-white rounded-lg border border-gray-200 border-l-4 ${tipo.borda} shadow-sm p-2.5`}>
       <div onClick={onClick} className="cursor-pointer">
@@ -271,10 +280,18 @@ function CardDemanda({ d, tipo, onClick, onAvancar, onProcessar }: {
           {d.canal && <span className="text-gray-400">{CANAL_LABEL[d.canal] || d.canal}</span>}
           {nItens > 0 && <span className="text-gray-400">{nItens} item(ns)</span>}
           {d.prazo && <span className={`flex items-center gap-1 ${prazoCor(d.prazo)}`}><Clock size={11} /> {fmtData(d.prazo)}</span>}
+          {!concluida && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`}>⏳ há {parado}d</span>}
         </div>
+        {d.ov_status && (
+          <div className="mt-1.5">
+            <span className="inline-flex items-center gap-1 text-[11px] bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5">
+              🔗 {d.gerado_ref} · {ovStatusLabel(d.ov_status)}
+            </span>
+          </div>
+        )}
       </div>
       {concluida ? (
-        d.gerado_ref && <p className="text-[11px] text-emerald-600 mt-2 flex items-center gap-1"><ExternalLink size={11} /> Gerou: {d.gerado_ref}</p>
+        refFeito && <p className="text-[11px] text-emerald-600 mt-2 flex items-center gap-1"><ExternalLink size={11} /> D365: {refFeito}</p>
       ) : (
         <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-50">
           {podeAvancar && (
@@ -282,8 +299,8 @@ function CardDemanda({ d, tipo, onClick, onAvancar, onProcessar }: {
               Avançar <Arrow size={11} />
             </button>
           )}
-          <button onClick={onProcessar} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white ml-auto">
-            <Flag size={11} /> Processar
+          <button onClick={onConcluir} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white ml-auto">
+            <Flag size={11} /> Concluir
           </button>
         </div>
       )}
@@ -395,10 +412,11 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 }
 
 // ── Modal: Detalhe da demanda ────────────────────────────────────────────────────
-function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
-  id: string; onClose: () => void; onChanged: () => void; onConcluir: (d: any) => void
+function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar }: {
+  id: string; onClose: () => void; onChanged: () => void; onConcluir: (d: any) => void; onGerar: (d: any) => void
 }) {
   const navigate = useNavigate()
+  const qcDet = useQueryClient()
   const { data: d } = useQuery<any>({
     queryKey: ['demanda', id],
     queryFn: () => api.get(`/licitacoes/demandas/${id}`).then(r => r.data),
@@ -417,12 +435,19 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
     mutationFn: () => api.delete(`/licitacoes/demandas/${id}`),
     onSuccess: () => { toast.success('Demanda removida'); onChanged(); onClose() },
   })
+  const [ovNum, setOvNum] = useState('')
+  const vincular = useMutation({
+    mutationFn: () => api.post(`/licitacoes/demandas/${id}/vincular-ov`, { numero_pedido: ovNum.trim() }),
+    onSuccess: () => { setOvNum(''); qcDet.invalidateQueries({ queryKey: ['demanda', id] }); onChanged(); toast.success('OV vinculada — o card vai espelhar o status dela') },
+    onError: (e: any) => toast.error(msgErro(e, 'OV não encontrada'), { duration: 5000 }),
+  })
 
   if (!d) return <ModalBase titulo="Demanda" onClose={onClose}><p className="p-8 text-center text-gray-400 text-sm">Carregando…</p></ModalBase>
 
   const cfg = TIPO_MAP[d.tipo_operacao] || TIPOS[0]
   const Icone = cfg.icone
-  const concluida = d.etapa === 'CONCLUIDO'
+  const etapaAtual = normEtapa(d.etapa)
+  const concluida = etapaAtual === 'CONCLUIDO'
 
   return (
     <ModalBase titulo={<span className="flex items-center gap-2"><Icone size={18} /> {cfg.label}</span>} onClose={onClose}>
@@ -463,13 +488,42 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
           </div>
         )}
 
+        {/* Vínculo com a OV real (espelha o status do fluxo logístico) */}
+        <div className="border border-indigo-100 bg-indigo-50/50 rounded-lg p-3">
+          {d.ov_status ? (
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm text-indigo-800 font-medium flex items-center gap-1.5">🔗 OV {d.gerado_ref}</p>
+                <p className="text-xs text-indigo-600">Status no fluxo: <strong>{ovStatusLabel(d.ov_status)}</strong></p>
+              </div>
+              <button onClick={() => d.gerado_id && navigate(`/expedicao/${d.gerado_id}`)}
+                className="flex items-center gap-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg">
+                <ExternalLink size={13} /> Abrir OV
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p className="text-xs font-medium text-indigo-700 mb-1">Vincular a uma OV do fluxo logístico</p>
+              <p className="text-[11px] text-indigo-500 mb-2">O card passa a espelhar o status real da OV (ex.: Aguardando Faturamento) automaticamente.</p>
+              <div className="flex gap-2">
+                <input value={ovNum} onChange={e => setOvNum(e.target.value.toUpperCase())} placeholder="Nº da OV (ex: OV015500)"
+                  className={`${inputCls} font-mono flex-1`} />
+                <button onClick={() => vincular.mutate()} disabled={!ovNum.trim() || vincular.isPending}
+                  className="px-3 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg whitespace-nowrap">
+                  {vincular.isPending ? 'Vinculando…' : 'Vincular'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {!concluida && (
           <div>
             <label className="text-xs font-medium text-gray-500">Mover para</label>
             <div className="flex flex-wrap gap-2 mt-1">
               {ETAPAS.filter(e => e.key !== 'CONCLUIDO').map(e => (
                 <button key={e.key} onClick={() => mover.mutate(e.key)}
-                  className={`text-sm px-3 py-1.5 rounded-lg border ${d.etapa === e.key ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  className={`text-sm px-3 py-1.5 rounded-lg border ${etapaAtual === e.key ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                   {e.label}
                 </button>
               ))}
@@ -479,25 +533,63 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
 
         {concluida && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-            <p className="text-sm text-emerald-700 font-medium">✅ Concluída — gerou {d.gerado_ref}</p>
+            <p className="text-sm text-emerald-700 font-medium">✅ Concluída{(d.ref_externa || d.gerado_ref) ? ` — D365: ${d.ref_externa || d.gerado_ref}` : ''}</p>
             {d.gerado_tipo === 'COMUNICADO' && d.gerado_id && (
               <button onClick={() => navigate(`/expedicao/${d.gerado_id}`)}
                 className="text-xs text-emerald-700 underline mt-1 flex items-center gap-1"><ExternalLink size={12} /> Abrir lançamento</button>
             )}
             {d.gerado_tipo === 'CONTRATO' && <p className="text-xs text-emerald-600 mt-1">Veja o saldo e lance entregas na aba <strong>Contratos</strong>.</p>}
+            <button onClick={() => mover.mutate('RECEBIDO')} className="text-xs text-gray-500 underline mt-2">Reabrir</button>
           </div>
         )}
       </div>
 
-      <div className="p-4 border-t flex items-center justify-between">
+      <div className="p-4 border-t flex items-center justify-between gap-2">
         <button onClick={() => { if (confirm('Remover esta demanda do painel?')) excluir.mutate() }}
           className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600"><Trash2 size={15} /> Remover</button>
         {!concluida && (
-          <button onClick={() => onConcluir(d)}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg">
-            <Flag size={16} /> Processar
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => onGerar(d)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50" title="Cria o contrato/comunicado dentro do app (opcional)">
+              Gerar registro
+            </button>
+            <button onClick={() => onConcluir(d)}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg">
+              <Flag size={16} /> Concluir
+            </button>
+          </div>
         )}
+      </div>
+    </ModalBase>
+  )
+}
+
+// ── Modal: Concluir (só marcar feito, com o nº do doc do D365) ───────────────────
+function ModalConcluirManual({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
+  const [ref, setRef] = useState(demanda.ref_externa || '')
+  const m = useMutation({
+    mutationFn: () => api.patch(`/licitacoes/demandas/${demanda.id}`, { etapa: 'CONCLUIDO', ref_externa: ref.trim() || null }),
+    onSuccess: () => { toast.success('Concluído! Continua no painel, na coluna Concluído.'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao concluir'), { duration: 5000 }),
+  })
+  return (
+    <ModalBase titulo="Concluir demanda" onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <div className="bg-gray-50 rounded-lg p-3 text-sm">
+          <p className="font-medium text-gray-700">{demanda.cliente}</p>
+          <p className="text-xs text-gray-400">{TIPO_MAP[demanda.tipo_operacao]?.label}{demanda.numero ? ` · ${demanda.numero}` : ''}</p>
+        </div>
+        <Campo label="Nº do documento no D365 (opcional)">
+          <input value={ref} onChange={e => setRef(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500 / NF 20045" autoFocus />
+        </Campo>
+        <p className="text-xs text-gray-400">Anote a OV/NF/lançamento gerado no D365 pra rastreabilidade. Pode deixar em branco e preencher depois.</p>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => m.mutate()} disabled={m.isPending}
+          className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {m.isPending ? 'Concluindo…' : 'Marcar como concluído'}
+        </button>
       </div>
     </ModalBase>
   )

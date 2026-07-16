@@ -25,7 +25,9 @@ from app.models.schemas import (
     UsuarioOut,
 )
 
-ETAPAS = ["NOVO", "ANALISE", "PROCESSANDO", "CONCLUIDO"]
+ETAPAS = ["RECEBIDO", "PROCESSANDO", "CONCLUIDO"]
+# Etapas antigas → novas (compatibilidade com registros já criados)
+_ETAPA_LEGADA = {"NOVO": "RECEBIDO", "ANALISE": "RECEBIDO"}
 TIPOS = ["VENDA_DIRETA", "CONSIGNACAO", "COMUNICADO_USO"]
 _PRIORIDADE_PESO = {"CRITICA": 0, "ALTA": 1, "NORMAL": 2}
 
@@ -53,7 +55,8 @@ def _serializar(d: dict) -> dict:
     return {
         "id": d["id"],
         "tipo_operacao": d.get("tipo_operacao"),
-        "etapa": d.get("etapa"),
+        "etapa": _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")),
+        "ref_externa": d.get("ref_externa"),
         "numero": d.get("numero"),
         "cliente_id": d.get("cliente_id"),
         "cliente": (d.get("clientes") or {}).get("nome") if d.get("clientes") else None,
@@ -66,9 +69,27 @@ def _serializar(d: dict) -> dict:
         "gerado_tipo": d.get("gerado_tipo"),
         "gerado_id": d.get("gerado_id"),
         "gerado_ref": d.get("gerado_ref"),
+        "ov_status": None,
         "criado_em": d.get("criado_em"),
         "concluido_em": d.get("concluido_em"),
     }
+
+
+def _anexar_ov_status(db, demandas: list) -> None:
+    """Para demandas vinculadas a uma OV (gerado_tipo PEDIDO/COMUNICADO), busca o
+    status atual da OV para o card espelhar o fluxo logístico ao vivo."""
+    ids = [d.get("gerado_id") for d in demandas if d.get("gerado_tipo") in ("PEDIDO", "COMUNICADO") and d.get("gerado_id")]
+    if not ids:
+        return
+    status_map: dict = {}
+    for i in range(0, len(ids), 80):
+        lote = ids[i:i + 80]
+        rows = db.table("pedidos").select("id, status").in_("id", lote).execute().data
+        for p in rows:
+            status_map[p["id"]] = p.get("status")
+    for d in demandas:
+        if d.get("gerado_id") in status_map:
+            d["ov_status"] = status_map[d["gerado_id"]]
 
 
 def listar_demandas() -> list:
@@ -76,6 +97,7 @@ def listar_demandas() -> list:
     rows = db.table("licitacao_demandas").select("*, clientes(nome)")\
         .eq("ativo", True).order("criado_em", desc=True).execute().data
     demandas = [_serializar(r) for r in rows]
+    _anexar_ov_status(db, demandas)
     demandas.sort(key=lambda d: (_PRIORIDADE_PESO.get(d["prioridade"], 3), d.get("prazo") or "9999"))
     return demandas
 
@@ -86,7 +108,7 @@ def criar_demanda(payload: DemandaCreate) -> dict:
     db = get_service_db()
     row = db.table("licitacao_demandas").insert({
         "tipo_operacao": payload.tipo_operacao,
-        "etapa": "NOVO",
+        "etapa": "RECEBIDO",
         "numero": (payload.numero or "").strip() or None,
         "cliente_id": str(payload.cliente_id),
         "canal": payload.canal,
@@ -104,7 +126,37 @@ def obter_demanda(demanda_id: str) -> dict:
     r = db.table("licitacao_demandas").select("*, clientes(nome)").eq("id", demanda_id).single().execute().data
     if not r:
         raise HTTPException(status_code=404, detail="Demanda não encontrada")
-    return _serializar(r)
+    d = _serializar(r)
+    _anexar_ov_status(db, [d])
+    return d
+
+
+def vincular_ov(demanda_id: str, numero_pedido: str) -> dict:
+    """Vincula a demanda a uma OV existente no fluxo logístico. O card passa a
+    espelhar o status real da OV (aguardando faturamento, faturado, expedido…)."""
+    db = get_service_db()
+    d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
+    if not d:
+        raise HTTPException(status_code=404, detail="Demanda não encontrada")
+    num = (numero_pedido or "").strip().upper()
+    if not num:
+        raise HTTPException(status_code=422, detail="Informe o número da OV")
+    peds = db.table("pedidos").select("id, numero_pedido, status, criado_em")\
+        .eq("numero_pedido", num).neq("status", "CANCELADO").order("criado_em", desc=True).execute().data
+    if not peds:
+        raise HTTPException(status_code=404, detail=f"Nenhuma OV ativa encontrada com o número '{num}'.")
+    ped = peds[0]
+    update = {
+        "gerado_tipo": "PEDIDO",
+        "gerado_id": ped["id"],
+        "gerado_ref": ped["numero_pedido"],
+        "ref_externa": ped["numero_pedido"],
+        "atualizado_em": _agora(),
+    }
+    if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) == "RECEBIDO":
+        update["etapa"] = "PROCESSANDO"
+    db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
+    return obter_demanda(demanda_id)
 
 
 def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
@@ -119,14 +171,14 @@ def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
             raise HTTPException(status_code=422, detail="Tipo de operação inválido")
         update["tipo_operacao"] = payload.tipo_operacao
     if payload.etapa is not None:
-        if payload.etapa not in ETAPAS:
+        etapa = _ETAPA_LEGADA.get(payload.etapa, payload.etapa)
+        if etapa not in ETAPAS:
             raise HTTPException(status_code=422, detail="Etapa inválida")
-        if payload.etapa == "CONCLUIDO" and not atual.get("gerado_id"):
-            raise HTTPException(
-                status_code=400,
-                detail="Para concluir, use a ação 'Concluir e gerar' — ela cria a OV/empenho/comunicado.",
-            )
-        update["etapa"] = payload.etapa
+        update["etapa"] = etapa
+        # Concluir é só marcar como feito (opcionalmente com o nº do doc do D365).
+        update["concluido_em"] = _agora() if etapa == "CONCLUIDO" else None
+    if payload.ref_externa is not None:
+        update["ref_externa"] = payload.ref_externa.strip() or None
     if payload.numero is not None:
         update["numero"] = payload.numero.strip() or None
     if payload.cliente_id is not None:

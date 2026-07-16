@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from app.core.deps import get_current_user
 from app.models.schemas import (
@@ -84,6 +85,15 @@ def concluir_demanda(
     usuario: UsuarioOut = Depends(get_current_user),
 ):
     return licitacao_demanda_service.concluir_demanda(str(demanda_id), payload, usuario)
+
+
+class VincularOVRequest(BaseModel):
+    numero_pedido: str
+
+
+@router.post("/demandas/{demanda_id}/vincular-ov")
+def vincular_ov(demanda_id: UUID, payload: VincularOVRequest, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.vincular_ov(str(demanda_id), payload.numero_pedido)
 
 
 @router.delete("/demandas/{demanda_id}")
