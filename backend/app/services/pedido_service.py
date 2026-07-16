@@ -276,6 +276,8 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         "criado_em": _agora(),
         "atualizado_em": _agora(),
     }
+    if getattr(payload, "empenho_id", None):
+        pedido_data["empenho_id"] = str(payload.empenho_id)
 
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]

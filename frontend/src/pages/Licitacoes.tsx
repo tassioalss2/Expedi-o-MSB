@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
   LayoutGrid, Layers, ChevronDown, ChevronRight, ExternalLink, Flag, Clock, Search,
+  ChevronRight as Arrow, Truck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -23,6 +24,12 @@ const STATUS_CFG: Record<string, { label: string; cor: string }> = {
   VENCIDO: { label: 'Vencido', cor: 'bg-red-100 text-red-700' },
 }
 
+// Tipo de contrato (empenho)
+const CONTRATO_TIPO: Record<string, { label: string; cor: string; icone: any }> = {
+  VENDA_DIRETA: { label: 'Venda direta', cor: 'bg-blue-100 text-blue-700', icone: ShoppingCart },
+  CONSIGNACAO: { label: 'Consignação', cor: 'bg-amber-100 text-amber-700', icone: Boxes },
+}
+
 function msgErro(e: any, fb: string) {
   const d = e?.response?.data?.detail
   if (typeof d === 'string') return d
@@ -37,26 +44,26 @@ function vigenciaEmRisco(vigencia?: string | null, saldoUn?: number) {
   return dias >= 0 && dias <= 15
 }
 
-// ── Config dos 3 tipos de operação (ordem de importância) ───────────────────────
+// ── Config dos 3 tipos de demanda (ordem de importância) ────────────────────────
 type TipoKey = 'VENDA_DIRETA' | 'COMUNICADO_USO' | 'CONSIGNACAO'
 const TIPOS: {
   key: TipoKey; label: string; icone: any; desc: string
-  header: string; borda: string; chip: string; ponto: string
+  header: string; borda: string; chip: string
 }[] = [
   {
     key: 'VENDA_DIRETA', label: 'Venda direta', icone: ShoppingCart,
-    desc: 'Ganhamos o pregão e o cliente pediu o material (parcial ou total). Vai para o fluxo logístico como OV.',
-    header: 'bg-blue-600', borda: 'border-l-blue-500', chip: 'bg-blue-100 text-blue-700', ponto: 'bg-blue-500',
+    desc: 'Ganhou o pregão. Vira um contrato com as quantidades totais; as entregas parciais geram OVs que baixam o saldo.',
+    header: 'bg-blue-600', borda: 'border-l-blue-500', chip: 'bg-blue-100 text-blue-700',
   },
   {
     key: 'COMUNICADO_USO', label: 'Comunicado de uso', icone: FileText,
-    desc: 'O cliente utilizou o material consignado — faturamos o que foi usado.',
-    header: 'bg-emerald-600', borda: 'border-l-emerald-500', chip: 'bg-emerald-100 text-emerald-700', ponto: 'bg-emerald-500',
+    desc: 'O cliente usou o material consignado — faturamos o que foi usado (baixa o saldo de um contrato de consignação).',
+    header: 'bg-emerald-600', borda: 'border-l-emerald-500', chip: 'bg-emerald-100 text-emerald-700',
   },
   {
     key: 'CONSIGNACAO', label: 'Consignação', icone: Boxes,
-    desc: 'Enviamos o material em consignado; o comunicado de uso baixa o saldo conforme o cliente usa.',
-    header: 'bg-amber-500', borda: 'border-l-amber-500', chip: 'bg-amber-100 text-amber-700', ponto: 'bg-amber-500',
+    desc: 'Envio de material em consignado. Vira um contrato; o comunicado de uso baixa o saldo conforme o cliente usa.',
+    header: 'bg-amber-500', borda: 'border-l-amber-500', chip: 'bg-amber-100 text-amber-700',
   },
 ]
 const TIPO_MAP = Object.fromEntries(TIPOS.map(t => [t.key, t]))
@@ -67,6 +74,7 @@ const ETAPAS: { key: string; label: string }[] = [
   { key: 'PROCESSANDO', label: 'Processando' },
   { key: 'CONCLUIDO', label: 'Concluído' },
 ]
+const ETAPAS_ABERTAS = ['NOVO', 'ANALISE', 'PROCESSANDO']
 
 const PRIO_CFG: Record<string, { label: string; cor: string }> = {
   CRITICA: { label: '🔴 Crítica', cor: 'bg-red-100 text-red-700' },
@@ -74,7 +82,6 @@ const PRIO_CFG: Record<string, { label: string; cor: string }> = {
   NORMAL: { label: 'Normal', cor: 'bg-gray-100 text-gray-500' },
 }
 
-// Prazo: vencido (vermelho) ou ≤ 3 dias (âmbar)
 function prazoCor(prazo?: string | null): string {
   if (!prazo) return 'text-gray-400'
   const dias = Math.ceil((new Date(prazo + 'T12:00:00').getTime() - Date.now()) / 86400000)
@@ -83,25 +90,19 @@ function prazoCor(prazo?: string | null): string {
   return 'text-gray-500'
 }
 
-const toItemLinhas = (itens: any[]): ItemLinha[] =>
-  (itens || []).filter(i => i.produto_id).map(i => ({
-    produto_id: i.produto_id, codigo: i.codigo || '', descricao: i.descricao || '',
-    qtd: Number(i.qtd) || 0, valor: Number(i.valor) || 0,
-  }))
-
 // ════════════════════════════════════════════════════════════════════════════════
 export function Licitacoes() {
-  const [aba, setAba] = useState<'painel' | 'empenhos'>('painel')
+  const [aba, setAba] = useState<'painel' | 'contratos'>('painel')
 
   return (
     <div className="p-4 lg:p-6 max-w-[1400px] mx-auto space-y-4">
       <div>
         <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><Gavel size={20} /> Licitações</h1>
-        <p className="text-sm text-gray-400">Painel de triagem das demandas do dia e controle dos empenhos consignados.</p>
+        <p className="text-sm text-gray-400">Triagem das demandas do dia e contratos (com saldo) de venda direta e consignação.</p>
       </div>
 
       <div className="flex gap-1 border-b">
-        {([['painel', 'Painel de demandas', LayoutGrid], ['empenhos', 'Empenhos (consignação)', Layers]] as const).map(([k, label, Icone]) => (
+        {([['painel', 'Painel de demandas', LayoutGrid], ['contratos', 'Contratos', Layers]] as const).map(([k, label, Icone]) => (
           <button key={k} onClick={() => setAba(k)}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
               aba === k ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -111,18 +112,17 @@ export function Licitacoes() {
         ))}
       </div>
 
-      {aba === 'painel' ? <PainelDemandas /> : <AbaEmpenhos />}
+      {aba === 'painel' ? <PainelDemandas /> : <AbaContratos />}
     </div>
   )
 }
 
-// ── Painel Kanban de demandas ────────────────────────────────────────────────────
+// ── Painel de demandas (triagem, sem arrastar) ───────────────────────────────────
 function PainelDemandas() {
   const qc = useQueryClient()
   const [modalNovo, setModalNovo] = useState<TipoKey | null>(null)
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [concluir, setConcluir] = useState<any | null>(null)
-  const [arrastando, setArrastando] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [canalFiltro, setCanalFiltro] = useState('')
   const [colapsadas, setColapsadas] = useState<Record<string, boolean>>({})
@@ -155,23 +155,15 @@ function PainelDemandas() {
 
   const porTipoEtapa = (tipo: string, etapa: string) => filtradas.filter(d => d.tipo_operacao === tipo && d.etapa === etapa)
 
-  const onDrop = (tipo: TipoKey, etapa: string) => {
-    const id = arrastando
-    setArrastando(null)
-    if (!id) return
-    const d = demandas.find(x => x.id === id)
-    if (!d || d.etapa === etapa) return
-    if (d.tipo_operacao !== tipo) return // não muda o tipo ao arrastar entre raias
-    if (etapa === 'CONCLUIDO') { setConcluir(d); return }
-    mover.mutate({ id, etapa })
+  const avancar = (d: any) => {
+    const idx = ETAPAS_ABERTAS.indexOf(d.etapa)
+    if (idx >= 0 && idx < ETAPAS_ABERTAS.length - 1) mover.mutate({ id: d.id, etapa: ETAPAS_ABERTAS[idx + 1] })
   }
 
-  const total = filtradas.length
   const pendentes = filtradas.filter(d => d.etapa !== 'CONCLUIDO').length
 
   return (
     <div className="space-y-4">
-      {/* Barra de ações + filtros */}
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="flex items-center gap-2 flex-1">
           <div className="relative flex-1 max-w-xs">
@@ -183,7 +175,7 @@ function PainelDemandas() {
             <option value="">Todos os canais</option>
             {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
           </select>
-          <span className="text-xs text-gray-400 hidden lg:block">{pendentes} pendente(s) · {total} no total</span>
+          <span className="text-xs text-gray-400 hidden lg:block">{pendentes} pendente(s)</span>
         </div>
         <div className="flex items-center gap-2">
           {TIPOS.map(t => (
@@ -193,6 +185,10 @@ function PainelDemandas() {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
+        💡 Sem arrastar: use <strong>Avançar</strong> para mover a etapa e <strong>Processar</strong> para gerar o registro definitivo (contrato / comunicado).
       </div>
 
       {isLoading ? (
@@ -219,10 +215,7 @@ function PainelDemandas() {
                     {ETAPAS.map(etapa => {
                       const cards = porTipoEtapa(tipo.key, etapa.key)
                       return (
-                        <div key={etapa.key}
-                          onDragOver={e => { e.preventDefault() }}
-                          onDrop={() => onDrop(tipo.key, etapa.key)}
-                          className="bg-gray-50 min-h-[90px] p-2">
+                        <div key={etapa.key} className="bg-gray-50 min-h-[90px] p-2">
                           <div className="flex items-center justify-between mb-2 px-1">
                             <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{etapa.label}</span>
                             <span className="text-[11px] text-gray-400">{cards.length}</span>
@@ -230,13 +223,12 @@ function PainelDemandas() {
                           <div className="space-y-2">
                             {cards.map(d => (
                               <CardDemanda key={d.id} d={d} tipo={tipo}
-                                onDragStart={() => setArrastando(d.id)}
-                                onClick={() => setDetalheId(d.id)} />
+                                onClick={() => setDetalheId(d.id)}
+                                onAvancar={() => avancar(d)}
+                                onProcessar={() => setConcluir(d)} />
                             ))}
                             {cards.length === 0 && (
-                              <div className="text-[11px] text-gray-300 text-center py-3 border-2 border-dashed border-gray-200 rounded-lg">
-                                arraste aqui
-                              </div>
+                              <div className="text-[11px] text-gray-300 text-center py-3">—</div>
                             )}
                           </div>
                         </div>
@@ -260,28 +252,40 @@ function PainelDemandas() {
   )
 }
 
-// ── Card de demanda (arrastável) ─────────────────────────────────────────────────
-function CardDemanda({ d, tipo, onDragStart, onClick }: { d: any; tipo: any; onDragStart: () => void; onClick: () => void }) {
+function CardDemanda({ d, tipo, onClick, onAvancar, onProcessar }: {
+  d: any; tipo: any; onClick: () => void; onAvancar: () => void; onProcessar: () => void
+}) {
   const prio = PRIO_CFG[d.prioridade] || PRIO_CFG.NORMAL
   const nItens = (d.itens || []).length
+  const concluida = d.etapa === 'CONCLUIDO'
+  const podeAvancar = d.etapa !== 'PROCESSANDO' && !concluida
   return (
-    <div
-      draggable
-      onDragStart={onDragStart}
-      onClick={onClick}
-      className={`bg-white rounded-lg border border-gray-200 border-l-4 ${tipo.borda} shadow-sm p-2.5 cursor-pointer hover:shadow-md hover:border-l-8 transition-all`}>
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-medium text-gray-800 leading-tight line-clamp-2">{d.cliente || 'Cliente não informado'}</p>
-        {d.prioridade !== 'NORMAL' && <span className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${prio.cor}`}>{prio.label}</span>}
+    <div className={`bg-white rounded-lg border border-gray-200 border-l-4 ${tipo.borda} shadow-sm p-2.5`}>
+      <div onClick={onClick} className="cursor-pointer">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-medium text-gray-800 leading-tight line-clamp-2">{d.cliente || 'Cliente não informado'}</p>
+          {d.prioridade !== 'NORMAL' && <span className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${prio.cor}`}>{prio.label}</span>}
+        </div>
+        {d.numero && <p className="text-xs font-mono text-gray-500 mt-0.5">{d.numero}</p>}
+        <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
+          {d.canal && <span className="text-gray-400">{CANAL_LABEL[d.canal] || d.canal}</span>}
+          {nItens > 0 && <span className="text-gray-400">{nItens} item(ns)</span>}
+          {d.prazo && <span className={`flex items-center gap-1 ${prazoCor(d.prazo)}`}><Clock size={11} /> {fmtData(d.prazo)}</span>}
+        </div>
       </div>
-      {d.numero && <p className="text-xs font-mono text-gray-500 mt-0.5">{d.numero}</p>}
-      <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
-        {d.canal && <span className="text-gray-400">{CANAL_LABEL[d.canal] || d.canal}</span>}
-        {nItens > 0 && <span className="text-gray-400">{nItens} item(ns)</span>}
-        {d.prazo && <span className={`flex items-center gap-1 ${prazoCor(d.prazo)}`}><Clock size={11} /> {fmtData(d.prazo)}</span>}
-      </div>
-      {d.etapa === 'CONCLUIDO' && d.gerado_ref && (
-        <p className="text-[11px] text-emerald-600 mt-1.5 flex items-center gap-1"><ExternalLink size={11} /> Gerou: {d.gerado_ref}</p>
+      {concluida ? (
+        d.gerado_ref && <p className="text-[11px] text-emerald-600 mt-2 flex items-center gap-1"><ExternalLink size={11} /> Gerou: {d.gerado_ref}</p>
+      ) : (
+        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-50">
+          {podeAvancar && (
+            <button onClick={onAvancar} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border text-gray-600 hover:bg-gray-50">
+              Avançar <Arrow size={11} />
+            </button>
+          )}
+          <button onClick={onProcessar} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white ml-auto">
+            <Flag size={11} /> Processar
+          </button>
+        </div>
       )}
     </div>
   )
@@ -300,7 +304,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const [itens, setItens] = useState<ItemLinha[]>([])
 
   const cfg = TIPO_MAP[tipo]
-  const comValor = tipo === 'CONSIGNACAO'
+  const comValor = tipo !== 'COMUNICADO_USO'
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/demandas', {
@@ -320,7 +324,6 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   return (
     <ModalBase titulo="Nova demanda de licitação" onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
-        {/* Seletor de tipo */}
         <div className="grid grid-cols-3 gap-2">
           {TIPOS.map(t => {
             const Icone = t.icone
@@ -343,7 +346,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
         </Campo>
 
         <div className="grid grid-cols-2 gap-3">
-          <Campo label={tipo === 'CONSIGNACAO' ? 'Nº do empenho' : tipo === 'VENDA_DIRETA' ? 'Nº do pregão / OV' : 'Referência'}>
+          <Campo label={tipo === 'COMUNICADO_USO' ? 'Referência' : 'Nº do pregão / contrato'}>
             <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Opcional" />
           </Campo>
           <Campo label="Canal">
@@ -369,8 +372,14 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
         </Campo>
 
         <div>
-          <label className="text-sm text-gray-600">Itens {tipo === 'CONSIGNACAO' && '(com valor)'}</label>
-          <p className="text-xs text-gray-400 mb-1.5">Opcional agora — você pode completar ao processar. Ajuda a adiantar o trabalho.</p>
+          <label className="text-sm text-gray-600">
+            Itens {tipo === 'COMUNICADO_USO' ? '(o que foi usado)' : '(quantidades TOTAIS do contrato, com valor)'}
+          </label>
+          <p className="text-xs text-gray-400 mb-1.5">
+            {tipo === 'VENDA_DIRETA'
+              ? 'Coloque o total ganho no pregão. As entregas parciais você lança depois, na aba Contratos.'
+              : 'Opcional agora — pode completar ao processar.'}
+          </p>
           <ItensPedido value={itens} onChange={setItens} comValor={comValor} />
         </div>
       </div>
@@ -428,7 +437,6 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
           {d.observacao && <p className="text-sm text-gray-600 mt-2 bg-gray-50 rounded-lg p-2">{d.observacao}</p>}
         </div>
 
-        {/* Prioridade */}
         <div>
           <label className="text-xs font-medium text-gray-500">Prioridade</label>
           <div className="flex gap-2 mt-1">
@@ -441,10 +449,9 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
           </div>
         </div>
 
-        {/* Itens */}
         {(d.itens || []).length > 0 && (
           <div>
-            <label className="text-xs font-medium text-gray-500">Itens capturados ({d.itens.length})</label>
+            <label className="text-xs font-medium text-gray-500">Itens ({d.itens.length})</label>
             <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 mt-1">
               {d.itens.map((it: any, idx: number) => (
                 <div key={idx} className="flex justify-between px-3 py-1.5 text-sm">
@@ -456,7 +463,6 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
           </div>
         )}
 
-        {/* Etapas */}
         {!concluida && (
           <div>
             <label className="text-xs font-medium text-gray-500">Mover para</label>
@@ -471,14 +477,14 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
           </div>
         )}
 
-        {/* Gerado */}
         {concluida && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
             <p className="text-sm text-emerald-700 font-medium">✅ Concluída — gerou {d.gerado_ref}</p>
-            {d.gerado_tipo === 'PEDIDO' || (d.gerado_tipo === 'COMUNICADO' && d.gerado_id && d.gerado_id.length === 36 && d.gerado_tipo !== 'EMPENHO') ? (
+            {d.gerado_tipo === 'COMUNICADO' && d.gerado_id && (
               <button onClick={() => navigate(`/expedicao/${d.gerado_id}`)}
-                className="text-xs text-emerald-700 underline mt-1 flex items-center gap-1"><ExternalLink size={12} /> Abrir OV/lançamento</button>
-            ) : null}
+                className="text-xs text-emerald-700 underline mt-1 flex items-center gap-1"><ExternalLink size={12} /> Abrir lançamento</button>
+            )}
+            {d.gerado_tipo === 'CONTRATO' && <p className="text-xs text-emerald-600 mt-1">Veja o saldo e lance entregas na aba <strong>Contratos</strong>.</p>}
           </div>
         )}
       </div>
@@ -489,7 +495,7 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
         {!concluida && (
           <button onClick={() => onConcluir(d)}
             className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg">
-            <Flag size={16} /> Concluir e gerar
+            <Flag size={16} /> Processar
           </button>
         )}
       </div>
@@ -497,33 +503,35 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir }: {
   )
 }
 
-// ── Modal: Concluir (gera o artefato conforme o tipo) ────────────────────────────
+// ── Modal: Processar (gera contrato ou comunicado) ───────────────────────────────
 function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
-  const navigate = useNavigate()
   const cfg = TIPO_MAP[demanda.tipo_operacao] || TIPOS[0]
   const hoje = new Date().toISOString().slice(0, 10)
   const tipo: TipoKey = demanda.tipo_operacao
 
   const [numero, setNumero] = useState(demanda.numero || '')
-  const [tipoFrete, setTipoFrete] = useState('FOB')
   const [canal, setCanal] = useState(demanda.canal || '')
-  const [dataEntrega, setDataEntrega] = useState(demanda.prazo || '')
-  const [localEntrega, setLocalEntrega] = useState('')
   const [dataEmpenho, setDataEmpenho] = useState(hoje)
   const [vigencia, setVigencia] = useState(demanda.prazo || '')
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [dataFat, setDataFat] = useState(hoje)
   const [empenhoId, setEmpenhoId] = useState('')
-  const [itens, setItens] = useState<ItemLinha[]>(toItemLinhas(demanda.itens))
+  const [itens, setItens] = useState<ItemLinha[]>(
+    (demanda.itens || []).filter((i: any) => i.produto_id).map((i: any) => ({
+      produto_id: i.produto_id, codigo: i.codigo || '', descricao: i.descricao || '',
+      qtd: Number(i.qtd) || 0, valor: Number(i.valor) || 0,
+    }))
+  )
 
-  // Empenhos do mesmo cliente, para vincular comunicado de uso (baixa de saldo)
+  const ehContrato = tipo === 'VENDA_DIRETA' || tipo === 'CONSIGNACAO'
+
   const { data: empenhos = [] } = useQuery<any[]>({
     queryKey: ['empenhos'],
     queryFn: () => api.get('/licitacoes/empenhos').then(r => r.data),
     enabled: tipo === 'COMUNICADO_USO',
   })
-  const empenhosCliente = empenhos.filter(e => e.cliente_id === demanda.cliente_id && e.saldo_un > 0)
+  const empenhosCliente = empenhos.filter(e => e.cliente_id === demanda.cliente_id && e.saldo_un > 0 && (e.tipo || 'CONSIGNACAO') === 'CONSIGNACAO')
 
   const concluir = useMutation({
     mutationFn: () => {
@@ -531,12 +539,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         canal: canal || null,
         itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor: i.valor || 0 })),
       }
-      if (tipo === 'VENDA_DIRETA') {
-        body.numero_pedido = numero.trim()
-        body.tipo_frete = tipoFrete
-        body.data_prevista_entrega = dataEntrega || null
-        body.local_entrega = localEntrega || null
-      } else if (tipo === 'CONSIGNACAO') {
+      if (ehContrato) {
         body.numero = numero.trim()
         body.data_empenho = dataEmpenho || null
         body.vigencia = vigencia || null
@@ -549,65 +552,42 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
       }
       return api.post(`/licitacoes/demandas/${demanda.id}/concluir`, body)
     },
-    onSuccess: (res) => {
-      toast.success('Demanda concluída — registro gerado!')
+    onSuccess: () => {
+      toast.success(ehContrato ? 'Contrato criado — lance as entregas na aba Contratos' : 'Comunicado de uso lançado')
       onSaved(); onClose()
-      const g = res.data
-      if (g?.gerado_tipo === 'PEDIDO' && g?.gerado_id) {
-        setTimeout(() => navigate(`/expedicao/${g.gerado_id}`), 300)
-      }
     },
-    onError: (e: any) => toast.error(msgErro(e, 'Erro ao concluir demanda'), { duration: 6000 }),
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao processar'), { duration: 6000 }),
   })
 
-  // Validação por tipo
   const itensOk = itens.length > 0 && itens.every(i => i.qtd > 0)
   let valido = false
-  if (tipo === 'VENDA_DIRETA') valido = !!numero.trim() && !!dataEntrega && itensOk
-  else if (tipo === 'CONSIGNACAO') valido = !!numero.trim() && itens.length > 0 && itens.every(i => i.qtd > 0)
+  if (ehContrato) valido = !!numero.trim() && itensOk
   else valido = !!numero.trim() && !!nf.trim() && Number(valorNf) > 0 && itensOk
 
   return (
-    <ModalBase titulo={<span className="flex items-center gap-2"><Flag size={17} /> Concluir · {cfg.label}</span>} onClose={onClose}>
+    <ModalBase titulo={<span className="flex items-center gap-2"><Flag size={17} /> Processar · {cfg.label}</span>} onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
         <div className="bg-gray-50 rounded-lg p-3 text-sm">
           <p className="font-medium text-gray-700">{demanda.cliente}</p>
-          <p className="text-xs text-gray-400">Ao confirmar, o app gera o registro definitivo automaticamente.</p>
+          <p className="text-xs text-gray-400">
+            {ehContrato
+              ? 'Cria o contrato com as quantidades totais. As entregas/consumos baixam o saldo depois.'
+              : 'Lança o faturamento do material consignado usado.'}
+          </p>
         </div>
 
-        {tipo === 'VENDA_DIRETA' && (
-          <>
-            <div className="grid grid-cols-2 gap-3">
-              <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
-              <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
-              <Campo label="Tipo de frete">
-                <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value)} className={inputCls}>
-                  <option value="FOB">FOB</option>
-                  <option value="CIF_COM_VALOR">CIF com Valor NF</option>
-                  <option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
-                </select>
-              </Campo>
-              <Campo label="Canal">
-                <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
-                  <option value="">A definir…</option>
-                  {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
-                </select>
-              </Campo>
-            </div>
-            <Campo label="Local de entrega"><input value={localEntrega} onChange={e => setLocalEntrega(e.target.value)} className={inputCls} placeholder="Ex: São Paulo SP" /></Campo>
-          </>
-        )}
-
-        {tipo === 'CONSIGNACAO' && (
+        {ehContrato && (
           <div className="grid grid-cols-2 gap-3">
-            <Campo label="Número do empenho *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: NE 2026/0123" /></Campo>
+            <Campo label={tipo === 'VENDA_DIRETA' ? 'Nº do contrato/pregão *' : 'Nº do empenho *'}>
+              <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: PE 042/2026" />
+            </Campo>
             <Campo label="Canal">
               <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
                 <option value="">A definir…</option>
                 {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
               </select>
             </Campo>
-            <Campo label="Data do empenho"><input type="date" value={dataEmpenho} onChange={e => setDataEmpenho(e.target.value)} className={inputCls} /></Campo>
+            <Campo label="Data"><input type="date" value={dataEmpenho} onChange={e => setDataEmpenho(e.target.value)} className={inputCls} /></Campo>
             <Campo label="Vigência (até)"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
           </div>
         )}
@@ -615,9 +595,9 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         {tipo === 'COMUNICADO_USO' && (
           <>
             {empenhosCliente.length > 0 && (
-              <Campo label="Baixar de um empenho consignado (opcional)">
+              <Campo label="Baixar de um contrato de consignação (opcional)">
                 <select value={empenhoId} onChange={e => setEmpenhoId(e.target.value)} className={inputCls}>
-                  <option value="">Comunicado avulso (sem empenho)</option>
+                  <option value="">Comunicado avulso (sem contrato)</option>
                   {empenhosCliente.map(e => <option key={e.id} value={e.id}>{e.numero} · saldo {fmtBRL(e.saldo_valor)}</option>)}
                 </select>
               </Campo>
@@ -638,15 +618,17 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         )}
 
         <div>
-          <label className="text-sm text-gray-600">Itens {tipo === 'CONSIGNACAO' ? '(produto, qtd e valor) *' : '*'}</label>
-          <ItensPedido value={itens} onChange={setItens} comValor={tipo === 'CONSIGNACAO'} />
+          <label className="text-sm text-gray-600">
+            Itens {ehContrato ? '(totais do contrato, com valor) *' : '(o que foi usado) *'}
+          </label>
+          <ItensPedido value={itens} onChange={setItens} comValor={ehContrato} />
         </div>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => concluir.mutate()} disabled={!valido || concluir.isPending}
           className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
-          {concluir.isPending ? 'Gerando…' : 'Concluir e gerar'}
+          {concluir.isPending ? 'Processando…' : ehContrato ? 'Criar contrato' : 'Lançar comunicado'}
         </button>
       </div>
     </ModalBase>
@@ -654,13 +636,14 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-// ── Aba Empenhos (consignação) — controle de saldo ───────────────────────────────
-function AbaEmpenhos() {
+// ── Aba Contratos (venda direta + consignação, com saldo) ────────────────────────
+function AbaContratos() {
   const qc = useQueryClient()
   const [modalNovo, setModalNovo] = useState(false)
   const [abertoId, setAbertoId] = useState<string | null>(null)
+  const [tipoFiltro, setTipoFiltro] = useState('')
 
-  const { data: empenhos = [], isLoading } = useQuery<any[]>({
+  const { data: contratos = [], isLoading } = useQuery<any[]>({
     queryKey: ['empenhos'],
     queryFn: () => api.get('/licitacoes/empenhos').then(r => r.data),
   })
@@ -670,26 +653,34 @@ function AbaEmpenhos() {
     if (abertoId) qc.invalidateQueries({ queryKey: ['empenho', abertoId] })
   }
 
+  const filtrados = tipoFiltro ? contratos.filter(c => (c.tipo || 'CONSIGNACAO') === tipoFiltro) : contratos
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-400">Empenhos consignados · o comunicado de uso baixa o saldo · {empenhos.length} empenho(s)</p>
+        <div className="flex gap-1">
+          <button onClick={() => setTipoFiltro('')} className={`text-sm px-3 py-1.5 rounded-lg ${!tipoFiltro ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}`}>Todos</button>
+          {Object.entries(CONTRATO_TIPO).map(([k, v]) => (
+            <button key={k} onClick={() => setTipoFiltro(k)} className={`text-sm px-3 py-1.5 rounded-lg ${tipoFiltro === k ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}`}>{v.label}</button>
+          ))}
+        </div>
         <button onClick={() => setModalNovo(true)}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
-          <Plus size={16} /> Novo empenho
+          <Plus size={16} /> Novo contrato
         </button>
       </div>
 
       {isLoading ? (
         <p className="text-center text-gray-400 py-10 text-sm">Carregando...</p>
-      ) : empenhos.length === 0 ? (
+      ) : filtrados.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">
-          Nenhum empenho cadastrado. Clique em <strong>Novo empenho</strong> para começar.
+          Nenhum contrato. Clique em <strong>Novo contrato</strong> (ou processe uma venda direta/consignação no painel).
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {empenhos.map((e) => {
+          {filtrados.map((e) => {
             const cfg = STATUS_CFG[e.status] || STATUS_CFG.ABERTO
+            const tp = CONTRATO_TIPO[e.tipo || 'CONSIGNACAO'] || CONTRATO_TIPO.CONSIGNACAO
             const risco = vigenciaEmRisco(e.vigencia, e.saldo_un)
             return (
               <button key={e.id} onClick={() => setAbertoId(e.id)}
@@ -698,7 +689,10 @@ function AbaEmpenhos() {
                   <div>
                     <p className="font-mono font-bold text-gray-800">{e.numero}</p>
                     <p className="text-sm text-gray-600 truncate max-w-[240px]">{e.cliente}</p>
-                    {e.canal && <p className="text-xs text-gray-400 mt-0.5">Canal: {CANAL_LABEL[e.canal] || e.canal}</p>}
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${tp.cor}`}>{tp.label}</span>
+                      {e.canal && <span className="text-xs text-gray-400">{CANAL_LABEL[e.canal] || e.canal}</span>}
+                    </div>
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.cor}`}>{cfg.label}</span>
                 </div>
@@ -706,7 +700,7 @@ function AbaEmpenhos() {
                   <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.min(e.percentual, 100)}%` }} />
                 </div>
                 <div className="flex justify-between text-xs text-gray-500">
-                  <span>Faturado {fmtBRL(e.faturado_valor)} · {e.percentual}%</span>
+                  <span>{e.tipo === 'VENDA_DIRETA' ? 'Entregue' : 'Faturado'} {fmtBRL(e.faturado_valor)} · {e.percentual}%</span>
                   <span className="font-semibold text-gray-700">Saldo {fmtBRL(e.saldo_valor)}</span>
                 </div>
                 <div className="flex justify-between items-center text-[11px] text-gray-400 mt-1.5">
@@ -719,33 +713,15 @@ function AbaEmpenhos() {
         </div>
       )}
 
-      {modalNovo && <ModalNovoEmpenho onClose={() => setModalNovo(false)} onSaved={invalidar} />}
-      {abertoId && <ModalEmpenho id={abertoId} onClose={() => setAbertoId(null)} onChanged={invalidar} />}
+      {modalNovo && <ModalNovoContrato onClose={() => setModalNovo(false)} onSaved={invalidar} />}
+      {abertoId && <ModalContrato id={abertoId} onClose={() => setAbertoId(null)} onChanged={invalidar} />}
     </div>
   )
 }
 
-function ModalBase({ titulo, onClose, children, max = 'max-w-2xl' }: { titulo: React.ReactNode; onClose: () => void; children: React.ReactNode; max?: string }) {
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className={`bg-white rounded-2xl w-full ${max} max-h-[88vh] flex flex-col`} onClick={e => e.stopPropagation()}>
-        <div className="p-5 border-b flex items-center justify-between">
-          <h2 className="text-lg font-bold">{titulo}</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-const inputCls = 'w-full border rounded-lg px-3 py-2.5 text-sm'
-function Campo({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><label className="text-sm text-gray-600">{label}</label>{children}</div>
-}
-
-function ModalNovoEmpenho({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function ModalNovoContrato({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const hoje = new Date().toISOString().slice(0, 10)
+  const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>('VENDA_DIRETA')
   const [numero, setNumero] = useState('')
   const [clienteId, setClienteId] = useState('')
   const [clienteNome, setClienteNome] = useState('')
@@ -757,33 +733,45 @@ function ModalNovoEmpenho({ onClose, onSaved }: { onClose: () => void; onSaved: 
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/empenhos', {
-      numero: numero.trim(),
-      cliente_id: clienteId,
-      canal,
-      data_empenho: dataEmpenho || null,
-      vigencia: vigencia || null,
-      observacao: observacao || null,
+      numero: numero.trim(), cliente_id: clienteId, tipo, canal,
+      data_empenho: dataEmpenho || null, vigencia: vigencia || null, observacao: observacao || null,
       itens: itens.map(i => ({ produto_id: i.produto_id, qtd_empenhada: i.qtd, valor_unitario: i.valor || 0 })),
     }),
-    onSuccess: () => { toast.success('Empenho cadastrado'); onSaved(); onClose() },
-    onError: (e: any) => toast.error(msgErro(e, 'Erro ao cadastrar empenho')),
+    onSuccess: () => { toast.success('Contrato cadastrado'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao cadastrar')),
   })
 
   const valido = numero.trim() && clienteId && itens.length > 0
 
   return (
-    <ModalBase titulo="Novo empenho" onClose={onClose}>
+    <ModalBase titulo="Novo contrato de licitação" onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
+        <div className="grid grid-cols-2 gap-2">
+          {(['VENDA_DIRETA', 'CONSIGNACAO'] as const).map(k => {
+            const v = CONTRATO_TIPO[k]; const Icone = v.icone; const ativo = tipo === k
+            return (
+              <button key={k} onClick={() => setTipo(k)}
+                className={`flex items-center justify-center gap-2 py-2.5 rounded-lg border-2 text-sm font-medium ${ativo ? `${v.cor} border-current` : 'border-gray-200 text-gray-500'}`}>
+                <Icone size={16} /> {v.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-[11px] text-gray-400 -mt-1">
+          {tipo === 'VENDA_DIRETA'
+            ? 'Contrato de pregão ganho. As entregas parciais geram OVs que baixam o saldo.'
+            : 'Material consignado. O comunicado de uso baixa o saldo conforme o cliente usa.'}
+        </p>
         <div className="grid grid-cols-2 gap-3">
-          <Campo label="Número do empenho *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: NE 2026/0123" /></Campo>
-          <Campo label="Data do empenho"><input type="date" value={dataEmpenho} onChange={e => setDataEmpenho(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Número do contrato *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: PE 042/2026" /></Campo>
+          <Campo label="Data"><input type="date" value={dataEmpenho} onChange={e => setDataEmpenho(e.target.value)} className={inputCls} /></Campo>
         </div>
         <Campo label="Cliente / Órgão *">
           <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
           {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
         </Campo>
         <div className="grid grid-cols-2 gap-3">
-          <Campo label="Canal de venda *">
+          <Campo label="Canal *">
             <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
               {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
             </select>
@@ -792,8 +780,8 @@ function ModalNovoEmpenho({ onClose, onSaved }: { onClose: () => void; onSaved: 
         </div>
         <Campo label="Observação"><input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
         <div>
-          <label className="text-sm text-gray-600">Itens do empenho *</label>
-          <p className="text-xs text-gray-400 mb-1.5">Produto, quantidade empenhada e valor unitário.</p>
+          <label className="text-sm text-gray-600">Itens do contrato *</label>
+          <p className="text-xs text-gray-400 mb-1.5">Produto, quantidade TOTAL e valor unitário.</p>
           <ItensPedido value={itens} onChange={setItens} comValor />
         </div>
       </div>
@@ -801,16 +789,16 @@ function ModalNovoEmpenho({ onClose, onSaved }: { onClose: () => void; onSaved: 
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => criar.mutate()} disabled={!valido || criar.isPending}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
-          {criar.isPending ? 'Salvando...' : 'Cadastrar empenho'}
+          {criar.isPending ? 'Salvando...' : 'Cadastrar contrato'}
         </button>
       </div>
     </ModalBase>
   )
 }
 
-function ModalEmpenho({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
   const qc = useQueryClient()
-  const [consumo, setConsumo] = useState(false)
+  const [acao, setAcao] = useState<'consumo' | 'entrega' | null>(null)
   const { data: emp } = useQuery<any>({
     queryKey: ['empenho', id],
     queryFn: () => api.get(`/licitacoes/empenhos/${id}`).then(r => r.data),
@@ -818,34 +806,39 @@ function ModalEmpenho({ id, onClose, onChanged }: { id: string; onClose: () => v
 
   const excluir = useMutation({
     mutationFn: () => api.delete(`/licitacoes/empenhos/${id}`),
-    onSuccess: () => { toast.success('Empenho excluído'); onChanged(); onClose() },
+    onSuccess: () => { toast.success('Contrato excluído'); onChanged(); onClose() },
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao excluir')),
   })
 
   if (!emp) {
-    return <ModalBase titulo="Empenho" onClose={onClose}><p className="p-8 text-center text-gray-400 text-sm">Carregando...</p></ModalBase>
+    return <ModalBase titulo="Contrato" onClose={onClose}><p className="p-8 text-center text-gray-400 text-sm">Carregando...</p></ModalBase>
   }
 
   const cfg = STATUS_CFG[emp.status] || STATUS_CFG.ABERTO
+  const tp = CONTRATO_TIPO[emp.tipo || 'CONSIGNACAO'] || CONTRATO_TIPO.CONSIGNACAO
+  const ehVendaDireta = (emp.tipo || 'CONSIGNACAO') === 'VENDA_DIRETA'
 
   return (
     <ModalBase titulo={<span className="flex items-center gap-2 font-mono">{emp.numero} <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.cor}`}>{cfg.label}</span></span>} onClose={onClose} max="max-w-3xl">
       <div className="flex-1 overflow-y-auto">
         <div className="px-5 py-4 bg-gray-50 border-b">
-          <p className="text-sm text-gray-700 font-medium">{emp.cliente}</p>
-          <p className="text-xs text-gray-400">
+          <div className="flex items-center gap-2">
+            <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${tp.cor}`}>{tp.label}</span>
+            <p className="text-sm text-gray-700 font-medium">{emp.cliente}</p>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">
             {emp.canal && <>Canal: {CANAL_LABEL[emp.canal] || emp.canal} · </>}
-            Empenhado {fmtData(emp.data_empenho)} · Vigência {fmtData(emp.vigencia)}
+            {fmtData(emp.data_empenho)} · Vigência {fmtData(emp.vigencia)}
           </p>
           <div className="grid grid-cols-3 gap-3 mt-3">
-            <div><p className="text-[11px] text-gray-400 uppercase">Empenhado</p><p className="text-base font-bold text-gray-800">{fmtBRL(emp.empenhado_valor)}</p></div>
-            <div><p className="text-[11px] text-gray-400 uppercase">Faturado</p><p className="text-base font-bold text-emerald-600">{fmtBRL(emp.faturado_valor)}</p></div>
+            <div><p className="text-[11px] text-gray-400 uppercase">Total</p><p className="text-base font-bold text-gray-800">{fmtBRL(emp.empenhado_valor)}</p></div>
+            <div><p className="text-[11px] text-gray-400 uppercase">{ehVendaDireta ? 'Entregue' : 'Faturado'}</p><p className="text-base font-bold text-emerald-600">{fmtBRL(emp.faturado_valor)}</p></div>
             <div><p className="text-[11px] text-gray-400 uppercase">Saldo</p><p className="text-base font-bold text-blue-600">{fmtBRL(emp.saldo_valor)}</p></div>
           </div>
           <div className="h-2 rounded-full bg-gray-200 overflow-hidden mt-2">
             <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(emp.percentual, 100)}%` }} />
           </div>
-          <p className="text-[11px] text-gray-400 mt-1">{emp.percentual}% consumido</p>
+          <p className="text-[11px] text-gray-400 mt-1">{emp.percentual}% {ehVendaDireta ? 'entregue' : 'consumido'}</p>
         </div>
 
         <div className="p-5">
@@ -854,7 +847,7 @@ function ModalEmpenho({ id, onClose, onChanged }: { id: string; onClose: () => v
             <table className="w-full text-sm">
               <thead><tr className="text-left text-gray-500 border-b">
                 <th className="pb-2 pr-3">Código</th><th className="pb-2 pr-3">Descrição</th>
-                <th className="pb-2 pr-3 text-right">Empenhado</th><th className="pb-2 pr-3 text-right">Faturado</th>
+                <th className="pb-2 pr-3 text-right">Total</th><th className="pb-2 pr-3 text-right">{ehVendaDireta ? 'Entregue' : 'Faturado'}</th>
                 <th className="pb-2 text-right">Saldo</th>
               </tr></thead>
               <tbody className="divide-y divide-gray-50">
@@ -873,16 +866,18 @@ function ModalEmpenho({ id, onClose, onChanged }: { id: string; onClose: () => v
         </div>
 
         <div className="px-5 pb-5">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Comunicados de uso lançados ({emp.consumos.length})</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">
+            {ehVendaDireta ? 'Entregas (OVs)' : 'Comunicados de uso'} lançados ({emp.consumos.length})
+          </h3>
           {emp.consumos.length === 0 ? (
-            <p className="text-xs text-gray-400">Nenhum comunicado de uso ainda.</p>
+            <p className="text-xs text-gray-400">Nenhum lançamento ainda.</p>
           ) : (
             <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
               {emp.consumos.map((c: any) => (
                 <div key={c.id} className="flex justify-between px-3 py-2 text-sm">
                   <span className="font-mono text-gray-700">{c.numero_pedido}</span>
-                  <span className="text-gray-500">NF {c.numero_nf} · {fmtData(c.data)}</span>
-                  <span className="font-medium text-gray-700">{fmtBRL(c.valor_nf)}</span>
+                  <span className="text-gray-500">{c.numero_nf ? `NF ${c.numero_nf} · ` : ''}{fmtData(c.data)}</span>
+                  <span className="font-medium text-gray-700">{c.valor_nf ? fmtBRL(c.valor_nf) : '—'}</span>
                 </div>
               ))}
             </div>
@@ -891,17 +886,115 @@ function ModalEmpenho({ id, onClose, onChanged }: { id: string; onClose: () => v
       </div>
 
       <div className="p-4 border-t flex items-center justify-between">
-        <button onClick={() => { if (confirm('Excluir este empenho? (só é possível se não houver comunicados lançados)')) excluir.mutate() }}
+        <button onClick={() => { if (confirm('Excluir este contrato? (só se não houver lançamentos)')) excluir.mutate() }}
           className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600">
           <Trash2 size={15} /> Excluir
         </button>
-        <button onClick={() => setConsumo(true)} disabled={emp.saldo_un <= 0}
-          className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-medium rounded-lg">
-          <FileText size={16} /> Registrar comunicado de uso
-        </button>
+        {ehVendaDireta ? (
+          <button onClick={() => setAcao('entrega')} disabled={emp.saldo_un <= 0}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium rounded-lg">
+            <Truck size={16} /> Registrar entrega (gera OV)
+          </button>
+        ) : (
+          <button onClick={() => setAcao('consumo')} disabled={emp.saldo_un <= 0}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-medium rounded-lg">
+            <FileText size={16} /> Registrar comunicado de uso
+          </button>
+        )}
       </div>
 
-      {consumo && <ModalConsumo emp={emp} onClose={() => setConsumo(false)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empenho', id] }); onChanged() }} />}
+      {acao === 'consumo' && <ModalConsumo emp={emp} onClose={() => setAcao(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empenho', id] }); onChanged() }} />}
+      {acao === 'entrega' && <ModalEntrega emp={emp} onClose={() => setAcao(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empenho', id] }); onChanged() }} />}
+    </ModalBase>
+  )
+}
+
+// ── Entrega parcial de venda direta (gera OV) ────────────────────────────────────
+function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void; onSaved: () => void }) {
+  const navigate = useNavigate()
+  const hoje = new Date().toISOString().slice(0, 10)
+  const comSaldo = emp.itens.filter((i: any) => i.qtd_saldo > 0)
+  const [numero, setNumero] = useState('')
+  const [tipoFrete, setTipoFrete] = useState('FOB')
+  const [canal, setCanal] = useState(emp.canal || '')
+  const [dataEntrega, setDataEntrega] = useState('')
+  const [local, setLocal] = useState('')
+  const [qtds, setQtds] = useState<Record<string, string>>({})
+
+  const registrar = useMutation({
+    mutationFn: () => api.post(`/licitacoes/empenhos/${emp.id}/entrega`, {
+      numero_pedido: numero.trim(),
+      tipo_frete: tipoFrete,
+      canal: canal || null,
+      data_prevista_entrega: dataEntrega || null,
+      local_entrega: local || null,
+      itens: comSaldo
+        .filter((i: any) => Number(qtds[i.produto_id]) > 0)
+        .map((i: any) => ({ produto_id: i.produto_id, qtd_solicitada: Number(qtds[i.produto_id]) })),
+    }),
+    onSuccess: (res) => {
+      toast.success('Entrega registrada — OV criada e saldo atualizado')
+      onSaved(); onClose()
+      const ov = res.data?.ov_gerada_id
+      if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao registrar entrega'), { duration: 6000 }),
+  })
+
+  const algumItem = comSaldo.some((i: any) => Number(qtds[i.produto_id]) > 0)
+  const valido = numero.trim() && dataEntrega && algumItem
+
+  return (
+    <ModalBase titulo={`Entrega parcial · ${emp.numero}`} onClose={onClose}>
+      <div className="p-5 space-y-3 overflow-y-auto">
+        <div className="bg-blue-50 rounded-lg p-2.5 text-xs text-blue-700">
+          Gera uma <strong>OV</strong> no fluxo logístico com as quantidades desta entrega e baixa o saldo do contrato.
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
+          <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Tipo de frete">
+            <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value)} className={inputCls}>
+              <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
+            </select>
+          </Campo>
+          <Campo label="Canal">
+            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
+              <option value="">A definir…</option>
+              {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+            </select>
+          </Campo>
+        </div>
+        <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        <div>
+          <label className="text-sm text-gray-600">Quantidades desta entrega *</label>
+          <p className="text-xs text-gray-400 mb-1.5">Informe quanto entregar de cada item (limitado ao saldo).</p>
+          <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+            {comSaldo.length === 0 ? (
+              <p className="px-3 py-3 text-xs text-gray-400">Sem saldo disponível neste contrato.</p>
+            ) : comSaldo.map((i: any) => (
+              <div key={i.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                <div className="flex-1 min-w-0">
+                  <span className="font-mono font-medium text-gray-800">{i.codigo}</span>
+                  <span className="text-gray-500 ml-2">{i.descricao}</span>
+                  <span className="block text-[11px] text-gray-400">saldo {i.qtd_saldo}</span>
+                </div>
+                <input type="number" min="0" max={i.qtd_saldo} step="1"
+                  value={qtds[i.produto_id] || ''}
+                  onChange={e => setQtds(q => ({ ...q, [i.produto_id]: e.target.value }))}
+                  placeholder="0" className="w-24 border rounded-lg px-2 py-1 text-sm text-right" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => registrar.mutate()} disabled={!valido || registrar.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {registrar.isPending ? 'Gerando OV...' : 'Registrar entrega'}
+        </button>
+      </div>
     </ModalBase>
   )
 }
@@ -956,7 +1049,7 @@ function ModalConsumo({ emp, onClose, onSaved }: { emp: any; onClose: () => void
           <p className="text-xs text-gray-400 mb-1.5">Informe quanto foi usado de cada item (limitado ao saldo).</p>
           <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
             {comSaldo.length === 0 ? (
-              <p className="px-3 py-3 text-xs text-gray-400">Sem saldo disponível neste empenho.</p>
+              <p className="px-3 py-3 text-xs text-gray-400">Sem saldo disponível neste contrato.</p>
             ) : comSaldo.map((i: any) => (
               <div key={i.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
                 <div className="flex-1 min-w-0">
@@ -982,4 +1075,24 @@ function ModalConsumo({ emp, onClose, onSaved }: { emp: any; onClose: () => void
       </div>
     </ModalBase>
   )
+}
+
+// ── Base ─────────────────────────────────────────────────────────────────────────
+function ModalBase({ titulo, onClose, children, max = 'max-w-2xl' }: { titulo: React.ReactNode; onClose: () => void; children: React.ReactNode; max?: string }) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className={`bg-white rounded-2xl w-full ${max} max-h-[88vh] flex flex-col`} onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b flex items-center justify-between">
+          <h2 className="text-lg font-bold">{titulo}</h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+const inputCls = 'w-full border rounded-lg px-3 py-2.5 text-sm'
+function Campo({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div><label className="text-sm text-gray-600">{label}</label>{children}</div>
 }

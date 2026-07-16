@@ -9,6 +9,7 @@ from app.models.schemas import (
     DemandaCreate,
     DemandaUpdate,
     EmpenhoCreate,
+    EntregaVendaDiretaCreate,
     UsuarioOut,
 )
 from app.services import licitacao_demanda_service, licitacao_service
@@ -38,6 +39,15 @@ def registrar_consumo(
     usuario: UsuarioOut = Depends(get_current_user),
 ):
     return licitacao_service.registrar_consumo(str(empenho_id), payload, usuario)
+
+
+@router.post("/empenhos/{empenho_id}/entrega", status_code=201)
+def registrar_entrega(
+    empenho_id: UUID,
+    payload: EntregaVendaDiretaCreate,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    return licitacao_service.registrar_entrega(str(empenho_id), payload, usuario)
 
 
 @router.delete("/empenhos/{empenho_id}")

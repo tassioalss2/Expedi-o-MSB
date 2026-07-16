@@ -5,7 +5,13 @@ from typing import Optional
 from fastapi import HTTPException
 
 from app.core.database import get_service_db
-from app.models.schemas import ComunicadoUsoCreate, ConsumoEmpenhoCreate, EmpenhoCreate, UsuarioOut
+from app.models.schemas import (
+    ComunicadoUsoCreate,
+    ConsumoEmpenhoCreate,
+    EmpenhoCreate,
+    EntregaVendaDiretaCreate,
+    UsuarioOut,
+)
 
 
 def _status(vigencia: Optional[str], saldo_un: float, empenhado_un: float) -> str:
@@ -70,6 +76,7 @@ def criar_empenho(payload: EmpenhoCreate) -> dict:
     emp = db.table("empenhos").insert({
         "numero": payload.numero,
         "cliente_id": str(payload.cliente_id),
+        "tipo": payload.tipo or "CONSIGNACAO",
         "canal": payload.canal,
         "data_empenho": payload.data_empenho.isoformat() if payload.data_empenho else None,
         "vigencia": payload.vigencia.isoformat() if payload.vigencia else None,
@@ -115,6 +122,7 @@ def listar_empenhos() -> list:
         result.append({
             "id": e["id"],
             "numero": e["numero"],
+            "tipo": e.get("tipo") or "CONSIGNACAO",
             "cliente": (e.get("clientes") or {}).get("nome", "—"),
             "cliente_id": e.get("cliente_id"),
             "canal": e.get("canal"),
@@ -167,6 +175,7 @@ def obter_empenho(empenho_id: str) -> dict:
     return {
         "id": e["id"],
         "numero": e["numero"],
+        "tipo": e.get("tipo") or "CONSIGNACAO",
         "cliente": (e.get("clientes") or {}).get("nome", "—"),
         "cliente_id": e.get("cliente_id"),
         "canal": e.get("canal"),
@@ -214,10 +223,55 @@ def registrar_consumo(empenho_id: str, payload: ConsumoEmpenhoCreate, usuario: U
     return obter_empenho(empenho_id)
 
 
+def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuario: UsuarioOut) -> dict:
+    """Entrega parcial de um contrato de VENDA DIRETA — gera uma OV no fluxo
+    logístico, vinculada ao contrato, baixando o saldo por item."""
+    from app.models.schemas import PedidoCreate
+    from app.services import pedido_service
+
+    db = get_service_db()
+    emp = db.table("empenhos").select("id, cliente_id, tipo").eq("id", empenho_id).single().execute().data
+    if not emp:
+        raise HTTPException(status_code=404, detail="Contrato não encontrado")
+    if (emp.get("tipo") or "CONSIGNACAO") != "VENDA_DIRETA":
+        raise HTTPException(status_code=400, detail="Entregas por OV só valem para contratos de venda direta. Consignação usa comunicado de uso.")
+    if not payload.itens:
+        raise HTTPException(status_code=422, detail="Informe ao menos um item da entrega")
+
+    # Valida saldo por item
+    detalhe = obter_empenho(empenho_id)
+    saldo = {i["produto_id"]: i["qtd_saldo"] for i in detalhe["itens"]}
+    for it in payload.itens:
+        pid = str(it.produto_id)
+        if pid not in saldo:
+            raise HTTPException(status_code=422, detail="Item não pertence a este contrato")
+        if it.qtd_solicitada > saldo[pid] + 0.001:
+            raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {saldo[pid]})")
+
+    ov = pedido_service.criar_pedido(
+        PedidoCreate(
+            numero_pedido=payload.numero_pedido,
+            cliente_id=emp["cliente_id"],
+            tipo_frete=payload.tipo_frete or "FOB",
+            tipo_operacao="VENDA_NORMAL",
+            canal=payload.canal or detalhe.get("canal"),
+            local_entrega=payload.local_entrega,
+            data_prevista_entrega=payload.data_prevista_entrega,
+            itens=payload.itens,
+            empenho_id=empenho_id,
+        ),
+        usuario,
+    )
+    detalhe = obter_empenho(empenho_id)
+    detalhe["ov_gerada_id"] = ov.get("id")
+    detalhe["ov_gerada_ref"] = ov.get("numero_pedido")
+    return detalhe
+
+
 def excluir_empenho(empenho_id: str) -> dict:
     db = get_service_db()
     vinculos = db.table("pedidos").select("id").eq("empenho_id", empenho_id).neq("status", "CANCELADO").execute().data
     if vinculos:
-        raise HTTPException(status_code=400, detail="Empenho já tem comunicados de uso lançados — não pode ser excluído")
+        raise HTTPException(status_code=400, detail="Este contrato já tem lançamentos (OV/comunicado) vinculados — não pode ser excluído")
     db.table("empenhos").update({"ativo": False}).eq("id", empenho_id).execute()
     return {"ok": True}

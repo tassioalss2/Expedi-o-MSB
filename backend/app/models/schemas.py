@@ -172,6 +172,8 @@ class PedidoCreate(BaseModel):
     prioridade: Prioridade = Prioridade.NORMAL
     observacoes: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
+    # Vínculo com contrato/empenho de licitação (baixa de saldo em venda direta)
+    empenho_id: Optional[UUID] = None
     # Recriação de OV cancelada — preenchidos apenas quando o operador confirma a duplicata
     forcar_duplicata: bool = False
     motivo_duplicata: Optional[str] = None
@@ -223,6 +225,7 @@ class EmpenhoItemCreate(BaseModel):
 class EmpenhoCreate(BaseModel):
     numero: str
     cliente_id: UUID
+    tipo: str = "CONSIGNACAO"  # CONSIGNACAO | VENDA_DIRETA
     canal: Optional[str] = None
     data_empenho: Optional[date] = None
     vigencia: Optional[date] = None
@@ -232,6 +235,21 @@ class EmpenhoCreate(BaseModel):
     @field_validator("numero")
     @classmethod
     def _strip_numero(cls, v: str) -> str:
+        return v.strip() if v else v
+
+
+class EntregaVendaDiretaCreate(BaseModel):
+    """Entrega parcial de um contrato de venda direta — gera uma OV que baixa o saldo."""
+    numero_pedido: str
+    tipo_frete: str = "FOB"
+    canal: Optional[str] = None
+    data_prevista_entrega: date
+    local_entrega: Optional[str] = None
+    itens: list[ItemPedidoCreate] = []
+
+    @field_validator("numero_pedido")
+    @classmethod
+    def _strip(cls, v: str) -> str:
         return v.strip() if v else v
 
 

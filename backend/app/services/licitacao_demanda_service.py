@@ -188,36 +188,19 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
 
     gerado_tipo = gerado_id = gerado_ref = None
 
-    if tipo == "VENDA_DIRETA":
-        if not payload.numero_pedido or not payload.numero_pedido.strip():
-            raise HTTPException(status_code=422, detail="Informe o número da OV.")
-        if not payload.data_prevista_entrega:
-            raise HTTPException(status_code=422, detail="Informe a data prevista de entrega.")
-        ov = pedido_service.criar_pedido(
-            PedidoCreate(
-                numero_pedido=payload.numero_pedido.strip().upper(),
-                cliente_id=cliente_id,
-                tipo_frete=payload.tipo_frete or "FOB",
-                tipo_operacao="VENDA_NORMAL",
-                canal=canal,
-                local_entrega=payload.local_entrega,
-                data_prevista_entrega=payload.data_prevista_entrega,
-                itens=_itens_pedido(itens_src, "a venda direta"),
-            ),
-            usuario,
-        )
-        gerado_tipo, gerado_id, gerado_ref = "PEDIDO", ov.get("id"), ov.get("numero_pedido")
-
-    elif tipo == "CONSIGNACAO":
+    if tipo in ("VENDA_DIRETA", "CONSIGNACAO"):
+        # Ambos criam um CONTRATO (empenho) com as quantidades totais do pregão/ata.
+        # Venda direta é baixada por OVs parciais; consignação por comunicado de uso.
         if not payload.numero or not payload.numero.strip():
-            raise HTTPException(status_code=422, detail="Informe o número do empenho.")
+            raise HTTPException(status_code=422, detail="Informe o número do contrato/empenho.")
         itens_emp = [it for it in itens_src if it.produto_id and float(it.qtd or 0) > 0]
         if not itens_emp:
-            raise HTTPException(status_code=422, detail="Informe os itens do empenho (produto, quantidade e valor).")
+            raise HTTPException(status_code=422, detail="Informe os itens do contrato (produto, quantidade e valor).")
         emp = licitacao_service.criar_empenho(
             EmpenhoCreate(
                 numero=payload.numero.strip(),
                 cliente_id=cliente_id,
+                tipo=tipo,
                 canal=canal,
                 data_empenho=payload.data_empenho,
                 vigencia=payload.vigencia,
@@ -226,7 +209,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                                          valor_unitario=float(it.valor or 0)) for it in itens_emp],
             )
         )
-        gerado_tipo, gerado_id, gerado_ref = "EMPENHO", emp.get("id"), emp.get("numero")
+        gerado_tipo, gerado_id, gerado_ref = "CONTRATO", emp.get("id"), emp.get("numero")
 
     elif tipo == "COMUNICADO_USO":
         if not payload.numero_pedido or not payload.numero_pedido.strip():
