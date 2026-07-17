@@ -246,6 +246,7 @@ class EntregaVendaDiretaCreate(BaseModel):
     data_prevista_entrega: date
     local_entrega: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
+    concluir: bool = False
 
     @field_validator("numero_pedido")
     @classmethod

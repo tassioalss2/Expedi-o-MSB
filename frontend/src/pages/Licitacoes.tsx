@@ -185,6 +185,13 @@ function PainelDemandas() {
     if (idx >= 0 && idx < ETAPAS_ABERTAS.length - 1) mover.mutate({ id: d.id, etapa: ETAPAS_ABERTAS[idx + 1] })
   }
 
+  // Venda direta e consignação: concluir = gerar a OV (D365 primeiro, OV ao concluir).
+  // Comunicado de uso: concluir = marcar feito (anotando o nº do doc do D365).
+  const concluirDemanda = (d: any) => {
+    if (d.tipo_operacao === 'VENDA_DIRETA' || d.tipo_operacao === 'CONSIGNACAO') setGerarOv({ demanda: d, concluir: true })
+    else setConcluirManual(d)
+  }
+
   const pendentes = filtradas.filter(d => d.etapa !== 'CONCLUIDO').length
 
   return (
@@ -254,8 +261,8 @@ function PainelDemandas() {
                               <CardDemanda key={d.id} d={d} tipo={tipo}
                                 onClick={() => setDetalheId(d.id)}
                                 onAvancar={() => avancar(d)}
-                                onConcluir={() => setConcluirManual(d)}
-                                onGerarOv={() => setGerarOv(d)} />
+                                onConcluir={() => concluirDemanda(d)}
+                                onGerarOv={() => setGerarOv({ demanda: d, concluir: false })} />
                             ))}
                             {cards.length === 0 && (
                               <div className="text-[11px] text-gray-300 text-center py-3">—</div>
@@ -275,13 +282,13 @@ function PainelDemandas() {
       {modalNovo && <ModalNovaDemanda tipoInicial={modalNovo} onClose={() => setModalNovo(null)} onSaved={invalidar} />}
       {detalheId && (
         <ModalDetalheDemanda id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar}
-          onConcluir={(d) => { setDetalheId(null); setConcluirManual(d) }}
+          onConcluir={(d) => { setDetalheId(null); concluirDemanda(d) }}
           onGerar={(d) => { setDetalheId(null); setGerar(d) }}
-          onGerarOv={(d) => { setDetalheId(null); setGerarOv(d) }} />
+          onGerarOv={(d) => { setDetalheId(null); setGerarOv({ demanda: d, concluir: false }) }} />
       )}
       {concluirManual && <ModalConcluirManual demanda={concluirManual} onClose={() => setConcluirManual(null)} onSaved={invalidar} />}
       {gerar && <ModalConcluir demanda={gerar} onClose={() => setGerar(null)} onSaved={invalidar} />}
-      {gerarOv && <ModalGerarOVSaldo demanda={gerarOv} onClose={() => setGerarOv(null)} onSaved={invalidar} />}
+      {gerarOv && <ModalGerarOVSaldo demanda={gerarOv.demanda} concluir={gerarOv.concluir} onClose={() => setGerarOv(null)} onSaved={invalidar} />}
       {historico && <ModalHistorico onClose={() => setHistorico(false)} />}
     </div>
   )
@@ -297,8 +304,9 @@ function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir, onGerarOv }: {
   const podeAvancar = etapa === 'RECEBIDO'
   const parado = diasParado(d.criado_em)
   const refFeito = d.ref_externa || d.gerado_ref
-  const temSaldo = d.tipo_operacao === 'VENDA_DIRETA' && nItens > 0 &&
-    mesclarItens(d.itens || [], d.ov_itens || []).some(l => l.saldo > 0)
+  // Follow-up: só quando JÁ existe OV e sobrou saldo (a 1ª OV sai ao concluir).
+  const temSaldo = d.tipo_operacao === 'VENDA_DIRETA' && (d.ov_itens || []).length > 0 &&
+    mesclarItens(d.itens || [], d.ov_itens).some(l => l.saldo > 0)
   return (
     <div className={`bg-white rounded-lg border border-gray-200 border-l-4 ${tipo.borda} shadow-sm p-2.5`}>
       <div onClick={onClick} className="cursor-pointer">
@@ -634,18 +642,23 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar, onGe
       <div className="p-4 border-t flex items-center justify-between gap-2">
         <button onClick={() => { if (confirm('Remover esta demanda do painel?')) excluir.mutate() }}
           className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600"><Trash2 size={15} /> Remover</button>
-        {!concluida && (
-          <div className="flex gap-2">
-            <button onClick={() => onGerar(d)}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50" title="Cria o contrato/comunicado dentro do app (opcional)">
-              Gerar registro
-            </button>
-            <button onClick={() => onConcluir(d)}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg">
-              <Flag size={16} /> Concluir
-            </button>
-          </div>
-        )}
+        {!concluida && (() => {
+          const geraOv = d.tipo_operacao === 'VENDA_DIRETA' || d.tipo_operacao === 'CONSIGNACAO'
+          return (
+            <div className="flex gap-2">
+              {!geraOv && (
+                <button onClick={() => onGerar(d)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50" title="Cria o comunicado dentro do app (opcional)">
+                  Gerar registro
+                </button>
+              )}
+              <button onClick={() => onConcluir(d)}
+                className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg">
+                <Flag size={16} /> {geraOv ? 'Concluir (gera OV)' : 'Concluir'}
+              </button>
+            </div>
+          )
+        })()}
       </div>
     </ModalBase>
   )
@@ -1088,11 +1101,12 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
   )
 }
 
-// ── Gerar OV do saldo de uma venda direta parcial (a partir da demanda) ──────────
-function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
+// ── Gerar OV de uma venda direta / consignação (a partir da demanda) ─────────────
+function ModalGerarOVSaldo({ demanda, concluir = false, onClose, onSaved }: { demanda: any; concluir?: boolean; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
   const hoje = new Date().toISOString().slice(0, 10)
   const saldoLinhas = mesclarItens(demanda.itens || [], demanda.ov_itens || []).filter(l => l.saldo > 0)
+  const consignacao = demanda.tipo_operacao === 'CONSIGNACAO'
   const [numero, setNumero] = useState('')
   const [tipoFrete, setTipoFrete] = useState('FOB')
   const [canal, setCanal] = useState(demanda.canal || '')
@@ -1108,11 +1122,12 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
       canal: canal || null,
       data_prevista_entrega: dataEntrega || null,
       local_entrega: local || null,
+      concluir,
       itens: saldoLinhas.filter(l => Number(qtds[l.produto_id]) > 0)
         .map(l => ({ produto_id: l.produto_id, qtd_solicitada: Number(qtds[l.produto_id]) })),
     }),
     onSuccess: (res) => {
-      toast.success('OV gerada — saldo atualizado')
+      toast.success(concluir ? 'OV gerada e demanda concluída' : 'OV gerada — saldo atualizado')
       onSaved(); onClose()
       const ov = res.data?.ov_gerada_id
       if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
@@ -1122,12 +1137,15 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
 
   const algum = saldoLinhas.some(l => Number(qtds[l.produto_id]) > 0)
   const valido = numero.trim() && dataEntrega && algum
+  const titulo = concluir ? `Concluir e gerar OV · ${demanda.cliente || ''}` : `Gerar OV do saldo · ${demanda.cliente || ''}`
 
   return (
-    <ModalBase titulo={`Gerar OV do saldo · ${demanda.cliente || ''}`} onClose={onClose}>
+    <ModalBase titulo={titulo} onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
         <div className="bg-blue-50 rounded-lg p-2.5 text-xs text-blue-700">
-          Cria uma <strong>OV</strong> no fluxo logístico com o saldo que ainda não foi faturado. O restante continua rastreado na demanda.
+          {concluir
+            ? <>Você já lançou no D365 — agora gere a <strong>OV</strong> {consignacao ? '(consignado)' : ''} no fluxo logístico. A demanda será marcada como <strong>concluída</strong>.</>
+            : <>Cria uma <strong>OV</strong> no fluxo logístico com o saldo que ainda não foi faturado. O restante continua rastreado na demanda.</>}
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
@@ -1170,8 +1188,8 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => gerar.mutate()} disabled={!valido || gerar.isPending}
-          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
-          {gerar.isPending ? 'Gerando OV...' : 'Gerar OV'}
+          className={`px-4 py-2 text-sm disabled:opacity-50 text-white font-medium rounded-lg ${concluir ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-blue-600 hover:bg-blue-500'}`}>
+          {gerar.isPending ? 'Gerando OV...' : (concluir ? 'Gerar OV e concluir' : 'Gerar OV')}
         </button>
       </div>
     </ModalBase>

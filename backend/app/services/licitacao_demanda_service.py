@@ -286,17 +286,24 @@ def _saldo_demanda(db, d: dict) -> dict:
     return {pid: max(0.0, q - entregue.get(pid, 0.0)) for pid, q in total.items()}
 
 
+# tipo_operacao da OV no fluxo logístico conforme o tipo da demanda
+_TIPO_OP_OV = {"VENDA_DIRETA": "VENDA_NORMAL", "CONSIGNACAO": "CONSIGNADO"}
+
+
 def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
     """Gera uma OV no fluxo logístico com o saldo (ou parte dele) de uma venda
-    direta parcial. A OV é vinculada à demanda; o saldo restante continua rastreado."""
+    direta / consignação. A OV é vinculada à demanda; o saldo restante continua
+    rastreado. Se payload.concluir, a demanda também é marcada como concluída
+    (fluxo padrão: processa no D365, depois gera a OV ao concluir)."""
     from app.services import pedido_service
 
     db = get_service_db()
     d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
     if not d:
         raise HTTPException(status_code=404, detail="Demanda não encontrada")
-    if d.get("tipo_operacao") != "VENDA_DIRETA":
-        raise HTTPException(status_code=400, detail="Gerar OV do saldo vale só para venda direta.")
+    tipo_demanda = d.get("tipo_operacao")
+    if tipo_demanda not in _TIPO_OP_OV:
+        raise HTTPException(status_code=400, detail="Gerar OV vale só para venda direta e consignação.")
     if not payload.itens:
         raise HTTPException(status_code=422, detail="Informe ao menos um item para a OV.")
 
@@ -311,7 +318,7 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
             numero_pedido=payload.numero_pedido,
             cliente_id=d["cliente_id"],
             tipo_frete=payload.tipo_frete or "FOB",
-            tipo_operacao="VENDA_NORMAL",
+            tipo_operacao=_TIPO_OP_OV[tipo_demanda],
             canal=payload.canal or d.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
@@ -330,7 +337,10 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
             "gerado_ref": ped["numero_pedido"],
             "ref_externa": ped["numero_pedido"],
         })
-    if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) == "RECEBIDO":
+    if getattr(payload, "concluir", False):
+        update["etapa"] = "CONCLUIDO"
+        update["concluido_em"] = _agora()
+    elif _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) == "RECEBIDO":
         update["etapa"] = "PROCESSANDO"
     db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
     res = obter_demanda(demanda_id)
