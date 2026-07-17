@@ -518,6 +518,27 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
     elif tipo == "COMUNICADO_USO":
         if not payload.numero_pedido or not payload.numero_pedido.strip():
             raise HTTPException(status_code=422, detail="Informe o número do lançamento (comunicado).")
+        numped = payload.numero_pedido.strip().upper()
+
+        # Se o comunicado com esse número já existe (faturado no D365/app), apenas
+        # vincula a demanda a ele e conclui — não lança de novo (evita duplicidade).
+        existente = db.table("pedidos").select("id, numero_pedido")\
+            .eq("numero_pedido", numped).neq("status", "CANCELADO").limit(1).execute().data
+        if existente:
+            p = existente[0]
+            gerado_tipo, gerado_id, gerado_ref = "COMUNICADO", p["id"], p["numero_pedido"]
+            db.table("licitacao_demandas").update({
+                "etapa": "CONCLUIDO",
+                "gerado_tipo": gerado_tipo,
+                "gerado_id": gerado_id,
+                "gerado_ref": gerado_ref,
+                "canal": canal,
+                "numero": numped,
+                "concluido_em": _agora(),
+                "atualizado_em": _agora(),
+            }).eq("id", demanda_id).execute()
+            return obter_demanda(demanda_id)
+
         if not payload.numero_nf or not payload.numero_nf.strip():
             raise HTTPException(status_code=422, detail="Informe o número da NF.")
         if not payload.valor_nf or float(payload.valor_nf) <= 0:

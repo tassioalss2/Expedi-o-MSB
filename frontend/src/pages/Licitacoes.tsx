@@ -822,9 +822,11 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   })
 
   const itensOk = itens.length > 0 && itens.every(i => i.qtd > 0)
+  // Comunicado: se já existe lançamento com esse número, o backend vincula e conclui
+  // (não exige NF/valor). Para um comunicado novo, o backend cobra NF/valor.
   let valido = false
   if (ehContrato) valido = !!numero.trim() && itensOk
-  else valido = !!numero.trim() && !!nf.trim() && Number(valorNf) > 0 && itensOk
+  else valido = !!numero.trim() && itensOk
 
   return (
     <ModalBase titulo={<span className="flex items-center gap-2"><Flag size={17} /> Processar · {cfg.label}</span>} onClose={onClose}>
