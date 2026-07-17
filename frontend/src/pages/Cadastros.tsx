@@ -81,7 +81,11 @@ export function Cadastros() {
       setModal(false)
       setForm({})
     },
-    onError: () => toast.error('Erro ao salvar'),
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      const msg = typeof d === 'string' ? d : Array.isArray(d) ? (d[0]?.msg || 'Erro ao salvar') : 'Erro ao salvar'
+      toast.error(msg, { duration: 6000 })
+    },
   })
 
   const salvarMotivo = () => {

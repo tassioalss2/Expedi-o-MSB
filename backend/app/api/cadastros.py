@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.database import get_service_db
 from app.core.deps import get_current_user, lider_ou_superior
@@ -134,6 +134,11 @@ def listar_clientes(
 @router.post("/clientes", response_model=ClienteOut, status_code=201)
 def criar_cliente(payload: ClienteCreate, _: UsuarioOut = Depends(lider_ou_superior)):
     db = get_service_db()
+    existe = db.table("clientes").select("id, nome, ativo").eq("codigo", payload.codigo).limit(1).execute().data
+    if existe:
+        e = existe[0]
+        estado = "" if e.get("ativo") else " (inativo)"
+        raise HTTPException(status_code=409, detail=f"Já existe um cliente com o código {payload.codigo}: {e.get('nome')}{estado}.")
     return db.table("clientes").insert({**payload.model_dump(), "ativo": True}).execute().data[0]
 
 
@@ -188,6 +193,11 @@ def buscar_produtos(
 @router.post("/produtos", response_model=ProdutoOut, status_code=201)
 def criar_produto(payload: ProdutoCreate, _: UsuarioOut = Depends(lider_ou_superior)):
     db = get_service_db()
+    existe = db.table("produtos").select("id, descricao, ativo").eq("codigo", payload.codigo).limit(1).execute().data
+    if existe:
+        e = existe[0]
+        estado = "" if e.get("ativo") else " (inativo)"
+        raise HTTPException(status_code=409, detail=f"Já existe um produto com o código {payload.codigo}: {e.get('descricao')}{estado}.")
     return db.table("produtos").insert({**payload.model_dump(), "ativo": True}).execute().data[0]
 
 
