@@ -84,10 +84,12 @@ const etapasDoTipo = (tipo: string) => tipo === 'COMUNICADO_USO' ? FLUXO_COMUNIC
 const ETAPAS_FINAIS = ['NF_ENVIADA', 'CONCLUIDO']
 // Compatibilidade com etapas antigas
 const normEtapa = (e?: string) => (e === 'NOVO' || e === 'ANALISE') ? 'RECEBIDO' : (e || 'RECEBIDO')
-// Coluna onde o card aparece (mapeia legado: VD/consignação CONCLUIDO → NF enviada)
+const temOV = (d: any) => (d.ovs || []).length > 0 || d.gerado_tipo === 'PEDIDO'
+// Coluna onde o card aparece. Legado: VD/consignação concluída no fluxo antigo
+// (gerava OV sem passar por frete/NF) volta para "OV gerada".
 function etapaColuna(d: any): string {
   const e = normEtapa(d.etapa)
-  if (e === 'CONCLUIDO' && d.tipo_operacao !== 'COMUNICADO_USO') return 'NF_ENVIADA'
+  if (e === 'CONCLUIDO' && d.tipo_operacao !== 'COMUNICADO_USO') return temOV(d) ? 'OV_GERADA' : 'PROCESSANDO'
   return e
 }
 const ehFinal = (d: any) => ETAPAS_FINAIS.includes(etapaColuna(d))
@@ -97,7 +99,10 @@ function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | nul
   const licitacao = d.tipo_operacao !== 'COMUNICADO_USO'
   if (e === 'RECEBIDO') return { kind: 'avancar', to: 'PROCESSANDO', label: 'Avançar' }
   if (e === 'PROCESSANDO') return licitacao ? { kind: 'avancar', to: 'COTACAO_FRETE', label: 'Avançar' } : { kind: 'concluir', label: 'Concluir' }
-  if (e === 'COTACAO_FRETE') return d.frete ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'frete', label: 'Cotar frete' }
+  if (e === 'COTACAO_FRETE') {
+    if (temOV(d)) return { kind: 'enviarNf', label: 'Enviar NF' }   // OV já existe (legado): pula geração
+    return d.frete ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'frete', label: 'Cotar frete' }
+  }
   if (e === 'OV_GERADA') return { kind: 'enviarNf', label: 'Enviar NF' }
   return null
 }
@@ -312,7 +317,8 @@ function PainelDemandas() {
         <ModalDetalheDemanda id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar}
           onAcao={(d) => { setDetalheId(null); executarAcao(d) }}
           onGerar={(d) => { setDetalheId(null); setGerar(d) }}
-          onGerarOv={(d) => { setDetalheId(null); setGerarOv({ demanda: d }) }} />
+          onGerarOv={(d) => { setDetalheId(null); setGerarOv({ demanda: d }) }}
+          onCotarFrete={(d) => { setDetalheId(null); setCotarFrete(d) }} />
       )}
       {concluirManual && <ModalConcluirManual demanda={concluirManual} onClose={() => setConcluirManual(null)} onSaved={invalidar} />}
       {gerar && <ModalConcluir demanda={gerar} onClose={() => setGerar(null)} onSaved={invalidar} />}
@@ -497,8 +503,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 }
 
 // ── Modal: Detalhe da demanda ────────────────────────────────────────────────────
-function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerar, onGerarOv }: {
-  id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerar: (d: any) => void; onGerarOv: (d: any) => void
+function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerar, onGerarOv, onCotarFrete }: {
+  id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerar: (d: any) => void; onGerarOv: (d: any) => void; onCotarFrete: (d: any) => void
 }) {
   const navigate = useNavigate()
   const qcDet = useQueryClient()
@@ -650,10 +656,20 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerar, onGerarO
           </div>
         </div>
 
-        {d.frete && (d.frete.transportadora_nome || d.frete.valor) && (
+        {/* Frete (CIF sem valor) — cotar/editar a qualquer momento em VD/consignação */}
+        {d.tipo_operacao !== 'COMUNICADO_USO' && (
           <div className="border border-gray-100 rounded-lg p-3 text-sm">
-            <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1"><Truck size={13} /> Frete cotado (CIF sem valor)</p>
-            <p className="text-gray-700">{d.frete.transportadora_nome || '—'}{d.frete.valor ? ` · ${fmtBRL(d.frete.valor)}` : ''}{d.frete.prazo_dias ? ` · ${d.frete.prazo_dias} dia(s)` : ''}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium text-gray-500 flex items-center gap-1"><Truck size={13} /> Frete cotado (CIF sem valor)</p>
+              {!concluida && (
+                <button onClick={() => onCotarFrete(d)} className="text-xs text-blue-600 hover:underline">
+                  {d.frete && (d.frete.transportadora_nome || d.frete.valor) ? 'Editar' : 'Cotar frete'}
+                </button>
+              )}
+            </div>
+            {d.frete && (d.frete.transportadora_nome || d.frete.valor)
+              ? <p className="text-gray-700 mt-1">{d.frete.transportadora_nome || '—'}{d.frete.valor ? ` · ${fmtBRL(d.frete.valor)}` : ''}{d.frete.prazo_dias ? ` · ${d.frete.prazo_dias} dia(s)` : ''}</p>
+              : <p className="text-gray-400 mt-1">Ainda não cotado.</p>}
           </div>
         )}
 
@@ -668,7 +684,7 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerar, onGerarO
           <div>
             <label className="text-xs font-medium text-gray-500">Mover para (manual)</label>
             <div className="flex flex-wrap gap-2 mt-1">
-              {['RECEBIDO', 'PROCESSANDO'].map(k => (
+              {(d.tipo_operacao === 'COMUNICADO_USO' ? ['RECEBIDO', 'PROCESSANDO'] : ['RECEBIDO', 'PROCESSANDO', 'COTACAO_FRETE']).map(k => (
                 <button key={k} onClick={() => mover.mutate(k)}
                   className={`text-sm px-3 py-1.5 rounded-lg border ${etapaAtual === k ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                   {ETAPA_LABEL[k]}
