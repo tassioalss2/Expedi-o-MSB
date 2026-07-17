@@ -98,7 +98,7 @@ function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | nul
   const e = etapaColuna(d)
   const licitacao = d.tipo_operacao !== 'COMUNICADO_USO'
   if (e === 'RECEBIDO') return { kind: 'avancar', to: 'PROCESSANDO', label: 'Avançar' }
-  if (e === 'PROCESSANDO') return licitacao ? { kind: 'avancar', to: 'COTACAO_FRETE', label: 'Avançar' } : { kind: 'concluir', label: 'Concluir' }
+  if (e === 'PROCESSANDO') return licitacao ? { kind: 'avancar', to: 'COTACAO_FRETE', label: 'Avançar' } : { kind: 'faturar', label: 'Concluir e faturar' }
   if (e === 'COTACAO_FRETE') {
     if (temOV(d)) return { kind: 'enviarNf', label: 'Enviar NF' }   // OV já existe (legado): pula geração
     return d.frete ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'frete', label: 'Cotar frete' }
@@ -220,6 +220,7 @@ function PainelDemandas() {
     else if (a.kind === 'frete') setCotarFrete(d)
     else if (a.kind === 'gerarOv') setGerarOv({ demanda: d })
     else if (a.kind === 'enviarNf') setEnviarNf(d)
+    else if (a.kind === 'faturar') setGerar(d)
     else if (a.kind === 'concluir') setConcluirManual(d)
   }
 
@@ -316,9 +317,9 @@ function PainelDemandas() {
       {detalheId && (
         <ModalDetalheDemanda id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar}
           onAcao={(d) => { setDetalheId(null); executarAcao(d) }}
-          onGerar={(d) => { setDetalheId(null); setGerar(d) }}
           onGerarOv={(d) => { setDetalheId(null); setGerarOv({ demanda: d }) }}
-          onCotarFrete={(d) => { setDetalheId(null); setCotarFrete(d) }} />
+          onCotarFrete={(d) => { setDetalheId(null); setCotarFrete(d) }}
+          onMarcarFeito={(d) => { setDetalheId(null); setConcluirManual(d) }} />
       )}
       {concluirManual && <ModalConcluirManual demanda={concluirManual} onClose={() => setConcluirManual(null)} onSaved={invalidar} />}
       {gerar && <ModalConcluir demanda={gerar} onClose={() => setGerar(null)} onSaved={invalidar} />}
@@ -503,8 +504,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 }
 
 // ── Modal: Detalhe da demanda ────────────────────────────────────────────────────
-function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerar, onGerarOv, onCotarFrete }: {
-  id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerar: (d: any) => void; onGerarOv: (d: any) => void; onCotarFrete: (d: any) => void
+function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCotarFrete, onMarcarFeito }: {
+  id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerarOv: (d: any) => void; onCotarFrete: (d: any) => void; onMarcarFeito: (d: any) => void
 }) {
   const navigate = useNavigate()
   const qcDet = useQueryClient()
@@ -712,9 +713,9 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerar, onGerarO
         {!concluida && (
           <div className="flex gap-2">
             {d.tipo_operacao === 'COMUNICADO_USO' && (
-              <button onClick={() => onGerar(d)}
-                className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50" title="Cria o comunicado dentro do app (opcional)">
-                Gerar registro
+              <button onClick={() => onMarcarFeito(d)}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50" title="Só marca como concluído, sem lançar o faturamento no app">
+                Só marcar feito
               </button>
             )}
             {temSaldoFollowup && (
@@ -836,7 +837,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
           <p className="text-xs text-gray-400">
             {ehContrato
               ? 'Cria o contrato com as quantidades totais. As entregas/consumos baixam o saldo depois.'
-              : 'Lança o faturamento do material consignado usado.'}
+              : 'Os itens já vieram da triagem — confira e informe só a NF e o valor (do D365). Ao lançar, a demanda é concluída e o faturamento entra no sistema.'}
           </p>
         </div>
 
@@ -892,7 +893,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => concluir.mutate()} disabled={!valido || concluir.isPending}
           className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
-          {concluir.isPending ? 'Processando…' : ehContrato ? 'Criar contrato' : 'Lançar comunicado'}
+          {concluir.isPending ? 'Processando…' : ehContrato ? 'Criar contrato' : 'Concluir e faturar'}
         </button>
       </div>
     </ModalBase>
