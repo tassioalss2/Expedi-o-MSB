@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -146,6 +146,8 @@ function PainelDemandas() {
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [concluirManual, setConcluirManual] = useState<any | null>(null)
   const [gerar, setGerar] = useState<any | null>(null)
+  const [gerarOv, setGerarOv] = useState<any | null>(null)
+  const [historico, setHistorico] = useState(false)
   const [busca, setBusca] = useState('')
   const [canalFiltro, setCanalFiltro] = useState('')
   const [colapsadas, setColapsadas] = useState<Record<string, boolean>>({})
@@ -201,6 +203,10 @@ function PainelDemandas() {
           <span className="text-xs text-gray-400 hidden lg:block">{pendentes} pendente(s)</span>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setHistorico(true)}
+            className="flex items-center gap-1.5 text-gray-600 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
+            <Clock size={15} /> Histórico
+          </button>
           {TIPOS.map(t => (
             <button key={t.key} onClick={() => setModalNovo(t.key)}
               className={`flex items-center gap-1.5 text-white text-sm font-medium px-3 py-2 rounded-lg ${t.header} hover:opacity-90`}>
@@ -211,7 +217,7 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 Organize o que chegou: <strong>Avançar</strong> quando começar a lançar no D365 e <strong>Concluir</strong> quando terminar (anote o nº do doc do D365). Nada some do painel até você concluir.
+        💡 Organize o que chegou: <strong>Avançar</strong> quando começar a lançar no D365 e <strong>Concluir</strong> quando terminar (anote o nº do doc do D365). As concluídas <strong>saem do painel no dia seguinte</strong> — consulte-as em <strong>Histórico</strong>.
       </div>
 
       {isLoading ? (
@@ -248,7 +254,8 @@ function PainelDemandas() {
                               <CardDemanda key={d.id} d={d} tipo={tipo}
                                 onClick={() => setDetalheId(d.id)}
                                 onAvancar={() => avancar(d)}
-                                onConcluir={() => setConcluirManual(d)} />
+                                onConcluir={() => setConcluirManual(d)}
+                                onGerarOv={() => setGerarOv(d)} />
                             ))}
                             {cards.length === 0 && (
                               <div className="text-[11px] text-gray-300 text-center py-3">—</div>
@@ -269,16 +276,19 @@ function PainelDemandas() {
       {detalheId && (
         <ModalDetalheDemanda id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar}
           onConcluir={(d) => { setDetalheId(null); setConcluirManual(d) }}
-          onGerar={(d) => { setDetalheId(null); setGerar(d) }} />
+          onGerar={(d) => { setDetalheId(null); setGerar(d) }}
+          onGerarOv={(d) => { setDetalheId(null); setGerarOv(d) }} />
       )}
       {concluirManual && <ModalConcluirManual demanda={concluirManual} onClose={() => setConcluirManual(null)} onSaved={invalidar} />}
       {gerar && <ModalConcluir demanda={gerar} onClose={() => setGerar(null)} onSaved={invalidar} />}
+      {gerarOv && <ModalGerarOVSaldo demanda={gerarOv} onClose={() => setGerarOv(null)} onSaved={invalidar} />}
+      {historico && <ModalHistorico onClose={() => setHistorico(false)} />}
     </div>
   )
 }
 
-function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir }: {
-  d: any; tipo: any; onClick: () => void; onAvancar: () => void; onConcluir: () => void
+function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir, onGerarOv }: {
+  d: any; tipo: any; onClick: () => void; onAvancar: () => void; onConcluir: () => void; onGerarOv?: () => void
 }) {
   const prio = PRIO_CFG[d.prioridade] || PRIO_CFG.NORMAL
   const nItens = (d.itens || []).length
@@ -287,6 +297,8 @@ function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir }: {
   const podeAvancar = etapa === 'RECEBIDO'
   const parado = diasParado(d.criado_em)
   const refFeito = d.ref_externa || d.gerado_ref
+  const temSaldo = d.tipo_operacao === 'VENDA_DIRETA' && nItens > 0 &&
+    mesclarItens(d.itens || [], d.ov_itens || []).some(l => l.saldo > 0)
   return (
     <div className={`bg-white rounded-lg border border-gray-200 border-l-4 ${tipo.borda} shadow-sm p-2.5`}>
       <div onClick={onClick} className="cursor-pointer">
@@ -314,6 +326,12 @@ function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir }: {
           </div>
         )}
       </div>
+      {temSaldo && onGerarOv && (
+        <button onClick={(e) => { e.stopPropagation(); onGerarOv() }}
+          className="mt-2 w-full flex items-center justify-center gap-1 text-[11px] px-2 py-1 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50">
+          <Truck size={11} /> Gerar OV do saldo
+        </button>
+      )}
       {concluida ? (
         refFeito && <p className="text-[11px] text-emerald-600 mt-2 flex items-center gap-1"><ExternalLink size={11} /> D365: {refFeito}</p>
       ) : (
@@ -436,8 +454,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 }
 
 // ── Modal: Detalhe da demanda ────────────────────────────────────────────────────
-function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar }: {
-  id: string; onClose: () => void; onChanged: () => void; onConcluir: (d: any) => void; onGerar: (d: any) => void
+function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar, onGerarOv }: {
+  id: string; onClose: () => void; onChanged: () => void; onConcluir: (d: any) => void; onGerar: (d: any) => void; onGerarOv: (d: any) => void
 }) {
   const navigate = useNavigate()
   const qcDet = useQueryClient()
@@ -512,20 +530,21 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar }: {
           </div>
         )}
 
-        {/* Comparativo triagem (previsto) × OV (realizado) — mostra o saldo que ainda não saiu */}
+        {/* Comparativo triagem (previsto) × OVs (realizado) — mostra o saldo que ainda não saiu */}
         {d.ov_itens && (() => {
           const linhas = mesclarItens(d.itens || [], d.ov_itens || [])
           const temSaldo = linhas.some(l => l.saldo > 0)
+          const ehVendaDireta = d.tipo_operacao === 'VENDA_DIRETA'
           return (
             <div>
-              <label className="text-xs font-medium text-gray-500">Triagem (pedido) × OV {d.gerado_ref} (faturado)</label>
+              <label className="text-xs font-medium text-gray-500">Pedido (triagem) × OVs (faturado)</label>
               <div className="border border-gray-100 rounded-lg overflow-hidden mt-1">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 text-[11px] uppercase text-gray-400">
                       <th className="text-left font-medium px-3 py-1.5">Item</th>
                       <th className="text-right font-medium px-2 py-1.5">Pedido</th>
-                      <th className="text-right font-medium px-2 py-1.5">OV</th>
+                      <th className="text-right font-medium px-2 py-1.5">OVs</th>
                       <th className="text-right font-medium px-3 py-1.5">Saldo</th>
                     </tr>
                   </thead>
@@ -541,40 +560,48 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar }: {
                   </tbody>
                 </table>
               </div>
-              {temSaldo
-                ? <p className="text-xs text-amber-600 mt-1.5">⚠️ Entrega parcial — ainda há saldo a faturar. Gere outra OV para o que falta.</p>
-                : <p className="text-xs text-emerald-600 mt-1.5">✔ A OV cobriu todo o pedido.</p>}
+              {temSaldo ? (
+                <div className="flex items-center justify-between gap-2 mt-1.5">
+                  <p className="text-xs text-amber-600">⚠️ Entrega parcial — ainda há saldo a faturar.</p>
+                  {ehVendaDireta && (
+                    <button onClick={() => onGerarOv(d)}
+                      className="flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg whitespace-nowrap">
+                      <Truck size={13} /> Gerar OV do saldo
+                    </button>
+                  )}
+                </div>
+              ) : <p className="text-xs text-emerald-600 mt-1.5">✔ As OVs cobriram todo o pedido.</p>}
             </div>
           )
         })()}
 
-        {/* Vínculo com a OV real (espelha o status do fluxo logístico) */}
-        <div className="border border-indigo-100 bg-indigo-50/50 rounded-lg p-3">
-          {d.ov_status ? (
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-sm text-indigo-800 font-medium flex items-center gap-1.5">🔗 OV {d.gerado_ref}</p>
-                <p className="text-xs text-indigo-600">Status no fluxo: <strong>{ovStatusLabel(d.ov_status)}</strong></p>
-              </div>
-              <button onClick={() => d.gerado_id && navigate(`/expedicao/${d.gerado_id}`)}
-                className="flex items-center gap-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg">
-                <ExternalLink size={13} /> Abrir OV
-              </button>
-            </div>
-          ) : (
-            <div>
-              <p className="text-xs font-medium text-indigo-700 mb-1">Vincular a uma OV do fluxo logístico</p>
-              <p className="text-[11px] text-indigo-500 mb-2">O card passa a espelhar o status real da OV (ex.: Aguardando Faturamento) automaticamente.</p>
-              <div className="flex gap-2">
-                <input value={ovNum} onChange={e => setOvNum(e.target.value.toUpperCase())} placeholder="Nº da OV (ex: OV015500)"
-                  className={`${inputCls} font-mono flex-1`} />
-                <button onClick={() => vincular.mutate()} disabled={!ovNum.trim() || vincular.isPending}
-                  className="px-3 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg whitespace-nowrap">
-                  {vincular.isPending ? 'Vinculando…' : 'Vincular'}
-                </button>
-              </div>
+        {/* OVs vinculadas (espelham o status do fluxo logístico ao vivo) */}
+        <div className="border border-indigo-100 bg-indigo-50/50 rounded-lg p-3 space-y-2">
+          {(d.ovs_detalhe || []).length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-indigo-700">OV(s) no fluxo logístico</p>
+              {d.ovs_detalhe.map((o: any) => (
+                <div key={o.id} className="flex items-center justify-between gap-2">
+                  <p className="text-sm text-indigo-800">🔗 {o.numero} · <span className="text-xs text-indigo-600">{ovStatusLabel(o.status)}</span></p>
+                  <button onClick={() => o.id && navigate(`/expedicao/${o.id}`)}
+                    className="flex items-center gap-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-2.5 py-1 rounded-lg">
+                    <ExternalLink size={12} /> Abrir
+                  </button>
+                </div>
+              ))}
             </div>
           )}
+          <div>
+            <p className="text-[11px] text-indigo-500 mb-1.5">Vincular outra OV já existente (o card espelha o status dela).</p>
+            <div className="flex gap-2">
+              <input value={ovNum} onChange={e => setOvNum(e.target.value.toUpperCase())} placeholder="Nº da OV (ex: OV015500)"
+                className={`${inputCls} font-mono flex-1`} />
+              <button onClick={() => vincular.mutate()} disabled={!ovNum.trim() || vincular.isPending}
+                className="px-3 py-2 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg whitespace-nowrap">
+                {vincular.isPending ? 'Vinculando…' : 'Vincular'}
+              </button>
+            </div>
+          </div>
         </div>
 
         {!concluida && (
@@ -1057,6 +1084,166 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
 
       {acao === 'consumo' && <ModalConsumo emp={emp} onClose={() => setAcao(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empenho', id] }); onChanged() }} />}
       {acao === 'entrega' && <ModalEntrega emp={emp} onClose={() => setAcao(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empenho', id] }); onChanged() }} />}
+    </ModalBase>
+  )
+}
+
+// ── Gerar OV do saldo de uma venda direta parcial (a partir da demanda) ──────────
+function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
+  const navigate = useNavigate()
+  const hoje = new Date().toISOString().slice(0, 10)
+  const saldoLinhas = mesclarItens(demanda.itens || [], demanda.ov_itens || []).filter(l => l.saldo > 0)
+  const [numero, setNumero] = useState('')
+  const [tipoFrete, setTipoFrete] = useState('FOB')
+  const [canal, setCanal] = useState(demanda.canal || '')
+  const [dataEntrega, setDataEntrega] = useState('')
+  const [local, setLocal] = useState('')
+  const [qtds, setQtds] = useState<Record<string, string>>(
+    () => Object.fromEntries(saldoLinhas.map(l => [l.produto_id, String(l.saldo)])))
+
+  const gerar = useMutation({
+    mutationFn: () => api.post(`/licitacoes/demandas/${demanda.id}/gerar-ov`, {
+      numero_pedido: numero.trim(),
+      tipo_frete: tipoFrete,
+      canal: canal || null,
+      data_prevista_entrega: dataEntrega || null,
+      local_entrega: local || null,
+      itens: saldoLinhas.filter(l => Number(qtds[l.produto_id]) > 0)
+        .map(l => ({ produto_id: l.produto_id, qtd_solicitada: Number(qtds[l.produto_id]) })),
+    }),
+    onSuccess: (res) => {
+      toast.success('OV gerada — saldo atualizado')
+      onSaved(); onClose()
+      const ov = res.data?.ov_gerada_id
+      if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao gerar OV'), { duration: 6000 }),
+  })
+
+  const algum = saldoLinhas.some(l => Number(qtds[l.produto_id]) > 0)
+  const valido = numero.trim() && dataEntrega && algum
+
+  return (
+    <ModalBase titulo={`Gerar OV do saldo · ${demanda.cliente || ''}`} onClose={onClose}>
+      <div className="p-5 space-y-3 overflow-y-auto">
+        <div className="bg-blue-50 rounded-lg p-2.5 text-xs text-blue-700">
+          Cria uma <strong>OV</strong> no fluxo logístico com o saldo que ainda não foi faturado. O restante continua rastreado na demanda.
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
+          <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Tipo de frete">
+            <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value)} className={inputCls}>
+              <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
+            </select>
+          </Campo>
+          <Campo label="Canal">
+            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
+              <option value="">A definir…</option>
+              {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+            </select>
+          </Campo>
+        </div>
+        <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        <div>
+          <label className="text-sm text-gray-600">Quantidades desta OV *</label>
+          <p className="text-xs text-gray-400 mb-1.5">Pré-preenchido com o saldo — ajuste se a entrega for menor.</p>
+          <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+            {saldoLinhas.length === 0 ? (
+              <p className="px-3 py-3 text-xs text-gray-400">Sem saldo a faturar nesta demanda.</p>
+            ) : saldoLinhas.map(l => (
+              <div key={l.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                <div className="flex-1 min-w-0">
+                  <span className="font-mono font-medium text-gray-800">{l.codigo}</span>
+                  <span className="text-gray-500 ml-2">{l.descricao}</span>
+                  <span className="block text-[11px] text-gray-400">saldo {l.saldo}</span>
+                </div>
+                <input type="number" min="0" max={l.saldo} step="1"
+                  value={qtds[l.produto_id] || ''}
+                  onChange={e => setQtds(q => ({ ...q, [l.produto_id]: e.target.value }))}
+                  placeholder="0" className="w-24 border rounded-lg px-2 py-1 text-sm text-right" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => gerar.mutate()} disabled={!valido || gerar.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {gerar.isPending ? 'Gerando OV...' : 'Gerar OV'}
+        </button>
+      </div>
+    </ModalBase>
+  )
+}
+
+// ── Histórico de demandas concluídas (por dia) ───────────────────────────────────
+function ModalHistorico({ onClose }: { onClose: () => void }) {
+  const navigate = useNavigate()
+  const { data: datas = [] } = useQuery<any[]>({
+    queryKey: ['demandas-historico-datas'],
+    queryFn: () => api.get('/licitacoes/demandas/historico/datas').then(r => r.data),
+  })
+  const [sel, setSel] = useState('')
+  useEffect(() => { if (!sel && datas.length) setSel(datas[0].data) }, [datas, sel])
+
+  const { data: itens = [], isLoading } = useQuery<any[]>({
+    queryKey: ['demandas-historico', sel],
+    queryFn: () => api.get(`/licitacoes/demandas/historico?data=${sel}`).then(r => r.data),
+    enabled: !!sel,
+  })
+
+  return (
+    <ModalBase titulo="Histórico de concluídas" onClose={onClose}>
+      <div className="p-5 space-y-3 overflow-y-auto">
+        {datas.length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-6">Nenhuma demanda concluída ainda.</p>
+        ) : (
+          <>
+            <Campo label="Dia">
+              <select value={sel} onChange={e => setSel(e.target.value)} className={inputCls}>
+                {datas.map((d: any) => <option key={d.data} value={d.data}>{fmtData(d.data)} · {d.total} concluída(s)</option>)}
+              </select>
+            </Campo>
+            {isLoading ? (
+              <p className="text-sm text-gray-400 text-center py-4">Carregando…</p>
+            ) : (
+              <div className="space-y-2">
+                {itens.map((d: any) => {
+                  const cfg = TIPO_MAP[d.tipo_operacao] || TIPOS[0]
+                  const Icone = cfg.icone
+                  const ref = d.ref_externa || d.gerado_ref
+                  return (
+                    <div key={d.id} className={`bg-white rounded-lg border border-gray-200 border-l-4 ${cfg.borda} p-2.5`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 flex items-center gap-1.5"><Icone size={14} /> {d.cliente || 'Cliente não informado'}</p>
+                          <div className="flex flex-wrap gap-x-3 text-[11px] text-gray-400 mt-0.5">
+                            {d.numero && <span className="font-mono">{d.numero}</span>}
+                            {d.canal && <span>{CANAL_LABEL[d.canal] || d.canal}</span>}
+                            {ref && <span className="text-emerald-600">D365: {ref}</span>}
+                          </div>
+                        </div>
+                        {(d.ovs_detalhe || []).length > 0 && (
+                          <button onClick={() => navigate(`/expedicao/${d.ovs_detalhe[0].id}`)}
+                            className="flex items-center gap-1 text-xs text-indigo-600 hover:underline whitespace-nowrap">
+                            <ExternalLink size={12} /> OV
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+                {itens.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Sem concluídas neste dia.</p>}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div className="p-4 border-t flex justify-end">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Fechar</button>
+      </div>
     </ModalBase>
   )
 }

@@ -63,6 +63,16 @@ def listar_demandas(_: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.listar_demandas()
 
 
+@router.get("/demandas/historico/datas")
+def historico_datas(_: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.historico_datas()
+
+
+@router.get("/demandas/historico")
+def historico_demandas(data: str, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.historico_demandas(data)
+
+
 @router.post("/demandas", status_code=201)
 def criar_demanda(payload: DemandaCreate, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.criar_demanda(payload)
@@ -94,6 +104,15 @@ class VincularOVRequest(BaseModel):
 @router.post("/demandas/{demanda_id}/vincular-ov")
 def vincular_ov(demanda_id: UUID, payload: VincularOVRequest, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.vincular_ov(str(demanda_id), payload.numero_pedido)
+
+
+@router.post("/demandas/{demanda_id}/gerar-ov", status_code=201)
+def gerar_ov_saldo(
+    demanda_id: UUID,
+    payload: EntregaVendaDiretaCreate,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    return licitacao_demanda_service.gerar_ov_saldo(str(demanda_id), payload, usuario)
 
 
 @router.delete("/demandas/{demanda_id}")

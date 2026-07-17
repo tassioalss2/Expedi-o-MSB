@@ -37,6 +37,26 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _hoje_brt() -> str:
+    """Data de hoje no fuso de Brasília (YYYY-MM-DD)."""
+    from datetime import datetime, timezone, timedelta
+    return datetime.now(timezone(timedelta(hours=-3))).date().isoformat()
+
+
+def _data_brt(iso: Optional[str]) -> str:
+    """Converte um timestamp ISO (UTC) para a data no fuso de Brasília."""
+    if not iso:
+        return ""
+    from datetime import datetime, timezone, timedelta
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=-3))).date().isoformat()
+    except Exception:
+        return iso[:10]
+
+
 def _itens_json(itens) -> list:
     """Serializa DemandaItem[] para gravar no jsonb."""
     out = []
@@ -69,6 +89,8 @@ def _serializar(d: dict) -> dict:
         "gerado_tipo": d.get("gerado_tipo"),
         "gerado_id": d.get("gerado_id"),
         "gerado_ref": d.get("gerado_ref"),
+        "ovs": d.get("ovs") or [],
+        "ovs_detalhe": None,
         "ov_status": None,
         "ov_itens": None,
         "criado_em": d.get("criado_em"),
@@ -76,20 +98,31 @@ def _serializar(d: dict) -> dict:
     }
 
 
+def _ov_ids_de(d: dict) -> list:
+    """Ids de todas as OVs vinculadas à demanda (lista `ovs`, com fallback para o
+    gerado_id legado quando ainda não foi migrado)."""
+    ids = [o.get("id") for o in (d.get("ovs") or []) if o.get("id")]
+    if not ids and d.get("gerado_tipo") in ("PEDIDO", "COMUNICADO") and d.get("gerado_id"):
+        ids = [d.get("gerado_id")]
+    return ids
+
+
 def _anexar_ov_status(db, demandas: list) -> None:
-    """Para demandas vinculadas a uma OV (gerado_tipo PEDIDO/COMUNICADO), busca o
-    status atual e os itens reais da OV para o card espelhar o fluxo logístico ao
-    vivo e comparar as quantidades da triagem (previsto) com as da OV (realizado)."""
-    ids = [d.get("gerado_id") for d in demandas if d.get("gerado_tipo") in ("PEDIDO", "COMUNICADO") and d.get("gerado_id")]
-    if not ids:
+    """Para demandas vinculadas a OVs, busca o status atual e os itens reais de
+    cada OV para o card espelhar o fluxo logístico ao vivo e comparar as
+    quantidades da triagem (previsto) com o total faturado nas OVs (realizado)."""
+    todos: list = []
+    for d in demandas:
+        todos.extend(_ov_ids_de(d))
+    if not todos:
         return
+    uniq = list(dict.fromkeys(todos))
     status_map: dict = {}
     itens_map: dict = {}
-    for i in range(0, len(ids), 80):
-        lote = ids[i:i + 80]
-        rows = db.table("pedidos").select("id, status").in_("id", lote).execute().data
-        for p in rows:
-            status_map[p["id"]] = p.get("status")
+    for i in range(0, len(uniq), 80):
+        lote = uniq[i:i + 80]
+        for p in db.table("pedidos").select("id, numero_pedido, status").in_("id", lote).execute().data:
+            status_map[p["id"]] = {"numero": p.get("numero_pedido"), "status": p.get("status")}
         itrows = db.table("itens_pedido")\
             .select("pedido_id, produto_id, qtd_solicitada, produtos(codigo, descricao)")\
             .in_("pedido_id", lote).execute().data
@@ -102,21 +135,76 @@ def _anexar_ov_status(db, demandas: list) -> None:
                 "qtd": float(it.get("qtd_solicitada") or 0),
             })
     for d in demandas:
-        gid = d.get("gerado_id")
-        if gid in status_map:
-            d["ov_status"] = status_map[gid]
-        if gid in itens_map:
-            d["ov_itens"] = itens_map[gid]
+        ids = _ov_ids_de(d)
+        if not ids:
+            continue
+        d["ovs_detalhe"] = [{
+            "id": i,
+            "numero": (status_map.get(i) or {}).get("numero"),
+            "status": (status_map.get(i) or {}).get("status"),
+        } for i in ids]
+        prim = status_map.get(ids[0])
+        if prim:
+            d["ov_status"] = prim.get("status")
+        # Soma dos itens de todas as OVs (por produto) = total realizado.
+        agg: dict = {}
+        for i in ids:
+            for it in itens_map.get(i, []):
+                k = it.get("produto_id") or it.get("codigo")
+                cur = agg.setdefault(k, {"produto_id": it.get("produto_id"), "codigo": it.get("codigo"),
+                                         "descricao": it.get("descricao"), "qtd": 0.0})
+                cur["qtd"] += it.get("qtd") or 0.0
+        if agg:
+            d["ov_itens"] = list(agg.values())
 
 
 def listar_demandas() -> list:
+    """Painel do dia: pendentes (qualquer dia) + concluídas HOJE. As concluídas de
+    dias anteriores saem do painel automaticamente (ficam no histórico)."""
     db = get_service_db()
     rows = db.table("licitacao_demandas").select("*, clientes(nome)")\
         .eq("ativo", True).order("criado_em", desc=True).execute().data
     demandas = [_serializar(r) for r in rows]
+    hoje = _hoje_brt()
+
+    def visivel(d: dict) -> bool:
+        if d["etapa"] != "CONCLUIDO":
+            return True
+        ce = d.get("concluido_em")
+        return (not ce) or _data_brt(ce) == hoje
+
+    demandas = [d for d in demandas if visivel(d)]
     _anexar_ov_status(db, demandas)
     demandas.sort(key=lambda d: (_PRIORIDADE_PESO.get(d["prioridade"], 3), d.get("prazo") or "9999"))
     return demandas
+
+
+def historico_datas() -> list:
+    """Dias que têm demandas concluídas, com a contagem — para o seletor do histórico."""
+    db = get_service_db()
+    rows = db.table("licitacao_demandas").select("etapa, concluido_em")\
+        .eq("ativo", True).execute().data
+    cont: dict = {}
+    for r in rows:
+        etapa = _ETAPA_LEGADA.get(r.get("etapa"), r.get("etapa"))
+        ce = r.get("concluido_em")
+        if etapa == "CONCLUIDO" and ce:
+            dia = _data_brt(ce)
+            cont[dia] = cont.get(dia, 0) + 1
+    return sorted([{"data": k, "total": v} for k, v in cont.items()], key=lambda x: x["data"], reverse=True)
+
+
+def historico_demandas(data: str) -> list:
+    """Demandas concluídas em uma data específica (fuso de Brasília)."""
+    db = get_service_db()
+    rows = db.table("licitacao_demandas").select("*, clientes(nome)")\
+        .eq("ativo", True).order("concluido_em", desc=True).execute().data
+    demandas = [_serializar(r) for r in rows]
+    alvo = (data or "").strip()[:10]
+    out = [d for d in demandas
+           if d["etapa"] == "CONCLUIDO" and d.get("concluido_em") and _data_brt(d["concluido_em"]) == alvo]
+    _anexar_ov_status(db, out)
+    return out
 
 
 def criar_demanda(payload: DemandaCreate) -> dict:
@@ -163,17 +251,92 @@ def vincular_ov(demanda_id: str, numero_pedido: str) -> dict:
     if not peds:
         raise HTTPException(status_code=404, detail=f"Nenhuma OV ativa encontrada com o número '{num}'.")
     ped = peds[0]
-    update = {
-        "gerado_tipo": "PEDIDO",
-        "gerado_id": ped["id"],
-        "gerado_ref": ped["numero_pedido"],
-        "ref_externa": ped["numero_pedido"],
-        "atualizado_em": _agora(),
-    }
+    ovs = list(d.get("ovs") or [])
+    if not any(o.get("id") == ped["id"] for o in ovs):
+        ovs.append({"id": ped["id"], "numero": ped["numero_pedido"]})
+    update = {"ovs": ovs, "atualizado_em": _agora()}
+    if not d.get("gerado_id"):
+        update.update({
+            "gerado_tipo": "PEDIDO",
+            "gerado_id": ped["id"],
+            "gerado_ref": ped["numero_pedido"],
+            "ref_externa": ped["numero_pedido"],
+        })
     if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) == "RECEBIDO":
         update["etapa"] = "PROCESSANDO"
     db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
     return obter_demanda(demanda_id)
+
+
+def _saldo_demanda(db, d: dict) -> dict:
+    """Saldo por produto = total da triagem − soma do que já saiu nas OVs vinculadas."""
+    total: dict = {}
+    for it in (d.get("itens") or []):
+        pid = it.get("produto_id")
+        if pid:
+            total[pid] = total.get(pid, 0.0) + float(it.get("qtd") or 0)
+    ids = _ov_ids_de(d)
+    entregue: dict = {}
+    for i in range(0, len(ids), 80):
+        lote = ids[i:i + 80]
+        for it in db.table("itens_pedido").select("produto_id, qtd_solicitada").in_("pedido_id", lote).execute().data:
+            pid = it.get("produto_id")
+            if pid:
+                entregue[pid] = entregue.get(pid, 0.0) + float(it.get("qtd_solicitada") or 0)
+    return {pid: max(0.0, q - entregue.get(pid, 0.0)) for pid, q in total.items()}
+
+
+def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
+    """Gera uma OV no fluxo logístico com o saldo (ou parte dele) de uma venda
+    direta parcial. A OV é vinculada à demanda; o saldo restante continua rastreado."""
+    from app.services import pedido_service
+
+    db = get_service_db()
+    d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
+    if not d:
+        raise HTTPException(status_code=404, detail="Demanda não encontrada")
+    if d.get("tipo_operacao") != "VENDA_DIRETA":
+        raise HTTPException(status_code=400, detail="Gerar OV do saldo vale só para venda direta.")
+    if not payload.itens:
+        raise HTTPException(status_code=422, detail="Informe ao menos um item para a OV.")
+
+    saldo = _saldo_demanda(db, d)
+    for it in payload.itens:
+        pid = str(it.produto_id)
+        if it.qtd_solicitada > saldo.get(pid, 0.0) + 0.001:
+            raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {round(saldo.get(pid, 0.0))}).")
+
+    ped = pedido_service.criar_pedido(
+        PedidoCreate(
+            numero_pedido=payload.numero_pedido,
+            cliente_id=d["cliente_id"],
+            tipo_frete=payload.tipo_frete or "FOB",
+            tipo_operacao="VENDA_NORMAL",
+            canal=payload.canal or d.get("canal"),
+            local_entrega=payload.local_entrega,
+            data_prevista_entrega=payload.data_prevista_entrega,
+            itens=payload.itens,
+        ),
+        usuario,
+    )
+    ovs = list(d.get("ovs") or [])
+    if not any(o.get("id") == ped["id"] for o in ovs):
+        ovs.append({"id": ped["id"], "numero": ped["numero_pedido"]})
+    update = {"ovs": ovs, "atualizado_em": _agora()}
+    if not d.get("gerado_id"):
+        update.update({
+            "gerado_tipo": "PEDIDO",
+            "gerado_id": ped["id"],
+            "gerado_ref": ped["numero_pedido"],
+            "ref_externa": ped["numero_pedido"],
+        })
+    if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) == "RECEBIDO":
+        update["etapa"] = "PROCESSANDO"
+    db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
+    res = obter_demanda(demanda_id)
+    res["ov_gerada_id"] = ped.get("id")
+    res["ov_gerada_ref"] = ped.get("numero_pedido")
+    return res
 
 
 def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
