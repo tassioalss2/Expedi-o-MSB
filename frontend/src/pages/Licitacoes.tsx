@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
   LayoutGrid, Layers, ChevronDown, ChevronRight, ExternalLink, Flag, Clock, Search,
-  ChevronRight as Arrow, Truck,
+  ChevronRight as Arrow, Truck, Send,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -68,14 +68,39 @@ const TIPOS: {
 ]
 const TIPO_MAP = Object.fromEntries(TIPOS.map(t => [t.key, t]))
 
-const ETAPAS: { key: string; label: string }[] = [
-  { key: 'RECEBIDO', label: 'Recebido' },
-  { key: 'PROCESSANDO', label: 'Em processamento (D365)' },
-  { key: 'CONCLUIDO', label: 'Concluído' },
-]
-const ETAPAS_ABERTAS = ['RECEBIDO', 'PROCESSANDO']
+const ETAPA_LABEL: Record<string, string> = {
+  RECEBIDO: 'Recebido',
+  PROCESSANDO: 'Em processamento (D365)',
+  COTACAO_FRETE: 'Cotação de frete',
+  OV_GERADA: 'OV gerada',
+  NF_ENVIADA: 'NF enviada',
+  CONCLUIDO: 'Concluído',
+}
+// Venda direta e consignação: fluxo completo (cota frete, gera OV, envia NF).
+// Comunicado de uso: fluxo curto (recebe, processa no D365, conclui).
+const FLUXO_LICITACAO = ['RECEBIDO', 'PROCESSANDO', 'COTACAO_FRETE', 'OV_GERADA', 'NF_ENVIADA']
+const FLUXO_COMUNICADO = ['RECEBIDO', 'PROCESSANDO', 'CONCLUIDO']
+const etapasDoTipo = (tipo: string) => tipo === 'COMUNICADO_USO' ? FLUXO_COMUNICADO : FLUXO_LICITACAO
+const ETAPAS_FINAIS = ['NF_ENVIADA', 'CONCLUIDO']
 // Compatibilidade com etapas antigas
 const normEtapa = (e?: string) => (e === 'NOVO' || e === 'ANALISE') ? 'RECEBIDO' : (e || 'RECEBIDO')
+// Coluna onde o card aparece (mapeia legado: VD/consignação CONCLUIDO → NF enviada)
+function etapaColuna(d: any): string {
+  const e = normEtapa(d.etapa)
+  if (e === 'CONCLUIDO' && d.tipo_operacao !== 'COMUNICADO_USO') return 'NF_ENVIADA'
+  return e
+}
+const ehFinal = (d: any) => ETAPAS_FINAIS.includes(etapaColuna(d))
+// Próxima ação do card conforme a etapa/tipo
+function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | null {
+  const e = etapaColuna(d)
+  const licitacao = d.tipo_operacao !== 'COMUNICADO_USO'
+  if (e === 'RECEBIDO') return { kind: 'avancar', to: 'PROCESSANDO', label: 'Avançar' }
+  if (e === 'PROCESSANDO') return licitacao ? { kind: 'avancar', to: 'COTACAO_FRETE', label: 'Avançar' } : { kind: 'concluir', label: 'Concluir' }
+  if (e === 'COTACAO_FRETE') return d.frete ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'frete', label: 'Cotar frete' }
+  if (e === 'OV_GERADA') return { kind: 'enviarNf', label: 'Enviar NF' }
+  return null
+}
 const diasParado = (iso?: string) => iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : 0
 const ovStatusLabel = (s?: string) => s ? (STATUS_CONFIG[s as keyof typeof STATUS_CONFIG]?.label || s) : ''
 
@@ -147,6 +172,8 @@ function PainelDemandas() {
   const [concluirManual, setConcluirManual] = useState<any | null>(null)
   const [gerar, setGerar] = useState<any | null>(null)
   const [gerarOv, setGerarOv] = useState<any | null>(null)
+  const [cotarFrete, setCotarFrete] = useState<any | null>(null)
+  const [enviarNf, setEnviarNf] = useState<any | null>(null)
   const [historico, setHistorico] = useState(false)
   const [busca, setBusca] = useState('')
   const [canalFiltro, setCanalFiltro] = useState('')
@@ -178,21 +205,20 @@ function PainelDemandas() {
     })
   }, [demandas, busca, canalFiltro])
 
-  const porTipoEtapa = (tipo: string, etapa: string) => filtradas.filter(d => d.tipo_operacao === tipo && normEtapa(d.etapa) === etapa)
+  const porTipoEtapa = (tipo: string, etapa: string) => filtradas.filter(d => d.tipo_operacao === tipo && etapaColuna(d) === etapa)
 
-  const avancar = (d: any) => {
-    const idx = ETAPAS_ABERTAS.indexOf(normEtapa(d.etapa))
-    if (idx >= 0 && idx < ETAPAS_ABERTAS.length - 1) mover.mutate({ id: d.id, etapa: ETAPAS_ABERTAS[idx + 1] })
+  // Executa a ação primária do card conforme a etapa atual.
+  const executarAcao = (d: any) => {
+    const a = acaoDaEtapa(d)
+    if (!a) return
+    if (a.kind === 'avancar' && a.to) mover.mutate({ id: d.id, etapa: a.to })
+    else if (a.kind === 'frete') setCotarFrete(d)
+    else if (a.kind === 'gerarOv') setGerarOv({ demanda: d })
+    else if (a.kind === 'enviarNf') setEnviarNf(d)
+    else if (a.kind === 'concluir') setConcluirManual(d)
   }
 
-  // Venda direta e consignação: concluir = gerar a OV (D365 primeiro, OV ao concluir).
-  // Comunicado de uso: concluir = marcar feito (anotando o nº do doc do D365).
-  const concluirDemanda = (d: any) => {
-    if (d.tipo_operacao === 'VENDA_DIRETA' || d.tipo_operacao === 'CONSIGNACAO') setGerarOv({ demanda: d, concluir: true })
-    else setConcluirManual(d)
-  }
-
-  const pendentes = filtradas.filter(d => d.etapa !== 'CONCLUIDO').length
+  const pendentes = filtradas.filter(d => !ehFinal(d)).length
 
   return (
     <div className="space-y-4">
@@ -224,7 +250,7 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 Organize o que chegou: <strong>Avançar</strong> quando começar a lançar no D365 e <strong>Concluir</strong> quando terminar (anote o nº do doc do D365). As concluídas <strong>saem do painel no dia seguinte</strong> — consulte-as em <strong>Histórico</strong>.
+        💡 Cada card anda pelas etapas com o botão da vez: D365 → <strong>Cotar frete</strong> → <strong>Gerar OV</strong> → <strong>Enviar NF</strong>. As finalizadas (NF enviada / concluídas) <strong>saem do painel no dia seguinte</strong> — consulte-as em <strong>Histórico</strong>.
       </div>
 
       {isLoading ? (
@@ -246,33 +272,35 @@ function PainelDemandas() {
                   <span className="text-[11px] text-white/70 ml-2 hidden md:block truncate">{tipo.desc}</span>
                 </button>
 
-                {!colaps && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-gray-100">
-                    {ETAPAS.map(etapa => {
-                      const cards = porTipoEtapa(tipo.key, etapa.key)
-                      return (
-                        <div key={etapa.key} className="bg-gray-50 min-h-[90px] p-2">
-                          <div className="flex items-center justify-between mb-2 px-1">
-                            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{etapa.label}</span>
-                            <span className="text-[11px] text-gray-400">{cards.length}</span>
+                {!colaps && (() => {
+                  const cols = etapasDoTipo(tipo.key)
+                  return (
+                    <div className="grid grid-cols-1 gap-px bg-gray-100" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(0, 1fr))` }}>
+                      {cols.map(etapaKey => {
+                        const cards = porTipoEtapa(tipo.key, etapaKey)
+                        return (
+                          <div key={etapaKey} className="bg-gray-50 min-h-[90px] p-2">
+                            <div className="flex items-center justify-between mb-2 px-1">
+                              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{ETAPA_LABEL[etapaKey]}</span>
+                              <span className="text-[11px] text-gray-400">{cards.length}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {cards.map(d => (
+                                <CardDemanda key={d.id} d={d} tipo={tipo}
+                                  onClick={() => setDetalheId(d.id)}
+                                  onAcao={() => executarAcao(d)}
+                                  onGerarOv={() => setGerarOv({ demanda: d })} />
+                              ))}
+                              {cards.length === 0 && (
+                                <div className="text-[11px] text-gray-300 text-center py-3">—</div>
+                              )}
+                            </div>
                           </div>
-                          <div className="space-y-2">
-                            {cards.map(d => (
-                              <CardDemanda key={d.id} d={d} tipo={tipo}
-                                onClick={() => setDetalheId(d.id)}
-                                onAvancar={() => avancar(d)}
-                                onConcluir={() => concluirDemanda(d)}
-                                onGerarOv={() => setGerarOv({ demanda: d, concluir: false })} />
-                            ))}
-                            {cards.length === 0 && (
-                              <div className="text-[11px] text-gray-300 text-center py-3">—</div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
               </div>
             )
           })}
@@ -282,31 +310,36 @@ function PainelDemandas() {
       {modalNovo && <ModalNovaDemanda tipoInicial={modalNovo} onClose={() => setModalNovo(null)} onSaved={invalidar} />}
       {detalheId && (
         <ModalDetalheDemanda id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar}
-          onConcluir={(d) => { setDetalheId(null); concluirDemanda(d) }}
+          onAcao={(d) => { setDetalheId(null); executarAcao(d) }}
           onGerar={(d) => { setDetalheId(null); setGerar(d) }}
-          onGerarOv={(d) => { setDetalheId(null); setGerarOv({ demanda: d, concluir: false }) }} />
+          onGerarOv={(d) => { setDetalheId(null); setGerarOv({ demanda: d }) }} />
       )}
       {concluirManual && <ModalConcluirManual demanda={concluirManual} onClose={() => setConcluirManual(null)} onSaved={invalidar} />}
       {gerar && <ModalConcluir demanda={gerar} onClose={() => setGerar(null)} onSaved={invalidar} />}
-      {gerarOv && <ModalGerarOVSaldo demanda={gerarOv.demanda} concluir={gerarOv.concluir} onClose={() => setGerarOv(null)} onSaved={invalidar} />}
+      {gerarOv && <ModalGerarOVSaldo demanda={gerarOv.demanda} onClose={() => setGerarOv(null)} onSaved={invalidar} />}
+      {cotarFrete && <ModalFrete demanda={cotarFrete} onClose={() => setCotarFrete(null)} onSaved={invalidar} />}
+      {enviarNf && <ModalEnviarNF demanda={enviarNf} onClose={() => setEnviarNf(null)} onSaved={invalidar} />}
       {historico && <ModalHistorico onClose={() => setHistorico(false)} />}
     </div>
   )
 }
 
-function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir, onGerarOv }: {
-  d: any; tipo: any; onClick: () => void; onAvancar: () => void; onConcluir: () => void; onGerarOv?: () => void
+function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv }: {
+  d: any; tipo: any; onClick: () => void; onAcao: () => void; onGerarOv?: () => void
 }) {
   const prio = PRIO_CFG[d.prioridade] || PRIO_CFG.NORMAL
   const nItens = (d.itens || []).length
-  const etapa = normEtapa(d.etapa)
-  const concluida = etapa === 'CONCLUIDO'
-  const podeAvancar = etapa === 'RECEBIDO'
+  const final = ehFinal(d)
+  const etapaCol = etapaColuna(d)
   const parado = diasParado(d.criado_em)
   const refFeito = d.ref_externa || d.gerado_ref
-  // Follow-up: só quando JÁ existe OV e sobrou saldo (a 1ª OV sai ao concluir).
-  const temSaldo = d.tipo_operacao === 'VENDA_DIRETA' && (d.ov_itens || []).length > 0 &&
+  const acao = acaoDaEtapa(d)
+  // Follow-up: OV já gerada e ainda sobra saldo (entrega parcial de venda direta).
+  const temSaldoFollowup = d.tipo_operacao === 'VENDA_DIRETA' && etapaCol === 'OV_GERADA' && (d.ov_itens || []).length > 0 &&
     mesclarItens(d.itens || [], d.ov_itens).some(l => l.saldo > 0)
+  const iconeAcao = acao?.kind === 'frete' ? <Truck size={11} /> : acao?.kind === 'gerarOv' ? <ShoppingCart size={11} />
+    : acao?.kind === 'enviarNf' ? <Send size={11} /> : acao?.kind === 'concluir' ? <Flag size={11} /> : <Arrow size={11} />
+  const acaoCor = acao?.kind === 'avancar' ? 'border text-gray-600 hover:bg-gray-50' : 'bg-blue-600 hover:bg-blue-500 text-white'
   return (
     <div className={`bg-white rounded-lg border border-gray-200 border-l-4 ${tipo.borda} shadow-sm p-2.5`}>
       <div onClick={onClick} className="cursor-pointer">
@@ -319,39 +352,41 @@ function CardDemanda({ d, tipo, onClick, onAvancar, onConcluir, onGerarOv }: {
           {d.canal && <span className="text-gray-400">{CANAL_LABEL[d.canal] || d.canal}</span>}
           {nItens > 0 && <span className="text-gray-400">{nItens} item(ns)</span>}
           {d.prazo && <span className={`flex items-center gap-1 ${prazoCor(d.prazo)}`}><Clock size={11} /> {fmtData(d.prazo)}</span>}
-          {!concluida && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`}>⏳ há {parado}d</span>}
+          {!final && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`}>⏳ há {parado}d</span>}
         </div>
+        {d.frete && (d.frete.transportadora_nome || d.frete.valor) && (
+          <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1"><Truck size={11} /> {d.frete.transportadora_nome || 'Frete'}{d.frete.valor ? ` · ${fmtBRL(d.frete.valor)}` : ''}</p>
+        )}
         {d.ov_status && (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             <span className="inline-flex items-center gap-1 text-[11px] bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5">
               🔗 {d.gerado_ref} · {ovStatusLabel(d.ov_status)}
             </span>
-            {d.ov_itens && mesclarItens(d.itens || [], d.ov_itens).some(l => l.saldo > 0) && (
-              <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5">
-                ⚠️ saldo a faturar
-              </span>
+            {temSaldoFollowup && (
+              <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5">⚠️ saldo a faturar</span>
             )}
           </div>
         )}
+        {d.nf && (d.nf.numero || d.nf.enviada_em) && (
+          <p className="text-[11px] text-emerald-600 mt-1 flex items-center gap-1"><Send size={11} /> NF {d.nf.numero || ''} enviada{d.nf.enviada_em ? ` · ${fmtData(d.nf.enviada_em)}` : ''}</p>
+        )}
       </div>
-      {temSaldo && onGerarOv && (
-        <button onClick={(e) => { e.stopPropagation(); onGerarOv() }}
-          className="mt-2 w-full flex items-center justify-center gap-1 text-[11px] px-2 py-1 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50">
-          <Truck size={11} /> Gerar OV do saldo
-        </button>
-      )}
-      {concluida ? (
-        refFeito && <p className="text-[11px] text-emerald-600 mt-2 flex items-center gap-1"><ExternalLink size={11} /> D365: {refFeito}</p>
+      {final ? (
+        (!d.nf && refFeito) ? <p className="text-[11px] text-emerald-600 mt-2 flex items-center gap-1"><ExternalLink size={11} /> D365: {refFeito}</p> : null
       ) : (
         <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-50">
-          {podeAvancar && (
-            <button onClick={onAvancar} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border text-gray-600 hover:bg-gray-50">
-              Avançar <Arrow size={11} />
+          {temSaldoFollowup && onGerarOv && (
+            <button onClick={(e) => { e.stopPropagation(); onGerarOv() }}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50">
+              <ShoppingCart size={11} /> OV do saldo
             </button>
           )}
-          <button onClick={onConcluir} className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white ml-auto">
-            <Flag size={11} /> Concluir
-          </button>
+          {acao && (
+            <button onClick={(e) => { e.stopPropagation(); onAcao() }}
+              className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded-md ml-auto ${acaoCor}`}>
+              {iconeAcao} {acao.label}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -462,8 +497,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 }
 
 // ── Modal: Detalhe da demanda ────────────────────────────────────────────────────
-function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar, onGerarOv }: {
-  id: string; onClose: () => void; onChanged: () => void; onConcluir: (d: any) => void; onGerar: (d: any) => void; onGerarOv: (d: any) => void
+function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerar, onGerarOv }: {
+  id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerar: (d: any) => void; onGerarOv: (d: any) => void
 }) {
   const navigate = useNavigate()
   const qcDet = useQueryClient()
@@ -496,8 +531,11 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar, onGe
 
   const cfg = TIPO_MAP[d.tipo_operacao] || TIPOS[0]
   const Icone = cfg.icone
-  const etapaAtual = normEtapa(d.etapa)
-  const concluida = etapaAtual === 'CONCLUIDO'
+  const etapaAtual = etapaColuna(d)
+  const concluida = ehFinal(d)
+  const acao = acaoDaEtapa(d)
+  const temSaldoFollowup = d.tipo_operacao === 'VENDA_DIRETA' && etapaAtual === 'OV_GERADA' && (d.ov_itens || []).length > 0 &&
+    mesclarItens(d.itens || [], d.ov_itens).some((l: any) => l.saldo > 0)
 
   return (
     <ModalBase titulo={<span className="flex items-center gap-2"><Icone size={18} /> {cfg.label}</span>} onClose={onClose}>
@@ -612,14 +650,28 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar, onGe
           </div>
         </div>
 
+        {d.frete && (d.frete.transportadora_nome || d.frete.valor) && (
+          <div className="border border-gray-100 rounded-lg p-3 text-sm">
+            <p className="text-xs font-medium text-gray-500 mb-1 flex items-center gap-1"><Truck size={13} /> Frete cotado (CIF sem valor)</p>
+            <p className="text-gray-700">{d.frete.transportadora_nome || '—'}{d.frete.valor ? ` · ${fmtBRL(d.frete.valor)}` : ''}{d.frete.prazo_dias ? ` · ${d.frete.prazo_dias} dia(s)` : ''}</p>
+          </div>
+        )}
+
+        {d.nf && (
+          <div className="border border-emerald-100 bg-emerald-50 rounded-lg p-3 text-sm">
+            <p className="text-xs font-medium text-emerald-700 mb-1 flex items-center gap-1"><Send size={13} /> NF enviada ao cliente</p>
+            <p className="text-emerald-800">NF {d.nf.numero || '—'}{d.nf.enviada_em ? ` · ${fmtData(d.nf.enviada_em)}` : ''}{d.nf.enviada_por ? ` · por ${d.nf.enviada_por}` : ''}</p>
+          </div>
+        )}
+
         {!concluida && (
           <div>
-            <label className="text-xs font-medium text-gray-500">Mover para</label>
+            <label className="text-xs font-medium text-gray-500">Mover para (manual)</label>
             <div className="flex flex-wrap gap-2 mt-1">
-              {ETAPAS.filter(e => e.key !== 'CONCLUIDO').map(e => (
-                <button key={e.key} onClick={() => mover.mutate(e.key)}
-                  className={`text-sm px-3 py-1.5 rounded-lg border ${etapaAtual === e.key ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                  {e.label}
+              {['RECEBIDO', 'PROCESSANDO'].map(k => (
+                <button key={k} onClick={() => mover.mutate(k)}
+                  className={`text-sm px-3 py-1.5 rounded-lg border ${etapaAtual === k ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {ETAPA_LABEL[k]}
                 </button>
               ))}
             </div>
@@ -628,12 +680,11 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar, onGe
 
         {concluida && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-            <p className="text-sm text-emerald-700 font-medium">✅ Concluída{(d.ref_externa || d.gerado_ref) ? ` — D365: ${d.ref_externa || d.gerado_ref}` : ''}</p>
+            <p className="text-sm text-emerald-700 font-medium">✅ {etapaAtual === 'NF_ENVIADA' ? 'NF enviada — ciclo fechado' : 'Concluída'}{(!d.nf && (d.ref_externa || d.gerado_ref)) ? ` — D365: ${d.ref_externa || d.gerado_ref}` : ''}</p>
             {d.gerado_tipo === 'COMUNICADO' && d.gerado_id && (
               <button onClick={() => navigate(`/expedicao/${d.gerado_id}`)}
                 className="text-xs text-emerald-700 underline mt-1 flex items-center gap-1"><ExternalLink size={12} /> Abrir lançamento</button>
             )}
-            {d.gerado_tipo === 'CONTRATO' && <p className="text-xs text-emerald-600 mt-1">Veja o saldo e lance entregas na aba <strong>Contratos</strong>.</p>}
             <button onClick={() => mover.mutate('RECEBIDO')} className="text-xs text-gray-500 underline mt-2">Reabrir</button>
           </div>
         )}
@@ -642,23 +693,28 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onConcluir, onGerar, onGe
       <div className="p-4 border-t flex items-center justify-between gap-2">
         <button onClick={() => { if (confirm('Remover esta demanda do painel?')) excluir.mutate() }}
           className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600"><Trash2 size={15} /> Remover</button>
-        {!concluida && (() => {
-          const geraOv = d.tipo_operacao === 'VENDA_DIRETA' || d.tipo_operacao === 'CONSIGNACAO'
-          return (
-            <div className="flex gap-2">
-              {!geraOv && (
-                <button onClick={() => onGerar(d)}
-                  className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50" title="Cria o comunicado dentro do app (opcional)">
-                  Gerar registro
-                </button>
-              )}
-              <button onClick={() => onConcluir(d)}
-                className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg">
-                <Flag size={16} /> {geraOv ? 'Concluir (gera OV)' : 'Concluir'}
+        {!concluida && (
+          <div className="flex gap-2">
+            {d.tipo_operacao === 'COMUNICADO_USO' && (
+              <button onClick={() => onGerar(d)}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50" title="Cria o comunicado dentro do app (opcional)">
+                Gerar registro
               </button>
-            </div>
-          )
-        })()}
+            )}
+            {temSaldoFollowup && (
+              <button onClick={() => onGerarOv(d)}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm border border-blue-200 text-blue-600 rounded-lg hover:bg-blue-50">
+                <ShoppingCart size={16} /> OV do saldo
+              </button>
+            )}
+            {acao && (
+              <button onClick={() => onAcao(d)}
+                className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg">
+                {acao.label}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </ModalBase>
   )
@@ -1102,13 +1158,14 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
 }
 
 // ── Gerar OV de uma venda direta / consignação (a partir da demanda) ─────────────
-function ModalGerarOVSaldo({ demanda, concluir = false, onClose, onSaved }: { demanda: any; concluir?: boolean; onClose: () => void; onSaved: () => void }) {
+function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
   const hoje = new Date().toISOString().slice(0, 10)
   const saldoLinhas = mesclarItens(demanda.itens || [], demanda.ov_itens || []).filter(l => l.saldo > 0)
   const consignacao = demanda.tipo_operacao === 'CONSIGNACAO'
+  const frete = demanda.frete || {}
   const [numero, setNumero] = useState('')
-  const [tipoFrete, setTipoFrete] = useState('FOB')
+  const [tipoFrete, setTipoFrete] = useState(frete.tipo_frete || 'CIF_SEM_VALOR')
   const [canal, setCanal] = useState(demanda.canal || '')
   const [dataEntrega, setDataEntrega] = useState('')
   const [local, setLocal] = useState('')
@@ -1122,12 +1179,13 @@ function ModalGerarOVSaldo({ demanda, concluir = false, onClose, onSaved }: { de
       canal: canal || null,
       data_prevista_entrega: dataEntrega || null,
       local_entrega: local || null,
-      concluir,
+      transportadora_id: frete.transportadora_id || null,
+      valor_frete: frete.valor ?? null,
       itens: saldoLinhas.filter(l => Number(qtds[l.produto_id]) > 0)
         .map(l => ({ produto_id: l.produto_id, qtd_solicitada: Number(qtds[l.produto_id]) })),
     }),
     onSuccess: (res) => {
-      toast.success(concluir ? 'OV gerada e demanda concluída' : 'OV gerada — saldo atualizado')
+      toast.success('OV gerada no fluxo logístico')
       onSaved(); onClose()
       const ov = res.data?.ov_gerada_id
       if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
@@ -1137,16 +1195,18 @@ function ModalGerarOVSaldo({ demanda, concluir = false, onClose, onSaved }: { de
 
   const algum = saldoLinhas.some(l => Number(qtds[l.produto_id]) > 0)
   const valido = numero.trim() && dataEntrega && algum
-  const titulo = concluir ? `Concluir e gerar OV · ${demanda.cliente || ''}` : `Gerar OV do saldo · ${demanda.cliente || ''}`
 
   return (
-    <ModalBase titulo={titulo} onClose={onClose}>
+    <ModalBase titulo={`Gerar OV · ${demanda.cliente || ''}`} onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
         <div className="bg-blue-50 rounded-lg p-2.5 text-xs text-blue-700">
-          {concluir
-            ? <>Você já lançou no D365 — agora gere a <strong>OV</strong> {consignacao ? '(consignado)' : ''} no fluxo logístico. A demanda será marcada como <strong>concluída</strong>.</>
-            : <>Cria uma <strong>OV</strong> no fluxo logístico com o saldo que ainda não foi faturado. O restante continua rastreado na demanda.</>}
+          Gera a <strong>OV</strong> {consignacao ? 'de consignação (não fatura até o comunicado de uso)' : 'de venda'} no fluxo logístico com estas quantidades.
         </div>
+        {(frete.transportadora_nome || frete.valor) && (
+          <div className="bg-gray-50 rounded-lg p-2.5 text-xs text-gray-600 flex items-center gap-1.5">
+            <Truck size={13} /> Frete cotado vai para a OV: <strong>{frete.transportadora_nome || 'transportadora'}</strong>{frete.valor ? ` · ${fmtBRL(frete.valor)}` : ''}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
           <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
@@ -1188,8 +1248,8 @@ function ModalGerarOVSaldo({ demanda, concluir = false, onClose, onSaved }: { de
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => gerar.mutate()} disabled={!valido || gerar.isPending}
-          className={`px-4 py-2 text-sm disabled:opacity-50 text-white font-medium rounded-lg ${concluir ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-blue-600 hover:bg-blue-500'}`}>
-          {gerar.isPending ? 'Gerando OV...' : (concluir ? 'Gerar OV e concluir' : 'Gerar OV')}
+          className="px-4 py-2 text-sm disabled:opacity-50 text-white font-medium rounded-lg bg-blue-600 hover:bg-blue-500">
+          {gerar.isPending ? 'Gerando OV...' : 'Gerar OV'}
         </button>
       </div>
     </ModalBase>
@@ -1261,6 +1321,104 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
       </div>
       <div className="p-4 border-t flex justify-end">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Fechar</button>
+      </div>
+    </ModalBase>
+  )
+}
+
+// ── Cotação de frete (CIF sem valor) — vai para a OV ao gerar ────────────────────
+function ModalFrete({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
+  const { data: transportadoras = [] } = useQuery<any[]>({
+    queryKey: ['transportadoras'],
+    queryFn: () => api.get('/transportadoras').then(r => r.data),
+  })
+  const f = demanda.frete || {}
+  const [transpId, setTranspId] = useState(f.transportadora_id || '')
+  const [valor, setValor] = useState(f.valor != null ? String(f.valor) : '')
+  const [prazo, setPrazo] = useState(f.prazo_dias != null ? String(f.prazo_dias) : '')
+  const [obs, setObs] = useState(f.observacao || '')
+
+  const salvar = useMutation({
+    mutationFn: () => {
+      const t = transportadoras.find((x: any) => x.id === transpId)
+      return api.post(`/licitacoes/demandas/${demanda.id}/frete`, {
+        transportadora_id: transpId || null,
+        transportadora_nome: t?.nome || null,
+        valor: valor ? Number(valor) : null,
+        prazo_dias: prazo ? Number(prazo) : null,
+        tipo_frete: 'CIF_SEM_VALOR',
+        observacao: obs || null,
+      })
+    },
+    onSuccess: () => { toast.success('Frete cotado — vai para a OV ao gerar'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar frete')),
+  })
+  const valido = !!transpId || !!valor
+
+  return (
+    <ModalBase titulo={`Cotação de frete · ${demanda.cliente || ''}`} onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <div className="bg-blue-50 rounded-lg p-2.5 text-xs text-blue-700">
+          Licitação é <strong>CIF sem valor</strong>. A transportadora e o valor cotados <strong>vão para a OV</strong> ao gerá-la (sem redigitar).
+        </div>
+        <Campo label="Transportadora">
+          <select value={transpId} onChange={e => setTranspId(e.target.value)} className={inputCls}>
+            <option value="">Selecione…</option>
+            {transportadoras.map((t: any) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+          </select>
+        </Campo>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Valor do frete (R$)"><input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)} className={inputCls} placeholder="0,00" /></Campo>
+          <Campo label="Prazo (dias)"><input type="number" value={prazo} onChange={e => setPrazo(e.target.value)} className={inputCls} placeholder="Ex: 5" /></Campo>
+        </div>
+        <Campo label="Observação"><input value={obs} onChange={e => setObs(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => salvar.mutate()} disabled={!valido || salvar.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {salvar.isPending ? 'Salvando…' : 'Salvar frete'}
+        </button>
+      </div>
+    </ModalBase>
+  )
+}
+
+// ── Enviar NF ao cliente (fechamento) ────────────────────────────────────────────
+function ModalEnviarNF({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
+  const hoje = new Date().toISOString().slice(0, 10)
+  const [numero, setNumero] = useState(demanda.nf?.numero || '')
+  const [data, setData] = useState(demanda.nf?.enviada_em || hoje)
+  const [obs, setObs] = useState('')
+
+  const salvar = useMutation({
+    mutationFn: () => api.post(`/licitacoes/demandas/${demanda.id}/enviar-nf`, {
+      numero: numero.trim() || null,
+      enviada_em: data || null,
+      observacao: obs || null,
+    }),
+    onSuccess: () => { toast.success('NF marcada como enviada — ciclo fechado'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao registrar envio da NF')),
+  })
+
+  return (
+    <ModalBase titulo={`Enviar NF ao cliente · ${demanda.cliente || ''}`} onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <div className="bg-emerald-50 rounded-lg p-2.5 text-xs text-emerald-700">
+          Registra que a <strong>NF foi enviada ao cliente</strong> — último passo. A demanda vai para <strong>NF enviada</strong> e sai do painel amanhã (fica no histórico).
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Número da NF"><input value={numero} onChange={e => setNumero(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 20045" /></Campo>
+          <Campo label="Enviada em"><input type="date" value={data} onChange={e => setData(e.target.value)} className={inputCls} /></Campo>
+        </div>
+        <Campo label="Observação"><input value={obs} onChange={e => setObs(e.target.value)} className={inputCls} placeholder="Ex: enviada por e-mail ao setor de compras" /></Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => salvar.mutate()} disabled={salvar.isPending}
+          className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {salvar.isPending ? 'Registrando…' : 'Marcar NF enviada'}
+        </button>
       </div>
     </ModalBase>
   )

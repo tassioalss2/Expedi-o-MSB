@@ -25,9 +25,11 @@ from app.models.schemas import (
     UsuarioOut,
 )
 
-ETAPAS = ["RECEBIDO", "PROCESSANDO", "CONCLUIDO"]
+ETAPAS = ["RECEBIDO", "PROCESSANDO", "COTACAO_FRETE", "OV_GERADA", "NF_ENVIADA", "CONCLUIDO"]
 # Etapas antigas → novas (compatibilidade com registros já criados)
 _ETAPA_LEGADA = {"NOVO": "RECEBIDO", "ANALISE": "RECEBIDO"}
+# Etapas terminais (saem do painel do dia seguinte, vão para o histórico)
+ETAPAS_FINAIS = {"NF_ENVIADA", "CONCLUIDO"}
 TIPOS = ["VENDA_DIRETA", "CONSIGNACAO", "COMUNICADO_USO"]
 _PRIORIDADE_PESO = {"CRITICA": 0, "ALTA": 1, "NORMAL": 2}
 
@@ -89,6 +91,8 @@ def _serializar(d: dict) -> dict:
         "gerado_tipo": d.get("gerado_tipo"),
         "gerado_id": d.get("gerado_id"),
         "gerado_ref": d.get("gerado_ref"),
+        "frete": d.get("frete"),
+        "nf": d.get("nf"),
         "ovs": d.get("ovs") or [],
         "ovs_detalhe": None,
         "ov_status": None,
@@ -168,7 +172,7 @@ def listar_demandas() -> list:
     hoje = _hoje_brt()
 
     def visivel(d: dict) -> bool:
-        if d["etapa"] != "CONCLUIDO":
+        if d["etapa"] not in ETAPAS_FINAIS:
             return True
         ce = d.get("concluido_em")
         return (not ce) or _data_brt(ce) == hoje
@@ -188,7 +192,7 @@ def historico_datas() -> list:
     for r in rows:
         etapa = _ETAPA_LEGADA.get(r.get("etapa"), r.get("etapa"))
         ce = r.get("concluido_em")
-        if etapa == "CONCLUIDO" and ce:
+        if etapa in ETAPAS_FINAIS and ce:
             dia = _data_brt(ce)
             cont[dia] = cont.get(dia, 0) + 1
     return sorted([{"data": k, "total": v} for k, v in cont.items()], key=lambda x: x["data"], reverse=True)
@@ -202,7 +206,7 @@ def historico_demandas(data: str) -> list:
     demandas = [_serializar(r) for r in rows]
     alvo = (data or "").strip()[:10]
     out = [d for d in demandas
-           if d["etapa"] == "CONCLUIDO" and d.get("concluido_em") and _data_brt(d["concluido_em"]) == alvo]
+           if d["etapa"] in ETAPAS_FINAIS and d.get("concluido_em") and _data_brt(d["concluido_em"]) == alvo]
     _anexar_ov_status(db, out)
     return out
 
@@ -313,15 +317,35 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
         if it.qtd_solicitada > saldo.get(pid, 0.0) + 0.001:
             raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {round(saldo.get(pid, 0.0))}).")
 
+    # Frete cotado na demanda vai para a OV (transportadora + tipo). O valor cotado
+    # entra nas observações (o valor de frete formal é confirmado no faturamento).
+    frete = d.get("frete") or {}
+    transp_id = getattr(payload, "transportadora_id", None) or frete.get("transportadora_id")
+    valor_frete = getattr(payload, "valor_frete", None)
+    if valor_frete is None:
+        valor_frete = frete.get("valor")
+    obs = None
+    if valor_frete or frete.get("transportadora_nome"):
+        partes = []
+        if frete.get("transportadora_nome"):
+            partes.append(f"Transportadora: {frete.get('transportadora_nome')}")
+        if valor_frete:
+            partes.append(f"Frete cotado: R$ {float(valor_frete):.2f}")
+        if frete.get("prazo_dias"):
+            partes.append(f"Prazo: {frete.get('prazo_dias')} dia(s)")
+        obs = " · ".join(partes)
+
     ped = pedido_service.criar_pedido(
         PedidoCreate(
             numero_pedido=payload.numero_pedido,
             cliente_id=d["cliente_id"],
-            tipo_frete=payload.tipo_frete or "FOB",
+            transportadora_id=transp_id,
+            tipo_frete=payload.tipo_frete or "CIF_SEM_VALOR",
             tipo_operacao=_TIPO_OP_OV[tipo_demanda],
             canal=payload.canal or d.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
+            observacoes=obs,
             itens=payload.itens,
         ),
         usuario,
@@ -329,7 +353,7 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
     ovs = list(d.get("ovs") or [])
     if not any(o.get("id") == ped["id"] for o in ovs):
         ovs.append({"id": ped["id"], "numero": ped["numero_pedido"]})
-    update = {"ovs": ovs, "atualizado_em": _agora()}
+    update = {"ovs": ovs, "etapa": "OV_GERADA", "atualizado_em": _agora()}
     if not d.get("gerado_id"):
         update.update({
             "gerado_tipo": "PEDIDO",
@@ -337,16 +361,54 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
             "gerado_ref": ped["numero_pedido"],
             "ref_externa": ped["numero_pedido"],
         })
-    if getattr(payload, "concluir", False):
-        update["etapa"] = "CONCLUIDO"
-        update["concluido_em"] = _agora()
-    elif _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) == "RECEBIDO":
-        update["etapa"] = "PROCESSANDO"
     db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
     res = obter_demanda(demanda_id)
     res["ov_gerada_id"] = ped.get("id")
     res["ov_gerada_ref"] = ped.get("numero_pedido")
     return res
+
+
+def registrar_frete(demanda_id: str, payload) -> dict:
+    """Cotação de frete (CIF sem valor). Guarda transportadora + valor + prazo na
+    demanda; esses dados vão para a OV ao gerá-la. Avança a etapa para Cotação de frete."""
+    db = get_service_db()
+    d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
+    if not d:
+        raise HTTPException(status_code=404, detail="Demanda não encontrada")
+    frete = {
+        "transportadora_id": str(payload.transportadora_id) if payload.transportadora_id else None,
+        "transportadora_nome": (payload.transportadora_nome or "").strip() or None,
+        "valor": float(payload.valor) if payload.valor is not None else None,
+        "prazo_dias": int(payload.prazo_dias) if payload.prazo_dias is not None else None,
+        "tipo_frete": payload.tipo_frete or "CIF_SEM_VALOR",
+        "observacao": (payload.observacao or "").strip() or None,
+    }
+    update = {"frete": frete, "atualizado_em": _agora()}
+    if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) in ("RECEBIDO", "PROCESSANDO"):
+        update["etapa"] = "COTACAO_FRETE"
+    db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
+    return obter_demanda(demanda_id)
+
+
+def enviar_nf(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
+    """Registra o envio da NF ao cliente — fechamento da demanda (etapa NF enviada)."""
+    db = get_service_db()
+    d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
+    if not d:
+        raise HTTPException(status_code=404, detail="Demanda não encontrada")
+    nf = {
+        "numero": (payload.numero or "").strip() or None,
+        "enviada_em": payload.enviada_em.isoformat() if payload.enviada_em else _data_brt(_agora()),
+        "enviada_por": getattr(usuario, "nome", None) or getattr(usuario, "email", None),
+        "observacao": (payload.observacao or "").strip() or None,
+    }
+    db.table("licitacao_demandas").update({
+        "nf": nf,
+        "etapa": "NF_ENVIADA",
+        "concluido_em": _agora(),
+        "atualizado_em": _agora(),
+    }).eq("id", demanda_id).execute()
+    return obter_demanda(demanda_id)
 
 
 def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
@@ -365,8 +427,8 @@ def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
         if etapa not in ETAPAS:
             raise HTTPException(status_code=422, detail="Etapa inválida")
         update["etapa"] = etapa
-        # Concluir é só marcar como feito (opcionalmente com o nº do doc do D365).
-        update["concluido_em"] = _agora() if etapa == "CONCLUIDO" else None
+        # Etapas finais registram a data de conclusão (para o histórico do dia).
+        update["concluido_em"] = _agora() if etapa in ETAPAS_FINAIS else None
     if payload.ref_externa is not None:
         update["ref_externa"] = payload.ref_externa.strip() or None
     if payload.numero is not None:

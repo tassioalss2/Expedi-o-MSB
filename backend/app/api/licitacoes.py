@@ -8,6 +8,8 @@ from app.models.schemas import (
     ConsumoEmpenhoCreate,
     DemandaConcluir,
     DemandaCreate,
+    DemandaFreteCreate,
+    DemandaNFEnvioCreate,
     DemandaUpdate,
     EmpenhoCreate,
     EntregaVendaDiretaCreate,
@@ -113,6 +115,16 @@ def gerar_ov_saldo(
     usuario: UsuarioOut = Depends(get_current_user),
 ):
     return licitacao_demanda_service.gerar_ov_saldo(str(demanda_id), payload, usuario)
+
+
+@router.post("/demandas/{demanda_id}/frete")
+def registrar_frete(demanda_id: UUID, payload: DemandaFreteCreate, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.registrar_frete(str(demanda_id), payload)
+
+
+@router.post("/demandas/{demanda_id}/enviar-nf")
+def enviar_nf(demanda_id: UUID, payload: DemandaNFEnvioCreate, usuario: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.enviar_nf(str(demanda_id), payload, usuario)
 
 
 @router.delete("/demandas/{demanda_id}")

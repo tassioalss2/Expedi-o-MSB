@@ -247,11 +247,30 @@ class EntregaVendaDiretaCreate(BaseModel):
     local_entrega: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
     concluir: bool = False
+    transportadora_id: Optional[UUID] = None
+    valor_frete: Optional[float] = None
 
     @field_validator("numero_pedido")
     @classmethod
     def _strip(cls, v: str) -> str:
         return v.strip() if v else v
+
+
+class DemandaFreteCreate(BaseModel):
+    """Cotação de frete de uma demanda de licitação (CIF sem valor)."""
+    transportadora_id: Optional[UUID] = None
+    transportadora_nome: Optional[str] = None
+    valor: Optional[float] = None
+    prazo_dias: Optional[int] = None
+    tipo_frete: str = "CIF_SEM_VALOR"
+    observacao: Optional[str] = None
+
+
+class DemandaNFEnvioCreate(BaseModel):
+    """Registro do envio da NF ao cliente (fechamento da demanda)."""
+    numero: Optional[str] = None
+    enviada_em: Optional[date] = None
+    observacao: Optional[str] = None
 
 
 class ConsumoEmpenhoCreate(BaseModel):
