@@ -384,7 +384,7 @@ def registrar_frete(demanda_id: str, payload) -> dict:
         "observacao": (payload.observacao or "").strip() or None,
     }
     update = {"frete": frete, "atualizado_em": _agora()}
-    if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) in ("RECEBIDO", "PROCESSANDO"):
+    if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) in ("RECEBIDO", "PROCESSANDO", "OV_GERADA"):
         update["etapa"] = "COTACAO_FRETE"
     db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
     return obter_demanda(demanda_id)

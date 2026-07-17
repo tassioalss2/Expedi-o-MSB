@@ -78,7 +78,7 @@ const ETAPA_LABEL: Record<string, string> = {
 }
 // Venda direta e consignação: fluxo completo (cota frete, gera OV, envia NF).
 // Comunicado de uso: fluxo curto (recebe, processa no D365, conclui).
-const FLUXO_LICITACAO = ['RECEBIDO', 'PROCESSANDO', 'COTACAO_FRETE', 'OV_GERADA', 'NF_ENVIADA']
+const FLUXO_LICITACAO = ['RECEBIDO', 'PROCESSANDO', 'OV_GERADA', 'COTACAO_FRETE', 'NF_ENVIADA']
 const FLUXO_COMUNICADO = ['RECEBIDO', 'PROCESSANDO', 'CONCLUIDO']
 const etapasDoTipo = (tipo: string) => tipo === 'COMUNICADO_USO' ? FLUXO_COMUNICADO : FLUXO_LICITACAO
 const ETAPAS_FINAIS = ['NF_ENVIADA', 'CONCLUIDO']
@@ -98,12 +98,9 @@ function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | nul
   const e = etapaColuna(d)
   const licitacao = d.tipo_operacao !== 'COMUNICADO_USO'
   if (e === 'RECEBIDO') return { kind: 'avancar', to: 'PROCESSANDO', label: 'Avançar' }
-  if (e === 'PROCESSANDO') return licitacao ? { kind: 'avancar', to: 'COTACAO_FRETE', label: 'Avançar' } : { kind: 'faturar', label: 'Concluir e faturar' }
-  if (e === 'COTACAO_FRETE') {
-    if (temOV(d)) return { kind: 'enviarNf', label: 'Enviar NF' }   // OV já existe (legado): pula geração
-    return d.frete ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'frete', label: 'Cotar frete' }
-  }
-  if (e === 'OV_GERADA') return { kind: 'enviarNf', label: 'Enviar NF' }
+  if (e === 'PROCESSANDO') return licitacao ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'faturar', label: 'Concluir e faturar' }
+  if (e === 'OV_GERADA') return { kind: 'frete', label: 'Cotar frete' }
+  if (e === 'COTACAO_FRETE') return { kind: 'enviarNf', label: 'Enviar NF' }
   return null
 }
 const diasParado = (iso?: string) => iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : 0
@@ -256,7 +253,7 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 Cada card anda pelas etapas com o botão da vez: D365 → <strong>Cotar frete</strong> → <strong>Gerar OV</strong> → <strong>Enviar NF</strong>. As finalizadas (NF enviada / concluídas) <strong>saem do painel no dia seguinte</strong> — consulte-as em <strong>Histórico</strong>.
+        💡 Cada card anda pelas etapas com o botão da vez: D365 → <strong>Gerar OV</strong> → <strong>Cotar frete</strong> → <strong>Enviar NF</strong>. As finalizadas (NF enviada / concluídas) <strong>saem do painel no dia seguinte</strong> — consulte-as em <strong>Histórico</strong>.
       </div>
 
       {isLoading ? (
@@ -685,7 +682,7 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
           <div>
             <label className="text-xs font-medium text-gray-500">Mover para (manual)</label>
             <div className="flex flex-wrap gap-2 mt-1">
-              {(d.tipo_operacao === 'COMUNICADO_USO' ? ['RECEBIDO', 'PROCESSANDO'] : ['RECEBIDO', 'PROCESSANDO', 'COTACAO_FRETE']).map(k => (
+              {['RECEBIDO', 'PROCESSANDO'].map(k => (
                 <button key={k} onClick={() => mover.mutate(k)}
                   className={`text-sm px-3 py-1.5 rounded-lg border ${etapaAtual === k ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                   {ETAPA_LABEL[k]}
