@@ -351,7 +351,26 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
 
-    # Itens (informativos — o comunicado já entra FATURADO, sem separação)
+    # A movimentação de FATURADO é o que o faturamento usa para atribuir a
+    # competência. Cria já — se falhar, desfaz o pedido para não deixar um
+    # comunicado "faturado" órfão (que ficaria fora do faturamento).
+    usuarios = db.table("usuarios").select("id").limit(1).execute()
+    uid = usuarios.data[0]["id"] if usuarios.data else None
+    try:
+        db.table("movimentacoes").insert({
+            "pedido_id":       pedido["id"],
+            "status_anterior": None,
+            "status_novo":     StatusPedido.FATURADO.value,
+            "usuario_id":      uid,
+            "observacao":      f"Comunicado de uso — NF {payload.numero_nf}",
+            "criado_em":       ts_fat,
+        }).execute()
+    except Exception:
+        db.table("pedidos").delete().eq("id", pedido["id"]).execute()
+        raise
+
+    # Itens (informativos — o comunicado já entra FATURADO, sem separação).
+    # Não bloqueiam o faturamento: se falharem, o comunicado permanece válido.
     itens = [
         {
             "pedido_id":      pedido["id"],
@@ -362,18 +381,10 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
         for item in (getattr(payload, "itens", None) or [])
     ]
     if itens:
-        db.table("itens_pedido").insert(itens).execute()
-
-    usuarios = db.table("usuarios").select("id").limit(1).execute()
-    uid = usuarios.data[0]["id"] if usuarios.data else None
-    db.table("movimentacoes").insert({
-        "pedido_id":       pedido["id"],
-        "status_anterior": None,
-        "status_novo":     StatusPedido.FATURADO.value,
-        "usuario_id":      uid,
-        "observacao":      f"Comunicado de uso — NF {payload.numero_nf}",
-        "criado_em":       ts_fat,
-    }).execute()
+        try:
+            db.table("itens_pedido").insert(itens).execute()
+        except Exception:
+            pass
 
     return pedido
 
