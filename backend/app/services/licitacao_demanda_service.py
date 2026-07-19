@@ -125,8 +125,8 @@ def _anexar_ov_status(db, demandas: list) -> None:
     itens_map: dict = {}
     for i in range(0, len(uniq), 80):
         lote = uniq[i:i + 80]
-        for p in db.table("pedidos").select("id, numero_pedido, status").in_("id", lote).execute().data:
-            status_map[p["id"]] = {"numero": p.get("numero_pedido"), "status": p.get("status")}
+        for p in db.table("pedidos").select("id, numero_pedido, status, numero_nf").in_("id", lote).execute().data:
+            status_map[p["id"]] = {"numero": p.get("numero_pedido"), "status": p.get("status"), "nf": p.get("numero_nf")}
         itrows = db.table("itens_pedido")\
             .select("pedido_id, produto_id, qtd_solicitada, produtos(codigo, descricao)")\
             .in_("pedido_id", lote).execute().data
@@ -146,6 +146,7 @@ def _anexar_ov_status(db, demandas: list) -> None:
             "id": i,
             "numero": (status_map.get(i) or {}).get("numero"),
             "status": (status_map.get(i) or {}).get("status"),
+            "nf": (status_map.get(i) or {}).get("nf"),
         } for i in ids]
         prim = status_map.get(ids[0])
         if prim:
@@ -312,10 +313,16 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
         raise HTTPException(status_code=422, detail="Informe ao menos um item para a OV.")
 
     saldo = _saldo_demanda(db, d)
+    # Preço unitário digitado na triagem segue junto para a OV (sugere o valor da
+    # NF no faturamento sem redigitar).
+    preco_triagem = {it.get("produto_id"): float(it.get("valor") or 0)
+                     for it in (d.get("itens") or []) if it.get("produto_id")}
     for it in payload.itens:
         pid = str(it.produto_id)
         if it.qtd_solicitada > saldo.get(pid, 0.0) + 0.001:
             raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {round(saldo.get(pid, 0.0))}).")
+        if it.valor_unitario is None and preco_triagem.get(pid):
+            it.valor_unitario = preco_triagem[pid]
 
     # Frete cotado na demanda vai para a OV (transportadora + tipo). O valor cotado
     # entra nas observações (o valor de frete formal é confirmado no faturamento).
@@ -346,6 +353,7 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
             observacoes=obs,
+            valor_frete=float(valor_frete) if valor_frete else None,
             itens=payload.itens,
         ),
         usuario,

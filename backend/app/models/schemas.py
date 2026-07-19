@@ -135,6 +135,9 @@ class ItemPedidoCreate(BaseModel):
     produto_id: UUID
     lote_id: Optional[UUID] = None
     qtd_solicitada: float
+    # Preço unitário herdado da origem (cotação/oportunidade/contrato) — permite
+    # sugerir o valor da NF no faturamento sem redigitar.
+    valor_unitario: Optional[float] = None
 
     @field_validator("qtd_solicitada")
     @classmethod
@@ -172,6 +175,8 @@ class PedidoCreate(BaseModel):
     prioridade: Prioridade = Prioridade.NORMAL
     observacoes: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
+    # Frete cotado antes da OV (licitações) — pré-preenche o custo no faturamento
+    valor_frete: Optional[float] = None
     # Vínculo com contrato/empenho de licitação (baixa de saldo em venda direta)
     empenho_id: Optional[UUID] = None
     # Recriação de OV cancelada — preenchidos apenas quando o operador confirma a duplicata

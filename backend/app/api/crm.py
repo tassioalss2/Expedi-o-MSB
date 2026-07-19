@@ -202,6 +202,11 @@ def atualizar_cotacao(cotacao_id: UUID, payload: CotacaoUpdate, usuario: Usuario
     return crm_cotacao_service.atualizar_cotacao(str(cotacao_id), payload, usuario)
 
 
+@router.post("/cotacoes/{cotacao_id}/gerar-ov", status_code=201)
+def gerar_ov_cotacao(cotacao_id: UUID, payload: GerarOVRequest, usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.gerar_ov(str(cotacao_id), payload, usuario)
+
+
 @router.delete("/cotacoes/{cotacao_id}")
 def excluir_cotacao(cotacao_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return crm_cotacao_service.excluir_cotacao(str(cotacao_id))

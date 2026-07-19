@@ -151,10 +151,34 @@ def converter_lead(lead_id: str, usuario: UsuarioOut) -> dict:
     if lead.get("oportunidade_id"):
         raise HTTPException(status_code=400, detail="Este lead já foi convertido em oportunidade.")
 
+    # Os dados de contato do lead viram um contato do CRM automaticamente
+    # (nada de recadastrar nome/email/telefone na mão).
+    contato_id = None
+    if (lead.get("contato_nome") or "").strip():
+        ja = db.table("crm_contatos").select("id").eq("ativo", True)\
+            .eq("nome", lead["contato_nome"].strip())
+        if lead.get("email"):
+            ja = ja.eq("email", lead["email"])
+        existente = ja.limit(1).execute().data
+        if existente:
+            contato_id = existente[0]["id"]
+        else:
+            novo = db.table("crm_contatos").insert({
+                "nome": lead["contato_nome"].strip(),
+                "email": lead.get("email"),
+                "telefone": lead.get("telefone"),
+                "cliente_id": lead.get("cliente_id"),
+                "canal": lead.get("canal"),
+                "observacao": f"Criado automaticamente na conversão do lead '{lead.get('empresa')}'",
+                "ativo": True,
+            }).execute().data
+            contato_id = novo[0]["id"] if novo else None
+
     opp = crm_service.criar_oportunidade(
         OportunidadeCreate(
             titulo=f"{lead.get('empresa')}",
             cliente_id=lead.get("cliente_id"),
+            contato_id=contato_id,
             canal=lead.get("canal"),
             estagio="QUALIFICACAO",
             valor_estimado=float(lead.get("valor_potencial") or 0),

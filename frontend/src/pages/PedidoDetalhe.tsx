@@ -1733,6 +1733,26 @@ export function PedidoDetalhe() {
   const alertaValorNf = (valorNfCalculado && refNf && refNf.qtd >= 3 && refNf.mediana
     && valorNfCalculado >= refNf.mediana * 5) ? refNf : null
 
+  // Sugestão automática do valor: Σ qtd × preço herdado da origem (cotação/
+  // oportunidade/contrato). Só quando TODOS os itens têm preço — senão fica nulo.
+  const itensPedido: any[] = (pedido as any)?.itens || []
+  const sugestaoProdutos = itensPedido.length > 0
+    && itensPedido.every(i => Number(i.valor_unitario) > 0 && Number(i.qtd_solicitada) > 0)
+    ? itensPedido.reduce((s, i) => s + Number(i.qtd_solicitada) * Number(i.valor_unitario), 0)
+    : null
+
+  // Ao abrir o faturamento, pré-preenche valores conhecidos (sempre editáveis).
+  useEffect(() => {
+    if (modal !== 'faturamento' || !pedido) return
+    if (isCIF) {
+      if (!valorProdutos && sugestaoProdutos) setValorProdutos(sugestaoProdutos.toFixed(2))
+      if (!valorFrete && (pedido as any).valor_frete) setValorFrete(String((pedido as any).valor_frete))
+    } else if (!valorNf && sugestaoProdutos) {
+      setValorNf(sugestaoProdutos.toFixed(2))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, pedido?.id])
+
   const faturarMutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${id}/faturamento`, {
       numero_nf: nf,
@@ -2386,6 +2406,9 @@ export function PedidoDetalhe() {
                   <label className="text-sm text-gray-600">Valor da NF (R$)</label>
                   <input type="number" step="0.01" value={valorNf} onChange={e => setValorNf(e.target.value)}
                     className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+                  {sugestaoProdutos != null && (
+                    <p className="text-xs text-blue-500 mt-1">💡 Sugerido pelos preços da origem (cotação/contrato): R$ {sugestaoProdutos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} — confirme com a NF do D365.</p>
+                  )}
                 </div>
               )}
 
@@ -2400,11 +2423,17 @@ export function PedidoDetalhe() {
                     <label className="text-sm font-medium text-gray-700">💰 Valor dos Produtos (R$)</label>
                     <input type="number" step="0.01" value={valorProdutos} onChange={e => setValorProdutos(e.target.value)}
                       className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+                    {sugestaoProdutos != null && (
+                      <p className="text-xs text-blue-500 mt-1">💡 Sugerido pelos preços da origem: R$ {sugestaoProdutos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} — confirme com a NF do D365.</p>
+                    )}
                   </div>
                   <div>
                     <label className="text-sm font-medium text-gray-700">🚛 Custo do Frete (R$)</label>
                     <input type="number" step="0.01" value={valorFrete} onChange={e => setValorFrete(e.target.value)}
                       className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+                    {(pedido as any).valor_frete != null && (
+                      <p className="text-xs text-blue-500 mt-1">💡 Frete já informado antes (cotação/alteração): R$ {Number((pedido as any).valor_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.</p>
+                    )}
                     {pedido.tipo_frete === 'CIF_SEM_VALOR' && (
                       <p className="text-xs text-gray-400 mt-1">Valor de controle interno — não consta na NF.</p>
                     )}

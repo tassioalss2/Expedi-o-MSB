@@ -378,7 +378,8 @@ def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut)
             canal=o.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
-            itens=[ItemPedidoCreate(produto_id=i["produto_id"], qtd_solicitada=float(i["qtd"])) for i in itens_validos],
+            itens=[ItemPedidoCreate(produto_id=i["produto_id"], qtd_solicitada=float(i["qtd"]),
+                                    valor_unitario=float(i.get("valor_unitario") or 0) or None) for i in itens_validos],
         ),
         usuario,
     )

@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, FileText, Printer, Trash2, Send, CheckCircle2, XCircle } from 'lucide-react'
+import { Plus, FileText, Printer, Trash2, Send, CheckCircle2, XCircle, Package } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { ClienteAutocomplete } from '../NovoPedido'
@@ -126,6 +127,7 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
     mutationFn: () => api.delete(`/crm/cotacoes/${cotacao.id}`),
     onSuccess: () => { toast.success('Cotação removida'); onSaved(); onClose() },
   })
+  const [gerarOv, setGerarOv] = useState(false)
 
   return (
     <ModalBase titulo={edicao ? `Cotação ${cotacao.numero}` : 'Nova cotação'} onClose={onClose} max="max-w-3xl">
@@ -137,6 +139,7 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
               {status === 'RASCUNHO' && <button onClick={() => mudarStatus.mutate('ENVIADA')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-blue-600 text-white"><Send size={12} /> Marcar enviada</button>}
               {status !== 'ACEITA' && <button onClick={() => mudarStatus.mutate('ACEITA')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-emerald-600 text-white"><CheckCircle2 size={12} /> Aceita</button>}
               {status !== 'RECUSADA' && <button onClick={() => mudarStatus.mutate('RECUSADA')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-600"><XCircle size={12} /> Recusada</button>}
+              {status === 'ACEITA' && <button onClick={() => setGerarOv(true)} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-blue-600 text-white"><Package size={12} /> Gerar OV</button>}
               <button onClick={() => window.open(`/crm/cotacao/${cotacao.id}/imprimir`, '_blank')} className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border text-gray-600"><Printer size={12} /> Imprimir</button>
             </div>
           </div>
@@ -182,6 +185,62 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
             {salvar.isPending ? 'Salvando…' : edicao ? 'Salvar' : 'Criar e imprimir'}
           </button>
         </div>
+      </div>
+      {gerarOv && <ModalGerarOVCotacao cotacao={cotacao} onClose={() => setGerarOv(false)} onSaved={onSaved} />}
+    </ModalBase>
+  )
+}
+
+// ── Gerar OV a partir da cotação aceita (herda cliente, itens e preços) ──────────
+function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onClose: () => void; onSaved: () => void }) {
+  const navigate = useNavigate()
+  const hoje = new Date().toISOString().slice(0, 10)
+  const [numero, setNumero] = useState('')
+  const [tipoFrete, setTipoFrete] = useState('FOB')
+  const [dataEntrega, setDataEntrega] = useState('')
+  const [local, setLocal] = useState('')
+
+  const gerar = useMutation({
+    mutationFn: () => api.post(`/crm/cotacoes/${cotacao.id}/gerar-ov`, {
+      numero_pedido: numero.trim(),
+      tipo_frete: tipoFrete,
+      data_prevista_entrega: dataEntrega,
+      local_entrega: local || null,
+    }),
+    onSuccess: (res) => {
+      toast.success('OV gerada — itens e preços herdados da cotação')
+      onSaved(); onClose()
+      const ov = res.data?.ov_gerada_id
+      if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao gerar OV'), { duration: 6000 }),
+  })
+
+  const valido = numero.trim() && dataEntrega
+
+  return (
+    <ModalBase titulo={`Gerar OV · ${cotacao.numero}`} onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <div className="bg-blue-50 rounded-lg p-2.5 text-xs text-blue-700">
+          Cliente, canal, itens e <strong>preços</strong> (com desconto) vêm da cotação. O valor da NF será sugerido no faturamento automaticamente.
+        </div>
+        <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" autoFocus /></Campo>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Tipo de frete">
+            <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value)} className={inputCls}>
+              <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
+            </select>
+          </Campo>
+        </div>
+        <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => gerar.mutate()} disabled={!valido || gerar.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {gerar.isPending ? 'Gerando…' : 'Gerar OV'}
+        </button>
       </div>
     </ModalBase>
   )

@@ -238,15 +238,18 @@ def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuari
     if not payload.itens:
         raise HTTPException(status_code=422, detail="Informe ao menos um item da entrega")
 
-    # Valida saldo por item
+    # Valida saldo por item; herda o preço unitário do contrato para a OV
     detalhe = obter_empenho(empenho_id)
     saldo = {i["produto_id"]: i["qtd_saldo"] for i in detalhe["itens"]}
+    preco = {i["produto_id"]: float(i.get("valor_unitario") or 0) for i in detalhe["itens"]}
     for it in payload.itens:
         pid = str(it.produto_id)
         if pid not in saldo:
             raise HTTPException(status_code=422, detail="Item não pertence a este contrato")
         if it.qtd_solicitada > saldo[pid] + 0.001:
             raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {saldo[pid]})")
+        if it.valor_unitario is None and preco.get(pid):
+            it.valor_unitario = preco[pid]
 
     ov = pedido_service.criar_pedido(
         PedidoCreate(

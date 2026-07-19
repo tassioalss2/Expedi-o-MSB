@@ -1403,7 +1403,9 @@ function ModalFrete({ demanda, onClose, onSaved }: { demanda: any; onClose: () =
 // ── Enviar NF ao cliente (fechamento) ────────────────────────────────────────────
 function ModalEnviarNF({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
   const hoje = new Date().toISOString().slice(0, 10)
-  const [numero, setNumero] = useState(demanda.nf?.numero || '')
+  // NF já registrada no faturamento da OV vinculada → pré-preenche (sem redigitar)
+  const nfDaOv = (demanda.ovs_detalhe || []).map((o: any) => o.nf).find(Boolean) || ''
+  const [numero, setNumero] = useState(demanda.nf?.numero || nfDaOv)
   const [data, setData] = useState(demanda.nf?.enviada_em || hoje)
   const [obs, setObs] = useState('')
 

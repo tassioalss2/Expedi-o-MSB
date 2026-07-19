@@ -198,6 +198,64 @@ def atualizar_cotacao(cotacao_id: str, payload: CotacaoUpdate, usuario: UsuarioO
     return obter_cotacao(cotacao_id)
 
 
+def gerar_ov(cotacao_id: str, payload, usuario: UsuarioOut) -> dict:
+    """Converte uma cotação ACEITA em OV no fluxo logístico, herdando cliente,
+    canal, itens e PREÇOS (com desconto por item aplicado) — sem redigitar nada."""
+    from app.models.schemas import ItemPedidoCreate, PedidoCreate
+    from app.services import crm_service, pedido_service
+
+    db = get_service_db()
+    c = db.table("crm_cotacoes").select("*").eq("id", cotacao_id).single().execute().data
+    if not c:
+        raise HTTPException(status_code=404, detail="Cotação não encontrada")
+    if c.get("status") != "ACEITA":
+        raise HTTPException(status_code=400, detail="Só cotações ACEITAS podem gerar OV.")
+    if not c.get("cliente_id"):
+        raise HTTPException(status_code=400, detail="A cotação precisa ter um cliente para gerar a OV.")
+
+    itens = db.table("crm_cotacao_itens").select("*").eq("cotacao_id", cotacao_id).execute().data
+    itens_validos = [i for i in itens if i.get("produto_id") and float(i.get("qtd") or 0) > 0]
+    if not itens_validos:
+        raise HTTPException(status_code=422, detail="A cotação precisa ter itens (produto e quantidade) para gerar a OV.")
+
+    def _preco_liquido(i: dict):
+        vu = float(i.get("valor_unitario") or 0)
+        desc = float(i.get("desconto_pct") or 0)
+        liq = round(vu * (1 - desc / 100), 4)
+        return liq or None
+
+    ov = pedido_service.criar_pedido(
+        PedidoCreate(
+            numero_pedido=payload.numero_pedido.strip().upper(),
+            cliente_id=c["cliente_id"],
+            tipo_frete=payload.tipo_frete or "FOB",
+            tipo_operacao="VENDA_NORMAL",
+            canal=c.get("canal"),
+            local_entrega=payload.local_entrega,
+            data_prevista_entrega=payload.data_prevista_entrega,
+            valor_frete=float(c.get("frete") or 0) or None,
+            itens=[ItemPedidoCreate(produto_id=i["produto_id"], qtd_solicitada=float(i["qtd"]),
+                                    valor_unitario=_preco_liquido(i)) for i in itens_validos],
+        ),
+        usuario,
+    )
+
+    # Se há oportunidade vinculada, registra a OV nela também.
+    opp_id = c.get("oportunidade_id")
+    if opp_id:
+        o = db.table("crm_oportunidades").select("gerado_ov_id").eq("id", opp_id).single().execute().data
+        if o and not o.get("gerado_ov_id"):
+            db.table("crm_oportunidades").update({
+                "gerado_ov_id": ov.get("id"), "gerado_ov_ref": ov.get("numero_pedido"), "atualizado_em": _agora(),
+            }).eq("id", opp_id).execute()
+            crm_service._log_evento(db, opp_id, f"📦 OV gerada a partir da cotação {c.get('numero')}: {ov.get('numero_pedido')}", str(usuario.id))
+
+    out = obter_cotacao(cotacao_id)
+    out["ov_gerada_id"] = ov.get("id")
+    out["ov_gerada_ref"] = ov.get("numero_pedido")
+    return out
+
+
 def excluir_cotacao(cotacao_id: str) -> dict:
     db = get_service_db()
     db.table("crm_cotacoes").update({"ativo": False, "atualizado_em": _agora()}).eq("id", cotacao_id).execute()

@@ -186,6 +186,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
                     "produto_id":      str(item.produto_id),
                     "lote_id":         str(item.lote_id) if item.lote_id else None,
                     "qtd_solicitada":  item.qtd_solicitada,
+                    "valor_unitario":  item.valor_unitario,
                     "status_item":     "PENDENTE",
                 }
                 for item in payload.itens
@@ -278,6 +279,8 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     }
     if getattr(payload, "empenho_id", None):
         pedido_data["empenho_id"] = str(payload.empenho_id)
+    if getattr(payload, "valor_frete", None) is not None:
+        pedido_data["valor_frete"] = payload.valor_frete
 
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
@@ -289,6 +292,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
             "produto_id": str(item.produto_id),
             "lote_id": str(item.lote_id) if item.lote_id else None,
             "qtd_solicitada": item.qtd_solicitada,
+            "valor_unitario": item.valor_unitario,
             "status_item": "PENDENTE",
         }
         for item in payload.itens
@@ -376,6 +380,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
             "pedido_id":      pedido["id"],
             "produto_id":     str(item.produto_id),
             "qtd_solicitada": item.qtd_solicitada,
+            "valor_unitario": getattr(item, "valor_unitario", None),
             "status_item":    "OK",
         }
         for item in (getattr(payload, "itens", None) or [])
