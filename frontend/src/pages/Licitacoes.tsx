@@ -179,6 +179,7 @@ function PainelDemandas() {
   const [historico, setHistorico] = useState(false)
   const [busca, setBusca] = useState('')
   const [canalFiltro, setCanalFiltro] = useState('')
+  const [alerta, setAlerta] = useState<'' | 'PARADAS' | 'PRAZO' | 'NF'>('')
   const [colapsadas, setColapsadas] = useState<Record<string, boolean>>({})
 
   const { data: demandas = [], isLoading } = useQuery<any[]>({
@@ -201,17 +202,38 @@ function PainelDemandas() {
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao enviar resumo'), { duration: 5000 }),
   })
 
+  // Data de hoje no fuso local (para comparar prazos)
+  const hojeISO = useMemo(() => {
+    const d = new Date()
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+  }, [])
+
+  // KPIs de controle — calculados sobre TODAS as demandas do painel
+  const kpis = useMemo(() => {
+    const pendentes = demandas.filter(d => !ehFinal(d))
+    return {
+      pendentes: pendentes.length,
+      paradas: pendentes.filter(d => diasParado(d.criado_em) >= 2).length,
+      prazoVencido: pendentes.filter(d => d.prazo && d.prazo < hojeISO).length,
+      nfPendente: demandas.filter(d => ['OV_GERADA', 'COTACAO_FRETE'].includes(etapaColuna(d))).length,
+      concluidasHoje: demandas.filter(d => ehFinal(d)).length,
+    }
+  }, [demandas, hojeISO])
+
   const filtradas = useMemo(() => {
     const b = busca.trim().toLowerCase()
     return demandas.filter(d => {
       if (canalFiltro && d.canal !== canalFiltro) return false
+      if (alerta === 'PARADAS' && (ehFinal(d) || diasParado(d.criado_em) < 2)) return false
+      if (alerta === 'PRAZO' && (ehFinal(d) || !d.prazo || d.prazo >= hojeISO)) return false
+      if (alerta === 'NF' && !['OV_GERADA', 'COTACAO_FRETE'].includes(etapaColuna(d))) return false
       if (b) {
         const alvo = `${d.cliente || ''} ${d.numero || ''} ${d.gerado_ref || ''}`.toLowerCase()
         if (!alvo.includes(b)) return false
       }
       return true
     })
-  }, [demandas, busca, canalFiltro])
+  }, [demandas, busca, canalFiltro, alerta, hojeISO])
 
   const porTipoEtapa = (tipo: string, etapa: string) => filtradas.filter(d => d.tipo_operacao === tipo && etapaColuna(d) === etapa)
 
@@ -227,10 +249,35 @@ function PainelDemandas() {
     else if (a.kind === 'concluir') setConcluirManual(d)
   }
 
-  const pendentes = filtradas.filter(d => !ehFinal(d)).length
-
   return (
     <div className="space-y-4">
+      {/* Faixa de controle — clique num indicador para filtrar o painel */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        {([
+          { key: '', label: 'Pendentes', valor: kpis.pendentes, cor: 'text-blue-700', borda: 'ring-blue-400', desc: 'tudo que ainda não fechou' },
+          { key: 'PARADAS', label: '⏳ Paradas 2+ dias', valor: kpis.paradas, cor: kpis.paradas > 0 ? 'text-amber-600' : 'text-gray-400', borda: 'ring-amber-400', desc: 'sem conclusão desde que chegaram' },
+          { key: 'PRAZO', label: '🔴 Prazo vencido', valor: kpis.prazoVencido, cor: kpis.prazoVencido > 0 ? 'text-red-600' : 'text-gray-400', borda: 'ring-red-400', desc: 'prazo do cliente estourado' },
+          { key: 'NF', label: '📄 NF a enviar', valor: kpis.nfPendente, cor: kpis.nfPendente > 0 ? 'text-indigo-600' : 'text-gray-400', borda: 'ring-indigo-400', desc: 'OV pronta, falta NF ao cliente' },
+        ] as const).map(k => (
+          <button key={k.label} onClick={() => setAlerta(alerta === k.key ? '' : k.key as any)}
+            title={k.desc}
+            className={`bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2 text-left transition hover:border-gray-300 ${alerta === k.key && k.key !== '' ? `ring-2 ${k.borda}` : ''}`}>
+            <p className={`text-xl font-bold leading-tight tabular-nums ${k.cor}`}>{k.valor}</p>
+            <p className="text-[11px] text-gray-500">{k.label}</p>
+          </button>
+        ))}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2">
+          <p className="text-xl font-bold leading-tight tabular-nums text-emerald-600">{kpis.concluidasHoje}</p>
+          <p className="text-[11px] text-gray-500">✅ Concluídas hoje</p>
+        </div>
+      </div>
+      {alerta && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-center justify-between">
+          <span>Mostrando só <strong>{alerta === 'PARADAS' ? 'paradas há 2+ dias' : alerta === 'PRAZO' ? 'com prazo vencido' : 'com NF a enviar'}</strong>.</span>
+          <button onClick={() => setAlerta('')} className="underline">Ver tudo</button>
+        </div>
+      )}
+
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="flex items-center gap-2 flex-1">
           <div className="relative flex-1 max-w-xs">
@@ -242,7 +289,7 @@ function PainelDemandas() {
             <option value="">Todos os canais</option>
             {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
           </select>
-          <span className="text-xs text-gray-400 hidden lg:block">{pendentes} pendente(s)</span>
+          <span className="text-xs text-gray-400 hidden lg:block">{filtradas.filter(d => !ehFinal(d)).length} no filtro</span>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => resumoTeams.mutate()} disabled={resumoTeams.isPending}
@@ -298,7 +345,7 @@ function PainelDemandas() {
                               <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{ETAPA_LABEL[etapaKey]}</span>
                               <span className="text-[11px] text-gray-400">{cards.length}</span>
                             </div>
-                            <div className="space-y-2">
+                            <div className="space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
                               {cards.map(d => (
                                 <CardDemanda key={d.id} d={d} tipo={tipo}
                                   onClick={() => setDetalheId(d.id)}

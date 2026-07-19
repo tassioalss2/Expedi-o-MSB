@@ -216,6 +216,18 @@ def criar_demanda(payload: DemandaCreate) -> dict:
     if payload.tipo_operacao not in TIPOS:
         raise HTTPException(status_code=422, detail="Tipo de operação inválido")
     db = get_service_db()
+    # Anti-duplicidade: o mesmo número (empenho/AF/pregão) não pode ter duas
+    # demandas ativas — evita o time processar o mesmo pedido duas vezes.
+    num = (payload.numero or "").strip()
+    if num:
+        dup = db.table("licitacao_demandas").select("id, etapa, clientes(nome)")\
+            .eq("ativo", True).eq("numero", num).execute().data
+        if dup:
+            cli = (dup[0].get("clientes") or {}).get("nome") or "cliente não informado"
+            raise HTTPException(
+                status_code=409,
+                detail=f"Já existe uma demanda ativa com o número '{num}' ({cli}). Confira no painel antes de criar — risco de processar duas vezes.",
+            )
     row = db.table("licitacao_demandas").insert({
         "tipo_operacao": payload.tipo_operacao,
         "etapa": "RECEBIDO",
