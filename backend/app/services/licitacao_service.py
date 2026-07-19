@@ -198,15 +198,18 @@ def registrar_consumo(empenho_id: str, payload: ConsumoEmpenhoCreate, usuario: U
     if not payload.itens:
         raise HTTPException(status_code=422, detail="Informe ao menos um item consumido")
 
-    # Valida saldo por item antes de faturar
+    # Valida saldo por item antes de faturar; herda o preço unitário do contrato
     detalhe = obter_empenho(empenho_id)
     saldo = {i["produto_id"]: i["qtd_saldo"] for i in detalhe["itens"]}
+    preco = {i["produto_id"]: float(i.get("valor_unitario") or 0) for i in detalhe["itens"]}
     for it in payload.itens:
         pid = str(it.produto_id)
         if pid not in saldo:
             raise HTTPException(status_code=422, detail="Item não pertence a este empenho")
         if it.qtd_solicitada > saldo[pid] + 0.001:
             raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {saldo[pid]})")
+        if it.valor_unitario is None and preco.get(pid):
+            it.valor_unitario = preco[pid]
 
     comunicado = ComunicadoUsoCreate(
         numero_pedido=payload.numero_pedido,

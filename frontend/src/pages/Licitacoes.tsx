@@ -195,6 +195,12 @@ function PainelDemandas() {
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao mover demanda')),
   })
 
+  const resumoTeams = useMutation({
+    mutationFn: () => api.post('/pedidos/resumo-diario'),
+    onSuccess: () => toast.success('Resumo do dia enviado ao canal do Teams'),
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao enviar resumo'), { duration: 5000 }),
+  })
+
   const filtradas = useMemo(() => {
     const b = busca.trim().toLowerCase()
     return demandas.filter(d => {
@@ -239,6 +245,11 @@ function PainelDemandas() {
           <span className="text-xs text-gray-400 hidden lg:block">{pendentes} pendente(s)</span>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => resumoTeams.mutate()} disabled={resumoTeams.isPending}
+            className="flex items-center gap-1.5 text-gray-600 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50"
+            title="Envia agora o resumo de pendências ao canal do Teams (também sai automático às 08h)">
+            📣 {resumoTeams.isPending ? 'Enviando…' : 'Resumo Teams'}
+          </button>
           <button onClick={() => setHistorico(true)}
             className="flex items-center gap-1.5 text-gray-600 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
             <Clock size={15} /> Histórico
@@ -795,6 +806,25 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   })
   const empenhosCliente = empenhos.filter(e => e.cliente_id === demanda.cliente_id && e.saldo_un > 0 && (e.tipo || 'CONSIGNACAO') === 'CONSIGNACAO')
 
+  // Com contrato selecionado, o valor da NF é calculado pelos preços dele
+  // (Σ qtd × valor unitário) — editável, o D365 é a palavra final.
+  const { data: empSel } = useQuery<any>({
+    queryKey: ['empenho', empenhoId],
+    queryFn: () => api.get(`/licitacoes/empenhos/${empenhoId}`).then(r => r.data),
+    enabled: tipo === 'COMUNICADO_USO' && !!empenhoId,
+  })
+  const [valorNfManual, setValorNfManual] = useState(false)
+  const precoEmp: Record<string, number> = Object.fromEntries(
+    (empSel?.itens || []).map((i: any) => [i.produto_id, Number(i.valor_unitario) || 0]))
+  const itensComQtd = itens.filter(i => i.produto_id && i.qtd > 0)
+  const sugestaoNf = tipo === 'COMUNICADO_USO' && empenhoId && empSel && itensComQtd.length > 0
+    && itensComQtd.every(i => precoEmp[i.produto_id] > 0)
+    ? itensComQtd.reduce((s, i) => s + i.qtd * precoEmp[i.produto_id], 0)
+    : null
+  useEffect(() => {
+    if (!valorNfManual && sugestaoNf != null) setValorNf(sugestaoNf.toFixed(2))
+  }, [sugestaoNf, valorNfManual])
+
   const concluir = useMutation({
     mutationFn: () => {
       const body: any = {
@@ -870,7 +900,12 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
               <Campo label="Nº do lançamento *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: CU000123" /></Campo>
               <Campo label="Data do faturamento"><input type="date" value={dataFat} onChange={e => setDataFat(e.target.value)} className={inputCls} /></Campo>
               <Campo label="Número da NF *"><input value={nf} onChange={e => setNf(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 20045" /></Campo>
-              <Campo label="Valor da NF (R$) *"><input type="number" step="0.01" value={valorNf} onChange={e => setValorNf(e.target.value)} className={inputCls} placeholder="0,00" /></Campo>
+              <Campo label="Valor da NF (R$) *">
+                <input type="number" step="0.01" value={valorNf} onChange={e => { setValorNf(e.target.value); setValorNfManual(true) }} className={inputCls} placeholder="0,00" />
+                {sugestaoNf != null && (
+                  <p className="text-xs text-blue-500 mt-1">💡 Calculado pelos preços do contrato: {fmtBRL(sugestaoNf)} — confira com a NF do D365.</p>
+                )}
+              </Campo>
             </div>
             <Campo label="Canal">
               <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
@@ -1538,9 +1573,20 @@ function ModalConsumo({ emp, onClose, onSaved }: { emp: any; onClose: () => void
   const [numero, setNumero] = useState('')
   const [nf, setNf] = useState('')
   const [valor, setValor] = useState('')
+  const [valorManual, setValorManual] = useState(false)
   const [data, setData] = useState(hoje)
   const [canal, setCanal] = useState(emp.canal || 'LICITACAO_URO')
   const [qtds, setQtds] = useState<Record<string, string>>({})
+
+  // Valor da NF calculado pelos preços do contrato (Σ qtd × valor unitário).
+  // Atualiza sozinho conforme as quantidades, até o usuário editar manualmente.
+  const selecionados = comSaldo.filter((i: any) => Number(qtds[i.produto_id]) > 0)
+  const sugestaoNf = selecionados.length > 0 && selecionados.every((i: any) => Number(i.valor_unitario) > 0)
+    ? selecionados.reduce((s: number, i: any) => s + Number(qtds[i.produto_id]) * Number(i.valor_unitario), 0)
+    : null
+  useEffect(() => {
+    if (!valorManual && sugestaoNf != null) setValor(sugestaoNf.toFixed(2))
+  }, [sugestaoNf, valorManual])
 
   const registrar = useMutation({
     mutationFn: () => api.post(`/licitacoes/empenhos/${emp.id}/consumo`, {
@@ -1567,7 +1613,12 @@ function ModalConsumo({ emp, onClose, onSaved }: { emp: any; onClose: () => void
           <Campo label="Nº do lançamento *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: CU000123" /></Campo>
           <Campo label="Data do faturamento *"><input type="date" value={data} onChange={e => setData(e.target.value)} className={inputCls} /></Campo>
           <Campo label="Número da NF *"><input value={nf} onChange={e => setNf(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 20045" /></Campo>
-          <Campo label="Valor da NF (R$) *"><input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)} className={inputCls} placeholder="0,00" /></Campo>
+          <Campo label="Valor da NF (R$) *">
+            <input type="number" step="0.01" value={valor} onChange={e => { setValor(e.target.value); setValorManual(true) }} className={inputCls} placeholder="0,00" />
+            {sugestaoNf != null && (
+              <p className="text-xs text-blue-500 mt-1">💡 Calculado pelos preços do contrato: {fmtBRL(sugestaoNf)} — confira com a NF do D365.</p>
+            )}
+          </Campo>
         </div>
         <Campo label="Canal">
           <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>

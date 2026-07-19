@@ -40,6 +40,13 @@ def criar_comunicado_uso(payload: ComunicadoUsoCreate, usuario: UsuarioOut = Dep
     return pedido_service.criar_comunicado_uso(payload, usuario)
 
 
+@router.post("/resumo-diario")
+def enviar_resumo_diario(_: UsuarioOut = Depends(get_current_user)):
+    """Envia o resumo do dia ao canal Teams (o mesmo do envio automático das 08h)."""
+    from app.services import resumo_service
+    return resumo_service.enviar_resumo(forcar=True)
+
+
 @router.get("/meta")
 def obter_meta(competencia: str = Query(...), _: UsuarioOut = Depends(get_current_user)):
     """Meta de faturamento do mês (competencia = 'YYYY-MM')."""

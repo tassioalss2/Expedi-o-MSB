@@ -39,6 +39,13 @@ app.include_router(esterilizacao_router, prefix="/api/v1")
 app.include_router(crm_router, prefix="/api/v1")
 
 
+@app.on_event("startup")
+def iniciar_agendador_resumo():
+    """Resumo diário no Teams (08h BRT, seg-sex) — thread leve, sem dependências."""
+    from app.services import resumo_service
+    resumo_service.iniciar_agendador()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "app": "ACE-MSB"}
