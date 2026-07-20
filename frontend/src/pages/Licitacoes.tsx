@@ -71,7 +71,7 @@ const TIPO_MAP = Object.fromEntries(TIPOS.map(t => [t.key, t]))
 const ETAPA_LABEL: Record<string, string> = {
   RECEBIDO: 'Recebido',
   PROCESSANDO: 'Em processamento (D365)',
-  AGUARDANDO_ESTOQUE: '🏭 Aguardando estoque (PCP)',
+  AGUARDANDO_ESTOQUE: '🚩 Aguardando estoque (PCP)',
   COTACAO_FRETE: 'Cotação de frete',
   OV_GERADA: 'OV gerada',
   NF_ENVIADA: 'NF enviada',
@@ -82,7 +82,7 @@ const ETAPA_LABEL: Record<string, string> = {
 // previsão e o card fica visível até o material chegar (nunca some do painel).
 // Comunicado de uso: fluxo curto (recebe, processa no D365, conclui) — o material
 // já foi usado pelo cliente, então não passa por estoque.
-const FLUXO_LICITACAO = ['RECEBIDO', 'PROCESSANDO', 'AGUARDANDO_ESTOQUE', 'OV_GERADA', 'COTACAO_FRETE', 'NF_ENVIADA']
+const FLUXO_LICITACAO = ['AGUARDANDO_ESTOQUE', 'RECEBIDO', 'PROCESSANDO', 'OV_GERADA', 'COTACAO_FRETE', 'NF_ENVIADA']
 const FLUXO_COMUNICADO = ['RECEBIDO', 'PROCESSANDO', 'CONCLUIDO']
 const etapasDoTipo = (tipo: string) => tipo === 'COMUNICADO_USO' ? FLUXO_COMUNICADO : FLUXO_LICITACAO
 const ETAPAS_FINAIS = ['NF_ENVIADA', 'CONCLUIDO']
@@ -381,11 +381,12 @@ function PainelDemandas() {
                     <div className="grid grid-cols-1 gap-px bg-gray-100" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(0, 1fr))` }}>
                       {cols.map(etapaKey => {
                         const cards = porTipoEtapa(tipo.key, etapaKey)
+                        const ehEstoque = etapaKey === 'AGUARDANDO_ESTOQUE'
                         return (
-                          <div key={etapaKey} className="bg-gray-50 min-h-[90px] p-2">
+                          <div key={etapaKey} className={`min-h-[90px] p-2 ${ehEstoque ? 'bg-red-50 ring-1 ring-inset ring-red-200' : 'bg-gray-50'}`}>
                             <div className="flex items-center justify-between mb-2 px-1">
-                              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{ETAPA_LABEL[etapaKey]}</span>
-                              <span className="text-[11px] text-gray-400">{cards.length}</span>
+                              <span className={`text-[11px] font-semibold uppercase tracking-wide ${ehEstoque ? 'text-red-600' : 'text-gray-500'}`}>{ETAPA_LABEL[etapaKey]}</span>
+                              <span className={`text-[11px] ${ehEstoque && cards.length > 0 ? 'text-red-500 font-bold' : 'text-gray-400'}`}>{cards.length}</span>
                             </div>
                             <div className="space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
                               {cards.map(d => (
