@@ -79,6 +79,7 @@ def _serializar(d: dict) -> dict:
         "tipo_operacao": d.get("tipo_operacao"),
         "etapa": _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")),
         "ref_externa": d.get("ref_externa"),
+        "numero_pregao": d.get("numero_pregao"),
         "numero": d.get("numero"),
         "cliente_id": d.get("cliente_id"),
         "cliente": (d.get("clientes") or {}).get("nome") if d.get("clientes") else None,
@@ -233,6 +234,7 @@ def criar_demanda(payload: DemandaCreate) -> dict:
     row = db.table("licitacao_demandas").insert({
         "tipo_operacao": payload.tipo_operacao,
         "etapa": "RECEBIDO",
+        "numero_pregao": (payload.numero_pregao or "").strip() or None,
         "numero": (payload.numero or "").strip() or None,
         "cliente_id": str(payload.cliente_id),
         "canal": payload.canal,
@@ -507,6 +509,8 @@ def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
         update["concluido_em"] = _agora() if etapa in ETAPAS_FINAIS else None
     if payload.ref_externa is not None:
         update["ref_externa"] = payload.ref_externa.strip() or None
+    if payload.numero_pregao is not None:
+        update["numero_pregao"] = payload.numero_pregao.strip() or None
     if payload.numero is not None:
         update["numero"] = payload.numero.strip() or None
     if payload.cliente_id is not None:
@@ -584,7 +588,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         emp = licitacao_service.criar_empenho(
             EmpenhoCreate(
                 numero=payload.numero.strip(),
-                numero_pregao=(payload.numero_pregao or "").strip() or None,
+                numero_pregao=(payload.numero_pregao or "").strip() or d.get("numero_pregao"),
                 cliente_id=cliente_id,
                 tipo=tipo,
                 canal=canal,

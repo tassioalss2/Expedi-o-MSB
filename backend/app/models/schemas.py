@@ -322,7 +322,8 @@ class DemandaItem(BaseModel):
 
 class DemandaCreate(BaseModel):
     tipo_operacao: str            # VENDA_DIRETA | CONSIGNACAO | COMUNICADO_USO
-    numero: Optional[str] = None
+    numero_pregao: Optional[str] = None  # pregão (mestre) — rege o contrato
+    numero: Optional[str] = None         # NE / referência (secundária)
     cliente_id: UUID
     canal: Optional[str] = None
     prazo: Optional[date] = None
@@ -334,6 +335,7 @@ class DemandaCreate(BaseModel):
 class DemandaUpdate(BaseModel):
     tipo_operacao: Optional[str] = None
     etapa: Optional[str] = None
+    numero_pregao: Optional[str] = None
     numero: Optional[str] = None
     cliente_id: Optional[UUID] = None
     canal: Optional[str] = None

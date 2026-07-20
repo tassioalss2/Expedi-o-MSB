@@ -283,6 +283,7 @@ def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuari
         db.table("licitacao_demandas").insert({
             "tipo_operacao": "VENDA_DIRETA",
             "etapa": "OV_GERADA",
+            "numero_pregao": detalhe.get("numero_pregao"),
             "numero": detalhe.get("numero"),
             "cliente_id": emp["cliente_id"],
             "canal": payload.canal or detalhe.get("canal"),
