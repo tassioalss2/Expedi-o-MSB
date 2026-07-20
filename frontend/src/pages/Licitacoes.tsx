@@ -1921,8 +1921,8 @@ function ModalConsumo({ emp, onClose, onSaved }: { emp: any; onClose: () => void
 // ── Base ─────────────────────────────────────────────────────────────────────────
 function ModalBase({ titulo, onClose, children, max = 'max-w-2xl' }: { titulo: React.ReactNode; onClose: () => void; children: React.ReactNode; max?: string }) {
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className={`bg-white rounded-2xl w-full ${max} max-h-[88vh] flex flex-col`} onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className={`bg-white rounded-2xl w-full ${max} max-h-[88vh] flex flex-col`}>
         <div className="p-5 border-b flex items-center justify-between">
           <h2 className="text-lg font-bold">{titulo}</h2>
           <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
