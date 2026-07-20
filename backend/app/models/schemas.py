@@ -369,6 +369,9 @@ class DemandaConcluir(BaseModel):
     # Cliente confirmado ao concluir (obrigatório no comunicado de uso) — garante
     # que o faturamento entra no sistema com o cliente certo.
     cliente_id: Optional[UUID] = None
+    # Atalho de entrega única (venda direta): ao criar o contrato, já gera a OV
+    # cheia baixando todo o saldo (usa numero_pedido como nº da OV).
+    gerar_ov: bool = False
     itens: list[DemandaItem] = []
 
 

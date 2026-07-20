@@ -570,6 +570,8 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         itens_src = [DemandaItem(**it) for it in d["itens"]]
 
     gerado_tipo = gerado_id = gerado_ref = None
+    etapa_final = "CONCLUIDO"
+    ovs_final = None
 
     if tipo in ("VENDA_DIRETA", "CONSIGNACAO"):
         # Ambos criam um CONTRATO (empenho) com as quantidades totais do pregão/ata.
@@ -594,6 +596,33 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             )
         )
         gerado_tipo, gerado_id, gerado_ref = "CONTRATO", emp.get("id"), emp.get("numero")
+
+        # Atalho de entrega única (venda direta): já gera a OV cheia baixando todo
+        # o saldo. A demanda segue no painel em "OV gerada" para cotar frete/enviar NF.
+        if getattr(payload, "gerar_ov", False) and tipo == "VENDA_DIRETA":
+            if not payload.numero_pedido or not payload.numero_pedido.strip():
+                raise HTTPException(status_code=422, detail="Informe o número da OV para gerar a entrega junto.")
+            from app.models.schemas import EntregaVendaDiretaCreate
+            itens_ov = [ItemPedidoCreate(
+                produto_id=it["produto_id"],
+                qtd_solicitada=float(it.get("qtd_empenhada") or it.get("qtd_saldo") or 0),
+                valor_unitario=(float(it.get("valor_unitario")) if it.get("valor_unitario") else None),
+            ) for it in (emp.get("itens") or []) if it.get("produto_id") and float(it.get("qtd_empenhada") or 0) > 0]
+            entrega = licitacao_service.registrar_entrega(
+                emp["id"],
+                EntregaVendaDiretaCreate(
+                    numero_pedido=payload.numero_pedido.strip().upper(),
+                    tipo_frete=payload.tipo_frete or "CIF_SEM_VALOR",
+                    canal=canal,
+                    data_prevista_entrega=payload.data_prevista_entrega or _hoje_brt(),
+                    local_entrega=payload.local_entrega,
+                    itens=itens_ov,
+                ),
+                usuario,
+            )
+            if entrega.get("ov_gerada_id"):
+                etapa_final = "OV_GERADA"
+                ovs_final = [{"id": entrega.get("ov_gerada_id"), "numero": entrega.get("ov_gerada_ref")}]
 
     elif tipo == "COMUNICADO_USO":
         if not payload.numero_pedido or not payload.numero_pedido.strip():
@@ -659,16 +688,19 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
     else:
         raise HTTPException(status_code=422, detail="Tipo de operação da demanda inválido.")
 
-    db.table("licitacao_demandas").update({
-        "etapa": "CONCLUIDO",
+    update_final = {
+        "etapa": etapa_final,
         "gerado_tipo": gerado_tipo,
         "gerado_id": gerado_id,
         "gerado_ref": gerado_ref,
         "cliente_id": cliente_id,
         "canal": canal,
         "numero": payload.numero.strip() if payload.numero else d.get("numero"),
-        "concluido_em": _agora(),
+        "concluido_em": _agora() if etapa_final in ETAPAS_FINAIS else None,
         "atualizado_em": _agora(),
-    }).eq("id", demanda_id).execute()
+    }
+    if ovs_final is not None:
+        update_final["ovs"] = ovs_final
+    db.table("licitacao_demandas").update(update_final).eq("id", demanda_id).execute()
 
     return obter_demanda(demanda_id)

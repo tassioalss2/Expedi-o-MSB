@@ -945,6 +945,9 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 
   const [numero, setNumero] = useState(demanda.numero || '')
   const [numeroPregao, setNumeroPregao] = useState(demanda.numero_pregao || '')
+  const [gerarOvJunto, setGerarOvJunto] = useState(false)
+  const [ovNumero, setOvNumero] = useState('')
+  const [dataEntregaOv, setDataEntregaOv] = useState(new Date().toISOString().slice(0, 10))
   const [clienteId, setClienteId] = useState(demanda.cliente_id || '')
   const [clienteNome, setClienteNome] = useState(demanda.cliente || '')
   const [canal, setCanal] = useState(demanda.canal || '')
@@ -1001,6 +1004,12 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         body.numero_pregao = numeroPregao.trim() || null
         body.data_empenho = dataEmpenho || null
         body.vigencia = vigencia || null
+        if (tipo === 'VENDA_DIRETA' && gerarOvJunto) {
+          body.gerar_ov = true
+          body.numero_pedido = ovNumero.trim()
+          body.data_prevista_entrega = dataEntregaOv || null
+          body.tipo_frete = 'CIF_SEM_VALOR'
+        }
       } else {
         body.numero_pedido = numero.trim()
         body.numero_nf = nf.trim()
@@ -1011,7 +1020,10 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
       return api.post(`/licitacoes/demandas/${demanda.id}/concluir`, body)
     },
     onSuccess: () => {
-      toast.success(ehContrato ? 'Contrato criado! Está na aba Contratos — as entregas baixam o saldo lá.' : 'Comunicado de uso lançado', ehContrato ? { duration: 5000 } : undefined)
+      const msg = !ehContrato ? 'Comunicado de uso lançado'
+        : (tipo === 'VENDA_DIRETA' && gerarOvJunto) ? 'Contrato criado e OV gerada! Agora cote o frete e envie a NF no painel.'
+        : 'Contrato criado! Está na aba Contratos — as entregas baixam o saldo lá.'
+      toast.success(msg, ehContrato ? { duration: 5000 } : undefined)
       onSaved(); onClose()
     },
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao processar'), { duration: 6000 }),
@@ -1021,7 +1033,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   // Comunicado: se já existe lançamento com esse número, o backend vincula e conclui
   // (não exige NF/valor). Para um comunicado novo, o backend cobra NF/valor.
   let valido = false
-  if (ehContrato) valido = !!numero.trim() && itensOk
+  if (ehContrato) valido = !!numero.trim() && itensOk && (!(tipo === 'VENDA_DIRETA' && gerarOvJunto) || !!ovNumero.trim())
   else valido = !!numero.trim() && itensOk && !!clienteId
 
   return (
@@ -1052,6 +1064,24 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
             </Campo>
             <Campo label="Data"><input type="date" value={dataEmpenho} onChange={e => setDataEmpenho(e.target.value)} className={inputCls} /></Campo>
             <Campo label="Vigência (até)"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
+          </div>
+        )}
+
+        {tipo === 'VENDA_DIRETA' && (
+          <div className="border border-blue-100 bg-blue-50/40 rounded-lg p-3">
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={gerarOvJunto} onChange={e => setGerarOvJunto(e.target.checked)} className="rounded" />
+              <span><strong>Entrega única</strong> — já gerar a OV cheia agora (baixa todo o saldo)</span>
+            </label>
+            {gerarOvJunto ? (
+              <div className="grid grid-cols-2 gap-3 mt-2.5">
+                <Campo label="Nº da OV *"><input value={ovNumero} onChange={e => setOvNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV016000" /></Campo>
+                <Campo label="Entrega prevista"><input type="date" value={dataEntregaOv} onChange={e => setDataEntregaOv(e.target.value)} className={inputCls} /></Campo>
+                <p className="col-span-2 text-[11px] text-gray-500">Cria o contrato <strong>e</strong> a OV com o total de uma vez. Depois é só <strong>cotar o frete</strong> e <strong>enviar a NF</strong> no painel.</p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-gray-400 mt-1">Se você entrega em partes, deixe desmarcado — as OVs você gera depois na aba <strong>Contratos</strong>, baixando o saldo aos poucos.</p>
+            )}
           </div>
         )}
 
@@ -1103,7 +1133,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => concluir.mutate()} disabled={!valido || concluir.isPending}
           className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
-          {concluir.isPending ? 'Processando…' : ehContrato ? 'Criar contrato' : 'Concluir e faturar'}
+          {concluir.isPending ? 'Processando…' : !ehContrato ? 'Concluir e faturar' : (tipo === 'VENDA_DIRETA' && gerarOvJunto) ? 'Criar contrato + gerar OV' : 'Criar contrato'}
         </button>
       </div>
     </ModalBase>
