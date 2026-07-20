@@ -549,6 +549,9 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 
   const cfg = TIPO_MAP[tipo]
   const comValor = tipo !== 'COMUNICADO_USO'
+  // Venda direta / consignação viram contrato — o nº do pregão/contrato é obrigatório.
+  const numeroObrigatorio = tipo !== 'COMUNICADO_USO'
+  const numeroOk = !numeroObrigatorio || !!numero.trim()
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/demandas', {
@@ -590,8 +593,9 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
         </Campo>
 
         <div className="grid grid-cols-2 gap-3">
-          <Campo label={tipo === 'COMUNICADO_USO' ? 'Referência' : 'Nº do pregão / contrato'}>
-            <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Opcional" />
+          <Campo label={tipo === 'COMUNICADO_USO' ? 'Referência' : 'Nº do pregão / contrato *'}>
+            <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder={numeroObrigatorio ? 'Ex: 90051/2025' : 'Opcional'} />
+            {numeroObrigatorio && !numero.trim() && <p className="text-xs text-red-500 mt-1">Obrigatório — é o nº do pregão/contrato que identifica a licitação.</p>}
           </Campo>
           <Campo label="Canal">
             <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
@@ -629,7 +633,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => criar.mutate()} disabled={!clienteId || criar.isPending}
+        <button onClick={() => criar.mutate()} disabled={!clienteId || !numeroOk || criar.isPending}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
           {criar.isPending ? 'Salvando…' : 'Adicionar ao painel'}
         </button>
