@@ -89,16 +89,23 @@ const ETAPAS_FINAIS = ['NF_ENVIADA', 'CONCLUIDO']
 // Compatibilidade com etapas antigas
 const normEtapa = (e?: string) => (e === 'NOVO' || e === 'ANALISE') ? 'RECEBIDO' : (e || 'RECEBIDO')
 const temOV = (d: any) => (d.ovs || []).length > 0 || d.gerado_tipo === 'PEDIDO'
-// Coluna onde o card aparece. Legado: VD/consignação concluída no fluxo antigo
-// (gerava OV sem passar por frete/NF) volta para "OV gerada".
+// OV já faturada (NF emitida) — daqui pra frente o operador precisa ENVIAR a NF
+// ao cliente por e-mail. Faturado e além (no pallet, expedido) contam.
+const FATURADO_STATES = ['FATURADO', 'AGUARD_COLETA', 'EXPEDIDO']
+const ovFaturada = (d: any) => FATURADO_STATES.includes(d.ov_status)
+// Coluna onde o card aparece.
 function etapaColuna(d: any): string {
   const e = normEtapa(d.etapa)
-  if (e === 'CONCLUIDO' && d.tipo_operacao !== 'COMUNICADO_USO') {
-    // Gerou OV direto (fluxo legado) → continua no fluxo de frete/NF.
-    if (d.gerado_tipo === 'PEDIDO' || temOV(d)) return 'OV_GERADA'
-    // Virou contrato → é final: sai do painel e vive na aba Contratos (com saldo).
-    return 'CONCLUIDO'
+  const ehComunicado = d.tipo_operacao === 'COMUNICADO_USO'
+  // Card de ENTREGA (vinculado a uma OV): espelha o ciclo real da OV no kanban.
+  if (!ehComunicado && temOV(d)) {
+    if (e === 'NF_ENVIADA') return 'NF_ENVIADA'        // operador confirmou o envio da NF
+    if (ovFaturada(d)) return 'COTACAO_FRETE'          // faturou → aguarda envio da NF ao cliente
+    if (e === 'COTACAO_FRETE') return 'COTACAO_FRETE'  // frete cotado
+    return 'OV_GERADA'
   }
+  // Venda direta/consignação concluída que virou contrato → final (sai do painel).
+  if (e === 'CONCLUIDO' && !ehComunicado) return 'CONCLUIDO'
   return e
 }
 const ehFinal = (d: any) => ETAPAS_FINAIS.includes(etapaColuna(d))
@@ -249,7 +256,8 @@ function PainelDemandas() {
       // "Parado" ignora quem está aguardando estoque de propósito (esperando o PCP).
       paradas: pendentes.filter(d => !semEstoque(d) && diasParado(d.atualizado_em || d.criado_em) >= 2).length,
       prazoVencido: pendentes.filter(d => d.prazo && d.prazo < hojeISO).length,
-      nfPendente: demandas.filter(d => ['OV_GERADA', 'COTACAO_FRETE'].includes(etapaColuna(d))).length,
+      // "NF a enviar" = OV já faturada (NF emitida) e ainda não confirmada como enviada ao cliente.
+      nfPendente: demandas.filter(d => ovFaturada(d) && etapaColuna(d) !== 'NF_ENVIADA' && !d.nf).length,
       semEstoque: semEst.length,
       semEstoqueRisco: semEst.filter(riscoMulta).length,
       concluidasHoje: demandas.filter(d => ehFinal(d)).length,
@@ -260,7 +268,9 @@ function PainelDemandas() {
   // (o cadastro novo já é bloqueado; aqui pegamos o que entrou antes).
   const numerosDuplicados = useMemo(() => {
     const cont: Record<string, number> = {}
-    demandas.forEach(d => { const n = (d.numero || '').trim(); if (n) cont[n] = (cont[n] || 0) + 1 })
+    // Cards de entrega (OVs de um mesmo contrato) compartilham o nº do contrato de
+    // propósito — não são duplicidade, então ficam de fora da checagem.
+    demandas.forEach(d => { if (d.gerado_tipo === 'PEDIDO') return; const n = (d.numero || '').trim(); if (n) cont[n] = (cont[n] || 0) + 1 })
     return new Set(Object.entries(cont).filter(([, c]) => c > 1).map(([n]) => n))
   }, [demandas])
 
@@ -270,7 +280,7 @@ function PainelDemandas() {
       if (canalFiltro && d.canal !== canalFiltro) return false
       if (alerta === 'PARADAS' && (ehFinal(d) || semEstoque(d) || diasParado(d.atualizado_em || d.criado_em) < 2)) return false
       if (alerta === 'PRAZO' && (ehFinal(d) || !d.prazo || d.prazo >= hojeISO)) return false
-      if (alerta === 'NF' && !['OV_GERADA', 'COTACAO_FRETE'].includes(etapaColuna(d))) return false
+      if (alerta === 'NF' && !(ovFaturada(d) && etapaColuna(d) !== 'NF_ENVIADA' && !d.nf)) return false
       if (alerta === 'ESTOQUE' && !semEstoque(d)) return false
       if (b) {
         const alvo = `${d.cliente || ''} ${d.numero || ''} ${d.gerado_ref || ''}`.toLowerCase()
@@ -448,6 +458,8 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplic
   const etapaCol = etapaColuna(d)
   const emEstoque = etapaCol === 'AGUARDANDO_ESTOQUE'
   const risco = riscoMulta(d)
+  // OV faturada e NF ainda não enviada ao cliente → lembrar o operador do e-mail.
+  const faturadoAviso = ovFaturada(d) && etapaCol !== 'NF_ENVIADA' && !d.nf
   const parado = diasParado(d.atualizado_em || d.criado_em)
   const refFeito = d.ref_externa || d.gerado_ref
   const acao = acaoDaEtapa(d)
@@ -500,6 +512,12 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplic
             {temSaldoFollowup && (
               <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5">⚠️ saldo a faturar</span>
             )}
+          </div>
+        )}
+        {faturadoAviso && (
+          <div className="mt-1.5 rounded-md px-2 py-1 text-[11px] bg-red-50 text-red-700 font-medium flex items-start gap-1"
+            title="A OV já foi faturada (NF emitida) — envie a NF ao cliente por e-mail e depois clique em Enviar NF">
+            <Send size={12} className="mt-px shrink-0" /> 📧 Faturado — envie a NF ao cliente por e-mail
           </div>
         )}
         {d.nf && (d.nf.numero || d.nf.enviada_em) && (

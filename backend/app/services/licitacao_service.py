@@ -274,6 +274,35 @@ def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuari
     detalhe = obter_empenho(empenho_id)
     detalhe["ov_gerada_id"] = ov.get("id")
     detalhe["ov_gerada_ref"] = ov.get("numero_pedido")
+
+    # Espelha a entrega no painel de licitação: cria um card (em "OV gerada")
+    # vinculado à OV, para o time acompanhar frete/NF por lá também — não só na
+    # logística. O card segue o status real da OV (faturamento etc.).
+    try:
+        from datetime import datetime, timezone
+        db.table("licitacao_demandas").insert({
+            "tipo_operacao": "VENDA_DIRETA",
+            "etapa": "OV_GERADA",
+            "numero": detalhe.get("numero"),
+            "cliente_id": emp["cliente_id"],
+            "canal": payload.canal or detalhe.get("canal"),
+            "prazo": payload.data_prevista_entrega.isoformat() if payload.data_prevista_entrega else None,
+            "gerado_tipo": "PEDIDO",
+            "gerado_id": ov.get("id"),
+            "gerado_ref": ov.get("numero_pedido"),
+            "ref_externa": ov.get("numero_pedido"),
+            "ovs": [{"id": ov.get("id"), "numero": ov.get("numero_pedido")}],
+            "itens": [{"produto_id": str(it.produto_id), "codigo": None, "descricao": None,
+                       "qtd": float(it.qtd_solicitada), "valor": float(it.valor_unitario or 0)}
+                      for it in payload.itens],
+            "observacao": f"Entrega do contrato {detalhe.get('numero')}",
+            "ativo": True,
+            "criado_em": datetime.now(timezone.utc).isoformat(),
+            "atualizado_em": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception:
+        pass
+
     return detalhe
 
 

@@ -620,9 +620,8 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                 ),
                 usuario,
             )
-            if entrega.get("ov_gerada_id"):
-                etapa_final = "OV_GERADA"
-                ovs_final = [{"id": entrega.get("ov_gerada_id"), "numero": entrega.get("ov_gerada_ref")}]
+            # A OV vira um card próprio no kanban (criado por registrar_entrega),
+            # que acompanha frete/NF. O contrato (esta demanda) fica concluído.
 
     elif tipo == "COMUNICADO_USO":
         if not payload.numero_pedido or not payload.numero_pedido.strip():
