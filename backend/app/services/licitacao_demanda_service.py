@@ -557,7 +557,10 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         raise HTTPException(status_code=400, detail="Esta demanda já foi concluída e gerou um registro.")
 
     tipo = d.get("tipo_operacao")
-    cliente_id = d.get("cliente_id")
+    # Cliente confirmado na conclusão prevalece (obrigatório no comunicado de uso).
+    cliente_id = str(payload.cliente_id) if getattr(payload, "cliente_id", None) else d.get("cliente_id")
+    if not cliente_id:
+        raise HTTPException(status_code=422, detail="Informe o cliente.")
     canal = payload.canal or d.get("canal")
 
     # Itens: usa os informados na conclusão; se vazios, cai nos itens da triagem.
@@ -608,6 +611,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                 "gerado_tipo": gerado_tipo,
                 "gerado_id": gerado_id,
                 "gerado_ref": gerado_ref,
+                "cliente_id": cliente_id,
                 "canal": canal,
                 "numero": numped,
                 "concluido_em": _agora(),
@@ -659,6 +663,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         "gerado_tipo": gerado_tipo,
         "gerado_id": gerado_id,
         "gerado_ref": gerado_ref,
+        "cliente_id": cliente_id,
         "canal": canal,
         "numero": payload.numero.strip() if payload.numero else d.get("numero"),
         "concluido_em": _agora(),

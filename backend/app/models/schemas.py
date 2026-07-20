@@ -364,6 +364,9 @@ class DemandaConcluir(BaseModel):
     data_faturamento: Optional[date] = None
     empenho_id: Optional[UUID] = None
     canal: Optional[str] = None
+    # Cliente confirmado ao concluir (obrigatório no comunicado de uso) — garante
+    # que o faturamento entra no sistema com o cliente certo.
+    cliente_id: Optional[UUID] = None
     itens: list[DemandaItem] = []
 
 

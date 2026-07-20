@@ -933,6 +933,8 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const tipo: TipoKey = demanda.tipo_operacao
 
   const [numero, setNumero] = useState(demanda.numero || '')
+  const [clienteId, setClienteId] = useState(demanda.cliente_id || '')
+  const [clienteNome, setClienteNome] = useState(demanda.cliente || '')
   const [canal, setCanal] = useState(demanda.canal || '')
   const [dataEmpenho, setDataEmpenho] = useState(hoje)
   const [vigencia, setVigencia] = useState(demanda.prazo || '')
@@ -954,7 +956,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
     queryFn: () => api.get('/licitacoes/empenhos').then(r => r.data),
     enabled: tipo === 'COMUNICADO_USO',
   })
-  const empenhosCliente = empenhos.filter(e => e.cliente_id === demanda.cliente_id && e.saldo_un > 0 && (e.tipo || 'CONSIGNACAO') === 'CONSIGNACAO')
+  const empenhosCliente = empenhos.filter(e => e.cliente_id === clienteId && e.saldo_un > 0 && (e.tipo || 'CONSIGNACAO') === 'CONSIGNACAO')
 
   // Com contrato selecionado, o valor da NF é calculado pelos preços dele
   // (Σ qtd × valor unitário) — editável, o D365 é a palavra final.
@@ -979,6 +981,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
     mutationFn: () => {
       const body: any = {
         canal: canal || null,
+        cliente_id: clienteId || null,
         itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor: i.valor || 0 })),
       }
       if (ehContrato) {
@@ -1006,7 +1009,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   // (não exige NF/valor). Para um comunicado novo, o backend cobra NF/valor.
   let valido = false
   if (ehContrato) valido = !!numero.trim() && itensOk
-  else valido = !!numero.trim() && itensOk
+  else valido = !!numero.trim() && itensOk && !!clienteId
 
   return (
     <ModalBase titulo={<span className="flex items-center gap-2"><Flag size={17} /> Processar · {cfg.label}</span>} onClose={onClose}>
@@ -1038,6 +1041,13 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 
         {tipo === 'COMUNICADO_USO' && (
           <>
+            <Campo label="Cliente / Órgão *">
+              <ClienteAutocomplete value={clienteId} initialNome={clienteNome}
+                onChange={(id, nome) => { setClienteId(id); setClienteNome(nome); setEmpenhoId('') }} />
+              {clienteId
+                ? <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>
+                : <p className="text-xs text-red-500 mt-1">Obrigatório — o faturamento entra no sistema com este cliente.</p>}
+            </Campo>
             {empenhosCliente.length > 0 && (
               <Campo label="Baixar de um contrato de consignação (opcional)">
                 <select value={empenhoId} onChange={e => setEmpenhoId(e.target.value)} className={inputCls}>
@@ -1473,48 +1483,71 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
     enabled: !!sel,
   })
 
+  const etapaFinalLabel = (d: any) => d.etapa === 'NF_ENVIADA' ? 'NF enviada' : 'Concluído'
+
   return (
-    <ModalBase titulo="Histórico de concluídas" onClose={onClose}>
+    <ModalBase titulo="Histórico de concluídas" onClose={onClose} max="max-w-5xl">
       <div className="p-5 space-y-3 overflow-y-auto">
         {datas.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-6">Nenhuma demanda concluída ainda.</p>
         ) : (
           <>
-            <Campo label="Dia">
-              <select value={sel} onChange={e => setSel(e.target.value)} className={inputCls}>
-                {datas.map((d: any) => <option key={d.data} value={d.data}>{fmtData(d.data)} · {d.total} concluída(s)</option>)}
-              </select>
-            </Campo>
+            <div className="flex items-end justify-between gap-3 flex-wrap">
+              <div className="flex-1 min-w-[220px]">
+                <Campo label="Dia">
+                  <select value={sel} onChange={e => setSel(e.target.value)} className={inputCls}>
+                    {datas.map((d: any) => <option key={d.data} value={d.data}>{fmtData(d.data)} · {d.total} concluída(s)</option>)}
+                  </select>
+                </Campo>
+              </div>
+              <p className="text-xs text-gray-400 pb-2.5">{itens.length} registro(s) em {fmtData(sel)}</p>
+            </div>
             {isLoading ? (
               <p className="text-sm text-gray-400 text-center py-4">Carregando…</p>
+            ) : itens.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">Sem concluídas neste dia.</p>
             ) : (
-              <div className="space-y-2">
-                {itens.map((d: any) => {
-                  const cfg = TIPO_MAP[d.tipo_operacao] || TIPOS[0]
-                  const Icone = cfg.icone
-                  const ref = d.ref_externa || d.gerado_ref
-                  return (
-                    <div key={d.id} className={`bg-white rounded-lg border border-gray-200 border-l-4 ${cfg.borda} p-2.5`}>
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-gray-800 flex items-center gap-1.5"><Icone size={14} /> {d.cliente || 'Cliente não informado'}</p>
-                          <div className="flex flex-wrap gap-x-3 text-[11px] text-gray-400 mt-0.5">
-                            {d.numero && <span className="font-mono">{d.numero}</span>}
-                            {d.canal && <span>{CANAL_LABEL[d.canal] || d.canal}</span>}
-                            {ref && <span className="text-emerald-600">D365: {ref}</span>}
-                          </div>
-                        </div>
-                        {(d.ovs_detalhe || []).length > 0 && (
-                          <button onClick={() => navigate(`/expedicao/${d.ovs_detalhe[0].id}`)}
-                            className="flex items-center gap-1 text-xs text-indigo-600 hover:underline whitespace-nowrap">
-                            <ExternalLink size={12} /> OV
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-                {itens.length === 0 && <p className="text-sm text-gray-400 text-center py-4">Sem concluídas neste dia.</p>}
+              <div className="border border-gray-100 rounded-lg overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-[11px] uppercase text-gray-400 text-left">
+                      <th className="font-medium px-3 py-2">Tipo</th>
+                      <th className="font-medium px-3 py-2">Cliente / Órgão</th>
+                      <th className="font-medium px-3 py-2">Nº</th>
+                      <th className="font-medium px-3 py-2">Canal</th>
+                      <th className="font-medium px-3 py-2">Situação</th>
+                      <th className="font-medium px-3 py-2">D365 / OV</th>
+                      <th className="font-medium px-3 py-2 text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {itens.map((d: any) => {
+                      const cfg = TIPO_MAP[d.tipo_operacao] || TIPOS[0]
+                      const Icone = cfg.icone
+                      const ref = d.ref_externa || d.gerado_ref
+                      return (
+                        <tr key={d.id} className="hover:bg-gray-50/60">
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${cfg.chip}`}><Icone size={12} /> {cfg.label}</span>
+                          </td>
+                          <td className="px-3 py-2 font-medium text-gray-800">{d.cliente || 'Cliente não informado'}</td>
+                          <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">{d.numero || '—'}</td>
+                          <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{d.canal ? (CANAL_LABEL[d.canal] || d.canal) : '—'}</td>
+                          <td className="px-3 py-2 whitespace-nowrap"><span className="text-emerald-600 text-xs">✓ {etapaFinalLabel(d)}</span></td>
+                          <td className="px-3 py-2 font-mono text-emerald-700 whitespace-nowrap">{ref || '—'}</td>
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            {(d.ovs_detalhe || []).length > 0 || (d.gerado_tipo === 'COMUNICADO' && d.gerado_id) ? (
+                              <button onClick={() => navigate(`/expedicao/${(d.ovs_detalhe || [])[0]?.id || d.gerado_id}`)}
+                                className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:underline">
+                                <ExternalLink size={12} /> Abrir
+                              </button>
+                            ) : <span className="text-gray-300">—</span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
           </>

@@ -7,10 +7,10 @@ import type { Cliente, Transportadora } from '../types'
 import toast from 'react-hot-toast'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 
-export function ClienteAutocomplete({ value, onChange }: { value: string; onChange: (id: string, nome: string) => void }) {
+export function ClienteAutocomplete({ value, onChange, initialNome }: { value: string; onChange: (id: string, nome: string) => void; initialNome?: string }) {
   const [busca, setBusca] = useState('')
   const [aberto, setAberto] = useState(false)
-  const [nomeSelecionado, setNomeSelecionado] = useState(value ? '' : '')
+  const [nomeSelecionado, setNomeSelecionado] = useState(value && initialNome ? initialNome : '')
   const ref = useRef<HTMLDivElement>(null)
 
   const { data: clientes = [] } = useQuery<Cliente[]>({
