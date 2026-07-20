@@ -208,17 +208,26 @@ function PainelDemandas() {
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
   }, [])
 
-  // KPIs de controle — calculados sobre TODAS as demandas do painel
+  // KPIs de controle — calculados sobre TODAS as demandas do painel.
+  // "Parado" = sem movimento (mede pelo último update, não pela criação).
   const kpis = useMemo(() => {
     const pendentes = demandas.filter(d => !ehFinal(d))
     return {
       pendentes: pendentes.length,
-      paradas: pendentes.filter(d => diasParado(d.criado_em) >= 2).length,
+      paradas: pendentes.filter(d => diasParado(d.atualizado_em || d.criado_em) >= 2).length,
       prazoVencido: pendentes.filter(d => d.prazo && d.prazo < hojeISO).length,
       nfPendente: demandas.filter(d => ['OV_GERADA', 'COTACAO_FRETE'].includes(etapaColuna(d))).length,
       concluidasHoje: demandas.filter(d => ehFinal(d)).length,
     }
   }, [demandas, hojeISO])
+
+  // Números repetidos entre demandas ativas — sinaliza duplicatas já existentes
+  // (o cadastro novo já é bloqueado; aqui pegamos o que entrou antes).
+  const numerosDuplicados = useMemo(() => {
+    const cont: Record<string, number> = {}
+    demandas.forEach(d => { const n = (d.numero || '').trim(); if (n) cont[n] = (cont[n] || 0) + 1 })
+    return new Set(Object.entries(cont).filter(([, c]) => c > 1).map(([n]) => n))
+  }, [demandas])
 
   const filtradas = useMemo(() => {
     const b = busca.trim().toLowerCase()
@@ -348,6 +357,7 @@ function PainelDemandas() {
                             <div className="space-y-2 max-h-[420px] overflow-y-auto pr-0.5">
                               {cards.map(d => (
                                 <CardDemanda key={d.id} d={d} tipo={tipo}
+                                  duplicado={!!d.numero && numerosDuplicados.has(d.numero.trim())}
                                   onClick={() => setDetalheId(d.id)}
                                   onAcao={() => executarAcao(d)}
                                   onGerarOv={() => setGerarOv({ demanda: d })} />
@@ -386,14 +396,14 @@ function PainelDemandas() {
   )
 }
 
-function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv }: {
-  d: any; tipo: any; onClick: () => void; onAcao: () => void; onGerarOv?: () => void
+function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, duplicado }: {
+  d: any; tipo: any; onClick: () => void; onAcao: () => void; onGerarOv?: () => void; duplicado?: boolean
 }) {
   const prio = PRIO_CFG[d.prioridade] || PRIO_CFG.NORMAL
   const nItens = (d.itens || []).length
   const final = ehFinal(d)
   const etapaCol = etapaColuna(d)
-  const parado = diasParado(d.criado_em)
+  const parado = diasParado(d.atualizado_em || d.criado_em)
   const refFeito = d.ref_externa || d.gerado_ref
   const acao = acaoDaEtapa(d)
   // Follow-up: OV já gerada e ainda sobra saldo (entrega parcial de venda direta).
@@ -409,12 +419,15 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv }: {
           <p className="text-sm font-medium text-gray-800 leading-tight line-clamp-2">{d.cliente || 'Cliente não informado'}</p>
           {d.prioridade !== 'NORMAL' && <span className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${prio.cor}`}>{prio.label}</span>}
         </div>
-        {d.numero && <p className="text-xs font-mono text-gray-500 mt-0.5">{d.numero}</p>}
+        <div className="flex items-center gap-1.5 mt-0.5">
+          {d.numero && <p className="text-xs font-mono text-gray-500">{d.numero}</p>}
+          {duplicado && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 whitespace-nowrap" title="Outra demanda ativa tem este mesmo número — confira se não é duplicidade">⚠️ nº duplicado</span>}
+        </div>
         <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
           {d.canal && <span className="text-gray-400">{CANAL_LABEL[d.canal] || d.canal}</span>}
-          {nItens > 0 && <span className="text-gray-400">{nItens} item(ns)</span>}
-          {d.prazo && <span className={`flex items-center gap-1 ${prazoCor(d.prazo)}`}><Clock size={11} /> {fmtData(d.prazo)}</span>}
-          {!final && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`}>⏳ há {parado}d</span>}
+          {nItens > 0 && <span className="text-gray-400">{nItens} {nItens === 1 ? 'item' : 'itens'}</span>}
+          {d.prazo && <span className={`flex items-center gap-1 ${prazoCor(d.prazo)}`}><Clock size={11} /> Prazo {fmtData(d.prazo)}</span>}
+          {!final && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`} title="Dias sem movimento">⏳ parado {parado}d</span>}
         </div>
         {d.frete && (d.frete.transportadora_nome || d.frete.valor) && (
           <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1"><Truck size={11} /> {d.frete.transportadora_nome || 'Frete'}{d.frete.valor ? ` · ${fmtBRL(d.frete.valor)}` : ''}</p>

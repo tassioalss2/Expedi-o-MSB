@@ -98,6 +98,7 @@ def _serializar(d: dict) -> dict:
         "ov_status": None,
         "ov_itens": None,
         "criado_em": d.get("criado_em"),
+        "atualizado_em": d.get("atualizado_em"),
         "concluido_em": d.get("concluido_em"),
     }
 
