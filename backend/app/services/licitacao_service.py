@@ -75,6 +75,7 @@ def criar_empenho(payload: EmpenhoCreate) -> dict:
 
     emp = db.table("empenhos").insert({
         "numero": payload.numero,
+        "numero_pregao": (payload.numero_pregao or "").strip() or None,
         "cliente_id": str(payload.cliente_id),
         "tipo": payload.tipo or "CONSIGNACAO",
         "canal": payload.canal,
@@ -122,6 +123,7 @@ def listar_empenhos() -> list:
         result.append({
             "id": e["id"],
             "numero": e["numero"],
+            "numero_pregao": e.get("numero_pregao"),
             "tipo": e.get("tipo") or "CONSIGNACAO",
             "cliente": (e.get("clientes") or {}).get("nome", "—"),
             "cliente_id": e.get("cliente_id"),
@@ -175,6 +177,7 @@ def obter_empenho(empenho_id: str) -> dict:
     return {
         "id": e["id"],
         "numero": e["numero"],
+        "numero_pregao": e.get("numero_pregao"),
         "tipo": e.get("tipo") or "CONSIGNACAO",
         "cliente": (e.get("clientes") or {}).get("nome", "—"),
         "cliente_id": e.get("cliente_id"),

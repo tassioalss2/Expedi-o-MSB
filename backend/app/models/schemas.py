@@ -229,6 +229,7 @@ class EmpenhoItemCreate(BaseModel):
 
 class EmpenhoCreate(BaseModel):
     numero: str
+    numero_pregao: Optional[str] = None  # nº do pregão (licitação), ex: 90051/2025
     cliente_id: UUID
     tipo: str = "CONSIGNACAO"  # CONSIGNACAO | VENDA_DIRETA
     canal: Optional[str] = None
@@ -353,6 +354,7 @@ class DemandaConcluir(BaseModel):
     - COMUNICADO_USO → registra comunicado (numero_pedido, numero_nf, valor_nf; empenho_id opcional)
     """
     numero: Optional[str] = None
+    numero_pregao: Optional[str] = None  # nº do pregão (licitação), separado do nº do contrato/empenho
     numero_pedido: Optional[str] = None
     tipo_frete: Optional[str] = None
     data_prevista_entrega: Optional[date] = None

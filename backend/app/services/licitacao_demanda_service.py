@@ -582,6 +582,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         emp = licitacao_service.criar_empenho(
             EmpenhoCreate(
                 numero=payload.numero.strip(),
+                numero_pregao=(payload.numero_pregao or "").strip() or None,
                 cliente_id=cliente_id,
                 tipo=tipo,
                 canal=canal,

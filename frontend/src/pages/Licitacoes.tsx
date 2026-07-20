@@ -944,6 +944,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const tipo: TipoKey = demanda.tipo_operacao
 
   const [numero, setNumero] = useState(demanda.numero || '')
+  const [numeroPregao, setNumeroPregao] = useState(demanda.numero_pregao || '')
   const [clienteId, setClienteId] = useState(demanda.cliente_id || '')
   const [clienteNome, setClienteNome] = useState(demanda.cliente || '')
   const [canal, setCanal] = useState(demanda.canal || '')
@@ -997,6 +998,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
       }
       if (ehContrato) {
         body.numero = numero.trim()
+        body.numero_pregao = numeroPregao.trim() || null
         body.data_empenho = dataEmpenho || null
         body.vigencia = vigencia || null
       } else {
@@ -1036,8 +1038,11 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 
         {ehContrato && (
           <div className="grid grid-cols-2 gap-3">
-            <Campo label={tipo === 'VENDA_DIRETA' ? 'Nº do contrato/pregão *' : 'Nº do empenho *'}>
-              <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: PE 042/2026" />
+            <Campo label={tipo === 'VENDA_DIRETA' ? 'Nº do contrato / empenho *' : 'Nº do empenho *'}>
+              <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 2026NE001246" />
+            </Campo>
+            <Campo label="Nº do Pregão">
+              <input value={numeroPregao} onChange={e => setNumeroPregao(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 90051/2025" />
             </Campo>
             <Campo label="Canal">
               <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
@@ -1158,6 +1163,7 @@ function AbaContratos() {
                 <div className="flex items-start justify-between mb-1">
                   <div>
                     <p className="font-mono font-bold text-gray-800">{e.numero}</p>
+                    {e.numero_pregao && <p className="text-[11px] font-mono text-gray-400">Pregão {e.numero_pregao}</p>}
                     <p className="text-sm text-gray-600 truncate max-w-[240px]">{e.cliente}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${tp.cor}`}>{tp.label}</span>
@@ -1193,6 +1199,7 @@ function ModalNovoContrato({ onClose, onSaved }: { onClose: () => void; onSaved:
   const hoje = new Date().toISOString().slice(0, 10)
   const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>('VENDA_DIRETA')
   const [numero, setNumero] = useState('')
+  const [numeroPregao, setNumeroPregao] = useState('')
   const [clienteId, setClienteId] = useState('')
   const [clienteNome, setClienteNome] = useState('')
   const [canal, setCanal] = useState('LICITACAO_URO')
@@ -1203,7 +1210,7 @@ function ModalNovoContrato({ onClose, onSaved }: { onClose: () => void; onSaved:
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/empenhos', {
-      numero: numero.trim(), cliente_id: clienteId, tipo, canal,
+      numero: numero.trim(), numero_pregao: numeroPregao.trim() || null, cliente_id: clienteId, tipo, canal,
       data_empenho: dataEmpenho || null, vigencia: vigencia || null, observacao: observacao || null,
       itens: itens.map(i => ({ produto_id: i.produto_id, qtd_empenhada: i.qtd, valor_unitario: i.valor || 0 })),
     }),
@@ -1233,21 +1240,20 @@ function ModalNovoContrato({ onClose, onSaved }: { onClose: () => void; onSaved:
             : 'Material consignado. O comunicado de uso baixa o saldo conforme o cliente usa.'}
         </p>
         <div className="grid grid-cols-2 gap-3">
-          <Campo label="Número do contrato *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: PE 042/2026" /></Campo>
+          <Campo label="Nº do contrato / empenho *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 2026NE001246" /></Campo>
+          <Campo label="Nº do Pregão"><input value={numeroPregao} onChange={e => setNumeroPregao(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 90051/2025" /></Campo>
           <Campo label="Data"><input type="date" value={dataEmpenho} onChange={e => setDataEmpenho(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Vigência (até)"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
         </div>
         <Campo label="Cliente / Órgão *">
           <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
           {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
         </Campo>
-        <div className="grid grid-cols-2 gap-3">
-          <Campo label="Canal *">
-            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
-              {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
-            </select>
-          </Campo>
-          <Campo label="Vigência (até)"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
-        </div>
+        <Campo label="Canal *">
+          <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
+            {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+          </select>
+        </Campo>
         <Campo label="Observação"><input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
         <div>
           <label className="text-sm text-gray-600">Itens do contrato *</label>
@@ -1297,6 +1303,7 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
             <p className="text-sm text-gray-700 font-medium">{emp.cliente}</p>
           </div>
           <p className="text-xs text-gray-400 mt-0.5">
+            {emp.numero_pregao && <>Pregão: <span className="font-mono">{emp.numero_pregao}</span> · </>}
             {emp.canal && <>Canal: {CANAL_LABEL[emp.canal] || emp.canal} · </>}
             {fmtData(emp.data_empenho)} · Vigência {fmtData(emp.vigencia)}
           </p>
