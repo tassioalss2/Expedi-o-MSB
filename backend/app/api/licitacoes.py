@@ -8,6 +8,8 @@ from app.models.schemas import (
     ConsumoEmpenhoCreate,
     DemandaConcluir,
     DemandaCreate,
+    DemandaEstoqueCreate,
+    DemandaEstoqueLiberar,
     DemandaFreteCreate,
     DemandaNFEnvioCreate,
     DemandaUpdate,
@@ -125,6 +127,16 @@ def registrar_frete(demanda_id: UUID, payload: DemandaFreteCreate, _: UsuarioOut
 @router.post("/demandas/{demanda_id}/enviar-nf")
 def enviar_nf(demanda_id: UUID, payload: DemandaNFEnvioCreate, usuario: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.enviar_nf(str(demanda_id), payload, usuario)
+
+
+@router.post("/demandas/{demanda_id}/sem-estoque")
+def marcar_sem_estoque(demanda_id: UUID, payload: DemandaEstoqueCreate, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.marcar_sem_estoque(str(demanda_id), payload)
+
+
+@router.post("/demandas/{demanda_id}/estoque-ok")
+def liberar_estoque(demanda_id: UUID, payload: DemandaEstoqueLiberar, _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_demanda_service.liberar_estoque(str(demanda_id), payload)
 
 
 @router.delete("/demandas/{demanda_id}")

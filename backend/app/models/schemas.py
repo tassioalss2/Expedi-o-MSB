@@ -278,6 +278,21 @@ class DemandaNFEnvioCreate(BaseModel):
     observacao: Optional[str] = None
 
 
+class DemandaEstoqueCreate(BaseModel):
+    """Sinaliza que a demanda de licitação está sem estoque disponível. Guarda a
+    previsão do PCP e, opcionalmente, o prazo contratual de entrega — cruzados
+    para alertar risco de multa por atraso."""
+    previsao_pcp: Optional[date] = None
+    prazo: Optional[date] = None
+    itens_faltantes: Optional[list[str]] = None
+    observacao: Optional[str] = None
+
+
+class DemandaEstoqueLiberar(BaseModel):
+    """Estoque chegou — devolve o card ao fluxo normal."""
+    observacao: Optional[str] = None
+
+
 class ConsumoEmpenhoCreate(BaseModel):
     """Comunicado de uso que consome saldo de um empenho."""
     numero_pedido: str

@@ -25,7 +25,7 @@ from app.models.schemas import (
     UsuarioOut,
 )
 
-ETAPAS = ["RECEBIDO", "PROCESSANDO", "COTACAO_FRETE", "OV_GERADA", "NF_ENVIADA", "CONCLUIDO"]
+ETAPAS = ["RECEBIDO", "PROCESSANDO", "AGUARDANDO_ESTOQUE", "COTACAO_FRETE", "OV_GERADA", "NF_ENVIADA", "CONCLUIDO"]
 # Etapas antigas → novas (compatibilidade com registros já criados)
 _ETAPA_LEGADA = {"NOVO": "RECEBIDO", "ANALISE": "RECEBIDO"}
 # Etapas terminais (saem do painel do dia seguinte, vão para o histórico)
@@ -93,6 +93,7 @@ def _serializar(d: dict) -> dict:
         "gerado_ref": d.get("gerado_ref"),
         "frete": d.get("frete"),
         "nf": d.get("nf"),
+        "estoque": d.get("estoque"),
         "ovs": d.get("ovs") or [],
         "ovs_detalhe": None,
         "ov_status": None,
@@ -427,6 +428,60 @@ def enviar_nf(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
         "nf": nf,
         "etapa": "NF_ENVIADA",
         "concluido_em": _agora(),
+        "atualizado_em": _agora(),
+    }).eq("id", demanda_id).execute()
+    return obter_demanda(demanda_id)
+
+
+def marcar_sem_estoque(demanda_id: str, payload) -> dict:
+    """Sinaliza que o pedido não tem estoque disponível. O card vai para a coluna
+    'Aguardando estoque (PCP)' e NÃO sai do painel — fica visível até o estoque
+    chegar, para o time nunca esquecer (risco de multa contratual). Guarda a
+    previsão informada pelo PCP e (opcionalmente) o prazo de entrega do contrato,
+    que é cruzado com a previsão para alertar risco de multa."""
+    db = get_service_db()
+    d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
+    if not d:
+        raise HTTPException(status_code=404, detail="Demanda não encontrada")
+    etapa_atual = _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa"))
+    anterior = (d.get("estoque") or {}).get("etapa_anterior")
+    estoque = {
+        "em_falta": True,
+        "previsao_pcp": payload.previsao_pcp.isoformat() if payload.previsao_pcp else None,
+        "itens_faltantes": [s for s in (payload.itens_faltantes or []) if (s or "").strip()],
+        "observacao": (payload.observacao or "").strip() or None,
+        # Guarda de onde veio para conseguir voltar quando o estoque chegar.
+        "etapa_anterior": etapa_atual if etapa_atual != "AGUARDANDO_ESTOQUE" else (anterior or "PROCESSANDO"),
+        "registrado_em": _agora(),
+    }
+    update = {"estoque": estoque, "etapa": "AGUARDANDO_ESTOQUE", "atualizado_em": _agora()}
+    # Permite registrar/atualizar o prazo contratual no mesmo passo (hoje muitos
+    # não têm o prazo preenchido, e ele é a base do alerta de multa).
+    if getattr(payload, "prazo", None) is not None:
+        update["prazo"] = payload.prazo.isoformat()
+    db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
+    return obter_demanda(demanda_id)
+
+
+def liberar_estoque(demanda_id: str, payload=None) -> dict:
+    """Estoque chegou (ou PCP produziu). Devolve o card ao fluxo normal — volta
+    para a etapa em que estava antes de faltar estoque (padrão: em processamento).
+    Mantém o histórico do que faltou."""
+    db = get_service_db()
+    d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
+    if not d:
+        raise HTTPException(status_code=404, detail="Demanda não encontrada")
+    est = dict(d.get("estoque") or {})
+    destino = est.get("etapa_anterior") or "PROCESSANDO"
+    if destino not in ETAPAS or destino in ETAPAS_FINAIS or destino == "AGUARDANDO_ESTOQUE":
+        destino = "PROCESSANDO"
+    est["em_falta"] = False
+    est["liberado_em"] = _agora()
+    if payload is not None and getattr(payload, "observacao", None):
+        est["observacao_liberacao"] = (payload.observacao or "").strip() or None
+    db.table("licitacao_demandas").update({
+        "estoque": est,
+        "etapa": destino,
         "atualizado_em": _agora(),
     }).eq("id", demanda_id).execute()
     return obter_demanda(demanda_id)

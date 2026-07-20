@@ -42,7 +42,9 @@ def montar_resumo() -> str:
         paradas = []
         for d in dem:
             etapa = d.get("etapa")
-            if etapa in _ETAPAS_FINAIS:
+            # AGUARDANDO_ESTOQUE está parado de propósito (esperando o PCP) — sai
+            # daqui e entra na seção própria de risco de estoque.
+            if etapa in _ETAPAS_FINAIS or etapa == "AGUARDANDO_ESTOQUE":
                 continue
             try:
                 criado = datetime.fromisoformat((d.get("criado_em") or "").replace("Z", "+00:00"))
@@ -99,6 +101,29 @@ def montar_resumo() -> str:
         if risco:
             tops = " · ".join(f"{e['numero']} (até {_fmt(e['vigencia'])})" for e in risco[:5])
             linhas.append(f"⚠️ **{len(risco)} contrato(s) vencendo com saldo**: {tops}")
+    except Exception:
+        pass
+
+    # 6) Demandas aguardando estoque (PCP) — destaca risco de multa
+    #    (previsão do PCP depois do prazo contratual, ou prazo já vencido).
+    try:
+        dem = db.table("licitacao_demandas").select("etapa, prazo, estoque, clientes(nome)")\
+            .eq("ativo", True).eq("etapa", "AGUARDANDO_ESTOQUE").execute().data
+        aguardando, em_risco = [], []
+        for d in dem:
+            nome = (d.get("clientes") or {}).get("nome") or "?"
+            est = d.get("estoque") or {}
+            previsao = est.get("previsao_pcp")
+            prazo = d.get("prazo")
+            risco = bool(prazo) and ((previsao and previsao > prazo) or prazo < hoje)
+            rotulo = nome + (f" (PCP {_fmt(previsao)})" if previsao else "")
+            aguardando.append(rotulo)
+            if risco:
+                em_risco.append(nome + (f" (prazo {_fmt(prazo)})" if prazo else ""))
+        if em_risco:
+            linhas.append(f"🏭🔴 **{len(em_risco)} sem estoque com RISCO DE MULTA** (previsão do PCP estoura o prazo): {' · '.join(em_risco[:5])}")
+        if aguardando:
+            linhas.append(f"🏭 **{len(aguardando)} demanda(s) aguardando estoque (PCP)**: {' · '.join(aguardando[:5])}")
     except Exception:
         pass
 

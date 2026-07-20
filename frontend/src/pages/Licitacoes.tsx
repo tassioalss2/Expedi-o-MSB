@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
   LayoutGrid, Layers, ChevronDown, ChevronRight, ExternalLink, Flag, Clock, Search,
-  ChevronRight as Arrow, Truck, Send,
+  ChevronRight as Arrow, Truck, Send, Package, PackageCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -71,14 +71,18 @@ const TIPO_MAP = Object.fromEntries(TIPOS.map(t => [t.key, t]))
 const ETAPA_LABEL: Record<string, string> = {
   RECEBIDO: 'Recebido',
   PROCESSANDO: 'Em processamento (D365)',
+  AGUARDANDO_ESTOQUE: '🏭 Aguardando estoque (PCP)',
   COTACAO_FRETE: 'Cotação de frete',
   OV_GERADA: 'OV gerada',
   NF_ENVIADA: 'NF enviada',
   CONCLUIDO: 'Concluído',
 }
 // Venda direta e consignação: fluxo completo (cota frete, gera OV, envia NF).
-// Comunicado de uso: fluxo curto (recebe, processa no D365, conclui).
-const FLUXO_LICITACAO = ['RECEBIDO', 'PROCESSANDO', 'OV_GERADA', 'COTACAO_FRETE', 'NF_ENVIADA']
+// "Aguardando estoque" é uma parada quando o pedido não tem estoque — o PCP dá a
+// previsão e o card fica visível até o material chegar (nunca some do painel).
+// Comunicado de uso: fluxo curto (recebe, processa no D365, conclui) — o material
+// já foi usado pelo cliente, então não passa por estoque.
+const FLUXO_LICITACAO = ['RECEBIDO', 'PROCESSANDO', 'AGUARDANDO_ESTOQUE', 'OV_GERADA', 'COTACAO_FRETE', 'NF_ENVIADA']
 const FLUXO_COMUNICADO = ['RECEBIDO', 'PROCESSANDO', 'CONCLUIDO']
 const etapasDoTipo = (tipo: string) => tipo === 'COMUNICADO_USO' ? FLUXO_COMUNICADO : FLUXO_LICITACAO
 const ETAPAS_FINAIS = ['NF_ENVIADA', 'CONCLUIDO']
@@ -97,11 +101,25 @@ const ehFinal = (d: any) => ETAPAS_FINAIS.includes(etapaColuna(d))
 function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | null {
   const e = etapaColuna(d)
   const licitacao = d.tipo_operacao !== 'COMUNICADO_USO'
+  if (e === 'AGUARDANDO_ESTOQUE') return { kind: 'liberarEstoque', label: 'Estoque chegou' }
   if (e === 'RECEBIDO') return { kind: 'avancar', to: 'PROCESSANDO', label: 'Avançar' }
   if (e === 'PROCESSANDO') return licitacao ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'faturar', label: 'Concluir e faturar' }
   if (e === 'OV_GERADA') return { kind: 'frete', label: 'Cotar frete' }
   if (e === 'COTACAO_FRETE') return { kind: 'enviarNf', label: 'Enviar NF' }
   return null
+}
+// Card sem estoque? (na coluna de espera do PCP)
+const semEstoque = (d: any) => etapaColuna(d) === 'AGUARDANDO_ESTOQUE'
+// Pode sinalizar falta de estoque? (venda direta/consignação ainda no início)
+const podeMarcarSemEstoque = (d: any) =>
+  d.tipo_operacao !== 'COMUNICADO_USO' && ['RECEBIDO', 'PROCESSANDO'].includes(etapaColuna(d))
+// Risco de multa: aguardando estoque e a previsão do PCP estoura o prazo do
+// contrato (ou o prazo já venceu enquanto o material não chega).
+function riscoMulta(d: any): boolean {
+  if (!semEstoque(d) || !d.prazo) return false
+  const prev = d.estoque?.previsao_pcp
+  const hoje = new Date().toISOString().slice(0, 10)
+  return (!!prev && prev > d.prazo) || d.prazo < hoje
 }
 const diasParado = (iso?: string) => iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : 0
 const ovStatusLabel = (s?: string) => s ? (STATUS_CONFIG[s as keyof typeof STATUS_CONFIG]?.label || s) : ''
@@ -176,10 +194,11 @@ function PainelDemandas() {
   const [gerarOv, setGerarOv] = useState<any | null>(null)
   const [cotarFrete, setCotarFrete] = useState<any | null>(null)
   const [enviarNf, setEnviarNf] = useState<any | null>(null)
+  const [semEstoqueModal, setSemEstoqueModal] = useState<any | null>(null)
   const [historico, setHistorico] = useState(false)
   const [busca, setBusca] = useState('')
   const [canalFiltro, setCanalFiltro] = useState('')
-  const [alerta, setAlerta] = useState<'' | 'PARADAS' | 'PRAZO' | 'NF'>('')
+  const [alerta, setAlerta] = useState<'' | 'PARADAS' | 'PRAZO' | 'NF' | 'ESTOQUE'>('')
   const [colapsadas, setColapsadas] = useState<Record<string, boolean>>({})
 
   const { data: demandas = [], isLoading } = useQuery<any[]>({
@@ -194,6 +213,12 @@ function PainelDemandas() {
     mutationFn: ({ id, etapa }: { id: string; etapa: string }) => api.patch(`/licitacoes/demandas/${id}`, { etapa }),
     onSuccess: invalidar,
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao mover demanda')),
+  })
+
+  const liberarEstoque = useMutation({
+    mutationFn: (id: string) => api.post(`/licitacoes/demandas/${id}/estoque-ok`, {}),
+    onSuccess: () => { invalidar(); toast.success('Estoque liberado — card voltou ao fluxo') },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao liberar estoque')),
   })
 
   const resumoTeams = useMutation({
@@ -212,11 +237,15 @@ function PainelDemandas() {
   // "Parado" = sem movimento (mede pelo último update, não pela criação).
   const kpis = useMemo(() => {
     const pendentes = demandas.filter(d => !ehFinal(d))
+    const semEst = pendentes.filter(semEstoque)
     return {
       pendentes: pendentes.length,
-      paradas: pendentes.filter(d => diasParado(d.atualizado_em || d.criado_em) >= 2).length,
+      // "Parado" ignora quem está aguardando estoque de propósito (esperando o PCP).
+      paradas: pendentes.filter(d => !semEstoque(d) && diasParado(d.atualizado_em || d.criado_em) >= 2).length,
       prazoVencido: pendentes.filter(d => d.prazo && d.prazo < hojeISO).length,
       nfPendente: demandas.filter(d => ['OV_GERADA', 'COTACAO_FRETE'].includes(etapaColuna(d))).length,
+      semEstoque: semEst.length,
+      semEstoqueRisco: semEst.filter(riscoMulta).length,
       concluidasHoje: demandas.filter(d => ehFinal(d)).length,
     }
   }, [demandas, hojeISO])
@@ -233,9 +262,10 @@ function PainelDemandas() {
     const b = busca.trim().toLowerCase()
     return demandas.filter(d => {
       if (canalFiltro && d.canal !== canalFiltro) return false
-      if (alerta === 'PARADAS' && (ehFinal(d) || diasParado(d.criado_em) < 2)) return false
+      if (alerta === 'PARADAS' && (ehFinal(d) || semEstoque(d) || diasParado(d.atualizado_em || d.criado_em) < 2)) return false
       if (alerta === 'PRAZO' && (ehFinal(d) || !d.prazo || d.prazo >= hojeISO)) return false
       if (alerta === 'NF' && !['OV_GERADA', 'COTACAO_FRETE'].includes(etapaColuna(d))) return false
+      if (alerta === 'ESTOQUE' && !semEstoque(d)) return false
       if (b) {
         const alvo = `${d.cliente || ''} ${d.numero || ''} ${d.gerado_ref || ''}`.toLowerCase()
         if (!alvo.includes(b)) return false
@@ -256,23 +286,26 @@ function PainelDemandas() {
     else if (a.kind === 'enviarNf') setEnviarNf(d)
     else if (a.kind === 'faturar') setGerar(d)
     else if (a.kind === 'concluir') setConcluirManual(d)
+    else if (a.kind === 'liberarEstoque') liberarEstoque.mutate(d.id)
   }
 
   return (
     <div className="space-y-4">
       {/* Faixa de controle — clique num indicador para filtrar o painel */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {([
-          { key: '', label: 'Pendentes', valor: kpis.pendentes, cor: 'text-blue-700', borda: 'ring-blue-400', desc: 'tudo que ainda não fechou' },
-          { key: 'PARADAS', label: '⏳ Paradas 2+ dias', valor: kpis.paradas, cor: kpis.paradas > 0 ? 'text-amber-600' : 'text-gray-400', borda: 'ring-amber-400', desc: 'sem conclusão desde que chegaram' },
-          { key: 'PRAZO', label: '🔴 Prazo vencido', valor: kpis.prazoVencido, cor: kpis.prazoVencido > 0 ? 'text-red-600' : 'text-gray-400', borda: 'ring-red-400', desc: 'prazo do cliente estourado' },
-          { key: 'NF', label: '📄 NF a enviar', valor: kpis.nfPendente, cor: kpis.nfPendente > 0 ? 'text-indigo-600' : 'text-gray-400', borda: 'ring-indigo-400', desc: 'OV pronta, falta NF ao cliente' },
+          { key: '', label: 'Pendentes', valor: kpis.pendentes, cor: 'text-blue-700', borda: 'ring-blue-400', desc: 'tudo que ainda não fechou', sub: '' },
+          { key: 'PARADAS', label: '⏳ Paradas 2+ dias', valor: kpis.paradas, cor: kpis.paradas > 0 ? 'text-amber-600' : 'text-gray-400', borda: 'ring-amber-400', desc: 'sem movimento (não conta as sem estoque)', sub: '' },
+          { key: 'ESTOQUE', label: '🏭 Sem estoque', valor: kpis.semEstoque, cor: kpis.semEstoqueRisco > 0 ? 'text-red-600' : kpis.semEstoque > 0 ? 'text-orange-600' : 'text-gray-400', borda: 'ring-orange-400', desc: 'aguardando previsão do PCP — não esquecer!', sub: kpis.semEstoqueRisco > 0 ? `🔴 ${kpis.semEstoqueRisco} c/ risco de multa` : '' },
+          { key: 'PRAZO', label: '🔴 Prazo vencido', valor: kpis.prazoVencido, cor: kpis.prazoVencido > 0 ? 'text-red-600' : 'text-gray-400', borda: 'ring-red-400', desc: 'prazo do cliente estourado', sub: '' },
+          { key: 'NF', label: '📄 NF a enviar', valor: kpis.nfPendente, cor: kpis.nfPendente > 0 ? 'text-indigo-600' : 'text-gray-400', borda: 'ring-indigo-400', desc: 'OV pronta, falta NF ao cliente', sub: '' },
         ] as const).map(k => (
           <button key={k.label} onClick={() => setAlerta(alerta === k.key ? '' : k.key as any)}
             title={k.desc}
             className={`bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2 text-left transition hover:border-gray-300 ${alerta === k.key && k.key !== '' ? `ring-2 ${k.borda}` : ''}`}>
             <p className={`text-xl font-bold leading-tight tabular-nums ${k.cor}`}>{k.valor}</p>
             <p className="text-[11px] text-gray-500">{k.label}</p>
+            {k.sub && <p className="text-[10px] text-red-600 font-medium leading-tight mt-0.5">{k.sub}</p>}
           </button>
         ))}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2">
@@ -282,7 +315,7 @@ function PainelDemandas() {
       </div>
       {alerta && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-center justify-between">
-          <span>Mostrando só <strong>{alerta === 'PARADAS' ? 'paradas há 2+ dias' : alerta === 'PRAZO' ? 'com prazo vencido' : 'com NF a enviar'}</strong>.</span>
+          <span>Mostrando só <strong>{alerta === 'PARADAS' ? 'paradas há 2+ dias' : alerta === 'PRAZO' ? 'com prazo vencido' : alerta === 'ESTOQUE' ? 'aguardando estoque (PCP)' : 'com NF a enviar'}</strong>.</span>
           <button onClick={() => setAlerta('')} className="underline">Ver tudo</button>
         </div>
       )}
@@ -320,7 +353,7 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 Cada card anda pelas etapas com o botão da vez: D365 → <strong>Gerar OV</strong> → <strong>Cotar frete</strong> → <strong>Enviar NF</strong>. As finalizadas (NF enviada / concluídas) <strong>saem do painel no dia seguinte</strong> — consulte-as em <strong>Histórico</strong>.
+        💡 Cada card anda pelas etapas com o botão da vez: D365 → <strong>Gerar OV</strong> → <strong>Cotar frete</strong> → <strong>Enviar NF</strong>. Sem estoque? Use <strong>🏭 Sem estoque</strong> — o card fica na coluna do PCP e <strong>não some</strong> até o material chegar (o app alerta risco de multa). As finalizadas <strong>saem do painel no dia seguinte</strong> — veja em <strong>Histórico</strong>.
       </div>
 
       {isLoading ? (
@@ -360,7 +393,8 @@ function PainelDemandas() {
                                   duplicado={!!d.numero && numerosDuplicados.has(d.numero.trim())}
                                   onClick={() => setDetalheId(d.id)}
                                   onAcao={() => executarAcao(d)}
-                                  onGerarOv={() => setGerarOv({ demanda: d })} />
+                                  onGerarOv={() => setGerarOv({ demanda: d })}
+                                  onSemEstoque={() => setSemEstoqueModal(d)} />
                               ))}
                               {cards.length === 0 && (
                                 <div className="text-[11px] text-gray-300 text-center py-3">—</div>
@@ -384,6 +418,7 @@ function PainelDemandas() {
           onAcao={(d) => { setDetalheId(null); executarAcao(d) }}
           onGerarOv={(d) => { setDetalheId(null); setGerarOv({ demanda: d }) }}
           onCotarFrete={(d) => { setDetalheId(null); setCotarFrete(d) }}
+          onSemEstoque={(d) => { setDetalheId(null); setSemEstoqueModal(d) }}
           onMarcarFeito={(d) => { setDetalheId(null); setConcluirManual(d) }} />
       )}
       {concluirManual && <ModalConcluirManual demanda={concluirManual} onClose={() => setConcluirManual(null)} onSaved={invalidar} />}
@@ -391,18 +426,21 @@ function PainelDemandas() {
       {gerarOv && <ModalGerarOVSaldo demanda={gerarOv.demanda} onClose={() => setGerarOv(null)} onSaved={invalidar} />}
       {cotarFrete && <ModalFrete demanda={cotarFrete} onClose={() => setCotarFrete(null)} onSaved={invalidar} />}
       {enviarNf && <ModalEnviarNF demanda={enviarNf} onClose={() => setEnviarNf(null)} onSaved={invalidar} />}
+      {semEstoqueModal && <ModalSemEstoque demanda={semEstoqueModal} onClose={() => setSemEstoqueModal(null)} onSaved={invalidar} />}
       {historico && <ModalHistorico onClose={() => setHistorico(false)} />}
     </div>
   )
 }
 
-function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, duplicado }: {
-  d: any; tipo: any; onClick: () => void; onAcao: () => void; onGerarOv?: () => void; duplicado?: boolean
+function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplicado }: {
+  d: any; tipo: any; onClick: () => void; onAcao: () => void; onGerarOv?: () => void; onSemEstoque?: () => void; duplicado?: boolean
 }) {
   const prio = PRIO_CFG[d.prioridade] || PRIO_CFG.NORMAL
   const nItens = (d.itens || []).length
   const final = ehFinal(d)
   const etapaCol = etapaColuna(d)
+  const emEstoque = etapaCol === 'AGUARDANDO_ESTOQUE'
+  const risco = riscoMulta(d)
   const parado = diasParado(d.atualizado_em || d.criado_em)
   const refFeito = d.ref_externa || d.gerado_ref
   const acao = acaoDaEtapa(d)
@@ -410,8 +448,11 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, duplicado }: {
   const temSaldoFollowup = d.tipo_operacao === 'VENDA_DIRETA' && etapaCol === 'OV_GERADA' && (d.ov_itens || []).length > 0 &&
     mesclarItens(d.itens || [], d.ov_itens).some(l => l.saldo > 0)
   const iconeAcao = acao?.kind === 'frete' ? <Truck size={11} /> : acao?.kind === 'gerarOv' ? <ShoppingCart size={11} />
-    : acao?.kind === 'enviarNf' ? <Send size={11} /> : acao?.kind === 'concluir' ? <Flag size={11} /> : <Arrow size={11} />
-  const acaoCor = acao?.kind === 'avancar' ? 'border text-gray-600 hover:bg-gray-50' : 'bg-blue-600 hover:bg-blue-500 text-white'
+    : acao?.kind === 'enviarNf' ? <Send size={11} /> : acao?.kind === 'concluir' ? <Flag size={11} />
+    : acao?.kind === 'liberarEstoque' ? <PackageCheck size={11} /> : <Arrow size={11} />
+  const acaoCor = acao?.kind === 'avancar' ? 'border text-gray-600 hover:bg-gray-50'
+    : acao?.kind === 'liberarEstoque' ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+    : 'bg-blue-600 hover:bg-blue-500 text-white'
   return (
     <div className={`bg-white rounded-lg border border-gray-200 border-l-4 ${tipo.borda} shadow-sm p-2.5`}>
       <div onClick={onClick} className="cursor-pointer">
@@ -427,8 +468,19 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, duplicado }: {
           {d.canal && <span className="text-gray-400">{CANAL_LABEL[d.canal] || d.canal}</span>}
           {nItens > 0 && <span className="text-gray-400">{nItens} {nItens === 1 ? 'item' : 'itens'}</span>}
           {d.prazo && <span className={`flex items-center gap-1 ${prazoCor(d.prazo)}`}><Clock size={11} /> Prazo {fmtData(d.prazo)}</span>}
-          {!final && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`} title="Dias sem movimento">⏳ parado {parado}d</span>}
+          {!final && !emEstoque && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`} title="Dias sem movimento">⏳ parado {parado}d</span>}
         </div>
+        {emEstoque && (
+          <div className={`mt-1.5 rounded-md px-2 py-1 text-[11px] flex items-start gap-1 ${risco ? 'bg-red-50 text-red-700 font-medium' : 'bg-orange-50 text-orange-700'}`}
+            title={risco ? 'A previsão do PCP passa do prazo do contrato — risco de multa' : 'Aguardando o material do PCP'}>
+            <Package size={12} className="mt-px shrink-0" />
+            <span>
+              {risco ? '🔴 Risco de multa · ' : ''}
+              {d.estoque?.previsao_pcp ? `PCP prevê ${fmtData(d.estoque.previsao_pcp)}` : 'Sem previsão do PCP'}
+              {(d.estoque?.itens_faltantes || []).length > 0 ? ` · faltam: ${d.estoque.itens_faltantes.slice(0, 3).join(', ')}` : ''}
+            </span>
+          </div>
+        )}
         {d.frete && (d.frete.transportadora_nome || d.frete.valor) && (
           <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1"><Truck size={11} /> {d.frete.transportadora_nome || 'Frete'}{d.frete.valor ? ` · ${fmtBRL(d.frete.valor)}` : ''}</p>
         )}
@@ -454,6 +506,13 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, duplicado }: {
             <button onClick={(e) => { e.stopPropagation(); onGerarOv() }}
               className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-50">
               <ShoppingCart size={11} /> OV do saldo
+            </button>
+          )}
+          {podeMarcarSemEstoque(d) && onSemEstoque && (
+            <button onClick={(e) => { e.stopPropagation(); onSemEstoque() }}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-orange-200 text-orange-600 hover:bg-orange-50"
+              title="Sinalizar que não há estoque — vai para a coluna Aguardando estoque (PCP) e não some do painel">
+              <Package size={11} /> Sem estoque
             </button>
           )}
           {acao && (
@@ -572,8 +631,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 }
 
 // ── Modal: Detalhe da demanda ────────────────────────────────────────────────────
-function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCotarFrete, onMarcarFeito }: {
-  id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerarOv: (d: any) => void; onCotarFrete: (d: any) => void; onMarcarFeito: (d: any) => void
+function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCotarFrete, onSemEstoque, onMarcarFeito }: {
+  id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerarOv: (d: any) => void; onCotarFrete: (d: any) => void; onSemEstoque: (d: any) => void; onMarcarFeito: (d: any) => void
 }) {
   const navigate = useNavigate()
   const qcDet = useQueryClient()
@@ -749,6 +808,29 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
           </div>
         )}
 
+        {etapaAtual === 'AGUARDANDO_ESTOQUE' && (
+          <div className={`rounded-lg p-3 text-sm border ${riscoMulta(d) ? 'bg-red-50 border-red-200' : 'bg-orange-50 border-orange-200'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <p className={`text-xs font-medium flex items-center gap-1 ${riscoMulta(d) ? 'text-red-700' : 'text-orange-700'}`}>
+                <Package size={13} /> Aguardando estoque (PCP)
+              </p>
+              <button onClick={() => onSemEstoque(d)} className="text-xs text-orange-700 hover:underline">Editar previsão</button>
+            </div>
+            <p className={`mt-1 ${riscoMulta(d) ? 'text-red-800' : 'text-orange-800'}`}>
+              {riscoMulta(d) ? '🔴 Risco de multa · ' : ''}
+              {d.estoque?.previsao_pcp ? `PCP prevê ${fmtData(d.estoque.previsao_pcp)}` : 'Sem previsão informada'}
+            </p>
+            {(d.estoque?.itens_faltantes || []).length > 0 && (
+              <p className="text-xs text-gray-600 mt-1">Faltam: {d.estoque.itens_faltantes.join(', ')}</p>
+            )}
+            {d.estoque?.observacao && <p className="text-xs text-gray-500 mt-1">{d.estoque.observacao}</p>}
+            <button onClick={() => onAcao(d)}
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg">
+              <PackageCheck size={15} /> Estoque chegou
+            </button>
+          </div>
+        )}
+
         {!concluida && (
           <div>
             <label className="text-xs font-medium text-gray-500">Mover para (manual)</label>
@@ -792,7 +874,14 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
                 <ShoppingCart size={16} /> OV do saldo
               </button>
             )}
-            {acao && (
+            {podeMarcarSemEstoque(d) && (
+              <button onClick={() => onSemEstoque(d)}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm border border-orange-200 text-orange-600 rounded-lg hover:bg-orange-50"
+                title="Sinalizar falta de estoque — vai para Aguardando estoque (PCP) e não some do painel">
+                <Package size={16} /> Sem estoque
+              </button>
+            )}
+            {acao && etapaAtual !== 'AGUARDANDO_ESTOQUE' && (
               <button onClick={() => onAcao(d)}
                 className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg">
                 {acao.label}
@@ -1438,6 +1527,80 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
 }
 
 // ── Cotação de frete (CIF sem valor) — vai para a OV ao gerar ────────────────────
+// ── Sem estoque (aguardando PCP) ─────────────────────────────────────────────────
+function ModalSemEstoque({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
+  const est = demanda.estoque || {}
+  const [previsao, setPrevisao] = useState(est.previsao_pcp || '')
+  const [prazo, setPrazo] = useState(demanda.prazo || '')
+  const [obs, setObs] = useState(est.observacao || '')
+  // Itens da triagem viram chips selecionáveis (o que está faltando).
+  const itens: string[] = (demanda.itens || [])
+    .map((i: any) => (i.codigo || i.descricao || '').toString().trim())
+    .filter(Boolean)
+  const [faltantes, setFaltantes] = useState<string[]>(est.itens_faltantes || [])
+  const toggle = (c: string) => setFaltantes(f => f.includes(c) ? f.filter(x => x !== c) : [...f, c])
+
+  // Risco de multa: previsão do PCP depois do prazo do contrato.
+  const risco = !!prazo && !!previsao && previsao > prazo
+
+  const salvar = useMutation({
+    mutationFn: () => api.post(`/licitacoes/demandas/${demanda.id}/sem-estoque`, {
+      previsao_pcp: previsao || null,
+      prazo: prazo || null,
+      itens_faltantes: faltantes,
+      observacao: obs || null,
+    }),
+    onSuccess: () => { toast.success('Marcado como sem estoque — fica visível até o material chegar'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao marcar sem estoque')),
+  })
+
+  return (
+    <ModalBase titulo={`Sem estoque · ${demanda.cliente || ''}`} onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <div className="bg-orange-50 rounded-lg p-2.5 text-xs text-orange-700">
+          🏭 Este pedido vai para a coluna <strong>Aguardando estoque (PCP)</strong> e <strong>não sai do painel</strong> até o estoque chegar — assim ninguém esquece. Informe a <strong>previsão do PCP</strong> e o <strong>prazo do contrato</strong> para o app alertar risco de multa.
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Previsão do PCP">
+            <input type="date" value={previsao} onChange={e => setPrevisao(e.target.value)} className={inputCls} />
+          </Campo>
+          <Campo label="Prazo de entrega (contrato)">
+            <input type="date" value={prazo} onChange={e => setPrazo(e.target.value)} className={inputCls} />
+          </Campo>
+        </div>
+        {risco && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700 flex items-center gap-1.5">
+            <AlertTriangle size={14} /> A previsão do PCP <strong>passa do prazo do contrato</strong> — risco de multa. Priorize com o PCP.
+          </div>
+        )}
+        {itens.length > 0 && (
+          <div>
+            <label className="text-sm text-gray-600">Itens em falta (opcional)</label>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {itens.map(c => (
+                <button key={c} type="button" onClick={() => toggle(c)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${faltantes.includes(c) ? 'bg-orange-100 border-orange-300 text-orange-700 font-medium' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                  {faltantes.includes(c) ? '✓ ' : ''}{c}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <Campo label="Observação (opcional)">
+          <input value={obs} onChange={e => setObs(e.target.value)} className={inputCls} placeholder="Ex: PCP confirmou produção para a semana que vem" />
+        </Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => salvar.mutate()} disabled={salvar.isPending}
+          className="px-4 py-2 text-sm bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {salvar.isPending ? 'Salvando…' : 'Marcar sem estoque'}
+        </button>
+      </div>
+    </ModalBase>
+  )
+}
+
 function ModalFrete({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
   const { data: transportadoras = [] } = useQuery<any[]>({
     queryKey: ['transportadoras'],
