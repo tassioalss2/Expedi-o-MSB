@@ -93,7 +93,12 @@ const temOV = (d: any) => (d.ovs || []).length > 0 || d.gerado_tipo === 'PEDIDO'
 // (gerava OV sem passar por frete/NF) volta para "OV gerada".
 function etapaColuna(d: any): string {
   const e = normEtapa(d.etapa)
-  if (e === 'CONCLUIDO' && d.tipo_operacao !== 'COMUNICADO_USO') return temOV(d) ? 'OV_GERADA' : 'PROCESSANDO'
+  if (e === 'CONCLUIDO' && d.tipo_operacao !== 'COMUNICADO_USO') {
+    // Gerou OV direto (fluxo legado) → continua no fluxo de frete/NF.
+    if (d.gerado_tipo === 'PEDIDO' || temOV(d)) return 'OV_GERADA'
+    // Virou contrato → é final: sai do painel e vive na aba Contratos (com saldo).
+    return 'CONCLUIDO'
+  }
   return e
 }
 const ehFinal = (d: any) => ETAPAS_FINAIS.includes(etapaColuna(d))
@@ -103,7 +108,8 @@ function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | nul
   const licitacao = d.tipo_operacao !== 'COMUNICADO_USO'
   if (e === 'AGUARDANDO_ESTOQUE') return { kind: 'liberarEstoque', label: 'Estoque chegou' }
   if (e === 'RECEBIDO') return { kind: 'avancar', to: 'PROCESSANDO', label: 'Avançar' }
-  if (e === 'PROCESSANDO') return licitacao ? { kind: 'gerarOv', label: 'Gerar OV' } : { kind: 'faturar', label: 'Concluir e faturar' }
+  // VD/consignação: processar cria o CONTRATO (empenho com saldo). Comunicado: fatura.
+  if (e === 'PROCESSANDO') return { kind: 'faturar', label: licitacao ? 'Criar contrato' : 'Concluir e faturar' }
   if (e === 'OV_GERADA') return { kind: 'frete', label: 'Cotar frete' }
   if (e === 'COTACAO_FRETE') return { kind: 'enviarNf', label: 'Enviar NF' }
   return null
@@ -353,7 +359,7 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 Cada card anda pelas etapas com o botão da vez: D365 → <strong>Gerar OV</strong> → <strong>Cotar frete</strong> → <strong>Enviar NF</strong>. Sem estoque? Use <strong>🏭 Sem estoque</strong> — o card fica na coluna do PCP e <strong>não some</strong> até o material chegar (o app alerta risco de multa). As finalizadas <strong>saem do painel no dia seguinte</strong> — veja em <strong>Histórico</strong>.
+        💡 <strong>Venda direta / consignação</strong>: ao processar, o card vira <strong>Contrato</strong> (aba Contratos) e as entregas parciais baixam o saldo lá. <strong>Comunicado de uso</strong>: Concluir e faturar. Sem estoque? Use <strong>🏭 Sem estoque</strong> — o card fica na coluna do PCP e <strong>não some</strong> até o material chegar (o app alerta risco de multa). As finalizadas <strong>saem do painel no dia seguinte</strong> — veja em <strong>Histórico</strong>.
       </div>
 
       {isLoading ? (
@@ -450,6 +456,7 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplic
     mesclarItens(d.itens || [], d.ov_itens).some(l => l.saldo > 0)
   const iconeAcao = acao?.kind === 'frete' ? <Truck size={11} /> : acao?.kind === 'gerarOv' ? <ShoppingCart size={11} />
     : acao?.kind === 'enviarNf' ? <Send size={11} /> : acao?.kind === 'concluir' ? <Flag size={11} />
+    : acao?.kind === 'faturar' ? <Flag size={11} />
     : acao?.kind === 'liberarEstoque' ? <PackageCheck size={11} /> : <Arrow size={11} />
   const acaoCor = acao?.kind === 'avancar' ? 'border text-gray-600 hover:bg-gray-50'
     : acao?.kind === 'liberarEstoque' ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
@@ -848,7 +855,7 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
 
         {concluida && (
           <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-            <p className="text-sm text-emerald-700 font-medium">✅ {etapaAtual === 'NF_ENVIADA' ? 'NF enviada — ciclo fechado' : 'Concluída'}{(!d.nf && (d.ref_externa || d.gerado_ref)) ? ` — D365: ${d.ref_externa || d.gerado_ref}` : ''}</p>
+            <p className="text-sm text-emerald-700 font-medium">✅ {d.gerado_tipo === 'CONTRATO' ? `Contrato criado — veja na aba Contratos${d.gerado_ref ? `: ${d.gerado_ref}` : ''}` : etapaAtual === 'NF_ENVIADA' ? 'NF enviada — ciclo fechado' : 'Concluída'}{(d.gerado_tipo !== 'CONTRATO' && !d.nf && (d.ref_externa || d.gerado_ref)) ? ` — D365: ${d.ref_externa || d.gerado_ref}` : ''}</p>
             {d.gerado_tipo === 'COMUNICADO' && d.gerado_id && (
               <button onClick={() => navigate(`/expedicao/${d.gerado_id}`)}
                 className="text-xs text-emerald-700 underline mt-1 flex items-center gap-1"><ExternalLink size={12} /> Abrir lançamento</button>
@@ -998,7 +1005,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
       return api.post(`/licitacoes/demandas/${demanda.id}/concluir`, body)
     },
     onSuccess: () => {
-      toast.success(ehContrato ? 'Contrato criado — lance as entregas na aba Contratos' : 'Comunicado de uso lançado')
+      toast.success(ehContrato ? 'Contrato criado! Está na aba Contratos — as entregas baixam o saldo lá.' : 'Comunicado de uso lançado', ehContrato ? { duration: 5000 } : undefined)
       onSaved(); onClose()
     },
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao processar'), { duration: 6000 }),
