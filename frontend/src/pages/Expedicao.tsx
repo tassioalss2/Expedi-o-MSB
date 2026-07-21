@@ -380,22 +380,31 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
             {row.map((status, colIdx) => {
               const cfg = STATUS_CONFIG[status]
               const lista = agrupado[status] || []
+              const valorEtapa = lista.reduce((a, p) => a + (Number((p as any).valor_ov) || 0), 0)
+              const valorFmt = valorEtapa >= 1000
+                ? `R$ ${(valorEtapa / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })} mil`
+                : `R$ ${valorEtapa.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
               return (
                 <Fragment key={status}>
                   <div className="flex-1 min-w-0 flex flex-col min-h-0">
                     <div
-                      className="rounded-t-lg px-3 py-2 flex items-center justify-between cursor-pointer group flex-shrink-0"
+                      className="rounded-t-lg px-3 pt-2 pb-1.5 flex flex-col gap-0.5 cursor-pointer group flex-shrink-0"
                       style={{ backgroundColor: cfg.cor, color: cfg.corTexto }}
                       onClick={() => setInfoAberta(status)}
                       title="Clique para ver detalhes desta etapa"
                     >
-                      <span className="text-sm font-semibold flex items-center gap-1 min-w-0">
-                        <span className="flex-shrink-0">{cfg.icone}</span>
-                        <span className="truncate">{cfg.label}</span>
-                        <Info size={12} className="opacity-50 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                      </span>
-                      <span className="text-xs font-bold bg-white bg-opacity-40 rounded-full px-2 py-0.5 flex-shrink-0 ml-1">
-                        {lista.length}
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold flex items-center gap-1 min-w-0">
+                          <span className="flex-shrink-0">{cfg.icone}</span>
+                          <span className="truncate">{cfg.label}</span>
+                          <Info size={12} className="opacity-50 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                        </span>
+                        <span className="text-xs font-bold bg-white bg-opacity-40 rounded-full px-2 py-0.5 flex-shrink-0 ml-1">
+                          {lista.length}
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-bold tabular-nums opacity-90" title={`R$ ${valorEtapa.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} parados nesta etapa`}>
+                        {valorEtapa > 0 ? `💰 ${valorFmt}` : ' '}
                       </span>
                     </div>
                     <div className="bg-gray-100 rounded-b-lg p-1.5 flex flex-col gap-0.5 overflow-y-auto flex-1">

@@ -590,8 +590,26 @@ def listar_pedidos(
         p["cliente_nome"] = p.get("clientes", {}).get("nome", "") if p.get("clientes") else ""
         p["transportadora_nome"] = p.get("transportadoras", {}).get("nome") if p.get("transportadoras") else None
 
-    # Data de faturamento (movimentação -> FATURADO, BRT) por pedido.
+    # Valor "parado" por OV = Σ qtd × valor_unitário dos itens (cai para o valor
+    # da NF quando os itens não têm preço). Alimenta o total por etapa no kanban.
     ids = [p["id"] for p in pedidos]
+    valor_itens: dict[str, float] = {}
+    for i in range(0, len(ids), 40):
+        its = db.table("itens_pedido").select("pedido_id, qtd_solicitada, valor_unitario")\
+            .in_("pedido_id", ids[i:i + 40]).execute().data
+        for it in its:
+            pid = it.get("pedido_id")
+            if not pid:
+                continue
+            valor_itens[pid] = valor_itens.get(pid, 0.0) + \
+                (float(it.get("qtd_solicitada") or 0) * float(it.get("valor_unitario") or 0))
+    for p in pedidos:
+        v = valor_itens.get(p["id"], 0.0)
+        if not v and p.get("valor_nf"):
+            v = float(p["valor_nf"])
+        p["valor_ov"] = round(v, 2)
+
+    # Data de faturamento (movimentação -> FATURADO, BRT) por pedido.
     fat: dict[str, str] = {}
     for i in range(0, len(ids), 40):
         movs = db.table("movimentacoes").select("pedido_id, criado_em")\
