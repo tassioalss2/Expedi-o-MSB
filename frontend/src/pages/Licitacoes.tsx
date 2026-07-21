@@ -1564,11 +1564,24 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
   const [sel, setSel] = useState('')
   useEffect(() => { if (!sel && datas.length) setSel(datas[0].data) }, [datas, sel])
 
-  const { data: itens = [], isLoading } = useQuery<any[]>({
+  // Busca por texto (pregão / NE / cliente / OV) varre TODAS as concluídas.
+  const [busca, setBusca] = useState('')
+  const [termo, setTermo] = useState('')
+  useEffect(() => { const t = setTimeout(() => setTermo(busca.trim()), 300); return () => clearTimeout(t) }, [busca])
+  const buscando = termo.length >= 2
+
+  const { data: itensDia = [], isLoading: loadingDia } = useQuery<any[]>({
     queryKey: ['demandas-historico', sel],
     queryFn: () => api.get(`/licitacoes/demandas/historico?data=${sel}`).then(r => r.data),
-    enabled: !!sel,
+    enabled: !!sel && !buscando,
   })
+  const { data: itensBusca = [], isLoading: loadingBusca } = useQuery<any[]>({
+    queryKey: ['demandas-historico-busca', termo],
+    queryFn: () => api.get(`/licitacoes/demandas/historico/buscar?q=${encodeURIComponent(termo)}`).then(r => r.data),
+    enabled: buscando,
+  })
+  const itens = buscando ? itensBusca : itensDia
+  const isLoading = buscando ? loadingBusca : loadingDia
 
   const etapaFinalLabel = (d: any) => d.etapa === 'NF_ENVIADA' ? 'NF enviada' : 'Concluído'
 
@@ -1579,20 +1592,35 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
           <p className="text-sm text-gray-400 text-center py-6">Nenhuma demanda concluída ainda.</p>
         ) : (
           <>
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                placeholder="Buscar por pregão, empenho (NE), OV ou cliente em todo o histórico…"
+                className={`${inputCls} pl-9`}
+                autoFocus
+              />
+              {busca && (
+                <button onClick={() => setBusca('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">limpar</button>
+              )}
+            </div>
             <div className="flex items-end justify-between gap-3 flex-wrap">
-              <div className="flex-1 min-w-[220px]">
+              <div className={`flex-1 min-w-[220px] ${buscando ? 'opacity-40 pointer-events-none' : ''}`}>
                 <Campo label="Dia">
-                  <select value={sel} onChange={e => setSel(e.target.value)} className={inputCls}>
+                  <select value={sel} onChange={e => setSel(e.target.value)} className={inputCls} disabled={buscando}>
                     {datas.map((d: any) => <option key={d.data} value={d.data}>{fmtData(d.data)} · {d.total} concluída(s)</option>)}
                   </select>
                 </Campo>
               </div>
-              <p className="text-xs text-gray-400 pb-2.5">{itens.length} registro(s) em {fmtData(sel)}</p>
+              <p className="text-xs text-gray-400 pb-2.5">
+                {buscando ? `${itens.length} resultado(s) para "${termo}"` : `${itens.length} registro(s) em ${fmtData(sel)}`}
+              </p>
             </div>
             {isLoading ? (
-              <p className="text-sm text-gray-400 text-center py-4">Carregando…</p>
+              <p className="text-sm text-gray-400 text-center py-4">{buscando ? 'Buscando…' : 'Carregando…'}</p>
             ) : itens.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-4">Sem concluídas neste dia.</p>
+              <p className="text-sm text-gray-400 text-center py-4">{buscando ? `Nenhuma concluída encontrada para "${termo}".` : 'Sem concluídas neste dia.'}</p>
             ) : (
               <div className="border border-gray-100 rounded-lg overflow-x-auto">
                 <table className="w-full text-sm">
@@ -1620,7 +1648,10 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
                           <td className="px-3 py-2 font-medium text-gray-800">{d.cliente || 'Cliente não informado'}</td>
                           <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">{d.numero || '—'}</td>
                           <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{d.canal ? (CANAL_LABEL[d.canal] || d.canal) : '—'}</td>
-                          <td className="px-3 py-2 whitespace-nowrap"><span className="text-emerald-600 text-xs">✓ {etapaFinalLabel(d)}</span></td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <span className="text-emerald-600 text-xs">✓ {etapaFinalLabel(d)}</span>
+                            {buscando && d.concluido_em && <span className="block text-[11px] text-gray-400">{fmtData(d.concluido_em)}</span>}
+                          </td>
                           <td className="px-3 py-2 font-mono text-emerald-700 whitespace-nowrap">{ref || '—'}</td>
                           <td className="px-3 py-2 text-right whitespace-nowrap">
                             {(d.ovs_detalhe || []).length > 0 || (d.gerado_tipo === 'COMUNICADO' && d.gerado_id) ? (

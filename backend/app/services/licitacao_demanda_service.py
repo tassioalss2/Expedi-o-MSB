@@ -215,6 +215,31 @@ def historico_demandas(data: str) -> list:
     return out
 
 
+def historico_buscar(termo: str) -> list:
+    """Busca em TODAS as concluídas por pregão, NE/número, cliente ou OV —
+    para conferir rapidamente se um empenho já foi feito, sem depender da data."""
+    q = (termo or "").strip().lower()
+    if not q:
+        return []
+    db = get_service_db()
+    rows = db.table("licitacao_demandas").select("*, clientes(nome)")\
+        .eq("ativo", True).order("concluido_em", desc=True).execute().data
+    demandas = [_serializar(r) for r in rows]
+    finais = [d for d in demandas if d["etapa"] in ETAPAS_FINAIS and d.get("concluido_em")]
+    _anexar_ov_status(db, finais)
+
+    def casa(d: dict) -> bool:
+        campos = [d.get("numero_pregao"), d.get("numero"), d.get("cliente"),
+                  d.get("ref_externa"), d.get("gerado_ref")]
+        for ov in (d.get("ovs_detalhe") or []):
+            campos.append(ov.get("numero"))
+        return any(q in str(c).lower() for c in campos if c)
+
+    out = [d for d in finais if casa(d)]
+    out.sort(key=lambda d: d.get("concluido_em") or "", reverse=True)
+    return out[:100]
+
+
 def criar_demanda(payload: DemandaCreate) -> dict:
     if payload.tipo_operacao not in TIPOS:
         raise HTTPException(status_code=422, detail="Tipo de operação inválido")
