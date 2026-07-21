@@ -358,6 +358,32 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
             partes.append(f"Prazo: {frete.get('prazo_dias')} dia(s)")
         obs = " · ".join(partes)
 
+    # Contrato automático: se ainda não existe um contrato (empenho) para esta
+    # venda direta, cria um por baixo dos panos com as quantidades totais da
+    # triagem — assim o saldo é rastreado sem o operador dar um passo extra.
+    empenho_id = None
+    if tipo_demanda == "VENDA_DIRETA":
+        contrato_num = (d.get("numero") or "").strip() or (d.get("numero_pregao") or "").strip()
+        if contrato_num:
+            existente = db.table("empenhos").select("id").eq("numero", contrato_num).eq("ativo", True).execute().data
+            if existente:
+                empenho_id = existente[0]["id"]
+            else:
+                from app.services import licitacao_service
+                itens_emp = [EmpenhoItemCreate(produto_id=it.get("produto_id"),
+                                               qtd_empenhada=float(it.get("qtd") or 0),
+                                               valor_unitario=float(it.get("valor") or 0))
+                             for it in (d.get("itens") or [])
+                             if it.get("produto_id") and float(it.get("qtd") or 0) > 0]
+                if itens_emp:
+                    emp = licitacao_service.criar_empenho(EmpenhoCreate(
+                        numero=contrato_num,
+                        numero_pregao=(d.get("numero_pregao") or "").strip() or None,
+                        cliente_id=d["cliente_id"], tipo="VENDA_DIRETA",
+                        canal=d.get("canal"), vigencia=None, itens=itens_emp,
+                    ))
+                    empenho_id = emp.get("id")
+
     ped = pedido_service.criar_pedido(
         PedidoCreate(
             numero_pedido=payload.numero_pedido,
@@ -370,6 +396,7 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
             data_prevista_entrega=payload.data_prevista_entrega,
             observacoes=obs,
             valor_frete=float(valor_frete) if valor_frete else None,
+            empenho_id=empenho_id,
             itens=payload.itens,
         ),
         usuario,
