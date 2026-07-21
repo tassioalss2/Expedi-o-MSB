@@ -15,6 +15,7 @@ from app.models.enums import (
 from app.models.schemas import (
     AgendarColetaRequest,
     ConfirmarColetaRequest,
+    CotacaoFreteRequest,
     FaturamentoRequest,
     FinalizarConferenciaRequest,
     FinalizarSeparacaoRequest,
@@ -791,6 +792,29 @@ def registrar_tratativa(pedido_id: str, payload: TratativaRequest, usuario: Usua
 
 # ── Faturamento ────────────────────────────────────────────────────────────────
 
+def registrar_cotacao_frete(pedido_id: str, payload: "CotacaoFreteRequest", usuario: UsuarioOut) -> dict:
+    """Registra a cotação de frete de uma OV CIF e a libera para faturamento."""
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+    if pedido["status"] != StatusPedido.EM_COTACAO_FRETE.value:
+        raise HTTPException(status_code=422, detail="OV não está aguardando cotação de frete")
+
+    update_data: dict = {"atualizado_em": _agora()}
+    if payload.valor_frete is not None:
+        update_data["valor_frete"] = payload.valor_frete
+    if payload.transportadora_id is not None:
+        update_data["transportadora_id"] = str(payload.transportadora_id)
+    db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
+
+    obs = "Frete cotado"
+    if payload.valor_frete is not None:
+        obs += f" — R$ {payload.valor_frete:.2f}"
+    if payload.observacao:
+        obs += f" — {payload.observacao}"
+    alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario, obs)
+    return obter_pedido(pedido_id)
+
+
 def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: UsuarioOut) -> dict:
     db = get_service_db()
     pedido = obter_pedido(pedido_id)
@@ -1035,6 +1059,7 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         StatusPedido.DIVERGENCIA.value,
         StatusPedido.AGUARD_TRATATIVA.value,
         StatusPedido.EM_PROCESSO_SISTEMICO.value,
+        StatusPedido.EM_COTACAO_FRETE.value,
         StatusPedido.AGUARD_FATURAMENTO.value,
         StatusPedido.FATURADO.value,
         StatusPedido.AGUARD_COLETA.value,
@@ -1095,7 +1120,8 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
         StatusPedido.AGUARD_CREDITO.value, StatusPedido.LIBERADO.value,
         StatusPedido.EM_INVENTARIO.value, StatusPedido.AGUARD_VERIFICACAO.value,
         StatusPedido.DIVERGENCIA.value, StatusPedido.AGUARD_TRATATIVA.value,
-        StatusPedido.EM_PROCESSO_SISTEMICO.value, StatusPedido.AGUARD_FATURAMENTO.value,
+        StatusPedido.EM_PROCESSO_SISTEMICO.value, StatusPedido.EM_COTACAO_FRETE.value,
+        StatusPedido.AGUARD_FATURAMENTO.value,
         StatusPedido.FATURADO.value, StatusPedido.AGUARD_COLETA.value,
         StatusPedido.BLOQUEADO.value,
     ]
@@ -1504,7 +1530,8 @@ def varredura_alertas(horas_parada: int = 24, enviar: bool = True) -> dict:
         StatusPedido.AGUARD_CREDITO.value, StatusPedido.LIBERADO.value,
         StatusPedido.EM_INVENTARIO.value, StatusPedido.AGUARD_VERIFICACAO.value,
         StatusPedido.DIVERGENCIA.value, StatusPedido.AGUARD_TRATATIVA.value,
-        StatusPedido.EM_PROCESSO_SISTEMICO.value, StatusPedido.AGUARD_FATURAMENTO.value,
+        StatusPedido.EM_PROCESSO_SISTEMICO.value, StatusPedido.EM_COTACAO_FRETE.value,
+        StatusPedido.AGUARD_FATURAMENTO.value,
         StatusPedido.FATURADO.value, StatusPedido.BLOQUEADO.value,
     ]
     limite = datetime.now(timezone.utc) - timedelta(hours=horas_parada)

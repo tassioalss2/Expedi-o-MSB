@@ -12,6 +12,7 @@ from app.models.schemas import (
     BloquearPedidoRequest,
     ComunicadoUsoCreate,
     ConfirmarColetaRequest,
+    CotacaoFreteRequest,
     FaturamentoRequest,
     MetaFaturamentoRequest,
     FinalizarConferenciaRequest,
@@ -307,6 +308,15 @@ def registrar_tratativa(
 
 
 # ── Faturamento ────────────────────────────────────────────────────────────────
+
+@router.post("/{pedido_id}/cotacao-frete")
+def registrar_cotacao_frete(
+    pedido_id: UUID,
+    payload: CotacaoFreteRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    return pedido_service.registrar_cotacao_frete(str(pedido_id), payload, usuario)
+
 
 @router.post("/{pedido_id}/faturamento")
 def registrar_faturamento(

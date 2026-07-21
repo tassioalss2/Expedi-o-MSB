@@ -9,6 +9,7 @@ class StatusPedido(str, Enum):
     DIVERGENCIA = "DIVERGENCIA"
     AGUARD_TRATATIVA = "AGUARD_TRATATIVA"
     EM_PROCESSO_SISTEMICO = "EM_PROCESSO_SISTEMICO"
+    EM_COTACAO_FRETE = "EM_COTACAO_FRETE"
     AGUARD_FATURAMENTO = "AGUARD_FATURAMENTO"
     FATURADO = "FATURADO"
     AGUARD_COLETA = "AGUARD_COLETA"
@@ -25,8 +26,9 @@ TRANSICOES_PERMITIDAS: dict[StatusPedido, list[StatusPedido]] = {
     StatusPedido.AGUARD_VERIFICACAO:     [StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.DIVERGENCIA],
     StatusPedido.DIVERGENCIA:            [StatusPedido.AGUARD_TRATATIVA],
     StatusPedido.AGUARD_TRATATIVA:       [StatusPedido.EM_INVENTARIO, StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
-    StatusPedido.EM_PROCESSO_SISTEMICO:  [StatusPedido.AGUARD_FATURAMENTO],
-    StatusPedido.AGUARD_FATURAMENTO:     [StatusPedido.FATURADO, StatusPedido.BLOQUEADO],
+    StatusPedido.EM_PROCESSO_SISTEMICO:  [StatusPedido.EM_COTACAO_FRETE, StatusPedido.AGUARD_FATURAMENTO],
+    StatusPedido.EM_COTACAO_FRETE:       [StatusPedido.AGUARD_FATURAMENTO, StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.BLOQUEADO],
+    StatusPedido.AGUARD_FATURAMENTO:     [StatusPedido.FATURADO, StatusPedido.EM_COTACAO_FRETE, StatusPedido.BLOQUEADO],
     StatusPedido.FATURADO:               [StatusPedido.AGUARD_COLETA],
     StatusPedido.AGUARD_COLETA:          [StatusPedido.COLETADO],
     StatusPedido.COLETADO:               [StatusPedido.EXPEDIDO],

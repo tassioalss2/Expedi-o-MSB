@@ -9,7 +9,7 @@ import uuid as uuid_module
 from fastapi import HTTPException
 
 from app.core.database import get_service_db
-from app.models.enums import StatusPedido
+from app.models.enums import StatusPedido, TipoFrete
 from app.models.schemas import (
     AdicionarPedidoPalletRequest,
     CubagemCreate,
@@ -203,6 +203,7 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
 
     STATUSES_CUBAGEM = [
         StatusPedido.EM_PROCESSO_SISTEMICO.value,
+        StatusPedido.EM_COTACAO_FRETE.value,
         StatusPedido.AGUARD_FATURAMENTO.value,
         StatusPedido.FATURADO.value,
         StatusPedido.AGUARD_COLETA.value,
@@ -250,9 +251,18 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
             "tipos_caixa": {"descricao": desc},
         })
 
-    # Só avança o status se ainda estiver em processo sistêmico
+    # Só avança o status se ainda estiver em processo sistêmico.
+    # CIF (com/sem valor) precisa cotar o frete antes de faturar; FOB vai direto.
     if pedido["status"] == StatusPedido.EM_PROCESSO_SISTEMICO.value:
-        alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario, "Cubagem registrada — aguardando faturamento")
+        eh_cif = (pedido.get("tipo_frete") or "FOB") in (
+            TipoFrete.CIF_COM_VALOR.value, TipoFrete.CIF_SEM_VALOR.value,
+        )
+        if eh_cif:
+            alterar_status(pedido_id, StatusPedido.EM_COTACAO_FRETE.value, usuario,
+                           "Cubagem registrada — CIF: aguardando cotação de frete")
+        else:
+            alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario,
+                           "Cubagem registrada — FOB: aguardando faturamento")
 
     # Alimenta o inventário contínuo automaticamente (falha silenciosa para não bloquear)
     try:

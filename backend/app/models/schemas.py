@@ -637,6 +637,14 @@ class TratativaRequest(BaseModel):
     tempo_retrabalho_min: Optional[int] = None
 
 
+# ── Cotação de frete (CIF, antes do faturamento) ────────────────────────────────
+
+class CotacaoFreteRequest(BaseModel):
+    valor_frete: Optional[float] = None       # valor cotado do frete
+    transportadora_id: Optional[UUID] = None  # transportadora cotada (opcional)
+    observacao: Optional[str] = None
+
+
 # ── Faturamento ───────────────────────────────────────────────────────────────
 
 class FaturamentoRequest(BaseModel):

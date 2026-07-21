@@ -50,6 +50,7 @@ function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
     AGUARD_VERIFICACAO: 'bg-yellow-100 text-yellow-700',
     DIVERGENCIA: 'bg-red-100 text-red-700',
     EM_PROCESSO_SISTEMICO: 'bg-purple-100 text-purple-700',
+    EM_COTACAO_FRETE: 'bg-amber-100 text-amber-700',
     AGUARD_FATURAMENTO: 'bg-indigo-100 text-indigo-700',
     FATURADO: 'bg-indigo-100 text-indigo-700',
     AGUARD_COLETA: 'bg-teal-100 text-teal-700',
@@ -62,6 +63,7 @@ function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
     LIBERADO: 'Liberado', EM_INVENTARIO: 'Em Inventário',
     AGUARD_VERIFICACAO: 'Aguard. Verificação', DIVERGENCIA: 'Divergência',
     AGUARD_TRATATIVA: 'Aguard. Tratativa', EM_PROCESSO_SISTEMICO: 'Proc. Sistêmico',
+    EM_COTACAO_FRETE: 'Cotação de Frete',
     AGUARD_FATURAMENTO: 'Aguard. Faturamento', FATURADO: 'Faturado',
     AGUARD_COLETA: 'No Pallet', EXPEDIDO: 'Expedido',
     CANCELADO: 'Cancelado', BLOQUEADO: 'Bloqueado',
@@ -274,6 +276,12 @@ const INFO_ETAPAS: Record<string, {
     inputs: ['Tipo(s) de caixa', 'Quantidade por tipo', 'Peso total (kg)'],
     criterio: 'Após D365 e cubagem registrada → mensagem enviada ao Teams para faturamento',
   },
+  EM_COTACAO_FRETE: {
+    responsavel: 'Logística',
+    objetivo: 'Cotar o frete das OVs CIF (com/sem valor) antes de liberar pra faturamento. FOB não passa por aqui.',
+    inputs: ['Valor cotado do frete (R$)', 'Observação (transportadora, prazo — opcional)'],
+    criterio: 'Frete cotado → clicar em "Registrar cotação de frete" para liberar o faturamento',
+  },
   AGUARD_FATURAMENTO: {
     responsavel: 'Operações de Vendas',
     objetivo: 'Emitir a nota fiscal após receber a mensagem de cubagem',
@@ -348,7 +356,7 @@ function InfoEtapaModal({ status, cfg, onClose }: { status: string; cfg: any; on
 
 const KANBAN_LAYOUT: StatusPedido[][] = [
   ['AGUARD_CREDITO', 'LIBERADO', 'EM_INVENTARIO'],
-  ['AGUARD_VERIFICACAO', 'EM_PROCESSO_SISTEMICO', 'AGUARD_FATURAMENTO'],
+  ['AGUARD_VERIFICACAO', 'EM_PROCESSO_SISTEMICO', 'EM_COTACAO_FRETE', 'AGUARD_FATURAMENTO'],
   ['FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'],
 ]
 

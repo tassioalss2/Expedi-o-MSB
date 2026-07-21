@@ -808,7 +808,8 @@ const RETORNOS: Record<string, { label: string; destinos: { status: string; labe
   DIVERGENCIA:           { label: 'Divergência',          destinos: [{ status: 'EM_INVENTARIO', label: 'Em Inventário (reprocessar)' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   AGUARD_TRATATIVA:      { label: 'Aguard. Tratativa',    destinos: [{ status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   EM_PROCESSO_SISTEMICO: { label: 'D365 + Cubagem',       destinos: [{ status: 'AGUARD_VERIFICACAO', label: 'Aguard. Verificação' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
-  AGUARD_FATURAMENTO:    { label: 'Aguard. Faturamento',  destinos: [{ status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
+  EM_COTACAO_FRETE:      { label: 'Cotação de Frete',     destinos: [{ status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
+  AGUARD_FATURAMENTO:    { label: 'Aguard. Faturamento',  destinos: [{ status: 'EM_COTACAO_FRETE', label: 'Cotação de Frete' }, { status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   FATURADO:              { label: 'Faturado',             destinos: [{ status: 'AGUARD_FATURAMENTO', label: 'Aguard. Faturamento' }, { status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   AGUARD_COLETA:         { label: 'No Pallet',            destinos: [{ status: 'FATURADO', label: 'Faturado (remover do pallet)' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
 }
@@ -1217,6 +1218,68 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
           >
             {mutation.isPending ? 'Reativando...' : 'Confirmar Reativação'}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Modal Cotação de Frete (CIF — antes do faturamento) ──────────────────────
+function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [valorFrete, setValorFrete] = useState(pedido.valor_frete ? String(pedido.valor_frete) : '')
+  const [obs, setObs] = useState('')
+  const semValor = pedido.tipo_frete === 'CIF_SEM_VALOR'
+  const valorOk = Number(valorFrete) > 0
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/cotacao-frete`, {
+      valor_frete: valorOk ? Number(valorFrete) : null,
+      observacao: obs.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success('Frete cotado — OV liberada para faturamento')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao registrar cotação de frete'),
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md">
+        <div className="p-5 border-b bg-amber-50 rounded-t-2xl flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-amber-800">🚚 Cotação de Frete — {pedido.numero_pedido}</h2>
+            <p className="text-sm text-amber-700 mt-0.5">{TIPO_FRETE_LABEL[pedido.tipo_frete || 'FOB']}</p>
+          </div>
+          <button onClick={onClose} className="text-amber-700 hover:text-amber-900"><XCircle size={20} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700">Valor cotado do frete (R$)</label>
+            <input type="number" step="0.01" min="0" value={valorFrete} autoFocus
+              onChange={e => setValorFrete(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              {semValor
+                ? 'CIF sem valor: o frete não entra na NF — é custo nosso e sai do faturamento.'
+                : 'CIF com valor: o frete fica embutido na NF e é ressarcido pelo cliente.'}
+            </p>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">Observação (opcional)</label>
+            <input value={obs} onChange={e => setObs(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="Transportadora cotada, prazo, etc." />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button onClick={onClose} className="flex-1 py-2.5 border rounded-lg text-sm text-gray-600">Cancelar</button>
+            <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
+              className="flex-1 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-500 disabled:opacity-50">
+              {mutation.isPending ? 'Salvando…' : 'Liberar para faturamento'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1672,7 +1735,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -1817,6 +1880,8 @@ export function PedidoDetalhe() {
     { key: 'EM_INVENTARIO', label: 'Inventário', icone: '📦' },
     { key: 'AGUARD_VERIFICACAO', label: 'Verificação Física', icone: '🔍' },
     { key: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem', icone: '💻' },
+    // Cotação de frete só existe no fluxo CIF (FOB pula direto pro faturamento)
+    ...(isCIF ? [{ key: 'EM_COTACAO_FRETE', label: 'Cotação de Frete', icone: '🚚' }] : []),
     { key: 'AGUARD_FATURAMENTO', label: 'Faturamento', icone: '🧾' },
     { key: 'FATURADO', label: 'Pallet', icone: '📦' },
     { key: 'EXPEDIDO', label: 'Expedido', icone: '✅' },
@@ -2249,6 +2314,13 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
+              {status === 'EM_COTACAO_FRETE' && (
+                <button onClick={() => setModal('cotacao_frete')}
+                  className="w-full flex items-center gap-2 justify-center py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-500">
+                  <Truck size={16} /> Registrar cotação de frete
+                </button>
+              )}
+
               {status === 'AGUARD_FATURAMENTO' && (
                 <button onClick={() => setModal('faturamento')}
                   className="w-full flex items-center gap-2 justify-center py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-500">
@@ -2363,6 +2435,7 @@ export function PedidoDetalhe() {
       {modal === 'reativar' && <ModalReativarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md">
