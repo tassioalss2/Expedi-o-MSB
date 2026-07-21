@@ -626,7 +626,7 @@ def listar_pedidos(
 def obter_pedido(pedido_id: str) -> dict:
     db = get_service_db()
     resultado = db.table("pedidos").select(
-        "*, clientes(*), transportadoras(*), itens_pedido(*, produtos(*), lotes(*))"
+        "*, clientes(*), transportadoras(*), empenhos(numero, numero_pregao, tipo), itens_pedido(*, produtos(*), lotes(*))"
     ).eq("id", pedido_id).single().execute()
 
     if not resultado.data:
@@ -641,6 +641,13 @@ def obter_pedido(pedido_id: str) -> dict:
     # Mapeia nomes do join (plural → singular) para o frontend
     p["cliente"] = p.pop("clientes", None)
     p["transportadora"] = p.pop("transportadoras", None)
+    # Dados da licitação (pregão + empenho/NE) — para achar a OV pelo e-mail
+    emp = p.pop("empenhos", None)
+    p["licitacao"] = {
+        "numero_pregao": emp.get("numero_pregao"),
+        "numero_empenho": emp.get("numero"),
+        "tipo": emp.get("tipo"),
+    } if emp else None
     p["itens"] = p.pop("itens_pedido", []) or []
     p["cliente_nome"] = p.get("cliente", {}).get("nome", "") if p.get("cliente") else ""
     p["transportadora_nome"] = p.get("transportadora", {}).get("nome", "") if p.get("transportadora") else ""

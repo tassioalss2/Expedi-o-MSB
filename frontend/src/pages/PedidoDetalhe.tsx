@@ -2081,6 +2081,33 @@ export function PedidoDetalhe() {
               <Linha label="Data Coleta" valor={format(new Date(pedido.data_real_coleta), 'dd/MM/yyyy HH:mm', { locale: ptBR })} />
             )}
             {pedido.observacoes && <Linha label="Obs." valor={pedido.observacoes} />}
+            {(() => {
+              const lic = (pedido as any).licitacao
+              if (!lic || (!lic.numero_pregao && !lic.numero_empenho)) return null
+              return (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">🏛️ Licitação — para localizar no e-mail</p>
+                  {lic.numero_pregao && (
+                    <div className="flex justify-between items-center py-1.5 border-b border-gray-50">
+                      <span className="text-sm text-gray-500">Pregão</span>
+                      <button onClick={() => { navigator.clipboard.writeText(lic.numero_pregao); toast.success('Pregão copiado!') }}
+                        className="text-sm font-mono font-semibold text-gray-900 hover:text-blue-600" title="Copiar nº do pregão">
+                        {lic.numero_pregao}
+                      </button>
+                    </div>
+                  )}
+                  {lic.numero_empenho && (
+                    <div className="flex justify-between items-center py-1.5">
+                      <span className="text-sm text-gray-500">Empenho / NE</span>
+                      <button onClick={() => { navigator.clipboard.writeText(lic.numero_empenho); toast.success('Empenho copiado!') }}
+                        className="text-sm font-mono font-semibold text-gray-900 hover:text-blue-600" title="Copiar nº do empenho/NE">
+                        {lic.numero_empenho}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           {/* Itens da OV (cadastrados na criação) */}
@@ -2088,6 +2115,9 @@ export function PedidoDetalhe() {
             const itensOV = ((pedido.itens || []) as any[]).filter(it => (it.produtos?.codigo || it.produto?.codigo))
             if (itensOV.length === 0) return null
             const totalUn = itensOV.reduce((a, it) => a + (Number(it.qtd_solicitada) || 0), 0)
+            const comValor = itensOV.some(it => Number(it.valor_unitario) > 0)
+            const totalValor = itensOV.reduce((a, it) => a + (Number(it.qtd_solicitada) || 0) * (Number(it.valor_unitario) || 0), 0)
+            const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
             return (
               <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
                 <h2 className="font-semibold text-gray-800 mb-3">Itens da OV</h2>
@@ -2098,6 +2128,8 @@ export function PedidoDetalhe() {
                         <th className="pb-2 pr-3">Código</th>
                         <th className="pb-2 pr-3">Descrição</th>
                         <th className="pb-2 text-right">Qtd</th>
+                        {comValor && <th className="pb-2 pl-3 text-right">Valor un.</th>}
+                        {comValor && <th className="pb-2 pl-3 text-right">Total</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
@@ -2106,6 +2138,8 @@ export function PedidoDetalhe() {
                           <td className="py-2 pr-3 font-mono font-medium text-gray-800">{it.produtos?.codigo || it.produto?.codigo}</td>
                           <td className="py-2 pr-3 text-gray-600">{it.produtos?.descricao || it.produto?.descricao || '—'}</td>
                           <td className="py-2 text-right tabular-nums text-gray-800">{Number(it.qtd_solicitada) || 0}</td>
+                          {comValor && <td className="py-2 pl-3 text-right tabular-nums text-gray-600">{Number(it.valor_unitario) > 0 ? brl(Number(it.valor_unitario)) : '—'}</td>}
+                          {comValor && <td className="py-2 pl-3 text-right tabular-nums text-gray-800 font-medium">{Number(it.valor_unitario) > 0 ? brl((Number(it.qtd_solicitada) || 0) * Number(it.valor_unitario)) : '—'}</td>}
                         </tr>
                       ))}
                     </tbody>
@@ -2113,6 +2147,8 @@ export function PedidoDetalhe() {
                       <tr className="border-t">
                         <td className="pt-2 text-xs text-gray-400" colSpan={2}>{itensOV.length} item(ns)</td>
                         <td className="pt-2 text-right text-xs text-gray-500">Total: <strong className="text-gray-700">{totalUn}</strong> un</td>
+                        {comValor && <td className="pt-2" />}
+                        {comValor && <td className="pt-2 text-right text-xs text-gray-500">Total: <strong className="text-gray-700">{brl(totalValor)}</strong></td>}
                       </tr>
                     </tfoot>
                   </table>
