@@ -637,6 +637,31 @@ class TratativaRequest(BaseModel):
     tempo_retrabalho_min: Optional[int] = None
 
 
+# ── Previsão de Faturamento (negócios em negociação) ────────────────────────────
+
+class PrevisaoNegocioCreate(BaseModel):
+    cliente_id: Optional[UUID] = None
+    cliente_nome: Optional[str] = None
+    descricao: Optional[str] = None
+    valor: float = 0
+    probabilidade: int = 50          # 0..100
+    previsao_fechamento: Optional[date] = None
+    canal: Optional[str] = None
+    observacao: Optional[str] = None
+
+
+class PrevisaoNegocioUpdate(BaseModel):
+    cliente_id: Optional[UUID] = None
+    cliente_nome: Optional[str] = None
+    descricao: Optional[str] = None
+    valor: Optional[float] = None
+    probabilidade: Optional[int] = None
+    previsao_fechamento: Optional[date] = None
+    canal: Optional[str] = None
+    observacao: Optional[str] = None
+    status: Optional[str] = None      # ABERTO | GANHO | PERDIDO
+
+
 # ── Cotação de frete (CIF, antes do faturamento) ────────────────────────────────
 
 class CotacaoFreteRequest(BaseModel):

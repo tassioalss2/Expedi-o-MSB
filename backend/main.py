@@ -10,6 +10,7 @@ from app.api.inventario import router as inventario_router
 from app.api.inventario_continuo import router as inventario_continuo_router
 from app.api.licitacoes import router as licitacoes_router
 from app.api.pedidos import router as pedidos_router
+from app.api.previsao import router as previsao_router
 
 app = FastAPI(
     title="ACE-MSB — Aplicativo de Controle de Expedição",
@@ -37,6 +38,7 @@ app.include_router(licitacoes_router, prefix="/api/v1")
 app.include_router(impressao_router, prefix="/api/v1")
 app.include_router(esterilizacao_router, prefix="/api/v1")
 app.include_router(crm_router, prefix="/api/v1")
+app.include_router(previsao_router, prefix="/api/v1")
 
 
 @app.on_event("startup")

@@ -12,6 +12,7 @@ import { Cadastros } from './pages/Cadastros'
 import { NovoPedido } from './pages/NovoPedido'
 import { ComunicadoUso } from './pages/ComunicadoUso'
 import { PainelComercial } from './pages/PainelComercial'
+import { PrevisaoFaturamento } from './pages/PrevisaoFaturamento'
 import { VisaoGeral } from './pages/VisaoGeral'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
@@ -83,6 +84,7 @@ export default function App() {
 
             {/* Comercial */}
             <Route path="comercial" element={<PainelComercial />} />
+            <Route path="previsao" element={<PrevisaoFaturamento />} />
             <Route path="comercial/comunicado-uso" element={<ComunicadoUso />} />
           </Route>
 

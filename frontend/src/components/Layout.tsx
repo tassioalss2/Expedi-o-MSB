@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, FileText, Home, Users, Gavel, Handshake,
+  DollarSign, FileText, Home, Users, Gavel, Handshake, TrendingUp,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -36,6 +36,7 @@ const navComercial: NavItem[] = [
       { hash: '#produtos', label: 'Vendas por Produto' },
     ],
   },
+  { to: '/previsao', label: 'Previsão de Faturamento', icone: TrendingUp },
   { to: '/comercial/comunicado-uso', label: 'Comunicado de Uso', icone: FileText },
 ]
 
