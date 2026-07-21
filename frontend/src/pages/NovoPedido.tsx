@@ -118,7 +118,7 @@ export function NovoPedido() {
     ...form,
     transportadora_id: form.transportadora_id || null,
     canal: form.canal || null,
-    itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd })),
+    itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
     ...extra,
   })
 
@@ -318,7 +318,7 @@ export function NovoPedido() {
           <div className="col-span-2">
             <label className="text-sm font-medium text-gray-700">Itens da OV *</label>
             <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade. Adicione ao menos um item.</p>
-            <ItensPedido value={itens} onChange={setItens} />
+            <ItensPedido value={itens} onChange={setItens} comValor />
             {itens.length === 0 && (
               <p className="text-xs text-amber-600 mt-1">Adicione pelo menos um item para cadastrar a OV.</p>
             )}
