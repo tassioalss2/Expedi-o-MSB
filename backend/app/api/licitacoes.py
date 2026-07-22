@@ -41,6 +41,11 @@ def obter_pregao(pregao_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return pregao_service.obter_pregao(str(pregao_id))
 
 
+@router.put("/pregoes/{pregao_id}")
+def atualizar_pregao(pregao_id: UUID, payload: PregaoCreate, _: UsuarioOut = Depends(get_current_user)):
+    return pregao_service.atualizar_pregao(str(pregao_id), payload)
+
+
 @router.post("/pregoes/{pregao_id}/nes", status_code=201)
 def criar_ne(pregao_id: UUID, payload: NeCreate, usuario: UsuarioOut = Depends(get_current_user)):
     return pregao_service.criar_ne(str(pregao_id), payload, usuario)

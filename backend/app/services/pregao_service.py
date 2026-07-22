@@ -205,6 +205,39 @@ def criar_ne(pregao_id: str, payload: NeCreate, usuario) -> dict:
     return obter_pregao(pregao_id)
 
 
+def atualizar_pregao(pregao_id: str, payload: PregaoCreate) -> dict:
+    """Corrige um pregão. Bloqueia reduzir a quantidade de um item abaixo do que
+    já foi empenhado nas NEs (ou remover um item já empenhado)."""
+    db = get_service_db()
+    atual = db.table("pregoes").select("id").eq("id", pregao_id).execute().data
+    if not atual:
+        raise HTTPException(status_code=404, detail="Pregão não encontrado")
+
+    nes = db.table("empenhos").select("id").eq("pregao_id", pregao_id).eq("ativo", True).execute().data
+    empenhado = _empenhado_por_produto(db, [n["id"] for n in nes])
+    novos_itens = _itens_pregao_json(payload.itens, db)
+    novas_qtd = {i["produto_id"]: i["qtd_total"] for i in novos_itens}
+    for pid, emp in empenhado.items():
+        if emp > 0 and novas_qtd.get(pid, 0) + 0.001 < emp:
+            raise HTTPException(
+                status_code=422,
+                detail=f"O item já tem {round(emp)} un empenhadas em NEs — não é possível reduzir abaixo disso nem removê-lo.",
+            )
+
+    db.table("pregoes").update({
+        "numero": payload.numero,
+        "cliente_id": str(payload.cliente_id),
+        "canal": payload.canal,
+        "tipo": payload.tipo or "VENDA_DIRETA",
+        "data": payload.data.isoformat() if payload.data else None,
+        "vigencia": payload.vigencia.isoformat() if payload.vigencia else None,
+        "observacao": payload.observacao,
+        "itens": novos_itens,
+        "atualizado_em": _agora(),
+    }).eq("id", pregao_id).execute()
+    return obter_pregao(pregao_id)
+
+
 def excluir_pregao(pregao_id: str) -> dict:
     db = get_service_db()
     nes = db.table("empenhos").select("id").eq("pregao_id", pregao_id).eq("ativo", True).execute().data

@@ -1446,32 +1446,41 @@ function ModalPregao({ grupo, onClose, onAbrirNE, onNovaNE }: {
   )
 }
 
-// ── Novo Pregão (mestre, com o total ganho) ──────────────────────────────────────
-function ModalNovoPregao({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+// ── Novo / Editar Pregão (mestre, com o total ganho) ─────────────────────────────
+function ModalNovoPregao({ onClose, onSaved, pregao }: { onClose: () => void; onSaved: () => void; pregao?: any }) {
   const hoje = new Date().toISOString().slice(0, 10)
-  const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>('VENDA_DIRETA')
-  const [numero, setNumero] = useState('')
-  const [clienteId, setClienteId] = useState('')
-  const [clienteNome, setClienteNome] = useState('')
-  const [canal, setCanal] = useState('LICITACAO_URO')
-  const [data, setData] = useState(hoje)
-  const [vigencia, setVigencia] = useState('')
-  const [observacao, setObservacao] = useState('')
-  const [itens, setItens] = useState<ItemLinha[]>([])
+  const edicao = !!pregao?.id
+  const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>(pregao?.tipo === 'CONSIGNACAO' ? 'CONSIGNACAO' : 'VENDA_DIRETA')
+  const [numero, setNumero] = useState(pregao?.numero || '')
+  const [clienteId, setClienteId] = useState(pregao?.cliente_id || '')
+  const [clienteNome, setClienteNome] = useState(pregao?.cliente || '')
+  const [canal, setCanal] = useState(pregao?.canal || 'LICITACAO_URO')
+  const [data, setData] = useState(pregao?.data || hoje)
+  const [vigencia, setVigencia] = useState(pregao?.vigencia || '')
+  const [observacao, setObservacao] = useState(pregao?.observacao || '')
+  const [itens, setItens] = useState<ItemLinha[]>(
+    (pregao?.itens || []).map((i: any) => ({
+      produto_id: i.produto_id, codigo: i.codigo || '', descricao: i.descricao || '',
+      qtd: Number(i.qtd_total) || 0, valor: Number(i.valor_unitario) || 0,
+    }))
+  )
 
   const criar = useMutation({
-    mutationFn: () => api.post('/licitacoes/pregoes', {
-      numero: numero.trim(), cliente_id: clienteId, tipo, canal,
-      data: data || null, vigencia: vigencia || null, observacao: observacao || null,
-      itens: itens.map(i => ({ produto_id: i.produto_id, qtd_total: i.qtd, valor_unitario: i.valor || 0 })),
-    }),
-    onSuccess: () => { toast.success('Pregão cadastrado'); onSaved(); onClose() },
-    onError: (e: any) => toast.error(msgErro(e, 'Erro ao cadastrar pregão')),
+    mutationFn: () => {
+      const body = {
+        numero: numero.trim(), cliente_id: clienteId, tipo, canal,
+        data: data || null, vigencia: vigencia || null, observacao: observacao || null,
+        itens: itens.map(i => ({ produto_id: i.produto_id, qtd_total: i.qtd, valor_unitario: i.valor || 0 })),
+      }
+      return edicao ? api.put(`/licitacoes/pregoes/${pregao.id}`, body) : api.post('/licitacoes/pregoes', body)
+    },
+    onSuccess: () => { toast.success(edicao ? 'Pregão atualizado' : 'Pregão cadastrado'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar pregão')),
   })
   const valido = numero.trim() && clienteId && itens.length > 0
 
   return (
-    <ModalBase titulo="Novo pregão (contrato ganho)" onClose={onClose}>
+    <ModalBase titulo={edicao ? 'Editar pregão' : 'Novo pregão (contrato ganho)'} onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
         <div className="grid grid-cols-2 gap-2">
           {(['VENDA_DIRETA', 'CONSIGNACAO'] as const).map(k => {
@@ -1510,7 +1519,7 @@ function ModalNovoPregao({ onClose, onSaved }: { onClose: () => void; onSaved: (
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => criar.mutate()} disabled={!valido || criar.isPending}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
-          {criar.isPending ? 'Salvando...' : 'Cadastrar pregão'}
+          {criar.isPending ? 'Salvando...' : edicao ? 'Salvar alterações' : 'Cadastrar pregão'}
         </button>
       </div>
     </ModalBase>
@@ -1522,12 +1531,28 @@ function ModalPregaoMestre({ pregao, onClose, onAbrirNE, onChanged }: {
   pregao: any; onClose: () => void; onAbrirNE: (neId: string) => void; onChanged: () => void
 }) {
   const [novaNE, setNovaNE] = useState(false)
+  const [editar, setEditar] = useState(false)
+  const semNes = pregao.nes.length === 0
+  const excluir = useMutation({
+    mutationFn: () => api.delete(`/licitacoes/pregoes/${pregao.id}`),
+    onSuccess: () => { toast.success('Pregão excluído'); onChanged(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao excluir')),
+  })
   return (
     <ModalBase titulo={<span className="font-mono">Pregão {pregao.numero}</span>} onClose={onClose} max="max-w-3xl">
       <div className="p-5 space-y-4 overflow-y-auto">
-        <div>
-          <p className="text-sm text-gray-700 font-medium">{pregao.cliente}</p>
-          <p className="text-xs text-gray-400">{pregao.canal ? (CANAL_LABEL[pregao.canal] || pregao.canal) : ''} · Vigência {fmtData(pregao.vigencia)}</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm text-gray-700 font-medium">{pregao.cliente}</p>
+            <p className="text-xs text-gray-400">{pregao.canal ? (CANAL_LABEL[pregao.canal] || pregao.canal) : ''} · Vigência {fmtData(pregao.vigencia)}</p>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => setEditar(true)} className="text-xs px-2.5 py-1.5 border rounded-lg text-gray-600 hover:bg-gray-50">✏️ Corrigir</button>
+            {semNes && (
+              <button onClick={() => { if (confirm('Excluir este pregão? Só é possível porque ainda não há NEs lançadas.')) excluir.mutate() }}
+                className="text-xs px-2.5 py-1.5 border border-red-200 rounded-lg text-red-600 hover:bg-red-50">🗑 Excluir</button>
+            )}
+          </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Total ganho</p><p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(pregao.total_valor)}</p></div>
@@ -1593,6 +1618,7 @@ function ModalPregaoMestre({ pregao, onClose, onAbrirNE, onChanged }: {
         </div>
       </div>
       {novaNE && <ModalNovaNE pregao={pregao} onClose={() => setNovaNE(false)} onSaved={() => { setNovaNE(false); onChanged() }} />}
+      {editar && <ModalNovoPregao pregao={pregao} onClose={() => setEditar(false)} onSaved={() => { setEditar(false); onChanged() }} />}
     </ModalBase>
   )
 }
