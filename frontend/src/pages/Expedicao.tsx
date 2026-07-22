@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect, Fragment } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, Upload, RefreshCw, Info, X, ChevronRight, CornerDownLeft, FileText } from 'lucide-react'
+import { Search, Plus, Upload, RefreshCw, Info, X, FileText } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -360,11 +360,10 @@ function InfoEtapaModal({ status, cfg, onClose }: { status: string; cfg: any; on
   )
 }
 
-const KANBAN_LAYOUT: StatusPedido[][] = [
-  ['AGUARD_CREDITO', 'LIBERADO', 'EM_INVENTARIO'],
-  ['AGUARD_VERIFICACAO', 'EM_PROCESSO_SISTEMICO', 'EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA', 'AGUARD_FATURAMENTO'],
-  ['FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'],
-]
+// Grid uniforme de 4 colunas — ORDEM_KANBAN (11 etapas) flui em 4/4/3, tudo
+// alinhado na vertical. Linha 1: recebimento/inventário; linha 2: sistêmico →
+// frete/transportadora → faturamento; linha 3: pós-faturamento.
+const KANBAN_COLS = 4
 
 function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedido: (p: Pedido) => void }) {
   const [infoAberta, setInfoAberta] = useState<string | null>(null)
@@ -379,11 +378,12 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
   }, {})
 
   return (
-    <div className="flex flex-col gap-2 h-full">
-      {KANBAN_LAYOUT.map((row, rowIdx) => (
-        <Fragment key={rowIdx}>
-          <div className="flex gap-2 items-stretch flex-1 min-h-0">
-            {row.map((status, colIdx) => {
+    <div className="h-full">
+      <div
+        className="grid gap-2 h-full"
+        style={{ gridTemplateColumns: `repeat(${KANBAN_COLS}, minmax(0, 1fr))`, gridAutoRows: 'minmax(0, 1fr)' }}
+      >
+        {ORDEM_KANBAN.map((status) => {
               const cfg = STATUS_CONFIG[status]
               const lista = agrupado[status] || []
               const valorEtapa = lista.reduce((a, p) => a + (Number((p as any).valor_ov) || 0), 0)
@@ -391,8 +391,7 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
                 ? `R$ ${(valorEtapa / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })} mil`
                 : `R$ ${valorEtapa.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
               return (
-                <Fragment key={status}>
-                  <div className="flex-1 min-w-0 flex flex-col min-h-0">
+                <div key={status} className="flex flex-col min-h-0 min-w-0">
                     <div
                       className="rounded-t-lg px-3 pt-2 pb-1.5 flex flex-col gap-0.5 cursor-pointer group flex-shrink-0"
                       style={{ backgroundColor: cfg.cor, color: cfg.corTexto }}
@@ -421,28 +420,10 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
                         <EntradaOV key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
                       ))}
                     </div>
-                  </div>
-                  {colIdx < row.length - 1 && (
-                    <div className="flex-shrink-0 flex items-start pt-3">
-                      <ChevronRight size={16} className="text-gray-300" />
-                    </div>
-                  )}
-                </Fragment>
+              </div>
               )
             })}
-          </div>
-          {rowIdx < KANBAN_LAYOUT.length - 1 && (
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <div className="flex-1 border-t border-dashed border-gray-200" />
-              <div className="flex items-center gap-1 text-xs text-gray-400 bg-white border border-gray-200 rounded-full px-2.5 py-0.5 flex-shrink-0">
-                <CornerDownLeft size={11} />
-                <span>próxima etapa</span>
-              </div>
-              <div className="flex-1 border-t border-dashed border-gray-200" />
-            </div>
-          )}
-        </Fragment>
-      ))}
+      </div>
       {infoAberta && (
         <InfoEtapaModal
           status={infoAberta}
