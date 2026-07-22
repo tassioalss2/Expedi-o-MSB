@@ -15,11 +15,40 @@ from app.models.schemas import (
     DemandaUpdate,
     EmpenhoCreate,
     EntregaVendaDiretaCreate,
+    NeCreate,
+    PregaoCreate,
     UsuarioOut,
 )
-from app.services import licitacao_demanda_service, licitacao_service
+from app.services import licitacao_demanda_service, licitacao_service, pregao_service
 
 router = APIRouter(prefix="/licitacoes", tags=["licitacoes"])
+
+
+# ── Pregões (mestre) ─────────────────────────────────────────────────────────────
+
+@router.get("/pregoes")
+def listar_pregoes(_: UsuarioOut = Depends(get_current_user)):
+    return pregao_service.listar_pregoes()
+
+
+@router.post("/pregoes", status_code=201)
+def criar_pregao(payload: PregaoCreate, _: UsuarioOut = Depends(get_current_user)):
+    return pregao_service.criar_pregao(payload)
+
+
+@router.get("/pregoes/{pregao_id}")
+def obter_pregao(pregao_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return pregao_service.obter_pregao(str(pregao_id))
+
+
+@router.post("/pregoes/{pregao_id}/nes", status_code=201)
+def criar_ne(pregao_id: UUID, payload: NeCreate, usuario: UsuarioOut = Depends(get_current_user)):
+    return pregao_service.criar_ne(str(pregao_id), payload, usuario)
+
+
+@router.delete("/pregoes/{pregao_id}")
+def excluir_pregao(pregao_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return pregao_service.excluir_pregao(str(pregao_id))
 
 
 @router.get("/empenhos")

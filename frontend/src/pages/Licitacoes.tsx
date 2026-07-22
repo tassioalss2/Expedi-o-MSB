@@ -1185,26 +1185,37 @@ function AbaContratos() {
   const qc = useQueryClient()
   const [modalNovo, setModalNovo] = useState(false)
   const [prefillNovo, setPrefillNovo] = useState<any>(null)
+  const [novoPregao, setNovoPregao] = useState(false)
   const [abertoId, setAbertoId] = useState<string | null>(null)
   const [pregaoChave, setPregaoChave] = useState<string | null>(null)
+  const [pregaoMestreId, setPregaoMestreId] = useState<string | null>(null)
   const [tipoFiltro, setTipoFiltro] = useState('')
 
   const { data: contratos = [], isLoading } = useQuery<any[]>({
     queryKey: ['empenhos'],
     queryFn: () => api.get('/licitacoes/empenhos').then(r => r.data),
   })
+  const { data: pregoes = [] } = useQuery<any[]>({
+    queryKey: ['pregoes'],
+    queryFn: () => api.get('/licitacoes/pregoes').then(r => r.data),
+  })
 
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ['empenhos'] })
+    qc.invalidateQueries({ queryKey: ['pregoes'] })
     if (abertoId) qc.invalidateQueries({ queryKey: ['empenho', abertoId] })
   }
 
-  const filtrados = tipoFiltro ? contratos.filter(c => (c.tipo || 'CONSIGNACAO') === tipoFiltro) : contratos
+  const pregoesFiltrados = tipoFiltro ? pregoes.filter(p => (p.tipo || 'VENDA_DIRETA') === tipoFiltro) : pregoes
+  const pregaoMestreAberto = pregoes.find(p => p.id === pregaoMestreId) || null
 
-  // Agrupa por PREGÃO (mestre). NEs sem pregão viram grupo próprio (chave por id).
+  // Empenhos legados (sem pregão mestre) — agrupados por texto do pregão.
+  const legado = (tipoFiltro ? contratos.filter(c => (c.tipo || 'CONSIGNACAO') === tipoFiltro) : contratos)
+    .filter(c => !c.pregao_id)
+
   const grupos: any[] = (() => {
     const map = new Map<string, any>()
-    for (const e of filtrados) {
+    for (const e of legado) {
       const chave = e.numero_pregao ? `P:${e.numero_pregao}` : `N:${e.id}`
       let g = map.get(chave)
       if (!g) {
@@ -1243,20 +1254,71 @@ function AbaContratos() {
             <button key={k} onClick={() => setTipoFiltro(k)} className={`text-sm px-3 py-1.5 rounded-lg ${tipoFiltro === k ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}`}>{v.label}</button>
           ))}
         </div>
-        <button onClick={() => { setPrefillNovo(null); setModalNovo(true) }}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
-          <Plus size={16} /> Novo contrato
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setNovoPregao(true)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
+            <Plus size={16} /> Novo pregão
+          </button>
+          <button onClick={() => { setPrefillNovo(null); setModalNovo(true) }}
+            className="text-sm text-gray-500 hover:text-gray-700 px-2 py-2">
+            contrato avulso
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
         <p className="text-center text-gray-400 py-10 text-sm">Carregando...</p>
-      ) : grupos.length === 0 ? (
+      ) : (pregoesFiltrados.length === 0 && grupos.length === 0) ? (
         <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">
-          Nenhum contrato. Clique em <strong>Novo contrato</strong> (ou processe uma venda direta/consignação no painel).
+          Nenhum pregão. Clique em <strong>Novo pregão</strong> para cadastrar um contrato ganho e depois lançar as notas de empenho.
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="space-y-6">
+          {pregoesFiltrados.length > 0 && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {pregoesFiltrados.map((p) => {
+                const tp = CONTRATO_TIPO[p.tipo || 'VENDA_DIRETA'] || CONTRATO_TIPO.VENDA_DIRETA
+                const concluido = p.empenhado_valor > 0 && p.saldo_valor <= 0.005
+                return (
+                  <button key={p.id} onClick={() => setPregaoMestreId(p.id)}
+                    className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-left hover:border-blue-300 hover:shadow transition">
+                    <div className="flex items-start justify-between mb-1">
+                      <div>
+                        <p className="font-mono font-bold text-gray-800">Pregão {p.numero}</p>
+                        <p className="text-[11px] font-mono text-gray-400">
+                          {p.qtd_nes} NE{p.qtd_nes === 1 ? '' : 's'}{p.qtd_nes ? `: ${p.nes.map((n: any) => n.numero).join(' · ')}` : ' — nenhuma ainda'}
+                        </p>
+                        <p className="text-sm text-gray-600 truncate max-w-[240px]">{p.cliente}</p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${tp.cor}`}>{tp.label}</span>
+                          {p.canal && <span className="text-xs text-gray-400">{CANAL_LABEL[p.canal] || p.canal}</span>}
+                        </div>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${concluido ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {concluido ? 'Empenhado 100%' : 'Aberto'}
+                      </span>
+                    </div>
+                    <div className="h-2 rounded-full bg-gray-100 overflow-hidden my-2">
+                      <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${Math.min(p.percentual_empenhado, 100)}%` }} />
+                    </div>
+                    <div className="flex justify-between text-xs text-gray-500">
+                      <span>Empenhado {fmtBRL(p.empenhado_valor)} · {p.percentual_empenhado}%</span>
+                      <span className="font-semibold text-gray-700">A empenhar {fmtBRL(p.saldo_valor)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[11px] text-gray-400 mt-1.5">
+                      <span>Total {fmtBRL(p.total_valor)} · entregue {fmtBRL(p.entregue_valor)}</span>
+                      <span>Vigência: {fmtData(p.vigencia)}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {grupos.length > 0 && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-400 mb-2">Contratos avulsos (sem total de pregão)</p>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {grupos.map((g) => {
             const tp = CONTRATO_TIPO[g.tipos[0] || 'CONSIGNACAO'] || CONTRATO_TIPO.CONSIGNACAO
             const ne0 = g.nes[0]
@@ -1296,8 +1358,21 @@ function AbaContratos() {
               </button>
             )
           })}
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      {pregaoMestreAberto && (
+        <ModalPregaoMestre
+          pregao={pregaoMestreAberto}
+          onClose={() => setPregaoMestreId(null)}
+          onAbrirNE={(neId: string) => setAbertoId(neId)}
+          onChanged={invalidar}
+        />
+      )}
+      {novoPregao && <ModalNovoPregao onClose={() => setNovoPregao(false)} onSaved={invalidar} />}
 
       {grupoAberto && (
         <ModalPregao
@@ -1366,6 +1441,220 @@ function ModalPregao({ grupo, onClose, onAbrirNE, onNovaNE }: {
             })}
           </div>
         </div>
+      </div>
+    </ModalBase>
+  )
+}
+
+// ── Novo Pregão (mestre, com o total ganho) ──────────────────────────────────────
+function ModalNovoPregao({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const hoje = new Date().toISOString().slice(0, 10)
+  const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>('VENDA_DIRETA')
+  const [numero, setNumero] = useState('')
+  const [clienteId, setClienteId] = useState('')
+  const [clienteNome, setClienteNome] = useState('')
+  const [canal, setCanal] = useState('LICITACAO_URO')
+  const [data, setData] = useState(hoje)
+  const [vigencia, setVigencia] = useState('')
+  const [observacao, setObservacao] = useState('')
+  const [itens, setItens] = useState<ItemLinha[]>([])
+
+  const criar = useMutation({
+    mutationFn: () => api.post('/licitacoes/pregoes', {
+      numero: numero.trim(), cliente_id: clienteId, tipo, canal,
+      data: data || null, vigencia: vigencia || null, observacao: observacao || null,
+      itens: itens.map(i => ({ produto_id: i.produto_id, qtd_total: i.qtd, valor_unitario: i.valor || 0 })),
+    }),
+    onSuccess: () => { toast.success('Pregão cadastrado'); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao cadastrar pregão')),
+  })
+  const valido = numero.trim() && clienteId && itens.length > 0
+
+  return (
+    <ModalBase titulo="Novo pregão (contrato ganho)" onClose={onClose}>
+      <div className="p-5 space-y-3 overflow-y-auto">
+        <div className="grid grid-cols-2 gap-2">
+          {(['VENDA_DIRETA', 'CONSIGNACAO'] as const).map(k => {
+            const v = CONTRATO_TIPO[k]; const Icone = v.icone; const ativo = tipo === k
+            return (
+              <button key={k} onClick={() => setTipo(k)}
+                className={`flex items-center justify-center gap-2 py-2.5 rounded-lg border-2 text-sm font-medium ${ativo ? `${v.cor} border-current` : 'border-gray-200 text-gray-500'}`}>
+                <Icone size={16} /> {v.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-[11px] text-gray-400 -mt-1">Cadastre o TOTAL ganho no pregão. Depois lance as notas de empenho (NE) — cada uma consome parte desse total.</p>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Nº do Pregão *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 90051/2025" /></Campo>
+          <Campo label="Canal *">
+            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
+              {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Data"><input type="date" value={data} onChange={e => setData(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Vigência (até)"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
+        </div>
+        <Campo label="Cliente / Órgão *">
+          <ClienteAutocomplete value={clienteId} initialNome={clienteNome} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
+          {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
+        </Campo>
+        <Campo label="Observação"><input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        <div>
+          <label className="text-sm text-gray-600">Itens do pregão (total ganho) *</label>
+          <p className="text-xs text-gray-400 mb-1.5">Produto, quantidade TOTAL do pregão e valor unitário.</p>
+          <ItensPedido value={itens} onChange={setItens} comValor />
+        </div>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => criar.mutate()} disabled={!valido || criar.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {criar.isPending ? 'Salvando...' : 'Cadastrar pregão'}
+        </button>
+      </div>
+    </ModalBase>
+  )
+}
+
+// ── Modal do Pregão mestre — total/empenhado/saldo + NEs + Nova NE ────────────────
+function ModalPregaoMestre({ pregao, onClose, onAbrirNE, onChanged }: {
+  pregao: any; onClose: () => void; onAbrirNE: (neId: string) => void; onChanged: () => void
+}) {
+  const [novaNE, setNovaNE] = useState(false)
+  return (
+    <ModalBase titulo={<span className="font-mono">Pregão {pregao.numero}</span>} onClose={onClose} max="max-w-3xl">
+      <div className="p-5 space-y-4 overflow-y-auto">
+        <div>
+          <p className="text-sm text-gray-700 font-medium">{pregao.cliente}</p>
+          <p className="text-xs text-gray-400">{pregao.canal ? (CANAL_LABEL[pregao.canal] || pregao.canal) : ''} · Vigência {fmtData(pregao.vigencia)}</p>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Total ganho</p><p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(pregao.total_valor)}</p></div>
+          <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Empenhado</p><p className="text-base font-bold text-indigo-600 tabular-nums">{fmtBRL(pregao.empenhado_valor)}</p></div>
+          <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">A empenhar</p><p className="text-base font-bold text-blue-600 tabular-nums">{fmtBRL(pregao.saldo_valor)}</p></div>
+          <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Entregue</p><p className="text-base font-bold text-emerald-600 tabular-nums">{fmtBRL(pregao.entregue_valor)}</p></div>
+        </div>
+
+        {/* Itens do pregão */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Itens do pregão · saldo a empenhar</h3>
+          <div className="overflow-x-auto border border-gray-100 rounded-lg">
+            <table className="w-full text-sm">
+              <thead><tr className="text-[11px] uppercase text-gray-400 text-left border-b bg-gray-50">
+                <th className="py-2 px-3">Código</th><th className="py-2 px-3">Descrição</th>
+                <th className="py-2 px-3 text-right">Total</th><th className="py-2 px-3 text-right">Empenhado</th><th className="py-2 px-3 text-right">Saldo</th>
+              </tr></thead>
+              <tbody className="divide-y divide-gray-50">
+                {pregao.itens.map((i: any) => (
+                  <tr key={i.produto_id}>
+                    <td className="py-2 px-3 font-mono text-gray-700">{i.codigo}</td>
+                    <td className="py-2 px-3 text-gray-600 truncate max-w-[240px]">{i.descricao}</td>
+                    <td className="py-2 px-3 text-right tabular-nums">{i.qtd_total}</td>
+                    <td className="py-2 px-3 text-right tabular-nums text-indigo-600">{i.qtd_empenhada}</td>
+                    <td className="py-2 px-3 text-right tabular-nums font-medium text-gray-800">{i.qtd_saldo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* NEs */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-gray-700">Notas de empenho ({pregao.nes.length})</h3>
+            <button onClick={() => setNovaNE(true)} disabled={pregao.saldo_un <= 0}
+              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-500 font-medium disabled:opacity-40">
+              <Plus size={15} /> Nova NE
+            </button>
+          </div>
+          {pregao.nes.length === 0 ? (
+            <p className="text-sm text-gray-400 py-2">Nenhuma NE lançada ainda. Clique em "Nova NE" conforme forem chegando.</p>
+          ) : (
+            <div className="space-y-2">
+              {pregao.nes.map((n: any) => (
+                <button key={n.id} onClick={() => onAbrirNE(n.id)}
+                  className="w-full text-left border border-gray-100 rounded-xl p-3 hover:border-blue-300 hover:shadow-sm transition">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-mono font-semibold text-gray-800">NE {n.numero}</p>
+                      <span className="text-[11px] text-gray-400">Vigência {fmtData(n.vigencia)}</span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-gray-700 tabular-nums">Saldo {fmtBRL(n.saldo_valor)}</p>
+                      <p className="text-[11px] text-gray-400 tabular-nums">empenhado {fmtBRL(n.empenhado_valor)} · entregue {fmtBRL(n.faturado_valor)}</p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      {novaNE && <ModalNovaNE pregao={pregao} onClose={() => setNovaNE(false)} onSaved={() => { setNovaNE(false); onChanged() }} />}
+    </ModalBase>
+  )
+}
+
+// ── Nova NE dentro do pregão (consome o saldo por item) ──────────────────────────
+function ModalNovaNE({ pregao, onClose, onSaved }: { pregao: any; onClose: () => void; onSaved: () => void }) {
+  const [numero, setNumero] = useState('')
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10))
+  const [vigencia, setVigencia] = useState('')
+  const disponiveis = pregao.itens.filter((i: any) => i.qtd_saldo > 0)
+  const [qtds, setQtds] = useState<Record<string, string>>({})
+
+  const criar = useMutation({
+    mutationFn: () => api.post(`/licitacoes/pregoes/${pregao.id}/nes`, {
+      numero: numero.trim(), data_empenho: data || null, vigencia: vigencia || null,
+      itens: disponiveis
+        .filter((i: any) => Number(qtds[i.produto_id]) > 0)
+        .map((i: any) => ({ produto_id: i.produto_id, qtd: Number(qtds[i.produto_id]) })),
+    }),
+    onSuccess: () => { toast.success('NE lançada'); onSaved() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao lançar NE')),
+  })
+  const algumItem = disponiveis.some((i: any) => Number(qtds[i.produto_id]) > 0)
+  const valido = numero.trim() && algumItem
+
+  return (
+    <ModalBase titulo={<span className="font-mono">Nova NE · Pregão {pregao.numero}</span>} onClose={onClose} max="max-w-lg">
+      <div className="p-5 space-y-3 overflow-y-auto">
+        <div className="grid grid-cols-3 gap-3">
+          <Campo label="Nota de empenho (NE) *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 2026NE001246" /></Campo>
+          <Campo label="Data"><input type="date" value={data} onChange={e => setData(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Vigência"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
+        </div>
+        <div>
+          <label className="text-sm text-gray-600">Quantidades desta NE *</label>
+          <p className="text-xs text-gray-400 mb-1.5">Informe quanto desta NE por item (limitado ao saldo do pregão).</p>
+          {disponiveis.length === 0 ? (
+            <p className="text-sm text-gray-400 py-2">Pregão sem saldo a empenhar.</p>
+          ) : (
+            <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+              {disponiveis.map((i: any) => (
+                <div key={i.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                  <div className="flex-1 min-w-0">
+                    <span className="font-mono text-gray-700">{i.codigo}</span>
+                    <span className="text-gray-500 ml-2 truncate">{i.descricao}</span>
+                    <span className="text-[11px] text-gray-400 ml-1">(saldo {i.qtd_saldo})</span>
+                  </div>
+                  <input type="number" min="0" max={i.qtd_saldo} value={qtds[i.produto_id] || ''}
+                    onChange={e => setQtds(q => ({ ...q, [i.produto_id]: e.target.value }))}
+                    className="w-24 border rounded-lg px-2 py-1 text-sm text-right" placeholder="0" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => criar.mutate()} disabled={!valido || criar.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {criar.isPending ? 'Lançando...' : 'Lançar NE'}
+        </button>
       </div>
     </ModalBase>
   )

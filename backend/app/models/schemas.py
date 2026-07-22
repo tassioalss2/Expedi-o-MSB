@@ -237,6 +237,64 @@ class EmpenhoCreate(BaseModel):
     vigencia: Optional[date] = None
     observacao: Optional[str] = None
     itens: list[EmpenhoItemCreate] = []
+    pregao_id: Optional[UUID] = None  # vínculo com o pregão mestre (NE de um pregão)
+
+    @field_validator("numero")
+    @classmethod
+    def _strip_numero(cls, v: str) -> str:
+        return v.strip() if v else v
+
+
+# ── Pregão (mestre) ─────────────────────────────────────────────────────────────
+
+class PregaoItemCreate(BaseModel):
+    produto_id: UUID
+    qtd_total: float
+    valor_unitario: float = 0
+
+    @field_validator("qtd_total")
+    @classmethod
+    def _qtd_pos(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Quantidade total deve ser maior que zero")
+        return v
+
+
+class PregaoCreate(BaseModel):
+    numero: str
+    cliente_id: UUID
+    canal: Optional[str] = None
+    tipo: str = "VENDA_DIRETA"
+    data: Optional[date] = None
+    vigencia: Optional[date] = None
+    observacao: Optional[str] = None
+    itens: list[PregaoItemCreate] = []
+
+    @field_validator("numero")
+    @classmethod
+    def _strip_numero(cls, v: str) -> str:
+        return v.strip() if v else v
+
+
+class NeItemCreate(BaseModel):
+    produto_id: UUID
+    qtd: float
+
+    @field_validator("qtd")
+    @classmethod
+    def _qtd_pos(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Quantidade da NE deve ser maior que zero")
+        return v
+
+
+class NeCreate(BaseModel):
+    """Nota de empenho registrada dentro de um pregão — consome o saldo do pregão."""
+    numero: str
+    data_empenho: Optional[date] = None
+    vigencia: Optional[date] = None
+    observacao: Optional[str] = None
+    itens: list[NeItemCreate] = []
 
     @field_validator("numero")
     @classmethod

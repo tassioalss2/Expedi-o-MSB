@@ -73,7 +73,7 @@ def criar_empenho(payload: EmpenhoCreate) -> dict:
     if existe.data:
         raise HTTPException(status_code=409, detail=f"Já existe um empenho com o número '{payload.numero}'.")
 
-    emp = db.table("empenhos").insert({
+    dados = {
         "numero": payload.numero,
         "numero_pregao": (payload.numero_pregao or "").strip() or None,
         "cliente_id": str(payload.cliente_id),
@@ -83,7 +83,10 @@ def criar_empenho(payload: EmpenhoCreate) -> dict:
         "vigencia": payload.vigencia.isoformat() if payload.vigencia else None,
         "observacao": payload.observacao,
         "ativo": True,
-    }).execute().data[0]
+    }
+    if getattr(payload, "pregao_id", None):
+        dados["pregao_id"] = str(payload.pregao_id)
+    emp = db.table("empenhos").insert(dados).execute().data[0]
 
     if payload.itens:
         prod_ids = [str(i.produto_id) for i in payload.itens]
@@ -124,6 +127,7 @@ def listar_empenhos() -> list:
             "id": e["id"],
             "numero": e["numero"],
             "numero_pregao": e.get("numero_pregao"),
+            "pregao_id": e.get("pregao_id"),
             "tipo": e.get("tipo") or "CONSIGNACAO",
             "cliente": (e.get("clientes") or {}).get("nome", "—"),
             "cliente_id": e.get("cliente_id"),
