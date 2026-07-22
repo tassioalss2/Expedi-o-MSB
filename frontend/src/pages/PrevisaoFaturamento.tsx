@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target } from 'lucide-react'
+import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info } from 'lucide-react'
 import api from '../lib/api'
 import { fmtBRL, fmtData, msgErro } from '../lib/crm'
 
@@ -34,6 +34,14 @@ interface Resumo {
   }
   pipeline: PipelineItem[]
   negocios: Negocio[]
+  realizado_itens: RealizadoItem[]
+  contratos: ContratoItem[]
+}
+interface RealizadoItem {
+  numero_pedido: string; cliente?: string; numero_nf?: string; data?: string; valor: number
+}
+interface ContratoItem {
+  numero?: string; numero_pregao?: string; total: number; faturado: number; saldo: number
 }
 
 const STATUS_OV: Record<string, string> = {
@@ -45,6 +53,7 @@ const STATUS_OV: Record<string, string> = {
 
 export function PrevisaoFaturamento() {
   const qc = useQueryClient()
+  const [detalhe, setDetalhe] = useState<DetalheTipo | null>(null)
   const { data, isLoading } = useQuery<Resumo>({
     queryKey: ['previsao-resumo'],
     queryFn: () => api.get('/previsao/resumo').then(r => r.data),
@@ -76,50 +85,57 @@ export function PrevisaoFaturamento() {
               <span className="text-xs text-gray-500">Meta {fmtBRL(mes.meta)} · previsto {mes.atingimento_previsto_pct}%</span>
             )}
           </div>
-          <p className="text-3xl font-bold text-indigo-600 tabular-nums">{fmtBRL(mes.previsao)}</p>
+          <button onClick={() => setDetalhe('previsao_mes')} className="text-left group">
+            <p className="text-3xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(mes.previsao)}</p>
+          </button>
           {mes.meta != null && (
             <div className="mt-3 h-2.5 rounded-full bg-gray-100 overflow-hidden">
               <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(100, mes.atingimento_previsto_pct || 0)}%` }} />
             </div>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
-            <Mini titulo="Realizado" icone={<CircleDollarSign size={14} />} valor={mes.realizado} cor="text-emerald-600" />
-            <Mini titulo="Em processo (OVs)" icone={<Package size={14} />} valor={mes.em_processo} cor="text-blue-600" />
-            <Mini titulo="Saldo de contratos" icone={<Handshake size={14} />} valor={mes.saldo_contratos} cor="text-teal-600" />
+            <Mini titulo="Realizado" icone={<CircleDollarSign size={14} />} valor={mes.realizado} cor="text-emerald-600" onClick={() => setDetalhe('realizado')} />
+            <Mini titulo="Em processo (OVs)" icone={<Package size={14} />} valor={mes.em_processo} cor="text-blue-600" onClick={() => setDetalhe('em_processo')} />
+            <Mini titulo="Saldo de contratos" icone={<Handshake size={14} />} valor={mes.saldo_contratos} cor="text-teal-600" onClick={() => setDetalhe('saldo_contratos')} />
           </div>
           <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-3">
-            <div className="bg-emerald-50 rounded-xl p-3">
-              <p className="text-[11px] text-emerald-700 font-semibold uppercase">Garantido</p>
+            <button onClick={() => setDetalhe('garantido')} className="bg-emerald-50 rounded-xl p-3 text-left hover:ring-2 hover:ring-emerald-200">
+              <p className="text-[11px] text-emerald-700 font-semibold uppercase flex items-center gap-1">Garantido <Info size={11} className="opacity-50" /></p>
               <p className="text-lg font-bold text-emerald-700 tabular-nums">{fmtBRL(mes.garantido)}</p>
               <p className="text-[11px] text-emerald-600/70">realizado + processo + contratos</p>
-            </div>
-            <div className="bg-amber-50 rounded-xl p-3">
-              <p className="text-[11px] text-amber-700 font-semibold uppercase">Em negociação (ponderado)</p>
+            </button>
+            <button onClick={() => setDetalhe('negociacao')} className="bg-amber-50 rounded-xl p-3 text-left hover:ring-2 hover:ring-amber-200">
+              <p className="text-[11px] text-amber-700 font-semibold uppercase flex items-center gap-1">Em negociação (ponderado) <Info size={11} className="opacity-50" /></p>
               <p className="text-lg font-bold text-amber-700 tabular-nums">{fmtBRL(mes.negociacao_ponderado)}</p>
               <p className="text-[11px] text-amber-600/70">bruto {fmtBRL(mes.negociacao_bruto)} × chance</p>
-            </div>
+            </button>
           </div>
         </div>
 
         {/* ── Previsão do DIA ───────────────────────────────────────── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <h2 className="font-semibold text-gray-700 flex items-center gap-2 mb-3"><Target size={16} /> Previsão do dia</h2>
-          <p className="text-[11px] text-gray-400 uppercase font-semibold">Deve faturar hoje</p>
-          <p className="text-2xl font-bold text-indigo-600 tabular-nums">{fmtBRL(dia.previsto_hoje)}</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">
-            OVs prestes a faturar {fmtBRL(dia.quase_nf)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
-          </p>
+          <button onClick={() => setDetalhe('previsto_hoje')} className="text-left group w-full">
+            <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">Deve faturar hoje <Info size={11} className="opacity-40" /></p>
+            <p className="text-2xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(dia.previsto_hoje)}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              OVs prestes a faturar {fmtBRL(dia.quase_nf)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
+            </p>
+          </button>
           <div className="mt-4 pt-3 border-t border-gray-100">
-            <p className="text-[11px] text-gray-400 uppercase font-semibold">Ritmo p/ bater a meta</p>
             {dia.ritmo_necessario != null ? (
-              <>
-                <p className="text-2xl font-bold text-gray-800 tabular-nums">{fmtBRL(dia.ritmo_necessario)}<span className="text-sm font-normal text-gray-400">/dia útil</span></p>
+              <button onClick={() => setDetalhe('ritmo')} className="text-left group w-full">
+                <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">Ritmo p/ bater a meta <Info size={11} className="opacity-40" /></p>
+                <p className="text-2xl font-bold text-gray-800 tabular-nums group-hover:underline decoration-gray-300 underline-offset-4">{fmtBRL(dia.ritmo_necessario)}<span className="text-sm font-normal text-gray-400">/dia útil</span></p>
                 <p className="text-[11px] text-gray-400 mt-0.5">
                   faltam {fmtBRL(dia.falta_meta || 0)} em {dia.dias_uteis_restantes} dia(s) útil(eis)
                 </p>
-              </>
+              </button>
             ) : (
-              <p className="text-sm text-gray-400 mt-1">Defina a meta do mês no Painel Comercial para calcular o ritmo.</p>
+              <>
+                <p className="text-[11px] text-gray-400 uppercase font-semibold">Ritmo p/ bater a meta</p>
+                <p className="text-sm text-gray-400 mt-1">Defina a meta do mês no Painel Comercial para calcular o ritmo.</p>
+              </>
             )}
           </div>
         </div>
@@ -165,17 +181,172 @@ export function PrevisaoFaturamento() {
           </div>
         )}
       </div>
+
+      {detalhe && <DetalheModal tipo={detalhe} data={data} onClose={() => setDetalhe(null)} />}
     </div>
   )
 }
 
-function Mini({ titulo, valor, cor, icone }: { titulo: string; valor: number; cor: string; icone: React.ReactNode }) {
+function Mini({ titulo, valor, cor, icone, onClick }: { titulo: string; valor: number; cor: string; icone: React.ReactNode; onClick?: () => void }) {
   return (
-    <div className="bg-gray-50 rounded-xl p-3">
-      <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1">{icone} {titulo}</p>
+    <button onClick={onClick} disabled={!onClick} className="bg-gray-50 rounded-xl p-3 text-left w-full enabled:hover:ring-2 enabled:hover:ring-gray-200 enabled:cursor-pointer">
+      <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1">{icone} {titulo} {onClick && <Info size={10} className="opacity-40" />}</p>
       <p className={`text-base font-bold tabular-nums ${cor}`}>{fmtBRL(valor)}</p>
+    </button>
+  )
+}
+
+// ── Modal de detalhe: mostra o que gera cada número ──────────────────────────────
+type DetalheTipo = 'previsao_mes' | 'realizado' | 'em_processo' | 'saldo_contratos' | 'garantido' | 'negociacao' | 'previsto_hoje' | 'ritmo'
+
+function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo; onClose: () => void }) {
+  const { mes, dia, pipeline, negocios, realizado_itens, contratos } = data
+  const quaseNf = pipeline.filter(p => p.quase_nf)
+  const negHoje = negocios.filter(n => n.previsao_fechamento === data.hoje)
+
+  const TITULOS: Record<DetalheTipo, string> = {
+    previsao_mes: 'Previsão do mês', realizado: 'Realizado no mês', em_processo: 'Em processo (OVs)',
+    saldo_contratos: 'Saldo de contratos', garantido: 'Garantido', negociacao: 'Em negociação',
+    previsto_hoje: 'Deve faturar hoje', ritmo: 'Ritmo p/ bater a meta',
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">{TITULOS[tipo]}</h2>
+            <p className="text-xs text-gray-400">De onde vem o número</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
+        </div>
+        <div className="p-5 overflow-y-auto">
+          {tipo === 'previsao_mes' && (
+            <Composicao linhas={[
+              { rotulo: 'Garantido (realizado + processo + contratos)', valor: mes.garantido },
+              { rotulo: 'Em negociação (ponderado pela chance)', valor: mes.negociacao_ponderado },
+            ]} total={mes.previsao} />
+          )}
+          {tipo === 'garantido' && (
+            <Composicao linhas={[
+              { rotulo: 'Realizado (NFs já faturadas no mês)', valor: mes.realizado },
+              { rotulo: 'Em processo (OVs no pipeline)', valor: mes.em_processo },
+              { rotulo: 'Saldo de contratos ganhos', valor: mes.saldo_contratos },
+            ]} total={mes.garantido} />
+          )}
+          {tipo === 'ritmo' && (
+            <div className="text-sm">
+              <div className="flex justify-between py-2 border-b border-gray-50 text-gray-700"><span>Meta do mês</span><span className="tabular-nums font-medium">{fmtBRL(mes.meta || 0)}</span></div>
+              <div className="flex justify-between py-2 border-b border-gray-50 text-gray-700"><span>Já realizado</span><span className="tabular-nums font-medium">− {fmtBRL(mes.realizado)}</span></div>
+              <div className="flex justify-between py-2 border-b border-gray-50 text-gray-700"><span>Falta para a meta</span><span className="tabular-nums font-medium">{fmtBRL(dia.falta_meta || 0)}</span></div>
+              <div className="flex justify-between py-2 border-b border-gray-50 text-gray-500"><span>Dias úteis restantes</span><span className="tabular-nums font-medium">{dia.dias_uteis_restantes}</span></div>
+              <div className="flex justify-between pt-3 mt-1">
+                <span className="font-semibold text-gray-800">Ritmo necessário / dia útil</span>
+                <span className="tabular-nums font-bold text-lg text-gray-800">{fmtBRL(dia.ritmo_necessario || 0)}</span>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2">Falta ÷ dias úteis restantes = ritmo necessário por dia.</p>
+            </div>
+          )}
+          {tipo === 'previsto_hoje' && (
+            <div className="space-y-4">
+              <Composicao linhas={[
+                { rotulo: 'OVs prestes a faturar (cotação/transp./aguard. NF)', valor: dia.quase_nf },
+                { rotulo: 'Negócios com fechamento previsto para hoje', valor: dia.negociacao_hoje },
+              ]} total={dia.previsto_hoje} />
+              {quaseNf.length > 0 && (
+                <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.quase_nf}
+                  linhas={quaseNf.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
+              )}
+              {negHoje.length > 0 && (
+                <Tabela cols={['Cliente', 'Chance', 'Ponderado']}
+                  linhas={negHoje.map(n => [n.cliente || n.cliente_nome || '—', `${n.probabilidade}%`, fmtBRL(n.valor_ponderado)])} />
+              )}
+            </div>
+          )}
+          {tipo === 'realizado' && (
+            realizado_itens.length === 0
+              ? <Vazio texto="Nenhuma NF faturada no mês ainda." />
+              : <Tabela cols={['OV', 'Cliente', 'NF', 'Data', 'Valor']} total={mes.realizado}
+                  linhas={realizado_itens.map(r => [r.numero_pedido, r.cliente || '—', r.numero_nf || '—', fmtData(r.data), fmtBRL(r.valor)])} />
+          )}
+          {tipo === 'em_processo' && (
+            pipeline.length === 0
+              ? <Vazio texto="Nenhuma OV em processo." />
+              : <Tabela cols={['OV', 'Cliente', 'Etapa', 'Entrega', 'Valor est.']} total={mes.em_processo}
+                  linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtData(p.data_prevista_entrega), fmtBRL(p.valor_estimado)])} />
+          )}
+          {tipo === 'saldo_contratos' && (
+            contratos.length === 0
+              ? <Vazio texto="Nenhum contrato com saldo a faturar." />
+              : <Tabela cols={['Contrato / Pregão', 'Total', 'Faturado', 'Saldo']} total={mes.saldo_contratos}
+                  linhas={contratos.map(c => [c.numero_pregao || c.numero || '—', fmtBRL(c.total), fmtBRL(c.faturado), fmtBRL(c.saldo)])} />
+          )}
+          {tipo === 'negociacao' && (
+            negocios.length === 0
+              ? <Vazio texto="Nenhum negócio em negociação." />
+              : <Tabela cols={['Cliente', 'Previsão', 'Chance', 'Valor', 'Ponderado']} total={mes.negociacao_ponderado} totalCol={4}
+                  linhas={negocios.map(n => [n.cliente || n.cliente_nome || '—', fmtData(n.previsao_fechamento), `${n.probabilidade}%`, fmtBRL(n.valor), fmtBRL(n.valor_ponderado)])} />
+          )}
+        </div>
+      </div>
     </div>
   )
+}
+
+function Composicao({ linhas, total, totalRotulo = 'Total', totalCor = 'text-indigo-600' }: {
+  linhas: { rotulo: string; valor: number; sub?: boolean }[]; total: number; totalRotulo?: string; totalCor?: string
+}) {
+  return (
+    <div className="text-sm">
+      {linhas.map((l, i) => (
+        <div key={i} className={`flex justify-between py-2 border-b border-gray-50 ${l.sub ? 'text-gray-500' : 'text-gray-700'}`}>
+          <span>{l.rotulo}</span>
+          <span className="tabular-nums font-medium">{fmtBRL(l.valor)}</span>
+        </div>
+      ))}
+      <div className="flex justify-between pt-3 mt-1">
+        <span className="font-semibold text-gray-800">{totalRotulo}</span>
+        <span className={`tabular-nums font-bold text-lg ${totalCor}`}>{fmtBRL(total)}</span>
+      </div>
+    </div>
+  )
+}
+
+function Tabela({ cols, linhas, total, totalCol }: { cols: string[]; linhas: (string | number)[][]; total?: number; totalCol?: number }) {
+  const ultima = cols.length - 1
+  const colTotal = totalCol ?? ultima
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[11px] uppercase text-gray-400 text-left border-b">
+            {cols.map((c, i) => <th key={i} className={`py-2 font-medium ${i >= 1 && i === ultima ? 'text-right' : ''}`}>{c}</th>)}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {linhas.map((row, i) => (
+            <tr key={i} className="hover:bg-gray-50/60">
+              {row.map((cell, j) => (
+                <td key={j} className={`py-2 ${j === 0 ? 'font-mono text-gray-700' : 'text-gray-700'} ${j === ultima ? 'text-right tabular-nums font-medium' : ''}`}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+        {total != null && (
+          <tfoot>
+            <tr className="border-t">
+              <td className="pt-2 text-xs text-gray-400" colSpan={colTotal}>{linhas.length} item(ns)</td>
+              <td className="pt-2 text-right tabular-nums font-bold text-gray-800" colSpan={cols.length - colTotal}>{fmtBRL(total)}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  )
+}
+
+function Vazio({ texto }: { texto: string }) {
+  return <p className="text-sm text-gray-400 py-6 text-center">{texto}</p>
 }
 
 // ── Seção de negócios em negociação (entrada rápida) ─────────────────────────────

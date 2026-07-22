@@ -154,15 +154,16 @@ def _dias_uteis(inicio: date, fim: date) -> int:
     return n
 
 
-def _realizado_mes(db, inicio: date, fim: date) -> float:
-    """NFs faturadas no mês (BRT), líquidas, só operações de faturamento."""
+def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, list]:
+    """NFs faturadas no mês (BRT), líquidas, só operações de faturamento.
+    Devolve (total, itens) — itens detalham cada OV que gerou o número."""
     janela_ini = (inicio - timedelta(days=1)).isoformat()
     janela_fim = (fim + timedelta(days=1)).isoformat()
     movs = db.table("movimentacoes").select("pedido_id, criado_em")\
         .eq("status_novo", "FATURADO")\
         .gte("criado_em", f"{janela_ini}T00:00:00")\
         .lte("criado_em", f"{janela_fim}T23:59:59").execute().data
-    ids_no_mes = set()
+    dia_por_ped: dict = {}
     for m in movs:
         ts_str, pid = m.get("criado_em"), m.get("pedido_id")
         if not ts_str or not pid:
@@ -173,18 +174,31 @@ def _realizado_mes(db, inicio: date, fim: date) -> float:
         except Exception:
             continue
         if inicio <= dia <= fim:
-            ids_no_mes.add(pid)
-    if not ids_no_mes:
-        return 0.0
+            atual = dia_por_ped.get(pid)
+            if atual is None or dia.isoformat() < atual:
+                dia_por_ped[pid] = dia.isoformat()
+    if not dia_por_ped:
+        return 0.0, []
     total = 0.0
-    ids = list(ids_no_mes)
+    itens: list = []
+    ids = list(dia_por_ped)
     for i in range(0, len(ids), 40):
-        rows = db.table("pedidos").select("valor_nf, valor_frete, tipo_frete, tipo_operacao")\
-            .in_("id", ids[i:i + 40]).execute().data
+        rows = db.table("pedidos").select(
+            "id, numero_pedido, valor_nf, valor_frete, tipo_frete, tipo_operacao, numero_nf, clientes(nome)"
+        ).in_("id", ids[i:i + 40]).execute().data
         for p in rows:
             if _conta_faturamento(p.get("tipo_operacao")):
-                total += _valor_liquido_nf(p)
-    return round(total, 2)
+                v = _valor_liquido_nf(p)
+                total += v
+                itens.append({
+                    "numero_pedido": p.get("numero_pedido"),
+                    "cliente": (p.get("clientes") or {}).get("nome"),
+                    "numero_nf": p.get("numero_nf"),
+                    "data": dia_por_ped.get(p["id"]),
+                    "valor": v,
+                })
+    itens.sort(key=lambda x: x.get("data") or "", reverse=True)
+    return round(total, 2), itens
 
 
 def _itens_por_pedido(db, ids: list) -> dict:
@@ -222,12 +236,14 @@ def _pipeline(db) -> list:
     return out
 
 
-def _saldo_contratos(db) -> float:
-    """Σ (valor total do contrato − já faturado das OVs vinculadas), por empenho ativo."""
-    emps = db.table("empenhos").select("id").eq("ativo", True).execute().data
+def _saldo_contratos(db) -> tuple[float, list]:
+    """Σ (valor total do contrato − já faturado das OVs vinculadas), por empenho ativo.
+    Devolve (saldo_total, contratos) — contratos detalham cada empenho com saldo."""
+    emps = db.table("empenhos").select("id, numero, numero_pregao").eq("ativo", True).execute().data
     if not emps:
-        return 0.0
+        return 0.0, []
     emp_ids = [e["id"] for e in emps]
+    emp_por_id = {e["id"]: e for e in emps}
 
     total_contrato: dict = {}
     for i in range(0, len(emp_ids), 40):
@@ -245,10 +261,23 @@ def _saldo_contratos(db) -> float:
             if p.get("status") in ("FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO") and p.get("valor_nf"):
                 faturado_por_emp[p["empenho_id"]] = faturado_por_emp.get(p["empenho_id"], 0.0) + _valor_liquido_nf(p)
 
-    saldo = 0.0
+    saldo_total = 0.0
+    contratos: list = []
     for eid, total in total_contrato.items():
-        saldo += max(0.0, total - faturado_por_emp.get(eid, 0.0))
-    return round(saldo, 2)
+        fat = faturado_por_emp.get(eid, 0.0)
+        saldo = max(0.0, total - fat)
+        saldo_total += saldo
+        if saldo > 0.005:
+            emp = emp_por_id.get(eid, {})
+            contratos.append({
+                "numero": emp.get("numero"),
+                "numero_pregao": emp.get("numero_pregao"),
+                "total": round(total, 2),
+                "faturado": round(fat, 2),
+                "saldo": round(saldo, 2),
+            })
+    contratos.sort(key=lambda x: x["saldo"], reverse=True)
+    return round(saldo_total, 2), contratos
 
 
 def resumo() -> dict:
@@ -258,10 +287,10 @@ def resumo() -> dict:
     fim = date(hoje.year + (hoje.month // 12), (hoje.month % 12) + 1, 1) - timedelta(days=1)
     comp = f"{hoje.year:04d}-{hoje.month:02d}"
 
-    realizado = _realizado_mes(db, inicio, fim)
+    realizado, realizado_itens = _realizado_mes(db, inicio, fim)
     pipeline = _pipeline(db)
     em_processo_total = round(sum(p["valor_estimado"] for p in pipeline), 2)
-    saldo_contratos = _saldo_contratos(db)
+    saldo_contratos, contratos = _saldo_contratos(db)
     garantido = round(realizado + em_processo_total + saldo_contratos, 2)
 
     try:
@@ -315,4 +344,6 @@ def resumo() -> dict:
         },
         "pipeline": pipeline,
         "negocios": negocios,
+        "realizado_itens": realizado_itens,
+        "contratos": contratos,
     }
