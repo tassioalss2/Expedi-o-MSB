@@ -677,6 +677,14 @@ class CotacaoFreteRequest(BaseModel):
     observacao: Optional[str] = None
 
 
+class TransportadoraClienteRequest(BaseModel):
+    """FOB: o cliente informa qual transportadora vai coletar (vai na NF).
+    Op. Vendas registra e a OV segue para faturamento."""
+    transportadora_id: UUID
+    transportadora_nome_real: Optional[str] = None  # quando "OUTROS"
+    observacao: Optional[str] = None
+
+
 # ── Faturamento ───────────────────────────────────────────────────────────────
 
 class FaturamentoRequest(BaseModel):

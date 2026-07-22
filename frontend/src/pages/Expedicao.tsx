@@ -282,6 +282,12 @@ const INFO_ETAPAS: Record<string, {
     inputs: ['Valor cotado do frete (R$)', 'Observação (transportadora, prazo — opcional)'],
     criterio: 'Frete cotado → clicar em "Registrar cotação de frete" para liberar o faturamento',
   },
+  AGUARD_TRANSPORTADORA: {
+    responsavel: 'Operações de Vendas',
+    objetivo: 'OV FOB: aguardar o cliente informar qual transportadora vai coletar. A transportadora vai na NF, então só faturamos depois disso. CIF não passa por aqui.',
+    inputs: ['Transportadora informada pelo cliente', 'Nome real (se OUTROS)', 'Observação (opcional)'],
+    criterio: 'Transportadora informada → clicar em "Registrar transportadora do cliente" para liberar o faturamento',
+  },
   AGUARD_FATURAMENTO: {
     responsavel: 'Operações de Vendas',
     objetivo: 'Emitir a nota fiscal após receber a mensagem de cubagem',
@@ -356,7 +362,7 @@ function InfoEtapaModal({ status, cfg, onClose }: { status: string; cfg: any; on
 
 const KANBAN_LAYOUT: StatusPedido[][] = [
   ['AGUARD_CREDITO', 'LIBERADO', 'EM_INVENTARIO'],
-  ['AGUARD_VERIFICACAO', 'EM_PROCESSO_SISTEMICO', 'EM_COTACAO_FRETE', 'AGUARD_FATURAMENTO'],
+  ['AGUARD_VERIFICACAO', 'EM_PROCESSO_SISTEMICO', 'EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA', 'AGUARD_FATURAMENTO'],
   ['FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'],
 ]
 
@@ -451,6 +457,7 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
 const ORDEM_LISTA: StatusPedido[] = [
   'AGUARD_CREDITO', 'LIBERADO', 'EM_INVENTARIO', 'AGUARD_VERIFICACAO',
   'DIVERGENCIA', 'AGUARD_TRATATIVA', 'EM_PROCESSO_SISTEMICO',
+  'EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA',
   'AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO',
   'BLOQUEADO', 'CANCELADO',
 ]

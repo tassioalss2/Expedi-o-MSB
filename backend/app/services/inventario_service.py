@@ -204,6 +204,7 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
     STATUSES_CUBAGEM = [
         StatusPedido.EM_PROCESSO_SISTEMICO.value,
         StatusPedido.EM_COTACAO_FRETE.value,
+        StatusPedido.AGUARD_TRANSPORTADORA.value,
         StatusPedido.AGUARD_FATURAMENTO.value,
         StatusPedido.FATURADO.value,
         StatusPedido.AGUARD_COLETA.value,
@@ -252,7 +253,8 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
         })
 
     # Só avança o status se ainda estiver em processo sistêmico.
-    # CIF (com/sem valor) precisa cotar o frete antes de faturar; FOB vai direto.
+    # CIF (com/sem valor) precisa cotar o frete antes de faturar; FOB fica
+    # aguardando o cliente informar a transportadora (que vai na NF).
     if pedido["status"] == StatusPedido.EM_PROCESSO_SISTEMICO.value:
         eh_cif = (pedido.get("tipo_frete") or "FOB") in (
             TipoFrete.CIF_COM_VALOR.value, TipoFrete.CIF_SEM_VALOR.value,
@@ -261,8 +263,8 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
             alterar_status(pedido_id, StatusPedido.EM_COTACAO_FRETE.value, usuario,
                            "Cubagem registrada — CIF: aguardando cotação de frete")
         else:
-            alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario,
-                           "Cubagem registrada — FOB: aguardando faturamento")
+            alterar_status(pedido_id, StatusPedido.AGUARD_TRANSPORTADORA.value, usuario,
+                           "Cubagem registrada — FOB: aguardando transportadora do cliente")
 
     # Alimenta o inventário contínuo automaticamente (falha silenciosa para não bloquear)
     try:

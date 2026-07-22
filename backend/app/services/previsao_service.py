@@ -32,10 +32,15 @@ _STATUS_PIPELINE = [
     StatusPedido.AGUARD_TRATATIVA.value,
     StatusPedido.EM_PROCESSO_SISTEMICO.value,
     StatusPedido.EM_COTACAO_FRETE.value,
+    StatusPedido.AGUARD_TRANSPORTADORA.value,
     StatusPedido.AGUARD_FATURAMENTO.value,
 ]
 # Prestes a faturar (usado na previsão do dia).
-_STATUS_QUASE_NF = [StatusPedido.EM_COTACAO_FRETE.value, StatusPedido.AGUARD_FATURAMENTO.value]
+_STATUS_QUASE_NF = [
+    StatusPedido.EM_COTACAO_FRETE.value,
+    StatusPedido.AGUARD_TRANSPORTADORA.value,
+    StatusPedido.AGUARD_FATURAMENTO.value,
+]
 
 _STATUS_NEGOCIO = ["ABERTO", "GANHO", "PERDIDO"]
 

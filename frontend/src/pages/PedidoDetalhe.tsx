@@ -809,7 +809,8 @@ const RETORNOS: Record<string, { label: string; destinos: { status: string; labe
   AGUARD_TRATATIVA:      { label: 'Aguard. Tratativa',    destinos: [{ status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   EM_PROCESSO_SISTEMICO: { label: 'D365 + Cubagem',       destinos: [{ status: 'AGUARD_VERIFICACAO', label: 'Aguard. Verificação' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   EM_COTACAO_FRETE:      { label: 'Cotação de Frete',     destinos: [{ status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
-  AGUARD_FATURAMENTO:    { label: 'Aguard. Faturamento',  destinos: [{ status: 'EM_COTACAO_FRETE', label: 'Cotação de Frete' }, { status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
+  AGUARD_TRANSPORTADORA: { label: 'Aguard. Transportadora', destinos: [{ status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
+  AGUARD_FATURAMENTO:    { label: 'Aguard. Faturamento',  destinos: [{ status: 'EM_COTACAO_FRETE', label: 'Cotação de Frete' }, { status: 'AGUARD_TRANSPORTADORA', label: 'Aguard. Transportadora' }, { status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'EM_INVENTARIO', label: 'Em Inventário' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   FATURADO:              { label: 'Faturado',             destinos: [{ status: 'AGUARD_FATURAMENTO', label: 'Aguard. Faturamento' }, { status: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
   AGUARD_COLETA:         { label: 'No Pallet',            destinos: [{ status: 'FATURADO', label: 'Faturado (remover do pallet)' }, { status: 'LIBERADO', label: 'OV Recebida (início)' }] },
 }
@@ -1286,6 +1287,81 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
   )
 }
 
+// ── Modal Transportadora do Cliente (FOB) ────────────────────────────────────
+function ModalTransportadoraCliente({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [transportadoraId, setTransportadoraId] = useState(pedido.transportadora_id || '')
+  const [nomeReal, setNomeReal] = useState('')
+  const [obs, setObs] = useState('')
+
+  const { data: transportadoras = [] } = useQuery<Transportadora[]>({
+    queryKey: ['transportadoras'],
+    queryFn: () => api.get('/transportadoras').then(r => r.data),
+  })
+  const transpSel = (transportadoras as any[]).find((t: any) => t.id === transportadoraId)
+  const isOutros = (transpSel?.nome || '').toUpperCase().includes('OUTROS')
+  const podeSalvar = !!transportadoraId && (!isOutros || nomeReal.trim().length > 0)
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/transportadora-cliente`, {
+      transportadora_id: transportadoraId,
+      transportadora_nome_real: isOutros && nomeReal.trim() ? nomeReal.trim() : null,
+      observacao: obs.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success('Transportadora registrada — OV liberada para faturamento')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao registrar transportadora'),
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md">
+        <div className="p-5 border-b bg-orange-50 rounded-t-2xl flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-orange-800">📥 Transportadora do Cliente — {pedido.numero_pedido}</h2>
+            <p className="text-sm text-orange-700 mt-0.5">FOB · a transportadora vai na NF</p>
+          </div>
+          <button onClick={onClose} className="text-orange-700 hover:text-orange-900"><XCircle size={20} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-[13px] text-gray-500">O cliente informou qual transportadora vai coletar. Registre para liberar o faturamento.</p>
+          <div>
+            <label className="text-sm font-medium text-gray-700">Transportadora *</label>
+            <select value={transportadoraId} onChange={e => setTransportadoraId(e.target.value)} autoFocus
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+              <option value="">Selecione a transportadora informada…</option>
+              {(transportadoras as any[]).map((t: any) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+            </select>
+          </div>
+          {isOutros && (
+            <div>
+              <label className="text-sm font-medium text-gray-700">Nome real da transportadora *</label>
+              <input value={nomeReal} onChange={e => setNomeReal(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="Ex: Jamef, Braspress…" />
+            </div>
+          )}
+          <div>
+            <label className="text-sm font-medium text-gray-700">Observação (opcional)</label>
+            <input value={obs} onChange={e => setObs(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="Prazo, contato, etc." />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button onClick={onClose} className="flex-1 py-2.5 border rounded-lg text-sm text-gray-600">Cancelar</button>
+            <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !podeSalvar}
+              className="flex-1 py-2.5 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-500 disabled:opacity-50">
+              {mutation.isPending ? 'Salvando…' : 'Liberar para faturamento'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal Alterar Tipo de Frete ──────────────────────────────────────────────
 const TIPOS_FRETE = ['FOB', 'CIF_COM_VALOR', 'CIF_SEM_VALOR'] as const
 
@@ -1735,7 +1811,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -1880,8 +1956,10 @@ export function PedidoDetalhe() {
     { key: 'EM_INVENTARIO', label: 'Inventário', icone: '📦' },
     { key: 'AGUARD_VERIFICACAO', label: 'Verificação Física', icone: '🔍' },
     { key: 'EM_PROCESSO_SISTEMICO', label: 'D365 + Cubagem', icone: '💻' },
-    // Cotação de frete só existe no fluxo CIF (FOB pula direto pro faturamento)
-    ...(isCIF ? [{ key: 'EM_COTACAO_FRETE', label: 'Cotação de Frete', icone: '🚚' }] : []),
+    // CIF passa por Cotação de frete; FOB fica aguardando a transportadora do cliente.
+    ...(isCIF
+      ? [{ key: 'EM_COTACAO_FRETE', label: 'Cotação de Frete', icone: '🚚' }]
+      : [{ key: 'AGUARD_TRANSPORTADORA', label: 'Transportadora', icone: '📥' }]),
     { key: 'AGUARD_FATURAMENTO', label: 'Faturamento', icone: '🧾' },
     { key: 'FATURADO', label: 'Pallet', icone: '📦' },
     { key: 'EXPEDIDO', label: 'Expedido', icone: '✅' },
@@ -2357,6 +2435,13 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
+              {status === 'AGUARD_TRANSPORTADORA' && (
+                <button onClick={() => setModal('transportadora_cliente')}
+                  className="w-full flex items-center gap-2 justify-center py-3 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-500">
+                  <Truck size={16} /> Registrar transportadora do cliente
+                </button>
+              )}
+
               {status === 'AGUARD_FATURAMENTO' && (
                 <button onClick={() => setModal('faturamento')}
                   className="w-full flex items-center gap-2 justify-center py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-500">
@@ -2472,6 +2557,7 @@ export function PedidoDetalhe() {
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-md">

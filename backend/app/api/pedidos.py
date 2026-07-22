@@ -15,6 +15,7 @@ from app.models.schemas import (
     CotacaoFreteRequest,
     FaturamentoRequest,
     MetaFaturamentoRequest,
+    TransportadoraClienteRequest,
     FinalizarConferenciaRequest,
     FinalizarSeparacaoRequest,
     ImportacaoResultado,
@@ -316,6 +317,15 @@ def registrar_cotacao_frete(
     usuario: UsuarioOut = Depends(get_current_user),
 ):
     return pedido_service.registrar_cotacao_frete(str(pedido_id), payload, usuario)
+
+
+@router.post("/{pedido_id}/transportadora-cliente")
+def registrar_transportadora_cliente(
+    pedido_id: UUID,
+    payload: TransportadoraClienteRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    return pedido_service.registrar_transportadora_cliente(str(pedido_id), payload, usuario)
 
 
 @router.post("/{pedido_id}/faturamento")
