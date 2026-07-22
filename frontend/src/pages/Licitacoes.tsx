@@ -1507,7 +1507,7 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
         )}
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
-          <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Data esperada pelo cliente *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
           <Campo label="Tipo de frete">
             <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value)} className={inputCls}>
               <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
@@ -1895,7 +1895,7 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
         </div>
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" /></Campo>
-          <Campo label="Data prevista de entrega *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
+          <Campo label="Data esperada pelo cliente *"><input type="date" value={dataEntrega} min={hoje} onChange={e => setDataEntrega(e.target.value)} className={inputCls} /></Campo>
           <Campo label="Tipo de frete">
             <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value)} className={inputCls}>
               <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>

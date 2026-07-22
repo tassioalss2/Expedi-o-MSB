@@ -91,6 +91,7 @@ export interface Pedido {
   canal?: string
   local_entrega?: string
   data_prevista_entrega: string
+  data_esperada_cliente?: string
   data_prevista_coleta?: string
   data_real_coleta?: string
   numero_nf?: string

@@ -675,6 +675,9 @@ class CotacaoFreteRequest(BaseModel):
     valor_frete: Optional[float] = None       # valor cotado do frete
     transportadora_id: Optional[UUID] = None  # transportadora cotada (opcional)
     observacao: Optional[str] = None
+    # Data prevista de entrega confirmada por Op. Vendas neste momento (a data
+    # da criação era só a esperada pelo cliente).
+    data_prevista_entrega: Optional[date] = None
 
 
 class TransportadoraClienteRequest(BaseModel):
@@ -683,6 +686,8 @@ class TransportadoraClienteRequest(BaseModel):
     transportadora_id: UUID
     transportadora_nome_real: Optional[str] = None  # quando "OUTROS"
     observacao: Optional[str] = None
+    # Data prevista de entrega confirmada por Op. Vendas neste momento.
+    data_prevista_entrega: Optional[date] = None
 
 
 # ── Faturamento ───────────────────────────────────────────────────────────────

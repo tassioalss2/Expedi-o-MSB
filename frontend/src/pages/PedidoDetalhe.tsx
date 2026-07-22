@@ -1230,6 +1230,8 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
   const qc = useQueryClient()
   const [valorFrete, setValorFrete] = useState(pedido.valor_frete ? String(pedido.valor_frete) : '')
   const [obs, setObs] = useState('')
+  const esperadaCliente = (pedido as any).data_esperada_cliente || pedido.data_prevista_entrega
+  const [dataEntrega, setDataEntrega] = useState(esperadaCliente || '')
   const semValor = pedido.tipo_frete === 'CIF_SEM_VALOR'
   const valorOk = Number(valorFrete) > 0
 
@@ -1237,6 +1239,7 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
     mutationFn: () => api.post(`/pedidos/${pedido.id}/cotacao-frete`, {
       valor_frete: valorOk ? Number(valorFrete) : null,
       observacao: obs.trim() || null,
+      data_prevista_entrega: dataEntrega || null,
     }),
     onSuccess: () => {
       toast.success('Frete cotado — OV liberada para faturamento')
@@ -1258,9 +1261,20 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
           <button onClick={onClose} className="text-amber-700 hover:text-amber-900"><XCircle size={20} /></button>
         </div>
         <div className="p-5 space-y-4">
+          {esperadaCliente && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-2.5 text-sm text-blue-800">
+              📅 Data esperada pelo cliente: <strong>{new Date(esperadaCliente + 'T12:00:00').toLocaleDateString('pt-BR')}</strong>
+            </div>
+          )}
+          <div>
+            <label className="text-sm font-medium text-gray-700">Data prevista de entrega *</label>
+            <input type="date" value={dataEntrega} onChange={e => setDataEntrega(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <p className="text-[11px] text-gray-400 mt-1">Confirme a data real de entrega com base no prazo do frete cotado.</p>
+          </div>
           <div>
             <label className="text-sm font-medium text-gray-700">Valor cotado do frete (R$)</label>
-            <input type="number" step="0.01" min="0" value={valorFrete} autoFocus
+            <input type="number" step="0.01" min="0" value={valorFrete}
               onChange={e => setValorFrete(e.target.value)}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
             <p className="text-[11px] text-gray-400 mt-1">
@@ -1276,7 +1290,7 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
           </div>
           <div className="flex gap-2 pt-1">
             <button onClick={onClose} className="flex-1 py-2.5 border rounded-lg text-sm text-gray-600">Cancelar</button>
-            <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
+            <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !dataEntrega}
               className="flex-1 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-500 disabled:opacity-50">
               {mutation.isPending ? 'Salvando…' : 'Liberar para faturamento'}
             </button>
@@ -1293,6 +1307,8 @@ function ModalTransportadoraCliente({ pedido, onClose }: { pedido: Pedido; onClo
   const [transportadoraId, setTransportadoraId] = useState(pedido.transportadora_id || '')
   const [nomeReal, setNomeReal] = useState('')
   const [obs, setObs] = useState('')
+  const esperadaCliente = (pedido as any).data_esperada_cliente || pedido.data_prevista_entrega
+  const [dataEntrega, setDataEntrega] = useState(esperadaCliente || '')
 
   const { data: transportadoras = [] } = useQuery<Transportadora[]>({
     queryKey: ['transportadoras'],
@@ -1300,13 +1316,14 @@ function ModalTransportadoraCliente({ pedido, onClose }: { pedido: Pedido; onClo
   })
   const transpSel = (transportadoras as any[]).find((t: any) => t.id === transportadoraId)
   const isOutros = (transpSel?.nome || '').toUpperCase().includes('OUTROS')
-  const podeSalvar = !!transportadoraId && (!isOutros || nomeReal.trim().length > 0)
+  const podeSalvar = !!transportadoraId && !!dataEntrega && (!isOutros || nomeReal.trim().length > 0)
 
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/transportadora-cliente`, {
       transportadora_id: transportadoraId,
       transportadora_nome_real: isOutros && nomeReal.trim() ? nomeReal.trim() : null,
       observacao: obs.trim() || null,
+      data_prevista_entrega: dataEntrega || null,
     }),
     onSuccess: () => {
       toast.success('Transportadora registrada — OV liberada para faturamento')
@@ -1329,6 +1346,11 @@ function ModalTransportadoraCliente({ pedido, onClose }: { pedido: Pedido; onClo
         </div>
         <div className="p-5 space-y-4">
           <p className="text-[13px] text-gray-500">O cliente informou qual transportadora vai coletar. Registre para liberar o faturamento.</p>
+          {esperadaCliente && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-2.5 text-sm text-blue-800">
+              📅 Data esperada pelo cliente: <strong>{new Date(esperadaCliente + 'T12:00:00').toLocaleDateString('pt-BR')}</strong>
+            </div>
+          )}
           <div>
             <label className="text-sm font-medium text-gray-700">Transportadora *</label>
             <select value={transportadoraId} onChange={e => setTransportadoraId(e.target.value)} autoFocus
@@ -1336,6 +1358,12 @@ function ModalTransportadoraCliente({ pedido, onClose }: { pedido: Pedido; onClo
               <option value="">Selecione a transportadora informada…</option>
               {(transportadoras as any[]).map((t: any) => <option key={t.id} value={t.id}>{t.nome}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">Data prevista de entrega *</label>
+            <input type="date" value={dataEntrega} onChange={e => setDataEntrega(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <p className="text-[11px] text-gray-400 mt-1">Confirme a data real com base no prazo da transportadora.</p>
           </div>
           {isOutros && (
             <div>

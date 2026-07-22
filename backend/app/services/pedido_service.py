@@ -301,6 +301,13 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     if itens:
         db.table("itens_pedido").insert(itens).execute()
 
+    # Data esperada pelo cliente (informada na criação). Best-effort: a coluna
+    # pode não existir ainda (migration v14) — se falhar, a OV segue normal.
+    try:
+        db.table("pedidos").update({"data_esperada_cliente": pedido_data["data_prevista_entrega"]}).eq("id", pedido["id"]).execute()
+    except Exception:
+        pass
+
     obs_criacao = "Pedido criado — em gerenciamento de crédito" if payload.em_gerenciamento_credito else "Pedido criado"
     _registrar_movimentacao(pedido["id"], None, status_inicial, str(usuario.id), obs_criacao)
 
@@ -829,11 +836,15 @@ def registrar_cotacao_frete(pedido_id: str, payload: "CotacaoFreteRequest", usua
         update_data["valor_frete"] = payload.valor_frete
     if payload.transportadora_id is not None:
         update_data["transportadora_id"] = str(payload.transportadora_id)
+    if payload.data_prevista_entrega is not None:
+        update_data["data_prevista_entrega"] = payload.data_prevista_entrega.isoformat()
     db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
 
     obs = "Frete cotado"
     if payload.valor_frete is not None:
         obs += f" — R$ {payload.valor_frete:.2f}"
+    if payload.data_prevista_entrega is not None:
+        obs += f" — entrega prevista {payload.data_prevista_entrega.strftime('%d/%m/%Y')}"
     if payload.observacao:
         obs += f" — {payload.observacao}"
     alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario, obs)
@@ -852,6 +863,8 @@ def registrar_transportadora_cliente(pedido_id: str, payload: "TransportadoraCli
         "transportadora_id": str(payload.transportadora_id),
         "atualizado_em": _agora(),
     }
+    if payload.data_prevista_entrega is not None:
+        update_data["data_prevista_entrega"] = payload.data_prevista_entrega.isoformat()
     # "OUTROS": guarda o nome real em observacoes no padrão [Transp. real: X]
     nome_real = (payload.transportadora_nome_real or "").strip()
     if nome_real:
@@ -862,6 +875,8 @@ def registrar_transportadora_cliente(pedido_id: str, payload: "TransportadoraCli
     db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
 
     obs = "Transportadora do cliente informada"
+    if payload.data_prevista_entrega is not None:
+        obs += f" — entrega prevista {payload.data_prevista_entrega.strftime('%d/%m/%Y')}"
     if payload.observacao:
         obs += f" — {payload.observacao}"
     alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario, obs)
