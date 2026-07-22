@@ -16,7 +16,8 @@ import {
 } from '../../lib/crm'
 import { ModalBase, Campo, inputCls } from './CrmShared'
 
-const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE', 'LICITACAO_URO', 'LICITACAO_VASCULAR']
+// CRM é do comercial — licitação NÃO entra aqui (tem módulo próprio).
+const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE']
 
 export function CrmPipeline() {
   const qc = useQueryClient()
@@ -178,11 +179,27 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
     }))
   )
 
-  const { data: contatos = [] } = useQuery<any[]>({
+  const [novoContato, setNovoContato] = useState(false)
+
+  const { data: contatos = [], refetch: refetchContatos } = useQuery<any[]>({
     queryKey: ['crm-contatos', clienteId],
     queryFn: () => api.get('/crm/contatos', { params: { cliente_id: clienteId } }).then(r => r.data),
     enabled: !!clienteId,
   })
+
+  // Cadastro rápido de cliente/prospect direto do CRM (pede confirmação).
+  const criarClienteNovo = async (nome: string) => {
+    if (!confirm(`"${nome}" não está cadastrado.\n\nConfirmar o cadastro de um NOVO cliente com esse nome?`)) return null
+    try {
+      const { data } = await api.post('/crm/clientes', { nome })
+      setClienteNome(data.nome); setContatoId('')
+      toast.success('Cliente cadastrado')
+      return { id: data.id, nome: data.nome }
+    } catch (e: any) {
+      toast.error(msgErro(e, 'Erro ao cadastrar cliente'), { duration: 5000 })
+      return null
+    }
+  }
 
   const totalItens = itens.reduce((a, i) => a + i.qtd * (i.valor || 0), 0)
 
@@ -211,22 +228,30 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
     <ModalBase titulo={edicao ? 'Editar oportunidade' : 'Nova oportunidade'} onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
         <Campo label="Título *">
-          <input value={titulo} onChange={e => setTitulo(e.target.value)} className={inputCls} placeholder="Ex: Pregão 042/2026 — cateteres vasculares" />
+          <input value={titulo} onChange={e => setTitulo(e.target.value)} className={inputCls} placeholder="Ex: Reposição trimestral — cateteres vasculares" />
         </Campo>
-        <Campo label="Cliente / Órgão">
-          <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome); setContatoId('') }} />
+        <Campo label="Cliente">
+          <ClienteAutocomplete value={clienteId} onCriarNovo={criarClienteNovo}
+            onChange={(id, nome) => { setClienteId(id); setClienteNome(nome); setContatoId('') }} />
           {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
         </Campo>
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Contato">
-            <select value={contatoId} onChange={e => setContatoId(e.target.value)} className={inputCls} disabled={!clienteId}>
-              <option value="">{clienteId ? '— nenhum —' : 'selecione o cliente'}</option>
-              {contatos.map(c => <option key={c.id} value={c.id}>{c.nome}{c.cargo ? ` (${c.cargo})` : ''}</option>)}
-            </select>
+            <div className="flex gap-1.5">
+              <select value={contatoId} onChange={e => setContatoId(e.target.value)} className={`${inputCls} flex-1`} disabled={!clienteId}>
+                <option value="">{clienteId ? '— nenhum —' : 'selecione o cliente'}</option>
+                {contatos.map(c => <option key={c.id} value={c.id}>{c.nome}{c.cargo ? ` (${c.cargo})` : ''}</option>)}
+              </select>
+              <button type="button" onClick={() => setNovoContato(true)} disabled={!clienteId}
+                title="Cadastrar novo contato"
+                className="px-2.5 rounded-lg border text-sm text-blue-600 hover:bg-blue-50 disabled:opacity-40 whitespace-nowrap">
+                ➕ Novo
+              </button>
+            </div>
           </Campo>
-          <Campo label="Canal">
+          <Campo label="Canal *">
             <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
-              <option value="">A definir…</option>
+              <option value="">Selecione o canal…</option>
               {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
             </select>
           </Campo>
@@ -257,9 +282,56 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => salvar.mutate()} disabled={!titulo.trim() || salvar.isPending}
+        <button onClick={() => salvar.mutate()} disabled={!titulo.trim() || !canal || salvar.isPending}
+          title={!canal ? 'Selecione o canal' : ''}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
           {salvar.isPending ? 'Salvando…' : edicao ? 'Salvar' : 'Criar oportunidade'}
+        </button>
+      </div>
+      {novoContato && (
+        <ModalNovoContato clienteId={clienteId} clienteNome={clienteNome}
+          onClose={() => setNovoContato(false)}
+          onSaved={async (novo) => { await refetchContatos(); setContatoId(novo.id); setNovoContato(false) }} />
+      )}
+    </ModalBase>
+  )
+}
+
+// ── Cadastro rápido de contato (pelo comercial) ─────────────────────────────────────
+function ModalNovoContato({ clienteId, clienteNome, onClose, onSaved }: {
+  clienteId: string; clienteNome: string; onClose: () => void; onSaved: (novo: { id: string; nome: string }) => void
+}) {
+  const [nome, setNome] = useState('')
+  const [cargo, setCargo] = useState('')
+  const [email, setEmail] = useState('')
+  const [telefone, setTelefone] = useState('')
+
+  const m = useMutation({
+    mutationFn: () => api.post('/crm/contatos', {
+      nome: nome.trim(), cargo: cargo.trim() || null,
+      email: email.trim() || null, telefone: telefone.trim() || null,
+      cliente_id: clienteId || null,
+    }),
+    onSuccess: (res) => { toast.success('Contato cadastrado'); onSaved({ id: res.data.id, nome: res.data.nome }) },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao cadastrar contato'), { duration: 5000 }),
+  })
+
+  return (
+    <ModalBase titulo="Novo contato" onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <p className="text-sm text-gray-500">Confirme o cadastro de um novo contato{clienteNome ? ` para ${clienteNome}` : ''}. E-mail e telefone são opcionais.</p>
+        <Campo label="Nome *"><input value={nome} onChange={e => setNome(e.target.value)} className={inputCls} placeholder="Ex: Dra. Ana Souza" autoFocus /></Campo>
+        <Campo label="Cargo"><input value={cargo} onChange={e => setCargo(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="E-mail (opcional)"><input type="email" value={email} onChange={e => setEmail(e.target.value)} className={inputCls} placeholder="nome@orgao.gov.br" /></Campo>
+          <Campo label="Telefone (opcional)"><input value={telefone} onChange={e => setTelefone(e.target.value)} className={inputCls} placeholder="(00) 00000-0000" /></Campo>
+        </div>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => m.mutate()} disabled={!nome.trim() || m.isPending}
+          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          {m.isPending ? 'Cadastrando…' : 'Cadastrar contato'}
         </button>
       </div>
     </ModalBase>
@@ -451,7 +523,7 @@ function ModalPerder({ id, onClose, onSaved }: { id: string; onClose: () => void
       <div className="p-5 space-y-3">
         <p className="text-sm text-gray-500">Registrar o motivo ajuda a analisar as perdas depois.</p>
         <Campo label="Motivo da perda *">
-          <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)} className={inputCls} placeholder="Ex: preço acima do concorrente; prazo de entrega; perdeu o pregão" autoFocus />
+          <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)} className={inputCls} placeholder="Ex: preço acima do concorrente; prazo de entrega; sem verba" autoFocus />
         </Campo>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">

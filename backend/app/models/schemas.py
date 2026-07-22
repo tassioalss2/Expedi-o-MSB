@@ -378,6 +378,13 @@ class DemandaConcluir(BaseModel):
 
 
 # ── CRM ──────────────────────────────────────────────────────────────────────────
+class ClienteRapidoCreate(BaseModel):
+    """Cadastro de cliente/prospect direto do CRM (comercial). O código é
+    gerado automaticamente — o cliente ainda não está no D365."""
+    nome: str
+    cnpj: Optional[str] = None
+
+
 class ContatoCreate(BaseModel):
     nome: str
     cargo: Optional[str] = None

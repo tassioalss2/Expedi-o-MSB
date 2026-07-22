@@ -7,10 +7,14 @@ import type { Cliente, Transportadora } from '../types'
 import toast from 'react-hot-toast'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 
-export function ClienteAutocomplete({ value, onChange, initialNome }: { value: string; onChange: (id: string, nome: string) => void; initialNome?: string }) {
+export function ClienteAutocomplete({ value, onChange, initialNome, onCriarNovo }: {
+  value: string; onChange: (id: string, nome: string) => void; initialNome?: string
+  onCriarNovo?: (nome: string) => Promise<{ id: string; nome: string } | null | undefined>
+}) {
   const [busca, setBusca] = useState('')
   const [aberto, setAberto] = useState(false)
   const [nomeSelecionado, setNomeSelecionado] = useState(value && initialNome ? initialNome : '')
+  const [criando, setCriando] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   const { data: clientes = [] } = useQuery<Cliente[]>({
@@ -31,11 +35,24 @@ export function ClienteAutocomplete({ value, onChange, initialNome }: { value: s
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const selecionar = (cliente: Cliente) => {
+  const selecionar = (cliente: { id: string; nome: string }) => {
     setNomeSelecionado(cliente.nome)
     setBusca('')
     setAberto(false)
     onChange(cliente.id, cliente.nome)
+  }
+
+  const criarNovo = async () => {
+    if (!onCriarNovo || criando) return
+    const nome = busca.trim()
+    if (!nome) return
+    setCriando(true)
+    try {
+      const novo = await onCriarNovo(nome)
+      if (novo?.id) selecionar({ id: novo.id, nome: novo.nome })
+    } finally {
+      setCriando(false)
+    }
   }
 
   return (
@@ -67,6 +84,12 @@ export function ClienteAutocomplete({ value, onChange, initialNome }: { value: s
               <span className="text-gray-400 text-xs ml-2">{c.codigo}</span>
             </button>
           ))}
+          {onCriarNovo && (
+            <button onClick={criarNovo} disabled={criando}
+              className="w-full text-left px-4 py-2.5 text-sm border-t border-gray-100 bg-blue-50/50 hover:bg-blue-50 text-blue-700 font-medium disabled:opacity-60">
+              {criando ? 'Cadastrando…' : <>➕ Cadastrar novo cliente: <span className="font-semibold">“{busca.trim()}”</span></>}
+            </button>
+          )}
         </div>
       )}
     </div>

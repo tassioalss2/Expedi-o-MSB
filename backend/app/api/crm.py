@@ -9,6 +9,7 @@ from app.models.schemas import (
     AtividadeUpdate,
     ContatoCreate,
     ContatoUpdate,
+    ClienteRapidoCreate,
     CotacaoCreate,
     CotacaoUpdate,
     GerarOVRequest,
@@ -34,6 +35,12 @@ router = APIRouter(prefix="/crm", tags=["crm"])
 @router.get("/dashboard")
 def dashboard(_: UsuarioOut = Depends(get_current_user)):
     return crm_service.dashboard()
+
+
+# ── Clientes (cadastro rápido pelo comercial) ──────────────────────────────────────
+@router.post("/clientes", status_code=201)
+def criar_cliente_rapido(payload: ClienteRapidoCreate, _: UsuarioOut = Depends(get_current_user)):
+    return crm_service.criar_cliente_rapido(payload.nome, payload.cnpj)
 
 
 # ── Contatos ─────────────────────────────────────────────────────────────────────

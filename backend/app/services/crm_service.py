@@ -43,6 +43,40 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# ── Clientes (cadastro rápido pelo comercial) ──────────────────────────────────────
+def criar_cliente_rapido(nome: str, cnpj: Optional[str] = None) -> dict:
+    """Cadastra um cliente/prospect direto do CRM. Gera um código único com
+    prefixo CRM- (marca que ainda não veio do D365). Se já existir um cliente
+    ativo com o mesmo nome, reutiliza em vez de duplicar."""
+    import uuid
+
+    db = get_service_db()
+    nome = (nome or "").strip()
+    if not nome:
+        raise HTTPException(status_code=422, detail="Informe o nome do cliente.")
+
+    existe = db.table("clientes").select("*").eq("nome", nome).eq("ativo", True).limit(1).execute().data
+    if existe:
+        return existe[0]
+
+    codigo = ""
+    for _ in range(10):
+        cand = "CRM-" + uuid.uuid4().hex[:6].upper()
+        if not db.table("clientes").select("id").eq("codigo", cand).limit(1).execute().data:
+            codigo = cand
+            break
+    if not codigo:
+        raise HTTPException(status_code=500, detail="Não foi possível gerar o código do cliente.")
+
+    return db.table("clientes").insert({
+        "codigo": codigo,
+        "nome": nome,
+        "cnpj": (cnpj or "").strip() or None,
+        "prioridade": 0,
+        "ativo": True,
+    }).execute().data[0]
+
+
 # ── Contatos ─────────────────────────────────────────────────────────────────────
 def _serializar_contato(c: dict) -> dict:
     return {
