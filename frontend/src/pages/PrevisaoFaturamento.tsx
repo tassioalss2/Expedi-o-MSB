@@ -29,7 +29,7 @@ interface Resumo {
     meta: number | null; atingimento_previsto_pct: number | null
   }
   dia: {
-    previsto_hoje: number; ovs_kanban: number; quase_nf: number; negociacao_hoje: number
+    sai_hoje: number; no_kanban: number; ovs_kanban: number; quase_nf: number; negociacao_hoje: number
     dias_uteis_restantes: number; falta_meta: number | null; ritmo_necessario: number | null
     no_ritmo: boolean | null
   }
@@ -116,12 +116,17 @@ export function PrevisaoFaturamento() {
         {/* ── Previsão do DIA ───────────────────────────────────────── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <h2 className="font-semibold text-gray-700 flex items-center gap-2 mb-3"><Target size={16} /> Previsão do dia</h2>
-          <button onClick={() => setDetalhe('previsto_hoje')} className="text-left group w-full">
-            <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">Deve faturar hoje <Info size={11} className="opacity-40" /></p>
-            <p className="text-2xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(dia.previsto_hoje)}</p>
+          <button onClick={() => setDetalhe('sai_hoje')} className="text-left group w-full">
+            <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">Sai hoje (prestes a faturar) <Info size={11} className="opacity-40" /></p>
+            <p className="text-2xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(dia.sai_hoje)}</p>
             <p className="text-[11px] text-gray-400 mt-0.5">
-              Todas as OVs no kanban {fmtBRL(dia.ovs_kanban)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
+              OVs prestes a faturar {fmtBRL(dia.quase_nf)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
             </p>
+          </button>
+          <button onClick={() => setDetalhe('no_kanban')} className="text-left group w-full mt-2">
+            <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">No kanban (potencial) <Info size={11} className="opacity-40" /></p>
+            <p className="text-lg font-bold text-gray-700 tabular-nums group-hover:underline decoration-gray-300 underline-offset-4">{fmtBRL(dia.no_kanban)}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">todas as OVs do kanban + negócios de hoje</p>
           </button>
           <div className="mt-4 pt-3 border-t border-gray-100">
             {dia.ritmo_necessario != null ? (
@@ -140,16 +145,16 @@ export function PrevisaoFaturamento() {
             )}
           </div>
 
-          {/* Sinal: previsto hoje x ritmo necessário */}
+          {/* Sinal: volume no kanban x ritmo necessário */}
           {dia.no_ritmo != null && dia.ritmo_necessario != null && (
             <div className={`mt-4 rounded-xl p-3 border ${dia.no_ritmo ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
               <p className={`text-sm font-bold flex items-center gap-1.5 ${dia.no_ritmo ? 'text-emerald-700' : 'text-red-700'}`}>
-                {dia.no_ritmo ? '✅ Dentro do ritmo' : '⚠️ Abaixo do ritmo'}
+                {dia.no_ritmo ? '✅ Volume dentro do ritmo' : '⚠️ Volume abaixo do ritmo'}
               </p>
               <p className={`text-[11px] mt-0.5 ${dia.no_ritmo ? 'text-emerald-600/80' : 'text-red-600/80'}`}>
                 {dia.no_ritmo
-                  ? `Previsto hoje ${fmtBRL(dia.previsto_hoje)} cobre o ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia (sobra ${fmtBRL(dia.previsto_hoje - dia.ritmo_necessario)}).`
-                  : `Previsto hoje ${fmtBRL(dia.previsto_hoje)} está ${fmtBRL(dia.ritmo_necessario - dia.previsto_hoje)} abaixo do ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia.`}
+                  ? `O kanban tem ${fmtBRL(dia.no_kanban)}, cobrindo o ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia (folga de ${fmtBRL(dia.no_kanban - dia.ritmo_necessario)}).`
+                  : `O kanban tem ${fmtBRL(dia.no_kanban)}, ${fmtBRL(dia.ritmo_necessario - dia.no_kanban)} abaixo do ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia — precisa entrar mais OV.`}
               </p>
             </div>
           )}
@@ -212,16 +217,17 @@ function Mini({ titulo, valor, cor, icone, onClick }: { titulo: string; valor: n
 }
 
 // ── Modal de detalhe: mostra o que gera cada número ──────────────────────────────
-type DetalheTipo = 'previsao_mes' | 'realizado' | 'em_processo' | 'saldo_contratos' | 'garantido' | 'negociacao' | 'previsto_hoje' | 'ritmo'
+type DetalheTipo = 'previsao_mes' | 'realizado' | 'em_processo' | 'saldo_contratos' | 'garantido' | 'negociacao' | 'sai_hoje' | 'no_kanban' | 'ritmo'
 
 function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo; onClose: () => void }) {
   const { mes, dia, pipeline, negocios, realizado_itens, contratos } = data
+  const quaseNf = pipeline.filter(p => p.quase_nf)
   const negHoje = negocios.filter(n => n.previsao_fechamento === data.hoje)
 
   const TITULOS: Record<DetalheTipo, string> = {
     previsao_mes: 'Previsão do mês', realizado: 'Realizado no mês', em_processo: 'Em processo (OVs)',
     saldo_contratos: 'Saldo de contratos', garantido: 'Garantido', negociacao: 'Em negociação',
-    previsto_hoje: 'Deve faturar hoje', ritmo: 'Ritmo p/ bater a meta',
+    sai_hoje: 'Sai hoje (prestes a faturar)', no_kanban: 'No kanban (potencial)', ritmo: 'Ritmo p/ bater a meta',
   }
 
   return (
@@ -261,17 +267,18 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
               <p className="text-[11px] text-gray-400 mt-2">Falta ÷ dias úteis restantes = ritmo necessário por dia.</p>
             </div>
           )}
-          {tipo === 'previsto_hoje' && (
+          {tipo === 'sai_hoje' && (
             <div className="space-y-4">
+              <p className="text-xs text-gray-500">O que realisticamente deve faturar hoje: OVs já prestes a sair (cotação de frete, aguardando transportadora ou aguardando NF) mais os negócios com fechamento previsto para hoje.</p>
               <Composicao linhas={[
-                { rotulo: 'Todas as OVs no kanban', valor: dia.ovs_kanban },
+                { rotulo: 'OVs prestes a faturar', valor: dia.quase_nf },
                 { rotulo: 'Negócios com fechamento previsto para hoje', valor: dia.negociacao_hoje },
-              ]} total={dia.previsto_hoje} />
-              {pipeline.length > 0 && (
+              ]} total={dia.sai_hoje} />
+              {quaseNf.length > 0 && (
                 <div>
-                  <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">OVs no kanban</p>
-                  <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.ovs_kanban}
-                    linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
+                  <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">OVs prestes a faturar</p>
+                  <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.quase_nf}
+                    linhas={quaseNf.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
                 </div>
               )}
               {negHoje.length > 0 && (
@@ -279,6 +286,22 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
                   <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">Negócios de hoje</p>
                   <Tabela cols={['Cliente', 'Chance', 'Ponderado']}
                     linhas={negHoje.map(n => [n.cliente || n.cliente_nome || '—', `${n.probabilidade}%`, fmtBRL(n.valor_ponderado)])} />
+                </div>
+              )}
+            </div>
+          )}
+          {tipo === 'no_kanban' && (
+            <div className="space-y-4">
+              <p className="text-xs text-gray-500">Volume total em aberto no kanban (todas as etapas antes do faturamento) mais os negócios de hoje. Serve para ver se há material suficiente para cobrir o ritmo do dia.</p>
+              <Composicao linhas={[
+                { rotulo: 'Todas as OVs no kanban', valor: dia.ovs_kanban },
+                { rotulo: 'Negócios com fechamento previsto para hoje', valor: dia.negociacao_hoje },
+              ]} total={dia.no_kanban} />
+              {pipeline.length > 0 && (
+                <div>
+                  <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">OVs no kanban</p>
+                  <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.ovs_kanban}
+                    linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
                 </div>
               )}
             </div>

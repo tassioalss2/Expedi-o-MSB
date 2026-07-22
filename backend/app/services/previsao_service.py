@@ -309,11 +309,15 @@ def resumo() -> dict:
     negociacao_ponderado = round(sum(n["valor_ponderado"] for n in neg_mes), 2)
     previsao_mes = round(garantido + negociacao_ponderado, 2)
 
-    # Previsão do dia — considera TODAS as OVs no kanban (pipeline inteiro), não
-    # só as prestes a faturar, mais os negócios com fechamento previsto para hoje.
+    # Previsão do dia — duas visões:
+    #  sai_hoje  = OVs prestes a faturar (quase-NF) + negócios de hoje (o que
+    #              realisticamente deve sair hoje);
+    #  no_kanban = TODO o pipeline + negócios de hoje (volume total em aberto,
+    #              usado para checar se há material suficiente pra bater o ritmo).
     quase_nf = round(sum(p["valor_estimado"] for p in pipeline if p["quase_nf"]), 2)
     neg_hoje = round(sum(n["valor_ponderado"] for n in negocios if n.get("previsao_fechamento") == hoje_iso), 2)
-    previsto_hoje = round(em_processo_total + neg_hoje, 2)
+    sai_hoje = round(quase_nf + neg_hoje, 2)
+    no_kanban = round(em_processo_total + neg_hoje, 2)
 
     meta_info = pedido_service.obter_meta(comp)
     meta = meta_info.get("valor")
@@ -336,14 +340,16 @@ def resumo() -> dict:
             "atingimento_previsto_pct": round(previsao_mes / meta * 100, 1) if meta else None,
         },
         "dia": {
-            "previsto_hoje": previsto_hoje,
+            "sai_hoje": sai_hoje,
+            "no_kanban": no_kanban,
             "ovs_kanban": em_processo_total,
             "quase_nf": quase_nf,
             "negociacao_hoje": neg_hoje,
             "dias_uteis_restantes": dias_restantes,
             "falta_meta": falta,
             "ritmo_necessario": ritmo_necessario,
-            "no_ritmo": (previsto_hoje >= ritmo_necessario) if ritmo_necessario is not None else None,
+            # Sinal: há volume no kanban suficiente para cobrir o ritmo do dia?
+            "no_ritmo": (no_kanban >= ritmo_necessario) if ritmo_necessario is not None else None,
         },
         "pipeline": pipeline,
         "negocios": negocios,
