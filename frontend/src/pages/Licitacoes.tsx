@@ -1184,7 +1184,9 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 function AbaContratos() {
   const qc = useQueryClient()
   const [modalNovo, setModalNovo] = useState(false)
+  const [prefillNovo, setPrefillNovo] = useState<any>(null)
   const [abertoId, setAbertoId] = useState<string | null>(null)
+  const [pregaoChave, setPregaoChave] = useState<string | null>(null)
   const [tipoFiltro, setTipoFiltro] = useState('')
 
   const { data: contratos = [], isLoading } = useQuery<any[]>({
@@ -1199,6 +1201,39 @@ function AbaContratos() {
 
   const filtrados = tipoFiltro ? contratos.filter(c => (c.tipo || 'CONSIGNACAO') === tipoFiltro) : contratos
 
+  // Agrupa por PREGÃO (mestre). NEs sem pregão viram grupo próprio (chave por id).
+  const grupos: any[] = (() => {
+    const map = new Map<string, any>()
+    for (const e of filtrados) {
+      const chave = e.numero_pregao ? `P:${e.numero_pregao}` : `N:${e.id}`
+      let g = map.get(chave)
+      if (!g) {
+        g = {
+          chave, numero_pregao: e.numero_pregao || null, cliente: e.cliente, cliente_id: e.cliente_id,
+          canal: e.canal, tipos: [] as string[], nes: [] as any[],
+          empenhado_valor: 0, faturado_valor: 0, saldo_valor: 0, vigencia: null as string | null,
+        }
+        map.set(chave, g)
+      }
+      g.nes.push(e)
+      g.empenhado_valor += e.empenhado_valor || 0
+      g.faturado_valor += e.faturado_valor || 0
+      g.saldo_valor += e.saldo_valor || 0
+      const t = e.tipo || 'CONSIGNACAO'
+      if (!g.tipos.includes(t)) g.tipos.push(t)
+      if (e.vigencia && (!g.vigencia || e.vigencia < g.vigencia)) g.vigencia = e.vigencia
+    }
+    return Array.from(map.values()).map(g => ({
+      ...g,
+      percentual: g.empenhado_valor ? Math.round(g.faturado_valor / g.empenhado_valor * 100) : 0,
+      concluido: g.saldo_valor <= 0.005,
+      risco: g.nes.some((n: any) => vigenciaEmRisco(n.vigencia, n.saldo_un)),
+    }))
+  })()
+  const grupoAberto = grupos.find(g => g.chave === pregaoChave) || null
+
+  const abrirGrupo = (g: any) => { if (g.numero_pregao) setPregaoChave(g.chave); else setAbertoId(g.nes[0].id) }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1208,7 +1243,7 @@ function AbaContratos() {
             <button key={k} onClick={() => setTipoFiltro(k)} className={`text-sm px-3 py-1.5 rounded-lg ${tipoFiltro === k ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}`}>{v.label}</button>
           ))}
         </div>
-        <button onClick={() => setModalNovo(true)}
+        <button onClick={() => { setPrefillNovo(null); setModalNovo(true) }}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
           <Plus size={16} /> Novo contrato
         </button>
@@ -1216,41 +1251,47 @@ function AbaContratos() {
 
       {isLoading ? (
         <p className="text-center text-gray-400 py-10 text-sm">Carregando...</p>
-      ) : filtrados.length === 0 ? (
+      ) : grupos.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">
           Nenhum contrato. Clique em <strong>Novo contrato</strong> (ou processe uma venda direta/consignação no painel).
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filtrados.map((e) => {
-            const cfg = STATUS_CFG[e.status] || STATUS_CFG.ABERTO
-            const tp = CONTRATO_TIPO[e.tipo || 'CONSIGNACAO'] || CONTRATO_TIPO.CONSIGNACAO
-            const risco = vigenciaEmRisco(e.vigencia, e.saldo_un)
+          {grupos.map((g) => {
+            const tp = CONTRATO_TIPO[g.tipos[0] || 'CONSIGNACAO'] || CONTRATO_TIPO.CONSIGNACAO
+            const ne0 = g.nes[0]
             return (
-              <button key={e.id} onClick={() => setAbertoId(e.id)}
+              <button key={g.chave} onClick={() => abrirGrupo(g)}
                 className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 text-left hover:border-blue-300 hover:shadow transition">
                 <div className="flex items-start justify-between mb-1">
                   <div>
-                    <p className="font-mono font-bold text-gray-800">{e.numero_pregao ? `Pregão ${e.numero_pregao}` : e.numero}</p>
-                    <p className="text-[11px] font-mono text-gray-400">{e.numero_pregao ? `NE ${e.numero}` : ''}</p>
-                    <p className="text-sm text-gray-600 truncate max-w-[240px]">{e.cliente}</p>
+                    <p className="font-mono font-bold text-gray-800">{g.numero_pregao ? `Pregão ${g.numero_pregao}` : ne0.numero}</p>
+                    <p className="text-[11px] font-mono text-gray-400">
+                      {g.numero_pregao ? `${g.nes.length} NE${g.nes.length > 1 ? 's' : ''}: ${g.nes.map((n: any) => n.numero).join(' · ')}` : ''}
+                    </p>
+                    <p className="text-sm text-gray-600 truncate max-w-[240px]">{g.cliente}</p>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${tp.cor}`}>{tp.label}</span>
-                      {e.canal && <span className="text-xs text-gray-400">{CANAL_LABEL[e.canal] || e.canal}</span>}
+                      {g.tipos.map((t: string) => {
+                        const cf = CONTRATO_TIPO[t] || CONTRATO_TIPO.CONSIGNACAO
+                        return <span key={t} className={`text-[11px] px-1.5 py-0.5 rounded-full ${cf.cor}`}>{cf.label}</span>
+                      })}
+                      {g.canal && <span className="text-xs text-gray-400">{CANAL_LABEL[g.canal] || g.canal}</span>}
                     </div>
                   </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.cor}`}>{cfg.label}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${g.concluido ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                    {g.concluido ? 'Concluído' : 'Aberto'}
+                  </span>
                 </div>
                 <div className="h-2 rounded-full bg-gray-100 overflow-hidden my-2">
-                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.min(e.percentual, 100)}%` }} />
+                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.min(g.percentual, 100)}%` }} />
                 </div>
                 <div className="flex justify-between text-xs text-gray-500">
-                  <span>{e.tipo === 'VENDA_DIRETA' ? 'Entregue' : 'Faturado'} {fmtBRL(e.faturado_valor)} · {e.percentual}%</span>
-                  <span className="font-semibold text-gray-700">Saldo {fmtBRL(e.saldo_valor)}</span>
+                  <span>{g.tipos[0] === 'VENDA_DIRETA' ? 'Entregue' : 'Faturado'} {fmtBRL(g.faturado_valor)} · {g.percentual}%</span>
+                  <span className="font-semibold text-gray-700">Saldo {fmtBRL(g.saldo_valor)}</span>
                 </div>
                 <div className="flex justify-between items-center text-[11px] text-gray-400 mt-1.5">
-                  <span>Vigência: {fmtData(e.vigencia)}</span>
-                  {risco && <span className="flex items-center gap-1 text-red-500 font-medium"><AlertTriangle size={12} /> vence em breve com saldo</span>}
+                  <span>Vigência: {fmtData(g.vigencia)}</span>
+                  {g.risco && <span className="flex items-center gap-1 text-red-500 font-medium"><AlertTriangle size={12} /> vence em breve com saldo</span>}
                 </div>
               </button>
             )
@@ -1258,20 +1299,86 @@ function AbaContratos() {
         </div>
       )}
 
-      {modalNovo && <ModalNovoContrato onClose={() => setModalNovo(false)} onSaved={invalidar} />}
+      {grupoAberto && (
+        <ModalPregao
+          grupo={grupoAberto}
+          onClose={() => setPregaoChave(null)}
+          onAbrirNE={(neId: string) => setAbertoId(neId)}
+          onNovaNE={() => {
+            setPrefillNovo({
+              numero_pregao: grupoAberto.numero_pregao, cliente_id: grupoAberto.cliente_id,
+              cliente_nome: grupoAberto.cliente, canal: grupoAberto.canal, tipo: grupoAberto.tipos[0] || 'VENDA_DIRETA',
+            })
+            setModalNovo(true)
+          }}
+        />
+      )}
       {abertoId && <ModalContrato id={abertoId} onClose={() => setAbertoId(null)} onChanged={invalidar} />}
+      {modalNovo && <ModalNovoContrato prefill={prefillNovo} onClose={() => { setModalNovo(false); setPrefillNovo(null) }} onSaved={invalidar} />}
     </div>
   )
 }
 
-function ModalNovoContrato({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+// ── Modal do Pregão (mestre) — consolida as NEs e permite adicionar novas ────────
+function ModalPregao({ grupo, onClose, onAbrirNE, onNovaNE }: {
+  grupo: any; onClose: () => void; onAbrirNE: (neId: string) => void; onNovaNE: () => void
+}) {
+  return (
+    <ModalBase titulo={<span className="font-mono">{grupo.numero_pregao ? `Pregão ${grupo.numero_pregao}` : grupo.nes[0]?.numero}</span>} onClose={onClose} max="max-w-2xl">
+      <div className="p-5 space-y-4 overflow-y-auto">
+        <div>
+          <p className="text-sm text-gray-700 font-medium">{grupo.cliente}</p>
+          <p className="text-xs text-gray-400">{grupo.canal ? (CANAL_LABEL[grupo.canal] || grupo.canal) : ''}</p>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Total</p><p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(grupo.empenhado_valor)}</p></div>
+          <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Entregue</p><p className="text-base font-bold text-emerald-600 tabular-nums">{fmtBRL(grupo.faturado_valor)}</p></div>
+          <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Saldo</p><p className="text-base font-bold text-blue-600 tabular-nums">{fmtBRL(grupo.saldo_valor)}</p></div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-gray-700">Notas de empenho ({grupo.nes.length})</h3>
+            <button onClick={onNovaNE} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-500 font-medium">
+              <Plus size={15} /> Nova NE neste pregão
+            </button>
+          </div>
+          <div className="space-y-2">
+            {grupo.nes.map((n: any) => {
+              const tp = CONTRATO_TIPO[n.tipo || 'CONSIGNACAO'] || CONTRATO_TIPO.CONSIGNACAO
+              return (
+                <button key={n.id} onClick={() => onAbrirNE(n.id)}
+                  className="w-full text-left border border-gray-100 rounded-xl p-3 hover:border-blue-300 hover:shadow-sm transition">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-mono font-semibold text-gray-800">NE {n.numero}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${tp.cor}`}>{tp.label}</span>
+                        <span className="text-[11px] text-gray-400">Vigência {fmtData(n.vigencia)}</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-gray-700 tabular-nums">Saldo {fmtBRL(n.saldo_valor)}</p>
+                      <p className="text-[11px] text-gray-400 tabular-nums">de {fmtBRL(n.empenhado_valor)} · {n.percentual}%</p>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </ModalBase>
+  )
+}
+
+function ModalNovoContrato({ onClose, onSaved, prefill }: { onClose: () => void; onSaved: () => void; prefill?: any }) {
   const hoje = new Date().toISOString().slice(0, 10)
-  const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>('VENDA_DIRETA')
+  const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>(prefill?.tipo === 'CONSIGNACAO' ? 'CONSIGNACAO' : 'VENDA_DIRETA')
   const [numero, setNumero] = useState('')
-  const [numeroPregao, setNumeroPregao] = useState('')
-  const [clienteId, setClienteId] = useState('')
-  const [clienteNome, setClienteNome] = useState('')
-  const [canal, setCanal] = useState('LICITACAO_URO')
+  const [numeroPregao, setNumeroPregao] = useState(prefill?.numero_pregao || '')
+  const [clienteId, setClienteId] = useState(prefill?.cliente_id || '')
+  const [clienteNome, setClienteNome] = useState(prefill?.cliente_nome || '')
+  const [canal, setCanal] = useState(prefill?.canal || 'LICITACAO_URO')
   const [dataEmpenho, setDataEmpenho] = useState(hoje)
   const [vigencia, setVigencia] = useState('')
   const [observacao, setObservacao] = useState('')
@@ -1315,7 +1422,7 @@ function ModalNovoContrato({ onClose, onSaved }: { onClose: () => void; onSaved:
           <Campo label="Vigência (até)"><input type="date" value={vigencia} onChange={e => setVigencia(e.target.value)} className={inputCls} /></Campo>
         </div>
         <Campo label="Cliente / Órgão *">
-          <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
+          <ClienteAutocomplete value={clienteId} initialNome={clienteNome} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
           {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
         </Campo>
         <Campo label="Canal *">
