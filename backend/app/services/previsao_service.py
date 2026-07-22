@@ -6,8 +6,9 @@ Junta três fontes para estimar o fechamento do mês e do dia:
   3. Saldo de contratos ganhos — empenhos com saldo a entregar.
   4. Em negociação — negócios lançados na entrada rápida, ponderados pela chance (%).
 
-Garantido = realizado + em processo + saldo de contratos.
-Previsão do mês = garantido + negociação ponderada.
+Garantido = realizado + em processo (o que vai faturar de fato).
+Saldo de contratos é "a realizar" — o órgão pede quando quer, sem data garantida.
+Previsão do mês = garantido + saldo de contratos + negociação ponderada.
 """
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -291,7 +292,9 @@ def resumo() -> dict:
     pipeline = _pipeline(db)
     em_processo_total = round(sum(p["valor_estimado"] for p in pipeline), 2)
     saldo_contratos, contratos = _saldo_contratos(db)
-    garantido = round(realizado + em_processo_total + saldo_contratos, 2)
+    # Garantido = só o que vai faturar de fato: NFs do mês + OVs no pipeline.
+    # Saldo de contratos NÃO entra (o órgão pede quando quer — sem data garantida).
+    garantido = round(realizado + em_processo_total, 2)
 
     try:
         negocios = listar_negocios("ABERTO")
@@ -307,7 +310,8 @@ def resumo() -> dict:
     neg_mes = [n for n in negocios if _no_mes(n)]
     negociacao_bruto = round(sum(n["valor"] for n in neg_mes), 2)
     negociacao_ponderado = round(sum(n["valor_ponderado"] for n in neg_mes), 2)
-    previsao_mes = round(garantido + negociacao_ponderado, 2)
+    # Previsão = garantido + a realizar (saldo de contratos) + negociação ponderada.
+    previsao_mes = round(garantido + saldo_contratos + negociacao_ponderado, 2)
 
     # Previsão do dia — duas visões:
     #  sai_hoje  = OVs prestes a faturar (quase-NF) + negócios de hoje (o que

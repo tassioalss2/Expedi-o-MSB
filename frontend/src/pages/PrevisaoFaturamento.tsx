@@ -103,7 +103,7 @@ export function PrevisaoFaturamento() {
             <button onClick={() => setDetalhe('garantido')} className="bg-emerald-50 rounded-xl p-3 text-left hover:ring-2 hover:ring-emerald-200">
               <p className="text-[11px] text-emerald-700 font-semibold uppercase flex items-center gap-1">Garantido <Info size={11} className="opacity-50" /></p>
               <p className="text-lg font-bold text-emerald-700 tabular-nums">{fmtBRL(mes.garantido)}</p>
-              <p className="text-[11px] text-emerald-600/70">realizado + processo + contratos</p>
+              <p className="text-[11px] text-emerald-600/70">realizado + processo</p>
             </button>
             <button onClick={() => setDetalhe('negociacao')} className="bg-amber-50 rounded-xl p-3 text-left hover:ring-2 hover:ring-amber-200">
               <p className="text-[11px] text-amber-700 font-semibold uppercase flex items-center gap-1">Em negociação (ponderado) <Info size={11} className="opacity-50" /></p>
@@ -243,16 +243,19 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
         <div className="p-5 overflow-y-auto">
           {tipo === 'previsao_mes' && (
             <Composicao linhas={[
-              { rotulo: 'Garantido (realizado + processo + contratos)', valor: mes.garantido },
-              { rotulo: 'Em negociação (ponderado pela chance)', valor: mes.negociacao_ponderado },
+              { rotulo: 'Garantido (realizado + processo)', valor: mes.garantido },
+              { rotulo: 'A realizar — saldo de contratos (sem data garantida)', valor: mes.saldo_contratos, sub: true },
+              { rotulo: 'Em negociação (ponderado pela chance)', valor: mes.negociacao_ponderado, sub: true },
             ]} total={mes.previsao} />
           )}
           {tipo === 'garantido' && (
-            <Composicao linhas={[
-              { rotulo: 'Realizado (NFs já faturadas no mês)', valor: mes.realizado },
-              { rotulo: 'Em processo (OVs no pipeline)', valor: mes.em_processo },
-              { rotulo: 'Saldo de contratos ganhos', valor: mes.saldo_contratos },
-            ]} total={mes.garantido} />
+            <>
+              <Composicao linhas={[
+                { rotulo: 'Realizado (NFs já faturadas no mês)', valor: mes.realizado },
+                { rotulo: 'Em processo (OVs no pipeline)', valor: mes.em_processo },
+              ]} total={mes.garantido} totalCor="text-emerald-600" />
+              <p className="text-[11px] text-gray-400 mt-3">Só o que vai faturar de fato. O saldo de contratos não entra aqui — o órgão pede quando quer, sem data garantida.</p>
+            </>
           )}
           {tipo === 'ritmo' && (
             <div className="text-sm">
@@ -319,10 +322,13 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
                   linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtData(p.data_prevista_entrega), fmtBRL(p.valor_estimado)])} />
           )}
           {tipo === 'saldo_contratos' && (
-            contratos.length === 0
-              ? <Vazio texto="Nenhum contrato com saldo a faturar." />
-              : <Tabela cols={['Contrato / Pregão', 'Total', 'Faturado', 'Saldo']} total={mes.saldo_contratos}
-                  linhas={contratos.map(c => [c.numero_pregao || c.numero || '—', fmtBRL(c.total), fmtBRL(c.faturado), fmtBRL(c.saldo)])} />
+            <>
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2 mb-3">⚠️ Valor a realizar, não garantido no mês — o órgão empenha/pede quando quer, sem data definida.</p>
+              {contratos.length === 0
+                ? <Vazio texto="Nenhum contrato com saldo a faturar." />
+                : <Tabela cols={['Contrato / Pregão', 'Total', 'Faturado', 'Saldo']} total={mes.saldo_contratos}
+                    linhas={contratos.map(c => [c.numero_pregao || c.numero || '—', fmtBRL(c.total), fmtBRL(c.faturado), fmtBRL(c.saldo)])} />}
+            </>
           )}
           {tipo === 'negociacao' && (
             negocios.length === 0
