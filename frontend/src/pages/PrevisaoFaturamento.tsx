@@ -29,8 +29,9 @@ interface Resumo {
     meta: number | null; atingimento_previsto_pct: number | null
   }
   dia: {
-    previsto_hoje: number; quase_nf: number; negociacao_hoje: number
+    previsto_hoje: number; ovs_kanban: number; quase_nf: number; negociacao_hoje: number
     dias_uteis_restantes: number; falta_meta: number | null; ritmo_necessario: number | null
+    no_ritmo: boolean | null
   }
   pipeline: PipelineItem[]
   negocios: Negocio[]
@@ -48,7 +49,7 @@ const STATUS_OV: Record<string, string> = {
   AGUARD_CREDITO: 'Ger. Crédito', LIBERADO: 'Liberado', EM_INVENTARIO: 'Inventário',
   AGUARD_VERIFICACAO: 'Verificação', DIVERGENCIA: 'Divergência', AGUARD_TRATATIVA: 'Tratativa',
   EM_PROCESSO_SISTEMICO: 'Proc. Sistêmico', EM_COTACAO_FRETE: 'Cotação de Frete',
-  AGUARD_FATURAMENTO: 'Aguard. Faturamento',
+  AGUARD_TRANSPORTADORA: 'Aguard. Transportadora', AGUARD_FATURAMENTO: 'Aguard. Faturamento',
 }
 
 export function PrevisaoFaturamento() {
@@ -119,7 +120,7 @@ export function PrevisaoFaturamento() {
             <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">Deve faturar hoje <Info size={11} className="opacity-40" /></p>
             <p className="text-2xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(dia.previsto_hoje)}</p>
             <p className="text-[11px] text-gray-400 mt-0.5">
-              OVs prestes a faturar {fmtBRL(dia.quase_nf)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
+              Todas as OVs no kanban {fmtBRL(dia.ovs_kanban)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
             </p>
           </button>
           <div className="mt-4 pt-3 border-t border-gray-100">
@@ -138,6 +139,20 @@ export function PrevisaoFaturamento() {
               </>
             )}
           </div>
+
+          {/* Sinal: previsto hoje x ritmo necessário */}
+          {dia.no_ritmo != null && dia.ritmo_necessario != null && (
+            <div className={`mt-4 rounded-xl p-3 border ${dia.no_ritmo ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+              <p className={`text-sm font-bold flex items-center gap-1.5 ${dia.no_ritmo ? 'text-emerald-700' : 'text-red-700'}`}>
+                {dia.no_ritmo ? '✅ Dentro do ritmo' : '⚠️ Abaixo do ritmo'}
+              </p>
+              <p className={`text-[11px] mt-0.5 ${dia.no_ritmo ? 'text-emerald-600/80' : 'text-red-600/80'}`}>
+                {dia.no_ritmo
+                  ? `Previsto hoje ${fmtBRL(dia.previsto_hoje)} cobre o ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia (sobra ${fmtBRL(dia.previsto_hoje - dia.ritmo_necessario)}).`
+                  : `Previsto hoje ${fmtBRL(dia.previsto_hoje)} está ${fmtBRL(dia.ritmo_necessario - dia.previsto_hoje)} abaixo do ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia.`}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -201,7 +216,6 @@ type DetalheTipo = 'previsao_mes' | 'realizado' | 'em_processo' | 'saldo_contrat
 
 function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo; onClose: () => void }) {
   const { mes, dia, pipeline, negocios, realizado_itens, contratos } = data
-  const quaseNf = pipeline.filter(p => p.quase_nf)
   const negHoje = negocios.filter(n => n.previsao_fechamento === data.hoje)
 
   const TITULOS: Record<DetalheTipo, string> = {
@@ -250,16 +264,22 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           {tipo === 'previsto_hoje' && (
             <div className="space-y-4">
               <Composicao linhas={[
-                { rotulo: 'OVs prestes a faturar (cotação/transp./aguard. NF)', valor: dia.quase_nf },
+                { rotulo: 'Todas as OVs no kanban', valor: dia.ovs_kanban },
                 { rotulo: 'Negócios com fechamento previsto para hoje', valor: dia.negociacao_hoje },
               ]} total={dia.previsto_hoje} />
-              {quaseNf.length > 0 && (
-                <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.quase_nf}
-                  linhas={quaseNf.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
+              {pipeline.length > 0 && (
+                <div>
+                  <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">OVs no kanban</p>
+                  <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.ovs_kanban}
+                    linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
+                </div>
               )}
               {negHoje.length > 0 && (
-                <Tabela cols={['Cliente', 'Chance', 'Ponderado']}
-                  linhas={negHoje.map(n => [n.cliente || n.cliente_nome || '—', `${n.probabilidade}%`, fmtBRL(n.valor_ponderado)])} />
+                <div>
+                  <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">Negócios de hoje</p>
+                  <Tabela cols={['Cliente', 'Chance', 'Ponderado']}
+                    linhas={negHoje.map(n => [n.cliente || n.cliente_nome || '—', `${n.probabilidade}%`, fmtBRL(n.valor_ponderado)])} />
+                </div>
               )}
             </div>
           )}
