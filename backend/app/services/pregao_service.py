@@ -141,9 +141,62 @@ def criar_pregao(payload: PregaoCreate) -> dict:
     return obter_pregao(row["id"])
 
 
+def _backfill_legado(db) -> None:
+    """Absorve empenhos legados (sem pregao_id) em pregões: o número do pregão
+    vira o contrato e as NEs viram linhas. Idempotente — só processa órfãos."""
+    emps = db.table("empenhos").select("*").eq("ativo", True).execute().data
+    orfaos = [e for e in emps if not e.get("pregao_id")]
+    if not orfaos:
+        return
+
+    ids = [e["id"] for e in orfaos]
+    itens_por_emp: dict = {}
+    for i in range(0, len(ids), 40):
+        for it in db.table("empenho_itens").select("*").in_("empenho_id", ids[i:i + 40]).execute().data:
+            itens_por_emp.setdefault(it["empenho_id"], []).append(it)
+
+    existentes = {p["numero"]: p["id"] for p in db.table("pregoes").select("id, numero").eq("ativo", True).execute().data}
+
+    grupos: dict = {}
+    for e in orfaos:
+        chave = (e.get("numero_pregao") or "").strip() or e.get("numero")
+        grupos.setdefault(chave, []).append(e)
+
+    for chave, emps_g in grupos.items():
+        first = emps_g[0]
+        agg: dict = {}
+        for e in emps_g:
+            for it in itens_por_emp.get(e["id"], []):
+                pid = it.get("produto_id")
+                if not pid:
+                    continue
+                a = agg.setdefault(pid, {
+                    "produto_id": pid, "codigo": it.get("codigo"), "descricao": it.get("descricao"),
+                    "qtd_total": 0.0, "valor_unitario": float(it.get("valor_unitario") or 0),
+                })
+                a["qtd_total"] += float(it.get("qtd_empenhada") or 0)
+
+        pregao_id = existentes.get(chave)
+        if not pregao_id:
+            row = db.table("pregoes").insert({
+                "numero": chave,
+                "cliente_id": first.get("cliente_id"),
+                "canal": first.get("canal"),
+                "tipo": first.get("tipo") or "VENDA_DIRETA",
+                "vigencia": first.get("vigencia"),
+                "itens": list(agg.values()),
+                "ativo": True,
+            }).execute().data[0]
+            pregao_id = row["id"]
+            existentes[chave] = pregao_id
+        for e in emps_g:
+            db.table("empenhos").update({"pregao_id": pregao_id}).eq("id", e["id"]).execute()
+
+
 def listar_pregoes() -> list:
     db = get_service_db()
     try:
+        _backfill_legado(db)
         pregoes = db.table("pregoes").select("*, clientes(nome)").eq("ativo", True).order("criado_em", desc=True).execute().data
     except Exception:
         # Tabela ainda não migrada (v15) — degrada sem quebrar a aba Contratos.
@@ -202,6 +255,34 @@ def criar_ne(pregao_id: str, payload: NeCreate, usuario) -> dict:
         itens=itens_emp,
         pregao_id=pregao_id,
     ))
+
+    # A NE que chegou vira uma demanda em "Recebido" no painel operacional, para
+    # o time processar (D365 → gerar OV → cotar frete → NF). Best-effort.
+    try:
+        info = {i["produto_id"]: i for i in detalhe["itens"]}
+        demanda_itens = [{
+            "produto_id": str(it.produto_id),
+            "codigo": (info.get(str(it.produto_id)) or {}).get("codigo"),
+            "descricao": (info.get(str(it.produto_id)) or {}).get("descricao"),
+            "qtd": float(it.qtd),
+            "valor": float((info.get(str(it.produto_id)) or {}).get("valor_unitario") or 0),
+        } for it in payload.itens]
+        db.table("licitacao_demandas").insert({
+            "tipo_operacao": detalhe["tipo"],
+            "etapa": "RECEBIDO",
+            "numero_pregao": detalhe["numero"],
+            "numero": payload.numero,
+            "cliente_id": detalhe["cliente_id"],
+            "canal": detalhe["canal"],
+            "prazo": vig.isoformat() if vig else None,
+            "prioridade": "NORMAL",
+            "observacao": f"NE {payload.numero} do pregão {detalhe['numero']}",
+            "itens": demanda_itens,
+            "ativo": True,
+        }).execute()
+    except Exception:
+        pass
+
     return obter_pregao(pregao_id)
 
 
