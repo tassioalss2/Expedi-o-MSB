@@ -15,3 +15,8 @@ def estados(_: UsuarioOut = Depends(get_current_user)):
 @router.get("/municipios")
 def municipios(uf: str, _: UsuarioOut = Depends(get_current_user)):
     return localidades_service.listar_municipios(uf)
+
+
+@router.get("/buscar")
+def buscar(q: str, _: UsuarioOut = Depends(get_current_user)):
+    return localidades_service.buscar_municipios(q)
