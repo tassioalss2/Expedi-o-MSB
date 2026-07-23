@@ -99,7 +99,7 @@ export function VisaoGeral() {
 
   const atalhos = [
     { label: 'Nova OV', desc: 'Cadastrar pedido', icone: Plus, to: '/expedicao/novo', cor: 'text-blue-600 bg-blue-50' },
-    { label: 'Comunicado de Uso', desc: 'Faturar consignado', icone: FileText, to: '/comercial/comunicado-uso', cor: 'text-emerald-600 bg-emerald-50' },
+    { label: 'Comunicado de Uso', desc: 'Faturar consignado', icone: FileText, to: '/licitacoes?novo=COMUNICADO_USO', cor: 'text-emerald-600 bg-emerald-50' },
     { label: 'Painel Comercial', desc: 'Faturamento e metas', icone: DollarSign, to: '/comercial', cor: 'text-green-600 bg-green-50' },
     { label: 'Painel Operacional', desc: 'Fluxo de expedição', icone: Package, to: '/dashboard', cor: 'text-indigo-600 bg-indigo-50' },
   ]

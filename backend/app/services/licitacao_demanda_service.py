@@ -88,6 +88,8 @@ def _serializar(d: dict) -> dict:
         "prioridade": d.get("prioridade") or "NORMAL",
         "observacao": d.get("observacao"),
         "responsavel_id": d.get("responsavel_id"),
+        "nome_paciente": d.get("nome_paciente"),
+        "prontuario": d.get("prontuario"),
         "itens": d.get("itens") or [],
         "gerado_tipo": d.get("gerado_tipo"),
         "gerado_id": d.get("gerado_id"),
@@ -216,27 +218,30 @@ def historico_demandas(data: str) -> list:
 
 
 def historico_buscar(termo: str) -> list:
-    """Busca em TODAS as concluídas por pregão, NE/número, cliente ou OV —
-    para conferir rapidamente se um empenho já foi feito, sem depender da data."""
+    """Busca em TODAS as demandas ativas — concluídas ou ainda em andamento —
+    por pregão, NE, AF, paciente, prontuário, cliente ou OV. Não se limita ao
+    que já foi concluído: se alguém já está processando o mesmo caso, o
+    operador precisa ver isso ANTES de criar de novo, senão a busca não evita
+    a duplicidade que deveria evitar."""
     q = (termo or "").strip().lower()
     if not q:
         return []
     db = get_service_db()
     rows = db.table("licitacao_demandas").select("*, clientes(nome)")\
-        .eq("ativo", True).order("concluido_em", desc=True).execute().data
+        .eq("ativo", True).order("criado_em", desc=True).execute().data
     demandas = [_serializar(r) for r in rows]
-    finais = [d for d in demandas if d["etapa"] in ETAPAS_FINAIS and d.get("concluido_em")]
-    _anexar_ov_status(db, finais)
+    _anexar_ov_status(db, demandas)
 
     def casa(d: dict) -> bool:
         campos = [d.get("numero_pregao"), d.get("numero"), d.get("cliente"),
-                  d.get("ref_externa"), d.get("gerado_ref")]
+                  d.get("ref_externa"), d.get("gerado_ref"),
+                  d.get("nome_paciente"), d.get("prontuario")]
         for ov in (d.get("ovs_detalhe") or []):
             campos.append(ov.get("numero"))
         return any(q in str(c).lower() for c in campos if c)
 
-    out = [d for d in finais if casa(d)]
-    out.sort(key=lambda d: d.get("concluido_em") or "", reverse=True)
+    out = [d for d in demandas if casa(d)]
+    out.sort(key=lambda d: d.get("concluido_em") or d.get("atualizado_em") or d.get("criado_em") or "", reverse=True)
     return out[:100]
 
 
@@ -273,29 +278,41 @@ def criar_demanda(payload: DemandaCreate) -> dict:
     if payload.tipo_operacao not in TIPOS:
         raise HTTPException(status_code=422, detail="Tipo de operação inválido")
     db = get_service_db()
+    num = (payload.numero or "").strip()
+    # Comunicado de uso é regido pela AF + paciente + prontuário — obrigatórios
+    # para rastreabilidade (evita o time processar o mesmo caso duas vezes).
+    if payload.tipo_operacao == "COMUNICADO_USO":
+        if not num:
+            raise HTTPException(status_code=422, detail="Informe a AF (Autorização de Fornecimento).")
+        if not (payload.nome_paciente or "").strip():
+            raise HTTPException(status_code=422, detail="Informe o nome do paciente.")
+        if not (payload.prontuario or "").strip():
+            raise HTTPException(status_code=422, detail="Informe o prontuário.")
     # Anti-duplicidade: o mesmo número (empenho/AF/pregão) não pode ter duas
     # demandas ativas — evita o time processar o mesmo pedido duas vezes.
-    num = (payload.numero or "").strip()
     if num:
         dup = db.table("licitacao_demandas").select("id, etapa, clientes(nome)")\
             .eq("ativo", True).eq("numero", num).execute().data
         if dup:
             cli = (dup[0].get("clientes") or {}).get("nome") or "cliente não informado"
+            campo = "AF" if payload.tipo_operacao == "COMUNICADO_USO" else "número"
             raise HTTPException(
                 status_code=409,
-                detail=f"Já existe uma demanda ativa com o número '{num}' ({cli}). Confira no painel antes de criar — risco de processar duas vezes.",
+                detail=f"Já existe uma demanda ativa com o {campo} '{num}' ({cli}). Confira no painel/histórico antes de criar — risco de processar duas vezes.",
             )
     row = db.table("licitacao_demandas").insert({
         "tipo_operacao": payload.tipo_operacao,
         "etapa": "RECEBIDO",
         "numero_pregao": (payload.numero_pregao or "").strip() or None,
-        "numero": (payload.numero or "").strip() or None,
+        "numero": num or None,
         "cliente_id": str(payload.cliente_id),
         "canal": payload.canal,
         "prazo": payload.prazo.isoformat() if payload.prazo else None,
         "prioridade": payload.prioridade or "NORMAL",
         "observacao": payload.observacao,
         "itens": _itens_json(payload.itens),
+        "nome_paciente": (payload.nome_paciente or "").strip() or None,
+        "prontuario": (payload.prontuario or "").strip() or None,
         "ativo": True,
     }).execute().data[0]
     # Venda direta "ganhou o pregão" → já cria o contrato com as quantidades
@@ -699,6 +716,18 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             raise HTTPException(status_code=422, detail="Informe o número do lançamento (comunicado).")
         numped = payload.numero_pedido.strip().upper()
 
+        # AF/paciente/prontuário: o que rege o comunicado. Payload (editado na
+        # conclusão) prevalece; senão usa o que já foi capturado na triagem.
+        af = (payload.numero or "").strip() or d.get("numero")
+        nome_paciente = (payload.nome_paciente or "").strip() or d.get("nome_paciente")
+        prontuario = (payload.prontuario or "").strip() or d.get("prontuario")
+        if not af:
+            raise HTTPException(status_code=422, detail="Informe a AF (Autorização de Fornecimento).")
+        if not nome_paciente:
+            raise HTTPException(status_code=422, detail="Informe o nome do paciente.")
+        if not prontuario:
+            raise HTTPException(status_code=422, detail="Informe o prontuário.")
+
         # Se o comunicado com esse número já existe (faturado no D365/app), apenas
         # vincula a demanda a ele e conclui — não lança de novo (evita duplicidade).
         existente = db.table("pedidos").select("id, numero_pedido")\
@@ -713,7 +742,9 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                 "gerado_ref": gerado_ref,
                 "cliente_id": cliente_id,
                 "canal": canal,
-                "numero": numped,
+                "numero": af,
+                "nome_paciente": nome_paciente,
+                "prontuario": prontuario,
                 "concluido_em": _agora(),
                 "atualizado_em": _agora(),
             }).eq("id", demanda_id).execute()
@@ -735,6 +766,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                     data_faturamento=payload.data_faturamento,
                     canal=canal,
                     itens=_itens_pedido(itens_src, "o comunicado de uso"),
+                    af=af, nome_paciente=nome_paciente, prontuario=prontuario,
                 ),
                 usuario,
             )
@@ -749,6 +781,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                     valor_nf=float(payload.valor_nf),
                     canal=canal,
                     data_faturamento=payload.data_faturamento,
+                    af=af, nome_paciente=nome_paciente, prontuario=prontuario,
                     itens=[ItemPedidoCreate(produto_id=it.produto_id, qtd_solicitada=float(it.qtd))
                            for it in itens_src if it.produto_id and float(it.qtd or 0) > 0],
                 ),
@@ -766,6 +799,8 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         "cliente_id": cliente_id,
         "canal": canal,
         "numero": payload.numero.strip() if payload.numero else d.get("numero"),
+        "nome_paciente": (payload.nome_paciente or "").strip() or d.get("nome_paciente"),
+        "prontuario": (payload.prontuario or "").strip() or d.get("prontuario"),
         "concluido_em": _agora() if etapa_final in ETAPAS_FINAIS else None,
         "atualizado_em": _agora(),
     }

@@ -603,7 +603,7 @@ export function Expedicao() {
             Importar CSV
           </button>
           <button
-            onClick={() => navigate('/comercial/comunicado-uso')}
+            onClick={() => navigate('/licitacoes?novo=COMUNICADO_USO')}
             className="flex items-center gap-2 px-3 py-2 border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50"
           >
             <FileText size={16} />

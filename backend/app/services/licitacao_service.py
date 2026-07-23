@@ -228,6 +228,9 @@ def registrar_consumo(empenho_id: str, payload: ConsumoEmpenhoCreate, usuario: U
         observacoes=payload.observacoes,
         itens=payload.itens,
         empenho_id=empenho_id,
+        af=getattr(payload, "af", None),
+        nome_paciente=getattr(payload, "nome_paciente", None),
+        prontuario=getattr(payload, "prontuario", None),
     )
     pedido_service.criar_comunicado_uso(comunicado, usuario)
     return obter_empenho(empenho_id)

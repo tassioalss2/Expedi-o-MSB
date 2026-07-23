@@ -205,7 +205,10 @@ export function Licitacoes() {
 // ── Painel de demandas (triagem, sem arrastar) ───────────────────────────────────
 function PainelDemandas() {
   const qc = useQueryClient()
-  const [modalNovo, setModalNovo] = useState<TipoKey | null>(null)
+  // Deep-link (ex: /licitacoes?novo=COMUNICADO_USO) — outras telas mandam direto
+  // para cá em vez de ter um formulário próprio de comunicado de uso.
+  const novoParam = new URLSearchParams(window.location.search).get('novo') as TipoKey | null
+  const [modalNovo, setModalNovo] = useState<TipoKey | null>(novoParam && TIPOS.some(t => t.key === novoParam) ? novoParam : null)
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [concluirManual, setConcluirManual] = useState<any | null>(null)
   const [gerar, setGerar] = useState<any | null>(null)
@@ -361,8 +364,9 @@ function PainelDemandas() {
             📣 {resumoTeams.isPending ? 'Enviando…' : 'Resumo Teams'}
           </button>
           <button onClick={() => setHistorico(true)}
+            title="Busque por pregão, NE, AF, paciente, prontuário, OV ou cliente — mesmo o que ainda está em andamento, antes de criar de novo"
             className="flex items-center gap-1.5 text-gray-600 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
-            <Clock size={15} /> Histórico
+            <Search size={15} /> Pesquisar / Histórico
           </button>
           {TIPOS.map(t => (
             <button key={t.key} onClick={() => setModalNovo(t.key)}
@@ -374,7 +378,7 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 <strong>Venda direta</strong>: D365 → <strong>Gerar OV</strong> (cria o contrato automático e segue no kanban) → <strong>Cotar frete</strong> → <strong>Enviar NF</strong>. <strong>Consignação</strong>: cria o contrato (baixa por comunicado de uso). <strong>Comunicado de uso</strong>: Concluir e faturar. Sem estoque? Use <strong>🏭 Sem estoque</strong> — o card fica na coluna do PCP e <strong>não some</strong> até o material chegar. As finalizadas <strong>saem do painel no dia seguinte</strong> — veja em <strong>Histórico</strong>.
+        💡 <strong>Venda direta</strong>: D365 → <strong>Gerar OV</strong> (cria o contrato automático e segue no kanban) → <strong>Cotar frete</strong> → <strong>Enviar NF</strong>. <strong>Consignação</strong>: cria o contrato (baixa por comunicado de uso). <strong>Comunicado de uso</strong>: regido pela <strong>AF + paciente + prontuário</strong> — confira em <strong>Pesquisar / Histórico</strong> antes de lançar, evita processar o mesmo caso duas vezes. Sem estoque? Use <strong>🏭 Sem estoque</strong> — o card fica na coluna do PCP e <strong>não some</strong> até o material chegar. As finalizadas <strong>saem do painel no dia seguinte</strong> — veja em <strong>Pesquisar / Histórico</strong>.
       </div>
 
       {isLoading ? (
@@ -487,9 +491,14 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplic
         </div>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
           {d.numero_pregao && <p className="text-xs font-mono text-gray-700 font-medium">Pregão {d.numero_pregao}</p>}
-          {d.numero && <p className="text-xs font-mono text-gray-400">{d.tipo_operacao === 'COMUNICADO_USO' ? d.numero : `NE ${d.numero}`}</p>}
+          {d.numero && <p className="text-xs font-mono text-gray-400">{d.tipo_operacao === 'COMUNICADO_USO' ? `AF ${d.numero}` : `NE ${d.numero}`}</p>}
           {duplicado && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 whitespace-nowrap" title="Outra demanda ativa tem este mesmo número — confira se não é duplicidade">⚠️ nº duplicado</span>}
         </div>
+        {d.tipo_operacao === 'COMUNICADO_USO' && (d.nome_paciente || d.prontuario) && (
+          <p className="text-[11px] text-gray-400 mt-0.5 truncate">
+            {d.nome_paciente && <>👤 {d.nome_paciente}</>}{d.nome_paciente && d.prontuario && ' · '}{d.prontuario && <>Prontuário {d.prontuario}</>}
+          </p>
+        )}
         <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
           {d.canal && <span className="text-gray-400">{CANAL_LABEL[d.canal] || d.canal}</span>}
           {nItens > 0 && <span className="text-gray-400">{nItens} {nItens === 1 ? 'item' : 'itens'}</span>}
@@ -566,6 +575,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const [clienteNome, setClienteNome] = useState('')
   const [numeroPregao, setNumeroPregao] = useState('')
   const [numero, setNumero] = useState('')
+  const [nomePaciente, setNomePaciente] = useState('')
+  const [prontuario, setProntuario] = useState('')
   const [canal, setCanal] = useState('')
   const [prazo, setPrazo] = useState('')
   const [prioridade, setPrioridade] = useState('NORMAL')
@@ -577,6 +588,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   // Venda direta / consignação viram contrato regido pelo PREGÃO → obrigatório.
   const pregaoObrigatorio = tipo !== 'COMUNICADO_USO'
   const pregaoOk = !pregaoObrigatorio || !!numeroPregao.trim()
+  // Comunicado de uso é regido pela AF + paciente + prontuário.
+  const comunicadoOk = tipo !== 'COMUNICADO_USO' || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim())
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/demandas', {
@@ -584,6 +597,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
       cliente_id: clienteId,
       numero_pregao: numeroPregao.trim() || null,
       numero: numero.trim() || null,
+      nome_paciente: nomePaciente.trim() || null,
+      prontuario: prontuario.trim() || null,
       canal: canal || null,
       prazo: prazo || null,
       prioridade,
@@ -629,9 +644,18 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
             </Campo>
           </div>
         ) : (
-          <Campo label="Referência">
-            <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Opcional" />
-          </Campo>
+          <div className="grid grid-cols-3 gap-3">
+            <Campo label="AF (Autorização de Fornecimento) *">
+              <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: AF123456" />
+              {!numero.trim() && <p className="text-xs text-red-500 mt-1">Obrigatório — rege o comunicado e evita duplicidade.</p>}
+            </Campo>
+            <Campo label="Nome do paciente *">
+              <input value={nomePaciente} onChange={e => setNomePaciente(e.target.value)} className={inputCls} placeholder="Nome completo" />
+            </Campo>
+            <Campo label="Prontuário *">
+              <input value={prontuario} onChange={e => setProntuario(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 000123" />
+            </Campo>
+          </div>
         )}
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Canal">
@@ -670,7 +694,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => criar.mutate()} disabled={!clienteId || !pregaoOk || criar.isPending}
+        <button onClick={() => criar.mutate()} disabled={!clienteId || !pregaoOk || !comunicadoOk || criar.isPending}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
           {criar.isPending ? 'Salvando…' : 'Adicionar ao painel'}
         </button>
@@ -727,10 +751,16 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
           <p className="text-base font-semibold text-gray-800">{d.cliente}</p>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-1">
             {d.numero_pregao && <span className="font-mono text-gray-700 font-medium">Pregão {d.numero_pregao}</span>}
-            {d.numero && <span className="font-mono">{d.tipo_operacao === 'COMUNICADO_USO' ? d.numero : `NE ${d.numero}`}</span>}
+            {d.numero && <span className="font-mono">{d.tipo_operacao === 'COMUNICADO_USO' ? `AF ${d.numero}` : `NE ${d.numero}`}</span>}
             {d.canal && <span>Canal: {CANAL_LABEL[d.canal] || d.canal}</span>}
             {d.prazo && <span className={prazoCor(d.prazo)}>Prazo: {fmtData(d.prazo)}</span>}
           </div>
+          {d.tipo_operacao === 'COMUNICADO_USO' && (d.nome_paciente || d.prontuario) && (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-1">
+              {d.nome_paciente && <span>👤 Paciente: <strong className="text-gray-700">{d.nome_paciente}</strong></span>}
+              {d.prontuario && <span>Prontuário: <strong className="font-mono text-gray-700">{d.prontuario}</strong></span>}
+            </div>
+          )}
           {d.observacao && <p className="text-sm text-gray-600 mt-2 bg-gray-50 rounded-lg p-2">{d.observacao}</p>}
         </div>
 
@@ -981,7 +1011,11 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const hoje = new Date().toISOString().slice(0, 10)
   const tipo: TipoKey = demanda.tipo_operacao
 
-  const [numero, setNumero] = useState(demanda.numero || '')
+  const ehComunicadoTipo = demanda.tipo_operacao === 'COMUNICADO_USO'
+  const [numero, setNumero] = useState(ehComunicadoTipo ? '' : (demanda.numero || ''))
+  const [af, setAf] = useState(demanda.numero || '')
+  const [nomePaciente, setNomePaciente] = useState(demanda.nome_paciente || '')
+  const [prontuario, setProntuario] = useState(demanda.prontuario || '')
   const [numeroPregao, setNumeroPregao] = useState(demanda.numero_pregao || '')
   const [gerarOvJunto, setGerarOvJunto] = useState(false)
   const [ovNumero, setOvNumero] = useState('')
@@ -1054,6 +1088,9 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         body.valor_nf = Number(valorNf)
         body.data_faturamento = dataFat || null
         body.empenho_id = empenhoId || null
+        body.numero = af.trim()
+        body.nome_paciente = nomePaciente.trim()
+        body.prontuario = prontuario.trim()
       }
       return api.post(`/licitacoes/demandas/${demanda.id}/concluir`, body)
     },
@@ -1072,7 +1109,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   // (não exige NF/valor). Para um comunicado novo, o backend cobra NF/valor.
   let valido = false
   if (ehContrato) valido = !!numeroPregao.trim() && !!numero.trim() && itensOk && (!(tipo === 'VENDA_DIRETA' && gerarOvJunto) || !!ovNumero.trim())
-  else valido = !!numero.trim() && itensOk && !!clienteId
+  else valido = !!numero.trim() && itensOk && !!clienteId && !!af.trim() && !!nomePaciente.trim() && !!prontuario.trim()
 
   return (
     <ModalBase titulo={<span className="flex items-center gap-2"><Flag size={17} /> Processar · {cfg.label}</span>} onClose={onClose}>
@@ -1141,6 +1178,17 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
                 </select>
               </Campo>
             )}
+            <div className="grid grid-cols-3 gap-3">
+              <Campo label="AF (Autorização de Fornecimento) *">
+                <input value={af} onChange={e => setAf(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: AF123456" />
+              </Campo>
+              <Campo label="Nome do paciente *">
+                <input value={nomePaciente} onChange={e => setNomePaciente(e.target.value)} className={inputCls} placeholder="Nome completo" />
+              </Campo>
+              <Campo label="Prontuário *">
+                <input value={prontuario} onChange={e => setProntuario(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 000123" />
+              </Campo>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Campo label="Nº do lançamento *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: CU000123" /></Campo>
               <Campo label="Data do faturamento"><input type="date" value={dataFat} onChange={e => setDataFat(e.target.value)} className={inputCls} /></Campo>
@@ -1759,28 +1807,29 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
   const itens = buscando ? itensBusca : itensDia
   const isLoading = buscando ? loadingBusca : loadingDia
 
-  const etapaFinalLabel = (d: any) => d.etapa === 'NF_ENVIADA' ? 'NF enviada' : 'Concluído'
+  const situacaoLabel = (d: any) => ETAPA_LABEL[normEtapa(d.etapa)] || d.etapa
 
   return (
-    <ModalBase titulo="Histórico de concluídas" onClose={onClose} max="max-w-5xl">
+    <ModalBase titulo="Pesquisar tudo (evita retrabalho)" onClose={onClose} max="max-w-5xl">
       <div className="p-5 space-y-3 overflow-y-auto">
-        {datas.length === 0 ? (
-          <p className="text-sm text-gray-400 text-center py-6">Nenhuma demanda concluída ainda.</p>
+        <div className="relative">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por pregão, NE, AF, paciente, prontuário, OV ou cliente — mesmo o que ainda está em andamento…"
+            className={`${inputCls} pl-9`}
+            autoFocus
+          />
+          {busca && (
+            <button onClick={() => setBusca('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">limpar</button>
+          )}
+        </div>
+        <p className="text-[11px] text-gray-400 -mt-1">Confira aqui antes de criar uma demanda nova — a busca cobre tudo, concluído ou não, para você nunca processar o mesmo caso duas vezes.</p>
+        {datas.length === 0 && !buscando ? (
+          <p className="text-sm text-gray-400 text-center py-6">Nenhuma demanda concluída ainda. Use a busca acima para achar algo em andamento.</p>
         ) : (
           <>
-            <div className="relative">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                value={busca}
-                onChange={e => setBusca(e.target.value)}
-                placeholder="Buscar por pregão, empenho (NE), OV ou cliente em todo o histórico…"
-                className={`${inputCls} pl-9`}
-                autoFocus
-              />
-              {busca && (
-                <button onClick={() => setBusca('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">limpar</button>
-              )}
-            </div>
             <div className="flex items-end justify-between gap-3 flex-wrap">
               <div className={`flex-1 min-w-[220px] ${buscando ? 'opacity-40 pointer-events-none' : ''}`}>
                 <Campo label="Dia">
@@ -1796,7 +1845,7 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
             {isLoading ? (
               <p className="text-sm text-gray-400 text-center py-4">{buscando ? 'Buscando…' : 'Carregando…'}</p>
             ) : itens.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-4">{buscando ? `Nenhuma concluída encontrada para "${termo}".` : 'Sem concluídas neste dia.'}</p>
+              <p className="text-sm text-gray-400 text-center py-4">{buscando ? `Nada encontrado para "${termo}".` : 'Sem concluídas neste dia.'}</p>
             ) : (
               <div className="border border-gray-100 rounded-lg overflow-x-auto">
                 <table className="w-full text-sm">
@@ -1822,10 +1871,15 @@ function ModalHistorico({ onClose }: { onClose: () => void }) {
                             <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${cfg.chip}`}><Icone size={12} /> {cfg.label}</span>
                           </td>
                           <td className="px-3 py-2 font-medium text-gray-800">{d.cliente || 'Cliente não informado'}</td>
-                          <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">{d.numero || '—'}</td>
+                          <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">
+                            {d.numero || '—'}
+                            {d.tipo_operacao === 'COMUNICADO_USO' && (d.nome_paciente || d.prontuario) && (
+                              <span className="block text-[11px] text-gray-400 font-sans">{d.nome_paciente}{d.nome_paciente && d.prontuario ? ' · ' : ''}{d.prontuario && `Pront. ${d.prontuario}`}</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{d.canal ? (CANAL_LABEL[d.canal] || d.canal) : '—'}</td>
                           <td className="px-3 py-2 whitespace-nowrap">
-                            <span className="text-emerald-600 text-xs">✓ {etapaFinalLabel(d)}</span>
+                            <span className={`text-xs ${ehFinal(d) ? 'text-emerald-600' : 'text-amber-600'}`}>{ehFinal(d) ? '✓ ' : '⏳ '}{situacaoLabel(d)}</span>
                             {buscando && d.concluido_em && <span className="block text-[11px] text-gray-400">{fmtData(d.concluido_em)}</span>}
                           </td>
                           <td className="px-3 py-2 font-mono text-emerald-700 whitespace-nowrap">{ref || '—'}</td>

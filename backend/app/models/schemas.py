@@ -210,6 +210,9 @@ class ComunicadoUsoCreate(BaseModel):
     observacoes: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
     empenho_id: Optional[UUID] = None
+    af: Optional[str] = None
+    nome_paciente: Optional[str] = None
+    prontuario: Optional[str] = None
 
 
 # ── Licitações / Empenhos ──────────────────────────────────────────────────────
@@ -361,6 +364,9 @@ class ConsumoEmpenhoCreate(BaseModel):
     canal: Optional[str] = None
     observacoes: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
+    af: Optional[str] = None
+    nome_paciente: Optional[str] = None
+    prontuario: Optional[str] = None
 
     @field_validator("numero_pedido", "numero_nf")
     @classmethod
@@ -381,13 +387,16 @@ class DemandaItem(BaseModel):
 class DemandaCreate(BaseModel):
     tipo_operacao: str            # VENDA_DIRETA | CONSIGNACAO | COMUNICADO_USO
     numero_pregao: Optional[str] = None  # pregão (mestre) — rege o contrato
-    numero: Optional[str] = None         # NE / referência (secundária)
+    numero: Optional[str] = None         # NE / referência; no COMUNICADO_USO é a AF
     cliente_id: UUID
     canal: Optional[str] = None
     prazo: Optional[date] = None
     prioridade: str = "NORMAL"
     observacao: Optional[str] = None
     itens: list[DemandaItem] = []
+    # Regem o comunicado de uso — identificam o que foi usado em qual paciente.
+    nome_paciente: Optional[str] = None
+    prontuario: Optional[str] = None
 
 
 class DemandaUpdate(BaseModel):
@@ -403,6 +412,8 @@ class DemandaUpdate(BaseModel):
     responsavel_id: Optional[UUID] = None
     ref_externa: Optional[str] = None
     itens: Optional[list[DemandaItem]] = None
+    nome_paciente: Optional[str] = None
+    prontuario: Optional[str] = None
 
 
 class DemandaConcluir(BaseModel):
@@ -429,6 +440,9 @@ class DemandaConcluir(BaseModel):
     # Cliente confirmado ao concluir (obrigatório no comunicado de uso) — garante
     # que o faturamento entra no sistema com o cliente certo.
     cliente_id: Optional[UUID] = None
+    # Regem o comunicado de uso (AF vem em `numero`) — confirmados/editados na conclusão.
+    nome_paciente: Optional[str] = None
+    prontuario: Optional[str] = None
     # Atalho de entrega única (venda direta): ao criar o contrato, já gera a OV
     # cheia baixando todo o saldo (usa numero_pedido como nº da OV).
     gerar_ov: bool = False
