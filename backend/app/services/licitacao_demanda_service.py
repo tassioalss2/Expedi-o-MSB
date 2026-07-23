@@ -685,10 +685,17 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
     d = db.table("licitacao_demandas").select("*").eq("id", demanda_id).single().execute().data
     if not d:
         raise HTTPException(status_code=404, detail="Demanda não encontrada")
-    if d.get("gerado_id"):
+    etapa_atual0 = _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa"))
+    if d.get("gerado_id") and etapa_atual0 in ETAPAS_FINAIS:
         raise HTTPException(status_code=400, detail="Esta demanda já foi concluída e gerou um registro.")
+    # Reaberta (etapa voltou pra antes de concluído) depois de já ter gerado um
+    # registro — corrige o que já existe em vez de criar de novo (senão duplica
+    # ou esbarra no "já existe um lançamento com esse número").
+    reabrindo = bool(d.get("gerado_id")) and etapa_atual0 not in ETAPAS_FINAIS
 
     tipo = d.get("tipo_operacao")
+    if reabrindo and tipo != "COMUNICADO_USO":
+        raise HTTPException(status_code=400, detail="Este contrato já foi criado — para corrigir, edite pela aba Contratos.")
     # Cliente confirmado na conclusão prevalece (obrigatório no comunicado de uso).
     cliente_id = str(payload.cliente_id) if getattr(payload, "cliente_id", None) else d.get("cliente_id")
     if not cliente_id:
@@ -774,7 +781,10 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
 
         # Se o comunicado com esse número já existe (faturado no D365/app), apenas
         # vincula a demanda a ele e conclui — não lança de novo (evita duplicidade).
-        existente = db.table("pedidos").select("id, numero_pedido")\
+        # Não vale quando a demanda foi reaberta pra corrigir algo — nesse caso o
+        # "existente" é o próprio lançamento que ela já gerou, e o objetivo é
+        # atualizar os dados errados, não só vincular de novo.
+        existente = None if reabrindo else db.table("pedidos").select("id, numero_pedido")\
             .eq("numero_pedido", numped).neq("status", "CANCELADO").limit(1).execute().data
         if existente:
             p = existente[0]
@@ -803,7 +813,35 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         if not payload.valor_nf or float(payload.valor_nf) <= 0:
             raise HTTPException(status_code=422, detail="Informe o valor da NF (maior que zero).")
 
-        if payload.empenho_id:
+        if reabrindo:
+            # Já tinha gerado o lançamento antes (demanda reaberta pra corrigir
+            # algo errado) — atualiza o registro existente em vez de criar de
+            # novo, senão duplica ou esbarra no "já existe lançamento com esse número".
+            ped = db.table("pedidos").select("id, numero_pedido")\
+                .eq("numero_pedido", d.get("gerado_ref") or numped).limit(1).execute().data
+            if not ped:
+                raise HTTPException(status_code=404, detail="O lançamento gerado anteriormente não foi encontrado — não dá para atualizar.")
+            pid = ped[0]["id"]
+            db.table("pedidos").update({
+                "numero_nf": numero_nf,
+                "valor_nf": float(payload.valor_nf),
+                "valor_produtos": float(payload.valor_nf),
+                "af": af,
+                "nome_paciente": nome_paciente,
+                "prontuario": prontuario,
+                "data_procedimento": data_procedimento.isoformat() if data_procedimento else None,
+                "canal": canal,
+                "atualizado_em": _agora(),
+            }).eq("id", pid).execute()
+            itens_corrigidos = [it for it in itens_src if it.produto_id and float(it.qtd or 0) > 0]
+            if itens_corrigidos:
+                db.table("itens_pedido").delete().eq("pedido_id", pid).execute()
+                db.table("itens_pedido").insert([{
+                    "pedido_id": pid, "produto_id": str(it.produto_id),
+                    "qtd_solicitada": float(it.qtd), "status_item": "OK",
+                } for it in itens_corrigidos]).execute()
+            gerado_tipo, gerado_id, gerado_ref = "COMUNICADO", pid, ped[0]["numero_pedido"]
+        elif payload.empenho_id:
             # Baixa saldo de um empenho consignado existente.
             licitacao_service.registrar_consumo(
                 str(payload.empenho_id),
