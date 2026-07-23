@@ -337,9 +337,9 @@ export function VisaoGeral() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {linhasDrill.map((r) => (
-                      <tr key={r.id} className="hover:bg-gray-50">
+                      <tr key={r.id} onClick={() => { setDrill(null); navigate(`/expedicao/${r.id}`) }} className="hover:bg-gray-50 cursor-pointer">
                         <td className="px-5 py-2.5 whitespace-nowrap">
-                          <span className="font-mono text-gray-700">{r.numero_pedido || '—'}</span>
+                          <span className="font-mono text-indigo-600 underline decoration-indigo-200 underline-offset-2">{r.numero_pedido || '—'}</span>
                           <span className="block text-xs text-gray-400">NF {r.numero_nf || '—'} · {format(new Date(r.data + 'T00:00:00'), 'dd/MM')}</span>
                         </td>
                         <td className="px-2 py-2.5 text-gray-600">{r.cliente}</td>
