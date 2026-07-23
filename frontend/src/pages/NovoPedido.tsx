@@ -6,6 +6,7 @@ import api from '../lib/api'
 import type { Cliente, Transportadora } from '../types'
 import toast from 'react-hot-toast'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
+import { LocalEntregaInput } from '../components/LocalEntregaInput'
 
 export function ClienteAutocomplete({ value, onChange, initialNome, onCriarNovo }: {
   value: string; onChange: (id: string, nome: string) => void; initialNome?: string
@@ -333,9 +334,9 @@ export function NovoPedido() {
 
           <div className="col-span-2">
             <label className="text-sm font-medium text-gray-700">Local de Entrega</label>
-            <input type="text" value={form.local_entrega} onChange={e => setForm({...form, local_entrega: e.target.value})}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
-              placeholder="Ex: São Paulo SP" />
+            <div className="mt-1">
+              <LocalEntregaInput value={form.local_entrega} onChange={v => setForm({ ...form, local_entrega: v })} />
+            </div>
           </div>
 
           <div className="col-span-2">

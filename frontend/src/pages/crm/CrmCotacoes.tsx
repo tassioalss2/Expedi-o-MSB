@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { ClienteAutocomplete } from '../NovoPedido'
 import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
+import { LocalEntregaInput } from '../../components/LocalEntregaInput'
 import { CANAL_LABEL } from '../../lib/statusConfig'
 import { fmtBRL, fmtData, msgErro } from '../../lib/crm'
 import { ModalBase, Campo, inputCls } from './CrmShared'
@@ -233,7 +234,7 @@ function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onCl
             </select>
           </Campo>
         </div>
-        <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>

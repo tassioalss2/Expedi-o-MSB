@@ -9,6 +9,7 @@ import type { InventarioItem, Pedido, Cubagem, Transportadora } from '../types'
 import { ClienteAutocomplete } from './NovoPedido'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
+import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
@@ -1188,9 +1189,9 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
 
               <div className="col-span-2">
                 <label className="text-xs font-medium text-gray-600">Local de Entrega</label>
-                <input type="text" value={form.local_entrega}
-                  onChange={e => setForm({ ...form, local_entrega: e.target.value })}
-                  className="w-full border rounded-lg px-3 py-2 text-sm mt-1" placeholder="Ex: São Paulo SP" />
+                <div className="mt-1">
+                  <LocalEntregaInput value={form.local_entrega} onChange={v => setForm({ ...form, local_entrega: v })} />
+                </div>
               </div>
 
               <div className="col-span-2">

@@ -9,6 +9,7 @@ import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { ClienteAutocomplete } from '../NovoPedido'
 import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
+import { LocalEntregaInput } from '../../components/LocalEntregaInput'
 import { CANAL_LABEL } from '../../lib/statusConfig'
 import {
   ESTAGIOS, ESTAGIOS_PIPELINE, ESTAGIO_MAP, ORIGENS, TIPOS_ATIVIDADE, TIPO_ATIV_MAP,
@@ -568,7 +569,7 @@ function ModalGerarOV({ opp, onClose, onSaved }: { opp: any; onClose: () => void
               <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
             </select>
           </Campo>
-          <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+          <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         </div>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">

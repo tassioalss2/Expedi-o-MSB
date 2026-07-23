@@ -10,6 +10,7 @@ import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
+import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 
 const CANAIS = ['LICITACAO_URO', 'LICITACAO_VASCULAR', 'URO', 'VASCULAR', 'REALCLOSURE']
@@ -1947,7 +1948,7 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
             </select>
           </Campo>
         </div>
-        <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         <div>
           <label className="text-sm text-gray-600">Quantidades desta OV *</label>
           <p className="text-xs text-gray-400 mb-1.5">Pré-preenchido com o saldo — ajuste se a entrega for menor.</p>
@@ -2341,7 +2342,7 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
             </select>
           </Campo>
         </div>
-        <Campo label="Local de entrega"><input value={local} onChange={e => setLocal(e.target.value)} className={inputCls} placeholder="Opcional" /></Campo>
+        <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         <div>
           <label className="text-sm text-gray-600">Quantidades desta entrega *</label>
           <p className="text-xs text-gray-400 mb-1.5">Informe quanto entregar de cada item (limitado ao saldo).</p>
