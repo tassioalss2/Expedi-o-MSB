@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
   LayoutGrid, Layers, ChevronDown, ChevronRight, ExternalLink, Flag, Clock, Search,
-  ChevronRight as Arrow, Truck, Send, Package, PackageCheck,
+  ChevronRight as Arrow, Truck, Send, Package, PackageCheck, BarChart3, Download,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -177,17 +177,17 @@ function prazoCor(prazo?: string | null): string {
 
 // ════════════════════════════════════════════════════════════════════════════════
 export function Licitacoes() {
-  const [aba, setAba] = useState<'painel' | 'contratos'>('painel')
+  const [aba, setAba] = useState<'painel' | 'contratos' | 'relatorio'>('painel')
 
   return (
     <div className="p-4 lg:p-6 max-w-[1400px] mx-auto space-y-4">
       <div>
         <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><Gavel size={20} /> Licitações</h1>
-        <p className="text-sm text-gray-400">Triagem das demandas do dia e contratos (com saldo) de venda direta e consignação.</p>
+        <p className="text-sm text-gray-400">Triagem das demandas do dia, contratos (com saldo) e relatório completo do que já foi feito.</p>
       </div>
 
       <div className="flex gap-1 border-b">
-        {([['painel', 'Painel de demandas', LayoutGrid], ['contratos', 'Contratos', Layers]] as const).map(([k, label, Icone]) => (
+        {([['painel', 'Painel de demandas', LayoutGrid], ['contratos', 'Contratos', Layers], ['relatorio', 'Relatório', BarChart3]] as const).map(([k, label, Icone]) => (
           <button key={k} onClick={() => setAba(k)}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
               aba === k ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -197,7 +197,7 @@ export function Licitacoes() {
         ))}
       </div>
 
-      {aba === 'painel' ? <PainelDemandas /> : <AbaContratos />}
+      {aba === 'painel' ? <PainelDemandas /> : aba === 'contratos' ? <AbaContratos /> : <AbaRelatorio />}
     </div>
   )
 }
@@ -1252,6 +1252,181 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         </button>
       </div>
     </ModalBase>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ── Aba Relatório (tudo que já foi feito — VD, comunicado de uso, consignação) ───
+function AbaRelatorio() {
+  const navigate = useNavigate()
+  const [tipo, setTipo] = useState('')
+  const [canal, setCanal] = useState('')
+  const [dataInicio, setDataInicio] = useState('')
+  const [dataFim, setDataFim] = useState('')
+  const [busca, setBusca] = useState('')
+
+  const { data: itens = [], isLoading } = useQuery<any[]>({
+    queryKey: ['relatorio-licitacoes', tipo, canal, dataInicio, dataFim],
+    queryFn: () => api.get('/licitacoes/demandas/relatorio', {
+      params: { tipo: tipo || undefined, canal: canal || undefined, data_inicio: dataInicio || undefined, data_fim: dataFim || undefined },
+    }).then(r => r.data),
+  })
+
+  const filtrados = useMemo(() => {
+    const b = busca.trim().toLowerCase()
+    if (!b) return itens
+    return itens.filter(d => {
+      const alvo = `${d.cliente || ''} ${d.numero || ''} ${d.numero_pregao || ''} ${d.nome_paciente || ''} ${d.prontuario || ''} ${d.numero_nf || ''} ${d.gerado_ref || ''}`.toLowerCase()
+      return alvo.includes(b)
+    })
+  }, [itens, busca])
+
+  const totais = useMemo(() => {
+    const porTipo: Record<string, { count: number; valor: number }> = {}
+    let valorGeral = 0
+    for (const d of filtrados) {
+      const t = d.tipo_operacao
+      if (!porTipo[t]) porTipo[t] = { count: 0, valor: 0 }
+      porTipo[t].count++
+      porTipo[t].valor += d.valor_total || 0
+      valorGeral += d.valor_total || 0
+    }
+    return { porTipo, valorGeral }
+  }, [filtrados])
+
+  const exportarCsv = () => {
+    const cols = ['Tipo', 'Data', 'Cliente', 'Pregão', 'NE/AF', 'Paciente', 'Prontuário', 'NF', 'Valor', 'Canal', 'Situação']
+    const linhas = filtrados.map(d => [
+      TIPO_MAP[d.tipo_operacao]?.label || d.tipo_operacao,
+      fmtData(d.data_ref),
+      d.cliente || '',
+      d.numero_pregao || '',
+      d.numero || '',
+      d.nome_paciente || '',
+      d.prontuario || '',
+      d.numero_nf || '',
+      d.valor_total ? d.valor_total.toFixed(2) : '',
+      d.canal ? (CANAL_LABEL[d.canal] || d.canal) : '',
+      ETAPA_LABEL[normEtapa(d.etapa)] || d.etapa,
+    ])
+    const csv = [cols, ...linhas].map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `relatorio-licitacoes-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {TIPOS.map(t => (
+          <div key={t.key} className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2">
+            <p className="text-xl font-bold tabular-nums text-gray-800">{totais.porTipo[t.key]?.count || 0}</p>
+            <p className="text-[11px] text-gray-500">{t.label}</p>
+            <p className="text-[11px] text-gray-400">{fmtBRL(totais.porTipo[t.key]?.valor || 0)}</p>
+          </div>
+        ))}
+        <div className="bg-blue-50 rounded-xl border border-blue-100 px-3 py-2">
+          <p className="text-xl font-bold tabular-nums text-blue-700">{filtrados.length}</p>
+          <p className="text-[11px] text-blue-600">Total no filtro</p>
+          <p className="text-[11px] text-blue-500">{fmtBRL(totais.valorGeral)}</p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px] max-w-xs">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar cliente, pregão, AF, paciente, prontuário, NF…"
+            className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
+        </div>
+        <select value={tipo} onChange={e => setTipo(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
+          <option value="">Todos os tipos</option>
+          {TIPOS.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+        </select>
+        <select value={canal} onChange={e => setCanal(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
+          <option value="">Todos os canais</option>
+          {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+        </select>
+        <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} title="De" className="border rounded-lg px-3 py-2 text-sm" />
+        <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} title="Até" className="border rounded-lg px-3 py-2 text-sm" />
+        <button onClick={exportarCsv}
+          className="flex items-center gap-1.5 text-sm border rounded-lg px-3 py-2 text-gray-600 hover:bg-gray-50">
+          <Download size={15} /> Exportar CSV
+        </button>
+      </div>
+
+      {isLoading ? (
+        <p className="text-center text-gray-400 py-10 text-sm">Carregando...</p>
+      ) : filtrados.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">Nada encontrado com esses filtros.</div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-[11px] uppercase text-gray-400 text-left border-b">
+                <th className="px-3 py-2 font-medium">Tipo</th>
+                <th className="px-3 py-2 font-medium">Data</th>
+                <th className="px-3 py-2 font-medium">Cliente</th>
+                <th className="px-3 py-2 font-medium">Pregão / AF-NE</th>
+                <th className="px-3 py-2 font-medium">Paciente / Prontuário</th>
+                <th className="px-3 py-2 font-medium">NF</th>
+                <th className="px-3 py-2 font-medium">Canal</th>
+                <th className="px-3 py-2 font-medium">Situação</th>
+                <th className="px-3 py-2 font-medium text-right">Valor</th>
+                <th className="px-3 py-2 font-medium text-right">Ação</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {filtrados.map(d => {
+                const cfg = TIPO_MAP[d.tipo_operacao] || TIPOS[0]
+                const Icone = cfg.icone
+                const ovId = (d.ovs_detalhe || [])[0]?.id || (d.gerado_tipo === 'COMUNICADO' ? d.gerado_id : null)
+                return (
+                  <tr key={d.id} className="hover:bg-gray-50/60">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${cfg.chip}`}><Icone size={12} /> {cfg.label}</span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{fmtData(d.data_ref)}</td>
+                    <td className="px-3 py-2 font-medium text-gray-800 max-w-[180px] truncate">{d.cliente || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">
+                      {d.numero_pregao && <span className="block">{d.numero_pregao}</span>}
+                      {d.numero && <span className="block text-gray-400">{d.tipo_operacao === 'COMUNICADO_USO' ? `AF ${d.numero}` : d.numero}</span>}
+                      {!d.numero_pregao && !d.numero && '—'}
+                    </td>
+                    <td className="px-3 py-2 text-gray-500">
+                      {d.tipo_operacao === 'COMUNICADO_USO' ? (
+                        <>
+                          {d.nome_paciente && <span className="block text-gray-700">{d.nome_paciente}</span>}
+                          {d.prontuario && <span className="block font-mono text-[11px]">{d.prontuario}</span>}
+                          {!d.nome_paciente && !d.prontuario && '—'}
+                        </>
+                      ) : '—'}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">{d.numero_nf || '—'}</td>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{d.canal ? (CANAL_LABEL[d.canal] || d.canal) : '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <span className={`text-xs ${ehFinal(d) ? 'text-emerald-600' : 'text-amber-600'}`}>{ehFinal(d) ? '✓ ' : '⏳ '}{ETAPA_LABEL[normEtapa(d.etapa)] || d.etapa}</span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium tabular-nums text-gray-800">{d.valor_total ? fmtBRL(d.valor_total) : '—'}</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      {ovId ? (
+                        <button onClick={() => navigate(`/expedicao/${ovId}`)} className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:underline">
+                          <ExternalLink size={12} /> Abrir
+                        </button>
+                      ) : <span className="text-gray-300">—</span>}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   )
 }
 

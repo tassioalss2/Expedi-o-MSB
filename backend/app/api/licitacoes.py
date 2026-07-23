@@ -116,6 +116,17 @@ def historico_buscar(q: str, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.historico_buscar(q)
 
 
+@router.get("/demandas/relatorio")
+def relatorio(
+    tipo: str | None = None,
+    canal: str | None = None,
+    data_inicio: str | None = None,
+    data_fim: str | None = None,
+    _: UsuarioOut = Depends(get_current_user),
+):
+    return licitacao_demanda_service.relatorio(tipo, canal, data_inicio, data_fim)
+
+
 @router.post("/demandas", status_code=201)
 def criar_demanda(payload: DemandaCreate, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.criar_demanda(payload)

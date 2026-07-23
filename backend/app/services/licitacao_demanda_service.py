@@ -248,6 +248,39 @@ def historico_buscar(termo: str) -> list:
     return out[:100]
 
 
+def relatorio(tipo: Optional[str] = None, canal: Optional[str] = None,
+              data_inicio: Optional[str] = None, data_fim: Optional[str] = None) -> list:
+    """Relatório completo — tudo que já foi feito de venda direta, comunicado de
+    uso e consignação, filtrável por tipo/canal/período. Substitui o controle em
+    planilha: cada linha traz pregão/AF, paciente/prontuário (comunicado), NF(s)
+    e valor total, com a data de referência sendo a de conclusão (ou criação,
+    se ainda em andamento)."""
+    db = get_service_db()
+    rows = db.table("licitacao_demandas").select("*, clientes(nome)")\
+        .eq("ativo", True).order("criado_em", desc=True).execute().data
+    demandas = [_serializar(r) for r in rows]
+    _anexar_ov_status(db, demandas)
+
+    for d in demandas:
+        d["data_ref"] = (d.get("concluido_em") or d.get("criado_em") or "")[:10]
+        d["valor_total"] = sum(float(it.get("qtd") or 0) * float(it.get("valor") or 0) for it in (d.get("itens") or []))
+
+    def dentro(d: dict) -> bool:
+        if tipo and d["tipo_operacao"] != tipo:
+            return False
+        if canal and d.get("canal") != canal:
+            return False
+        if data_inicio and d["data_ref"] < data_inicio:
+            return False
+        if data_fim and d["data_ref"] > data_fim:
+            return False
+        return True
+
+    out = [d for d in demandas if dentro(d)]
+    out.sort(key=lambda d: d["data_ref"], reverse=True)
+    return out
+
+
 def _garantir_contrato_vd(db, d: dict) -> str | None:
     """Garante que exista o contrato (empenho) de uma venda direta, criando-o com
     as quantidades totais da triagem se ainda não houver. Idempotente: se já
