@@ -1401,6 +1401,9 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
   const [valorFrete, setValorFrete] = useState(pedido.valor_frete ? String(pedido.valor_frete) : '')
   const novoEhCif = tipoFrete === 'CIF_COM_VALOR' || tipoFrete === 'CIF_SEM_VALOR'
   const valorFreteOk = !novoEhCif || Number(valorFrete) > 0
+  const mesmoTipo = tipoFrete === tipoAtual
+  const valorMudou = Number(valorFrete) !== Number(pedido.valor_frete || 0)
+  const mudouAlgo = !mesmoTipo || (novoEhCif && valorMudou)
 
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/alterar-tipo-frete`, {
@@ -1410,7 +1413,9 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
     }),
     onSuccess: (res) => {
       const d = res.data
-      toast.success(`Tipo de frete alterado: ${TIPO_FRETE_LABEL[d.tipo_frete_anterior]} → ${TIPO_FRETE_LABEL[d.tipo_frete_novo]}`)
+      toast.success(d.tipo_frete_anterior === d.tipo_frete_novo
+        ? `Valor do frete corrigido (${TIPO_FRETE_LABEL[d.tipo_frete_novo]})`
+        : `Tipo de frete alterado: ${TIPO_FRETE_LABEL[d.tipo_frete_anterior]} → ${TIPO_FRETE_LABEL[d.tipo_frete_novo]}`)
       qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       qc.invalidateQueries({ queryKey: ['ocorrencias'] })
@@ -1437,7 +1442,7 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
             <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value as (typeof TIPOS_FRETE)[number])}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
               {TIPOS_FRETE.map(tipo => (
-                <option key={tipo} value={tipo} disabled={tipo === tipoAtual}>
+                <option key={tipo} value={tipo}>
                   {TIPO_FRETE_LABEL[tipo]}{tipo === tipoAtual ? ' (atual)' : ''}
                 </option>
               ))}
@@ -1466,13 +1471,15 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
           </div>
 
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-            Uma ocorrência aberta será criada com o tipo anterior, o novo tipo e o motivo informado.
+            {mesmoTipo
+              ? 'Uma ocorrência aberta será criada registrando a correção do valor do frete.'
+              : 'Uma ocorrência aberta será criada com o tipo anterior, o novo tipo e o motivo informado.'}
           </div>
         </div>
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || tipoFrete === tipoAtual || !motivo.trim() || !valorFreteOk}
+            disabled={mutation.isPending || !mudouAlgo || !motivo.trim() || !valorFreteOk}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-500">
             {mutation.isPending ? 'Salvando...' : 'Confirmar Alteração'}
           </button>

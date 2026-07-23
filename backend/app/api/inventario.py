@@ -249,8 +249,7 @@ def alterar_tipo_frete(
 
     frete_anterior = pedido.get("tipo_frete") or TipoFrete.FOB.value
     frete_novo = payload.tipo_frete.value
-    if frete_anterior == frete_novo:
-        raise HTTPException(status_code=400, detail="Selecione um tipo de frete diferente do atual")
+    mesmo_tipo = frete_anterior == frete_novo
 
     # Valor do frete: obrigatório para CIF; FOB zera (cliente paga, não vai na NF).
     eh_cif = frete_novo in (TipoFrete.CIF_COM_VALOR.value, TipoFrete.CIF_SEM_VALOR.value)
@@ -262,6 +261,8 @@ def alterar_tipo_frete(
         valor_frete_novo = 0.0
 
     frete_anterior_valor = float(pedido.get("valor_frete") or 0)
+    if mesmo_tipo and abs(valor_frete_novo - frete_anterior_valor) < 0.005:
+        raise HTTPException(status_code=400, detail="Nada foi alterado — mude o tipo ou o valor do frete.")
 
     uid = _get_usuario_real(str(usuario.id))
     labels = {
@@ -281,15 +282,26 @@ def alterar_tipo_frete(
     }).eq("id", str(pedido_id)).execute()
 
     linha_valor = f"\n• Valor do frete: {_brl(valor_frete_novo)}" if eh_cif else ""
-    db.table("ocorrencias").insert({
-        "pedido_id": str(pedido_id),
-        "tipo": "Alteração de Tipo de Frete",
-        "descricao": (
+    if mesmo_tipo:
+        tipo_ocorrencia = "Correção de Valor do Frete"
+        titulo_desc = (
+            f"Valor do frete corrigido na OV {pedido['numero_pedido']} (tipo {labels.get(frete_novo, frete_novo)} mantido).\n"
+            f"• De: {_brl(frete_anterior_valor)}\n"
+            f"• Para: {_brl(valor_frete_novo)}\n"
+            f"• Motivo: {motivo}"
+        )
+    else:
+        tipo_ocorrencia = "Alteração de Tipo de Frete"
+        titulo_desc = (
             f"Tipo de frete alterado na OV {pedido['numero_pedido']}.\n"
             f"• De: {labels.get(frete_anterior, frete_anterior)} ({_brl(frete_anterior_valor)})\n"
             f"• Para: {labels.get(frete_novo, frete_novo)}{linha_valor}\n"
             f"• Motivo: {motivo}"
-        ),
+        )
+    db.table("ocorrencias").insert({
+        "pedido_id": str(pedido_id),
+        "tipo": tipo_ocorrencia,
+        "descricao": titulo_desc,
         "responsavel_id": uid,
         "status": "ABERTA",
         "criado_em": agora,
@@ -301,6 +313,9 @@ def alterar_tipo_frete(
         "status_novo": pedido["status"],
         "usuario_id": uid,
         "observacao": (
+            f"Valor do frete corrigido ({labels.get(frete_novo, frete_novo)}): "
+            f"{_brl(frete_anterior_valor)} → {_brl(valor_frete_novo)}. {motivo}"
+            if mesmo_tipo else
             f"Tipo de frete alterado: {labels.get(frete_anterior, frete_anterior)} "
             f"→ {labels.get(frete_novo, frete_novo)}"
             f"{' (' + _brl(valor_frete_novo) + ')' if eh_cif else ''}. {motivo}"
