@@ -283,8 +283,16 @@ def relatorio(tipo: Optional[str] = None, canal: Optional[str] = None,
 
 def _garantir_contrato_vd(db, d: dict) -> str | None:
     """Garante que exista o contrato (empenho) de uma venda direta, criando-o com
-    as quantidades totais da triagem se ainda não houver. Idempotente: se já
-    existe um empenho com o mesmo número, reusa. Devolve o empenho_id (ou None)."""
+    as quantidades da triagem se ainda não houver. Idempotente: se já existe um
+    empenho com o mesmo número, reusa.
+
+    Se já existe um PREGÃO MESTRE com o mesmo número do pregão, esta NE entra
+    como linha dele (pregao_id + saldo validado por item) em vez de virar um
+    contrato solto — sem isso, a NE só se juntaria ao pregão bem depois (no
+    backfill da aba Contratos) e sem validar se os itens/quantidades cabem no
+    saldo, deixando o pregão com saldo errado silenciosamente.
+
+    Devolve o empenho_id (ou None)."""
     if d.get("tipo_operacao") != "VENDA_DIRETA":
         return None
     contrato_num = (d.get("numero") or "").strip() or (d.get("numero_pregao") or "").strip()
@@ -300,12 +308,36 @@ def _garantir_contrato_vd(db, d: dict) -> str | None:
                  if it.get("produto_id") and float(it.get("qtd") or 0) > 0]
     if not itens_emp:
         return None
+
     from app.services import licitacao_service
+    numero_pregao = (d.get("numero_pregao") or "").strip()
+    pregao_id = None
+    if numero_pregao:
+        pregao_rows = db.table("pregoes").select("id").eq("numero", numero_pregao).eq("ativo", True).execute().data
+        if pregao_rows:
+            from app.services import pregao_service
+            detalhe = pregao_service.obter_pregao(pregao_rows[0]["id"])
+            saldo = {i["produto_id"]: i["qtd_saldo"] for i in detalhe["itens"]}
+            for it in itens_emp:
+                pid = str(it.produto_id)
+                if pid not in saldo:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"O pregão {numero_pregao} já existe na aba Contratos, mas este item não faz parte dele — confira o item ou o número do pregão.",
+                    )
+                if it.qtd_empenhada > saldo[pid] + 0.001:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Quantidade acima do saldo do pregão {numero_pregao} para este item (saldo {saldo[pid]}). Confira o pregão na aba Contratos.",
+                    )
+            pregao_id = pregao_rows[0]["id"]
+
     emp = licitacao_service.criar_empenho(EmpenhoCreate(
         numero=contrato_num,
-        numero_pregao=(d.get("numero_pregao") or "").strip() or None,
+        numero_pregao=numero_pregao or None,
         cliente_id=d["cliente_id"], tipo="VENDA_DIRETA",
         canal=d.get("canal"), vigencia=None, itens=itens_emp,
+        pregao_id=pregao_id,
     ))
     return emp.get("id")
 
@@ -360,10 +392,13 @@ def criar_demanda(payload: DemandaCreate) -> dict:
         "ativo": True,
     }).execute().data[0]
     # Venda direta "ganhou o pregão" → já cria o contrato com as quantidades
-    # totais (o card segue no kanban; o contrato aparece na aba Contratos).
-    # Falha aqui não bloqueia a criação da demanda.
+    # da triagem (o card segue no kanban; o contrato aparece na aba Contratos).
+    # Erro de validação (ex.: item/quantidade não cabe no saldo do pregão já
+    # existente) precisa aparecer pro operador — só engole falha inesperada.
     try:
         _garantir_contrato_vd(db, obter_demanda(row["id"]))
+    except HTTPException:
+        raise
     except Exception:
         pass
     return obter_demanda(row["id"])
