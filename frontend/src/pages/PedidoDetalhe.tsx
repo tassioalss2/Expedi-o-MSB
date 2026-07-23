@@ -1863,7 +1863,7 @@ export function PedidoDetalhe() {
   const { data: cubagem } = useQuery<Cubagem>({
     queryKey: ['cubagem', id],
     queryFn: () => api.get(`/pedidos/${id}/cubagem`).then(r => r.data),
-    enabled: !!id && !!pedido && ['AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'].includes(pedido?.status || ''),
+    enabled: !!id && !!pedido && ['EM_PROCESSO_SISTEMICO', 'EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA', 'AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'].includes(pedido?.status || ''),
   })
 
   const { data: movimentacoes = [] } = useQuery<Array<{ status_novo: string; criado_em: string }>>({
