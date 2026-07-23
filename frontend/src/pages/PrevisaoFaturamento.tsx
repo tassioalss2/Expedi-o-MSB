@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info } from 'lucide-react'
@@ -54,6 +55,7 @@ const STATUS_OV: Record<string, string> = {
 
 export function PrevisaoFaturamento() {
   const qc = useQueryClient()
+  const nav = useNavigate()
   const [detalhe, setDetalhe] = useState<DetalheTipo | null>(null)
   const { data, isLoading } = useQuery<Resumo>({
     queryKey: ['previsao-resumo'],
@@ -184,8 +186,8 @@ export function PrevisaoFaturamento() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {pipeline.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50/60">
-                    <td className="py-2 font-mono text-gray-700">{p.numero_pedido}</td>
+                  <tr key={p.id} onClick={() => nav(`/expedicao/${p.id}`)} className="hover:bg-indigo-50/60 cursor-pointer">
+                    <td className="py-2 font-mono text-indigo-600 underline decoration-indigo-200 underline-offset-2">{p.numero_pedido}</td>
                     <td className="py-2 text-gray-700 truncate max-w-[200px]">{p.cliente || '—'}</td>
                     <td className="py-2">
                       <span className={`text-[11px] px-2 py-0.5 rounded-full ${p.quase_nf ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'}`}>
@@ -220,9 +222,11 @@ function Mini({ titulo, valor, cor, icone, onClick }: { titulo: string; valor: n
 type DetalheTipo = 'previsao_mes' | 'realizado' | 'em_processo' | 'saldo_contratos' | 'garantido' | 'negociacao' | 'sai_hoje' | 'no_kanban' | 'ritmo'
 
 function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo; onClose: () => void }) {
+  const nav = useNavigate()
   const { mes, dia, pipeline, negocios, realizado_itens, contratos } = data
   const quaseNf = pipeline.filter(p => p.quase_nf)
   const negHoje = negocios.filter(n => n.previsao_fechamento === data.hoje)
+  const irParaOV = (id: string) => { onClose(); nav(`/expedicao/${id}`) }
 
   const TITULOS: Record<DetalheTipo, string> = {
     previsao_mes: 'Previsão do mês', realizado: 'Realizado no mês', em_processo: 'Em processo (OVs)',
@@ -281,6 +285,7 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
                 <div>
                   <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">OVs prestes a faturar</p>
                   <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.quase_nf}
+                    onRowClick={i => irParaOV(quaseNf[i].id)}
                     linhas={quaseNf.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
                 </div>
               )}
@@ -304,6 +309,7 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
                 <div>
                   <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">OVs no kanban</p>
                   <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.ovs_kanban}
+                    onRowClick={i => irParaOV(pipeline[i].id)}
                     linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
                 </div>
               )}
@@ -319,6 +325,7 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
             pipeline.length === 0
               ? <Vazio texto="Nenhuma OV em processo." />
               : <Tabela cols={['OV', 'Cliente', 'Etapa', 'Entrega', 'Valor est.']} total={mes.em_processo}
+                  onRowClick={i => irParaOV(pipeline[i].id)}
                   linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtData(p.data_prevista_entrega), fmtBRL(p.valor_estimado)])} />
           )}
           {tipo === 'saldo_contratos' && (
@@ -361,7 +368,7 @@ function Composicao({ linhas, total, totalRotulo = 'Total', totalCor = 'text-ind
   )
 }
 
-function Tabela({ cols, linhas, total, totalCol }: { cols: string[]; linhas: (string | number)[][]; total?: number; totalCol?: number }) {
+function Tabela({ cols, linhas, total, totalCol, onRowClick }: { cols: string[]; linhas: (string | number)[][]; total?: number; totalCol?: number; onRowClick?: (i: number) => void }) {
   const ultima = cols.length - 1
   const colTotal = totalCol ?? ultima
   return (
@@ -374,9 +381,10 @@ function Tabela({ cols, linhas, total, totalCol }: { cols: string[]; linhas: (st
         </thead>
         <tbody className="divide-y divide-gray-50">
           {linhas.map((row, i) => (
-            <tr key={i} className="hover:bg-gray-50/60">
+            <tr key={i} onClick={onRowClick ? () => onRowClick(i) : undefined}
+              className={onRowClick ? 'hover:bg-indigo-50/60 cursor-pointer' : 'hover:bg-gray-50/60'}>
               {row.map((cell, j) => (
-                <td key={j} className={`py-2 ${j === 0 ? 'font-mono text-gray-700' : 'text-gray-700'} ${j === ultima ? 'text-right tabular-nums font-medium' : ''}`}>{cell}</td>
+                <td key={j} className={`py-2 ${j === 0 ? `font-mono ${onRowClick ? 'text-indigo-600 underline decoration-indigo-200 underline-offset-2' : 'text-gray-700'}` : 'text-gray-700'} ${j === ultima ? 'text-right tabular-nums font-medium' : ''}`}>{cell}</td>
               ))}
             </tr>
           ))}
