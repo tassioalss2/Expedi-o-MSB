@@ -213,6 +213,7 @@ class ComunicadoUsoCreate(BaseModel):
     af: Optional[str] = None
     nome_paciente: Optional[str] = None
     prontuario: Optional[str] = None
+    data_procedimento: Optional[date] = None
 
 
 # ── Licitações / Empenhos ──────────────────────────────────────────────────────
@@ -367,6 +368,7 @@ class ConsumoEmpenhoCreate(BaseModel):
     af: Optional[str] = None
     nome_paciente: Optional[str] = None
     prontuario: Optional[str] = None
+    data_procedimento: Optional[date] = None
 
     @field_validator("numero_pedido", "numero_nf")
     @classmethod
@@ -394,9 +396,11 @@ class DemandaCreate(BaseModel):
     prioridade: str = "NORMAL"
     observacao: Optional[str] = None
     itens: list[DemandaItem] = []
-    # Regem o comunicado de uso — identificam o que foi usado em qual paciente.
+    # Regem o comunicado de uso — identificam o que foi usado, em qual paciente e quando.
     nome_paciente: Optional[str] = None
     prontuario: Optional[str] = None
+    numero_nf: Optional[str] = None
+    data_procedimento: Optional[date] = None
 
 
 class DemandaUpdate(BaseModel):
@@ -414,6 +418,8 @@ class DemandaUpdate(BaseModel):
     itens: Optional[list[DemandaItem]] = None
     nome_paciente: Optional[str] = None
     prontuario: Optional[str] = None
+    numero_nf: Optional[str] = None
+    data_procedimento: Optional[date] = None
 
 
 class DemandaConcluir(BaseModel):
@@ -443,6 +449,7 @@ class DemandaConcluir(BaseModel):
     # Regem o comunicado de uso (AF vem em `numero`) — confirmados/editados na conclusão.
     nome_paciente: Optional[str] = None
     prontuario: Optional[str] = None
+    data_procedimento: Optional[date] = None
     # Atalho de entrega única (venda direta): ao criar o contrato, já gera a OV
     # cheia baixando todo o saldo (usa numero_pedido como nº da OV).
     gerar_ov: bool = False

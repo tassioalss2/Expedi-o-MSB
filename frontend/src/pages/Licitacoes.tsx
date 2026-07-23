@@ -577,6 +577,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const [numero, setNumero] = useState('')
   const [nomePaciente, setNomePaciente] = useState('')
   const [prontuario, setProntuario] = useState('')
+  const [numeroNf, setNumeroNf] = useState('')
+  const [dataProcedimento, setDataProcedimento] = useState('')
   const [canal, setCanal] = useState('')
   const [prazo, setPrazo] = useState('')
   const [prioridade, setPrioridade] = useState('NORMAL')
@@ -584,12 +586,14 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const [itens, setItens] = useState<ItemLinha[]>([])
 
   const cfg = TIPO_MAP[tipo]
-  const comValor = tipo !== 'COMUNICADO_USO'
+  const ehComunicado = tipo === 'COMUNICADO_USO'
+  const comValor = true
   // Venda direta / consignação viram contrato regido pelo PREGÃO → obrigatório.
-  const pregaoObrigatorio = tipo !== 'COMUNICADO_USO'
+  const pregaoObrigatorio = !ehComunicado
   const pregaoOk = !pregaoObrigatorio || !!numeroPregao.trim()
-  // Comunicado de uso é regido pela AF + paciente + prontuário.
-  const comunicadoOk = tipo !== 'COMUNICADO_USO' || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim())
+  // Comunicado de uso é regido pela AF + paciente + prontuário + NF + data do procedimento + itens com valor.
+  const itensComunicadoOk = itens.length > 0 && itens.every(i => i.qtd > 0 && (i.valor || 0) > 0)
+  const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!numeroNf.trim() && !!dataProcedimento && itensComunicadoOk)
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/demandas', {
@@ -599,8 +603,10 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
       numero: numero.trim() || null,
       nome_paciente: nomePaciente.trim() || null,
       prontuario: prontuario.trim() || null,
+      numero_nf: ehComunicado ? (numeroNf.trim() || null) : null,
+      data_procedimento: ehComunicado ? (dataProcedimento || null) : null,
       canal: canal || null,
-      prazo: prazo || null,
+      prazo: ehComunicado ? null : (prazo || null),
       prioridade,
       observacao: observacao || null,
       itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor: i.valor || 0 })),
@@ -644,18 +650,28 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
             </Campo>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-3">
-            <Campo label="AF (Autorização de Fornecimento) *">
-              <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: AF123456" />
-              {!numero.trim() && <p className="text-xs text-red-500 mt-1">Obrigatório — rege o comunicado e evita duplicidade.</p>}
-            </Campo>
-            <Campo label="Nome do paciente *">
-              <input value={nomePaciente} onChange={e => setNomePaciente(e.target.value)} className={inputCls} placeholder="Nome completo" />
-            </Campo>
-            <Campo label="Prontuário *">
-              <input value={prontuario} onChange={e => setProntuario(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 000123" />
-            </Campo>
-          </div>
+          <>
+            <div className="grid grid-cols-3 gap-3">
+              <Campo label="AF (Autorização de Fornecimento) *">
+                <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: AF123456" />
+                {!numero.trim() && <p className="text-xs text-red-500 mt-1">Obrigatório — rege o comunicado e evita duplicidade.</p>}
+              </Campo>
+              <Campo label="Nome do paciente *">
+                <input value={nomePaciente} onChange={e => setNomePaciente(e.target.value)} className={inputCls} placeholder="Nome completo" />
+              </Campo>
+              <Campo label="Prontuário *">
+                <input value={prontuario} onChange={e => setProntuario(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 000123" />
+              </Campo>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Campo label="Número da NF *">
+                <input value={numeroNf} onChange={e => setNumeroNf(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 20045" />
+              </Campo>
+              <Campo label="Data do procedimento *">
+                <input type="date" value={dataProcedimento} onChange={e => setDataProcedimento(e.target.value)} className={inputCls} />
+              </Campo>
+            </div>
+          </>
         )}
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Canal">
@@ -664,9 +680,11 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
               {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
             </select>
           </Campo>
-          <Campo label="Prazo / vigência">
-            <input type="date" value={prazo} onChange={e => setPrazo(e.target.value)} className={inputCls} />
-          </Campo>
+          {!ehComunicado && (
+            <Campo label="Prazo / vigência">
+              <input type="date" value={prazo} onChange={e => setPrazo(e.target.value)} className={inputCls} />
+            </Campo>
+          )}
           <Campo label="Prioridade">
             <select value={prioridade} onChange={e => setPrioridade(e.target.value)} className={inputCls}>
               <option value="NORMAL">Normal</option>
@@ -682,12 +700,12 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 
         <div>
           <label className="text-sm text-gray-600">
-            Itens {tipo === 'COMUNICADO_USO' ? '(o que foi usado)' : '(quantidades TOTAIS do contrato, com valor)'}
+            Itens {ehComunicado ? '(o que foi usado, com valor unitário) *' : '(quantidades TOTAIS do contrato, com valor)'}
           </label>
           <p className="text-xs text-gray-400 mb-1.5">
             {tipo === 'VENDA_DIRETA'
               ? 'Coloque o total ganho no pregão. As entregas parciais você lança depois, na aba Contratos.'
-              : 'Opcional agora — pode completar ao processar.'}
+              : ehComunicado ? 'Informe o que foi usado com o valor unitário — o valor da NF é calculado ao concluir.' : 'Opcional agora — pode completar ao processar.'}
           </p>
           <ItensPedido value={itens} onChange={setItens} comValor={comValor} />
         </div>
@@ -755,10 +773,12 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
             {d.canal && <span>Canal: {CANAL_LABEL[d.canal] || d.canal}</span>}
             {d.prazo && <span className={prazoCor(d.prazo)}>Prazo: {fmtData(d.prazo)}</span>}
           </div>
-          {d.tipo_operacao === 'COMUNICADO_USO' && (d.nome_paciente || d.prontuario) && (
+          {d.tipo_operacao === 'COMUNICADO_USO' && (d.nome_paciente || d.prontuario || d.numero_nf || d.data_procedimento) && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-1">
               {d.nome_paciente && <span>👤 Paciente: <strong className="text-gray-700">{d.nome_paciente}</strong></span>}
               {d.prontuario && <span>Prontuário: <strong className="font-mono text-gray-700">{d.prontuario}</strong></span>}
+              {d.numero_nf && <span>NF: <strong className="font-mono text-gray-700">{d.numero_nf}</strong></span>}
+              {d.data_procedimento && <span>Procedimento: <strong className="text-gray-700">{fmtData(d.data_procedimento)}</strong></span>}
             </div>
           )}
           {d.observacao && <p className="text-sm text-gray-600 mt-2 bg-gray-50 rounded-lg p-2">{d.observacao}</p>}
@@ -1025,7 +1045,8 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const [canal, setCanal] = useState(demanda.canal || '')
   const [dataEmpenho, setDataEmpenho] = useState(hoje)
   const [vigencia, setVigencia] = useState(demanda.prazo || '')
-  const [nf, setNf] = useState('')
+  const [nf, setNf] = useState(demanda.numero_nf || '')
+  const [dataProcedimento, setDataProcedimento] = useState(demanda.data_procedimento || '')
   const [valorNf, setValorNf] = useState('')
   const [dataFat, setDataFat] = useState(hoje)
   const [empenhoId, setEmpenhoId] = useState('')
@@ -1056,9 +1077,12 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const precoEmp: Record<string, number> = Object.fromEntries(
     (empSel?.itens || []).map((i: any) => [i.produto_id, Number(i.valor_unitario) || 0]))
   const itensComQtd = itens.filter(i => i.produto_id && i.qtd > 0)
-  const sugestaoNf = tipo === 'COMUNICADO_USO' && empenhoId && empSel && itensComQtd.length > 0
-    && itensComQtd.every(i => precoEmp[i.produto_id] > 0)
+  const sugestaoNf = tipo !== 'COMUNICADO_USO' || itensComQtd.length === 0 ? null
+    : empenhoId && empSel && itensComQtd.every(i => precoEmp[i.produto_id] > 0)
     ? itensComQtd.reduce((s, i) => s + i.qtd * precoEmp[i.produto_id], 0)
+    // Sem contrato selecionado: usa o valor unitário já informado na triagem.
+    : !empenhoId && itensComQtd.every(i => (i.valor || 0) > 0)
+    ? itensComQtd.reduce((s, i) => s + i.qtd * (i.valor || 0), 0)
     : null
   useEffect(() => {
     if (!valorNfManual && sugestaoNf != null) setValorNf(sugestaoNf.toFixed(2))
@@ -1091,6 +1115,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         body.numero = af.trim()
         body.nome_paciente = nomePaciente.trim()
         body.prontuario = prontuario.trim()
+        body.data_procedimento = dataProcedimento || null
       }
       return api.post(`/licitacoes/demandas/${demanda.id}/concluir`, body)
     },
@@ -1109,7 +1134,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   // (não exige NF/valor). Para um comunicado novo, o backend cobra NF/valor.
   let valido = false
   if (ehContrato) valido = !!numeroPregao.trim() && !!numero.trim() && itensOk && (!(tipo === 'VENDA_DIRETA' && gerarOvJunto) || !!ovNumero.trim())
-  else valido = !!numero.trim() && itensOk && !!clienteId && !!af.trim() && !!nomePaciente.trim() && !!prontuario.trim()
+  else valido = !!numero.trim() && itensOk && !!clienteId && !!af.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!dataProcedimento
 
   return (
     <ModalBase titulo={<span className="flex items-center gap-2"><Flag size={17} /> Processar · {cfg.label}</span>} onClose={onClose}>
@@ -1178,7 +1203,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
                 </select>
               </Campo>
             )}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <Campo label="AF (Autorização de Fornecimento) *">
                 <input value={af} onChange={e => setAf(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: AF123456" />
               </Campo>
@@ -1187,6 +1212,9 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
               </Campo>
               <Campo label="Prontuário *">
                 <input value={prontuario} onChange={e => setProntuario(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 000123" />
+              </Campo>
+              <Campo label="Data do procedimento *">
+                <input type="date" value={dataProcedimento} onChange={e => setDataProcedimento(e.target.value)} className={inputCls} />
               </Campo>
             </div>
             <div className="grid grid-cols-2 gap-3">

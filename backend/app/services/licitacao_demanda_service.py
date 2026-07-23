@@ -7,6 +7,7 @@ CONCLUIDO. Ao concluir, o app gera automaticamente o artefato correspondente:
 - CONSIGNACAO   → cria o empenho
 - COMUNICADO_USO→ registra o comunicado de uso (baixando saldo de um empenho, se houver)
 """
+from datetime import date
 from typing import Optional
 
 from fastapi import HTTPException
@@ -90,6 +91,8 @@ def _serializar(d: dict) -> dict:
         "responsavel_id": d.get("responsavel_id"),
         "nome_paciente": d.get("nome_paciente"),
         "prontuario": d.get("prontuario"),
+        "numero_nf": d.get("numero_nf"),
+        "data_procedimento": d.get("data_procedimento"),
         "itens": d.get("itens") or [],
         "gerado_tipo": d.get("gerado_tipo"),
         "gerado_id": d.get("gerado_id"),
@@ -235,7 +238,7 @@ def historico_buscar(termo: str) -> list:
     def casa(d: dict) -> bool:
         campos = [d.get("numero_pregao"), d.get("numero"), d.get("cliente"),
                   d.get("ref_externa"), d.get("gerado_ref"),
-                  d.get("nome_paciente"), d.get("prontuario")]
+                  d.get("nome_paciente"), d.get("prontuario"), d.get("numero_nf")]
         for ov in (d.get("ovs_detalhe") or []):
             campos.append(ov.get("numero"))
         return any(q in str(c).lower() for c in campos if c)
@@ -288,6 +291,10 @@ def criar_demanda(payload: DemandaCreate) -> dict:
             raise HTTPException(status_code=422, detail="Informe o nome do paciente.")
         if not (payload.prontuario or "").strip():
             raise HTTPException(status_code=422, detail="Informe o prontuário.")
+        if not (payload.numero_nf or "").strip():
+            raise HTTPException(status_code=422, detail="Informe o número da NF.")
+        if not payload.data_procedimento:
+            raise HTTPException(status_code=422, detail="Informe a data do procedimento.")
     # Anti-duplicidade: o mesmo número (empenho/AF/pregão) não pode ter duas
     # demandas ativas — evita o time processar o mesmo pedido duas vezes.
     if num:
@@ -313,6 +320,8 @@ def criar_demanda(payload: DemandaCreate) -> dict:
         "itens": _itens_json(payload.itens),
         "nome_paciente": (payload.nome_paciente or "").strip() or None,
         "prontuario": (payload.prontuario or "").strip() or None,
+        "numero_nf": (payload.numero_nf or "").strip() or None,
+        "data_procedimento": payload.data_procedimento.isoformat() if payload.data_procedimento else None,
         "ativo": True,
     }).execute().data[0]
     # Venda direta "ganhou o pregão" → já cria o contrato com as quantidades
@@ -750,7 +759,11 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             }).eq("id", demanda_id).execute()
             return obter_demanda(demanda_id)
 
-        if not payload.numero_nf or not payload.numero_nf.strip():
+        numero_nf = (payload.numero_nf or "").strip() or d.get("numero_nf")
+        data_procedimento = payload.data_procedimento or (
+            date.fromisoformat(d["data_procedimento"]) if d.get("data_procedimento") else None
+        )
+        if not numero_nf:
             raise HTTPException(status_code=422, detail="Informe o número da NF.")
         if not payload.valor_nf or float(payload.valor_nf) <= 0:
             raise HTTPException(status_code=422, detail="Informe o valor da NF (maior que zero).")
@@ -761,12 +774,13 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                 str(payload.empenho_id),
                 ConsumoEmpenhoCreate(
                     numero_pedido=payload.numero_pedido.strip().upper(),
-                    numero_nf=payload.numero_nf.strip(),
+                    numero_nf=numero_nf,
                     valor_nf=float(payload.valor_nf),
                     data_faturamento=payload.data_faturamento,
                     canal=canal,
                     itens=_itens_pedido(itens_src, "o comunicado de uso"),
                     af=af, nome_paciente=nome_paciente, prontuario=prontuario,
+                    data_procedimento=data_procedimento,
                 ),
                 usuario,
             )
@@ -777,11 +791,12 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                 ComunicadoUsoCreate(
                     numero_pedido=payload.numero_pedido.strip().upper(),
                     cliente_id=cliente_id,
-                    numero_nf=payload.numero_nf.strip(),
+                    numero_nf=numero_nf,
                     valor_nf=float(payload.valor_nf),
                     canal=canal,
                     data_faturamento=payload.data_faturamento,
                     af=af, nome_paciente=nome_paciente, prontuario=prontuario,
+                    data_procedimento=data_procedimento,
                     itens=[ItemPedidoCreate(produto_id=it.produto_id, qtd_solicitada=float(it.qtd))
                            for it in itens_src if it.produto_id and float(it.qtd or 0) > 0],
                 ),
@@ -801,6 +816,8 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         "numero": payload.numero.strip() if payload.numero else d.get("numero"),
         "nome_paciente": (payload.nome_paciente or "").strip() or d.get("nome_paciente"),
         "prontuario": (payload.prontuario or "").strip() or d.get("prontuario"),
+        "numero_nf": (payload.numero_nf or "").strip() or d.get("numero_nf"),
+        "data_procedimento": payload.data_procedimento.isoformat() if payload.data_procedimento else d.get("data_procedimento"),
         "concluido_em": _agora() if etapa_final in ETAPAS_FINAIS else None,
         "atualizado_em": _agora(),
     }

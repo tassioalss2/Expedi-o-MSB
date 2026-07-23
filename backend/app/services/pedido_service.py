@@ -339,6 +339,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     data_fat = payload.data_faturamento or date.today()
     # Meio-dia UTC = 09h BRT — garante que a data BRT do faturamento seja a escolhida.
     ts_fat = f"{data_fat.isoformat()}T12:00:00+00:00"
+    data_proc = getattr(payload, "data_procedimento", None)
 
     pedido_data = {
         "numero_pedido":         payload.numero_pedido,
@@ -356,6 +357,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
         "af":                    getattr(payload, "af", None),
         "nome_paciente":         getattr(payload, "nome_paciente", None),
         "prontuario":            getattr(payload, "prontuario", None),
+        "data_procedimento":     data_proc.isoformat() if data_proc else None,
         "criado_por":            None,
         "criado_em":             ts_fat,
         "atualizado_em":         _agora(),
