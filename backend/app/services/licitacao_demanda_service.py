@@ -328,6 +328,8 @@ def criar_demanda(payload: DemandaCreate) -> dict:
             raise HTTPException(status_code=422, detail="Informe o número da NF.")
         if not payload.data_procedimento:
             raise HTTPException(status_code=422, detail="Informe a data do procedimento.")
+    elif payload.tipo_operacao in ("VENDA_DIRETA", "CONSIGNACAO") and not num:
+        raise HTTPException(status_code=422, detail="Informe a Nota de Empenho (NE).")
     # Anti-duplicidade: o mesmo número (empenho/AF/pregão) não pode ter duas
     # demandas ativas — evita o time processar o mesmo pedido duas vezes.
     if num:

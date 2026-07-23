@@ -589,9 +589,9 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const cfg = TIPO_MAP[tipo]
   const ehComunicado = tipo === 'COMUNICADO_USO'
   const comValor = true
-  // Venda direta / consignação viram contrato regido pelo PREGÃO → obrigatório.
+  // Venda direta / consignação viram contrato regido pelo PREGÃO + NE → ambos obrigatórios.
   const pregaoObrigatorio = !ehComunicado
-  const pregaoOk = !pregaoObrigatorio || !!numeroPregao.trim()
+  const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim())
   // Comunicado de uso é regido pela AF + paciente + prontuário + NF + data do procedimento + itens com valor.
   const itensComunicadoOk = itens.length > 0 && itens.every(i => i.qtd > 0 && (i.valor || 0) > 0)
   const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!numeroNf.trim() && !!dataProcedimento && itensComunicadoOk)
@@ -646,8 +646,9 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
               <input value={numeroPregao} onChange={e => setNumeroPregao(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 90051/2025" />
               {!numeroPregao.trim() && <p className="text-xs text-red-500 mt-1">Obrigatório — o pregão é o que rege o contrato.</p>}
             </Campo>
-            <Campo label="Nota de empenho (NE)">
-              <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Opcional agora — ex: 2026NE001246" />
+            <Campo label="Nota de empenho (NE) *">
+              <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 2026NE001246" />
+              {!numero.trim() && <p className="text-xs text-red-500 mt-1">Obrigatório — sem ela o contrato fica sem NE (rege a rastreabilidade).</p>}
             </Campo>
           </div>
         ) : (
