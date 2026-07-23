@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
   LayoutGrid, Layers, ChevronDown, ChevronRight, ExternalLink, Flag, Clock, Search,
-  ChevronRight as Arrow, Truck, Send, Package, PackageCheck, BarChart3, Download,
+  ChevronRight as Arrow, Truck, Send, Package, PackageCheck, BarChart3, Download, Pencil,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -734,6 +734,21 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
     queryFn: () => api.get(`/licitacoes/demandas/${id}`).then(r => r.data),
   })
 
+  const [editandoItens, setEditandoItens] = useState(false)
+  const [itensEdit, setItensEdit] = useState<ItemLinha[]>([])
+  const salvarItens = useMutation({
+    mutationFn: () => api.patch(`/licitacoes/demandas/${id}`, {
+      itens: itensEdit.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor: i.valor || 0 })),
+    }),
+    onSuccess: () => {
+      toast.success('Itens corrigidos')
+      setEditandoItens(false)
+      qcDet.invalidateQueries({ queryKey: ['demanda', id] })
+      onChanged()
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar')),
+  })
+
   const mover = useMutation({
     mutationFn: (etapa: string) => api.patch(`/licitacoes/demandas/${id}`, { etapa }),
     onSuccess: () => { onChanged(); toast.success('Etapa atualizada') },
@@ -800,15 +815,41 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
 
         {(d.itens || []).length > 0 && !d.ov_itens && (
           <div>
-            <label className="text-xs font-medium text-gray-500">Itens ({d.itens.length})</label>
-            <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 mt-1">
-              {d.itens.map((it: any, idx: number) => (
-                <div key={idx} className="flex justify-between px-3 py-1.5 text-sm">
-                  <span><span className="font-mono text-gray-700">{it.codigo || '—'}</span> <span className="text-gray-500">{it.descricao}</span></span>
-                  <span className="text-gray-600 tabular-nums">{it.qtd} un{it.valor ? ` · ${fmtBRL(it.valor)}` : ''}</span>
-                </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-gray-500">Itens ({d.itens.length})</label>
+              {!concluida && !editandoItens && (
+                <button onClick={() => {
+                  setItensEdit(d.itens.map((it: any) => ({
+                    produto_id: it.produto_id, codigo: it.codigo || '', descricao: it.descricao || '',
+                    qtd: Number(it.qtd) || 0, valor: Number(it.valor) || 0,
+                  })))
+                  setEditandoItens(true)
+                }} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+                  <Pencil size={12} /> Corrigir
+                </button>
+              )}
             </div>
+            {editandoItens ? (
+              <div className="mt-1 space-y-2">
+                <ItensPedido value={itensEdit} onChange={setItensEdit} comValor />
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setEditandoItens(false)} className="px-3 py-1.5 text-xs border rounded-lg text-gray-600">Cancelar</button>
+                  <button onClick={() => salvarItens.mutate()} disabled={salvarItens.isPending || itensEdit.length === 0}
+                    className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg">
+                    {salvarItens.isPending ? 'Salvando…' : 'Salvar correção'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 mt-1">
+                {d.itens.map((it: any, idx: number) => (
+                  <div key={idx} className="flex justify-between px-3 py-1.5 text-sm">
+                    <span><span className="font-mono text-gray-700">{it.codigo || '—'}</span> <span className="text-gray-500">{it.descricao}</span></span>
+                    <span className="text-gray-600 tabular-nums">{it.qtd} un{it.valor ? ` · ${fmtBRL(it.valor)}` : ''}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
