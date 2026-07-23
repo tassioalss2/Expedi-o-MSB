@@ -30,7 +30,7 @@ interface Resumo {
     meta: number | null; atingimento_previsto_pct: number | null
   }
   dia: {
-    sai_hoje: number; no_kanban: number; ovs_kanban: number; quase_nf: number; negociacao_hoje: number
+    sai_hoje: number; no_kanban: number; realizado_hoje: number; ovs_kanban: number; quase_nf: number; negociacao_hoje: number
     dias_uteis_restantes: number; falta_meta: number | null; ritmo_necessario: number | null
     no_ritmo: boolean | null
   }
@@ -122,13 +122,13 @@ export function PrevisaoFaturamento() {
             <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">Sai hoje (prestes a faturar) <Info size={11} className="opacity-40" /></p>
             <p className="text-2xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(dia.sai_hoje)}</p>
             <p className="text-[11px] text-gray-400 mt-0.5">
-              OVs prestes a faturar {fmtBRL(dia.quase_nf)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
+              já faturado hoje {fmtBRL(dia.realizado_hoje)} + OVs prestes a faturar {fmtBRL(dia.quase_nf)} + negócios de hoje {fmtBRL(dia.negociacao_hoje)}
             </p>
           </button>
           <button onClick={() => setDetalhe('no_kanban')} className="text-left group w-full mt-2">
             <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">No kanban (potencial) <Info size={11} className="opacity-40" /></p>
             <p className="text-lg font-bold text-gray-700 tabular-nums group-hover:underline decoration-gray-300 underline-offset-4">{fmtBRL(dia.no_kanban)}</p>
-            <p className="text-[11px] text-gray-400 mt-0.5">todas as OVs do kanban + negócios de hoje</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">já faturado hoje + todas as OVs do kanban + negócios de hoje</p>
           </button>
           <div className="mt-4 pt-3 border-t border-gray-100">
             {dia.ritmo_necessario != null ? (
@@ -155,8 +155,8 @@ export function PrevisaoFaturamento() {
               </p>
               <p className={`text-[11px] mt-0.5 ${dia.no_ritmo ? 'text-emerald-600/80' : 'text-red-600/80'}`}>
                 {dia.no_ritmo
-                  ? `O kanban tem ${fmtBRL(dia.no_kanban)}, cobrindo o ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia (folga de ${fmtBRL(dia.no_kanban - dia.ritmo_necessario)}).`
-                  : `O kanban tem ${fmtBRL(dia.no_kanban)}, ${fmtBRL(dia.ritmo_necessario - dia.no_kanban)} abaixo do ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia — precisa entrar mais OV.`}
+                  ? `Já faturado hoje ${fmtBRL(dia.realizado_hoje)} + kanban ${fmtBRL(dia.ovs_kanban)} = ${fmtBRL(dia.no_kanban)}, cobrindo o ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia (folga de ${fmtBRL(dia.no_kanban - dia.ritmo_necessario)}).`
+                  : `Já faturado hoje ${fmtBRL(dia.realizado_hoje)} + kanban ${fmtBRL(dia.ovs_kanban)} = ${fmtBRL(dia.no_kanban)}, ${fmtBRL(dia.ritmo_necessario - dia.no_kanban)} abaixo do ritmo de ${fmtBRL(dia.ritmo_necessario)}/dia — precisa entrar mais OV.`}
               </p>
             </div>
           )}
@@ -276,8 +276,9 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           )}
           {tipo === 'sai_hoje' && (
             <div className="space-y-4">
-              <p className="text-xs text-gray-500">O que realisticamente deve faturar hoje: OVs já prestes a sair (cotação de frete, aguardando transportadora ou aguardando NF) mais os negócios com fechamento previsto para hoje.</p>
+              <p className="text-xs text-gray-500">O que realisticamente sai hoje: o que já foi faturado hoje, mais OVs já prestes a sair (cotação de frete, aguardando transportadora ou aguardando NF), mais os negócios com fechamento previsto para hoje.</p>
               <Composicao linhas={[
+                { rotulo: 'Já faturado hoje', valor: dia.realizado_hoje },
                 { rotulo: 'OVs prestes a faturar', valor: dia.quase_nf },
                 { rotulo: 'Negócios com fechamento previsto para hoje', valor: dia.negociacao_hoje },
               ]} total={dia.sai_hoje} />
@@ -300,8 +301,9 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           )}
           {tipo === 'no_kanban' && (
             <div className="space-y-4">
-              <p className="text-xs text-gray-500">Volume total em aberto no kanban (todas as etapas antes do faturamento) mais os negócios de hoje. Serve para ver se há material suficiente para cobrir o ritmo do dia.</p>
+              <p className="text-xs text-gray-500">O que já foi faturado hoje, mais o volume total em aberto no kanban (todas as etapas antes do faturamento), mais os negócios de hoje. Usado para ver se o dia bate o ritmo — sem contar o que já faturou, o sinal ficaria errado depois de bater a meta do dia.</p>
               <Composicao linhas={[
+                { rotulo: 'Já faturado hoje', valor: dia.realizado_hoje },
                 { rotulo: 'Todas as OVs no kanban', valor: dia.ovs_kanban },
                 { rotulo: 'Negócios com fechamento previsto para hoje', valor: dia.negociacao_hoje },
               ]} total={dia.no_kanban} />

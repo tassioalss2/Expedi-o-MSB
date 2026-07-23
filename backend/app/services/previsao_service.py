@@ -313,15 +313,17 @@ def resumo() -> dict:
     # Previsão = garantido + a realizar (saldo de contratos) + negociação ponderada.
     previsao_mes = round(garantido + saldo_contratos + negociacao_ponderado, 2)
 
-    # Previsão do dia — duas visões:
-    #  sai_hoje  = OVs prestes a faturar (quase-NF) + negócios de hoje (o que
-    #              realisticamente deve sair hoje);
-    #  no_kanban = TODO o pipeline + negócios de hoje (volume total em aberto,
-    #              usado para checar se há material suficiente pra bater o ritmo).
+    # Previsão do dia — duas visões, ambas somando o que JÁ faturou hoje (senão
+    # o dia parece "abaixo do ritmo" mesmo depois de já ter batido a meta):
+    #  sai_hoje  = já faturado hoje + OVs prestes a faturar (quase-NF) +
+    #              negócios de hoje (o que realisticamente deve sair hoje);
+    #  no_kanban = já faturado hoje + TODO o pipeline + negócios de hoje (volume
+    #              total do dia, usado para checar se bate o ritmo).
+    realizado_hoje, _ = _realizado_mes(db, hoje, hoje)
     quase_nf = round(sum(p["valor_estimado"] for p in pipeline if p["quase_nf"]), 2)
     neg_hoje = round(sum(n["valor_ponderado"] for n in negocios if n.get("previsao_fechamento") == hoje_iso), 2)
-    sai_hoje = round(quase_nf + neg_hoje, 2)
-    no_kanban = round(em_processo_total + neg_hoje, 2)
+    sai_hoje = round(realizado_hoje + quase_nf + neg_hoje, 2)
+    no_kanban = round(realizado_hoje + em_processo_total + neg_hoje, 2)
 
     meta_info = pedido_service.obter_meta(comp)
     meta = meta_info.get("valor")
@@ -346,6 +348,7 @@ def resumo() -> dict:
         "dia": {
             "sai_hoje": sai_hoje,
             "no_kanban": no_kanban,
+            "realizado_hoje": realizado_hoje,
             "ovs_kanban": em_processo_total,
             "quase_nf": quase_nf,
             "negociacao_hoje": neg_hoje,
