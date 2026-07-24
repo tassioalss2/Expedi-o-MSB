@@ -589,6 +589,18 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const cfg = TIPO_MAP[tipo]
   const ehComunicado = tipo === 'COMUNICADO_USO'
   const comValor = true
+
+  // Sinaliza se o pregão digitado já existe — a demanda vira mais uma NE
+  // (linha) desse contrato, não um contrato novo.
+  const { data: pregoesExistentes = [] } = useQuery<any[]>({
+    queryKey: ['pregoes'],
+    queryFn: () => api.get('/licitacoes/pregoes').then(r => r.data),
+    enabled: !ehComunicado,
+    staleTime: 60000,
+  })
+  const pregaoEncontrado = !ehComunicado && numeroPregao.trim()
+    ? pregoesExistentes.find(p => p.numero.trim().toLowerCase() === numeroPregao.trim().toLowerCase())
+    : null
   // Venda direta / consignação viram contrato regido pelo PREGÃO + NE → ambos obrigatórios.
   const pregaoObrigatorio = !ehComunicado
   const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim())
@@ -650,6 +662,12 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
               <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 2026NE001246" />
               {!numero.trim() && <p className="text-xs text-red-500 mt-1">Obrigatório — sem ela o contrato fica sem NE (rege a rastreabilidade).</p>}
             </Campo>
+            {pregaoEncontrado && (
+              <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 text-xs text-blue-700">
+                ✅ Pregão <strong>{pregaoEncontrado.numero}</strong> já cadastrado — {pregaoEncontrado.cliente} · {pregaoEncontrado.qtd_nes} NE(s) já lançada(s) · saldo a empenhar {fmtBRL(pregaoEncontrado.saldo_valor)}.
+                Esta demanda vai virar <strong>mais uma NE (linha)</strong> desse contrato, consumindo o saldo — não um contrato novo.
+              </div>
+            )}
           </div>
         ) : (
           <>
@@ -1102,6 +1120,18 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 
   const ehContrato = tipo === 'VENDA_DIRETA' || tipo === 'CONSIGNACAO'
 
+  // Sinaliza se o pregão digitado já existe — vira mais uma NE (linha) desse
+  // contrato, não um contrato novo.
+  const { data: pregoesExistentes = [] } = useQuery<any[]>({
+    queryKey: ['pregoes'],
+    queryFn: () => api.get('/licitacoes/pregoes').then(r => r.data),
+    enabled: ehContrato,
+    staleTime: 60000,
+  })
+  const pregaoEncontrado = ehContrato && numeroPregao.trim()
+    ? pregoesExistentes.find(p => p.numero.trim().toLowerCase() === numeroPregao.trim().toLowerCase())
+    : null
+
   const { data: empenhos = [] } = useQuery<any[]>({
     queryKey: ['empenhos'],
     queryFn: () => api.get('/licitacoes/empenhos').then(r => r.data),
@@ -1200,6 +1230,12 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
             <Campo label="Nota de empenho (NE) *">
               <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 2026NE001246" />
             </Campo>
+            {pregaoEncontrado && (
+              <div className="col-span-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 text-xs text-blue-700">
+                ✅ Pregão <strong>{pregaoEncontrado.numero}</strong> já cadastrado — {pregaoEncontrado.cliente} · {pregaoEncontrado.qtd_nes} NE(s) já lançada(s) · saldo a empenhar {fmtBRL(pregaoEncontrado.saldo_valor)}.
+                Esta demanda vai virar <strong>mais uma NE (linha)</strong> desse contrato, consumindo o saldo — não um contrato novo.
+              </div>
+            )}
             <Campo label="Canal">
               <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
                 <option value="">A definir…</option>
