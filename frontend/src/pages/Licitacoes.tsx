@@ -903,19 +903,19 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
           </div>
         </div>
 
-        {(d.itens || []).length > 0 && !d.ov_itens && (
+        {!d.ov_itens && (
           <div>
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-gray-500">Itens ({d.itens.length})</label>
+              <label className="text-xs font-medium text-gray-500">Itens ({(d.itens || []).length})</label>
               {!concluida && !editandoItens && (
                 <button onClick={() => {
-                  setItensEdit(d.itens.map((it: any) => ({
+                  setItensEdit((d.itens || []).map((it: any) => ({
                     produto_id: it.produto_id, codigo: it.codigo || '', descricao: it.descricao || '',
                     qtd: Number(it.qtd) || 0, valor: Number(it.valor) || 0,
                   })))
                   setEditandoItens(true)
                 }} className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
-                  <Pencil size={12} /> Corrigir
+                  <Pencil size={12} /> {(d.itens || []).length > 0 ? 'Corrigir' : '+ Adicionar itens'}
                 </button>
               )}
             </div>
@@ -930,6 +930,10 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
                   </button>
                 </div>
               </div>
+            ) : (d.itens || []).length === 0 ? (
+              <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-1">
+                ⚠️ Sem itens cadastrados — o saldo a faturar fica zerado e a OV/NE não pode ser gerada. Use "+ Adicionar itens" acima.
+              </p>
             ) : (
               <div className="border border-gray-100 rounded-lg divide-y divide-gray-50 mt-1">
                 {d.itens.map((it: any, idx: number) => (
