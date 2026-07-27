@@ -792,7 +792,12 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
       </div>
       {abrirNovoPregao && (
         <ModalNovoPregao
-          pregao={{ numero: numeroPregao.trim() }}
+          pregao={{
+            numero: numeroPregao.trim(), tipo: 'VENDA_DIRETA',
+            cliente_id: clienteId, cliente: clienteNome,
+            canal: canal || undefined, vigencia: prazo || undefined,
+            observacao: observacao || undefined,
+          }}
           onClose={() => setAbrirNovoPregao(false)}
           onSaved={() => { qc.invalidateQueries({ queryKey: ['pregoes'] }); setAbrirNovoPregao(false) }}
         />
