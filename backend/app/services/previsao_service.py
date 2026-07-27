@@ -349,41 +349,56 @@ def _faturado_por_dia_import(db, inicio: date, fim: date) -> dict:
 
 def _meses_historicos(db, mes_atual_inicio: date, n_meses: int = 24) -> list:
     """Meses COMPLETOS antes do atual, cada um com o total e a curva acumulada
-    por dia útil. Um mês que tem dados no app usa o app; os demais usam o
-    histórico importado — nunca as duas fontes juntas (evita dobrar valor)."""
-    meses: list = []
-    ref = mes_atual_inicio
+    por dia útil.
+
+    O histórico importado (D365) tem prioridade sobre o app: é a fonte fiscal, e
+    os primeiros meses do app estão incompletos porque ele começou a ser usado no
+    meio da operação (06/2026 tem notas que o app não registrou). O app cobre os
+    meses que a importação não alcança. Nunca soma as duas fontes no mesmo mês —
+    isso dobraria valor."""
+    # Janela do histórico: n_meses antes do mês atual até o fim do mês passado.
+    fim_janela = mes_atual_inicio - timedelta(days=1)
+    ini_janela = mes_atual_inicio
     for _ in range(n_meses):
-        # Anda um mês para trás.
-        fim = ref - timedelta(days=1)
-        ini = date(fim.year, fim.month, 1)
-        ref = ini
+        anterior = ini_janela - timedelta(days=1)
+        ini_janela = date(anterior.year, anterior.month, 1)
 
-        por_dia = _faturado_por_dia_app(db, ini, fim)
-        origem = "APP"
-        if not por_dia:
-            por_dia = _faturado_por_dia_import(db, ini, fim)
-            origem = "HISTORICO"
-        if not por_dia:
-            continue
+    # Duas consultas para toda a janela, em vez de duas por mês.
+    imp = _faturado_por_dia_import(db, ini_janela, fim_janela)
+    app = _faturado_por_dia_app(db, ini_janela, fim_janela)
 
-        dias_uteis = _dias_uteis_do_mes(ini, fim)
-        acumulado, soma = [], 0.0
-        for d in dias_uteis:
-            soma += por_dia.get(d.isoformat(), 0.0)
-            acumulado.append(round(soma, 2))
-        # Faturamento em fim de semana (raro) entra no total para não sumir.
+    def _por_competencia(por_dia: dict) -> dict:
+        agrupado: dict = {}
+        for d_iso, v in por_dia.items():
+            agrupado.setdefault(d_iso[:7], {})[d_iso] = v
+        return agrupado
+
+    imp_mes, app_mes = _por_competencia(imp), _por_competencia(app)
+
+    meses: list = []
+    for comp in sorted(set(imp_mes) | set(app_mes)):
+        if comp in imp_mes:
+            por_dia, origem = imp_mes[comp], "HISTORICO"
+        else:
+            por_dia, origem = app_mes[comp], "APP"
         total = round(sum(por_dia.values()), 2)
         if total <= 0:
             continue
+
+        ano, mes_num = int(comp[:4]), int(comp[5:7])
+        ini = date(ano, mes_num, 1)
+        fim = date(ano + (mes_num // 12), (mes_num % 12) + 1, 1) - timedelta(days=1)
+        acumulado, soma = [], 0.0
+        for d in _dias_uteis_do_mes(ini, fim):
+            soma += por_dia.get(d.isoformat(), 0.0)
+            acumulado.append(round(soma, 2))
         meses.append({
-            "competencia": f"{ini.year:04d}-{ini.month:02d}",
+            "competencia": comp,
             "total": total,
             "acumulado": acumulado,
-            "dias_uteis": len(dias_uteis),
+            "dias_uteis": len(acumulado),
             "origem": origem,
         })
-    meses.sort(key=lambda m: m["competencia"])
     return meses
 
 
@@ -403,6 +418,34 @@ def _fracao_esperada(meses: list, progresso: float) -> tuple:
     if not fracoes:
         return None, 0
     return sum(fracoes) / len(fracoes), len(fracoes)
+
+
+def _erro_historico(meses: list, progresso: float, peso_curva: float) -> tuple:
+    """Backtest leave-one-out: reprojeta cada mês do histórico nesta mesma altura
+    usando só os OUTROS meses como base, e mede o erro contra o total real.
+
+    É daqui que sai a faixa da previsão — erro medido, não chutado. Devolve
+    (erro_medio_pct, qtd_meses_testados)."""
+    erros = []
+    for alvo in meses:
+        base = [m for m in meses if m["competencia"] != alvo["competencia"]]
+        acum, total = alvo["acumulado"], alvo["total"]
+        n = len(acum)
+        if n == 0 or total <= 0:
+            continue
+        idx = min(n - 1, max(0, int(round(progresso * n)) - 1))
+        realizado = acum[idx]
+        decorridos, futuros = idx + 1, n - (idx + 1)
+        proj_rr = realizado + (realizado / decorridos) * futuros
+        frac, _ = _fracao_esperada(base, progresso)
+        if frac and frac >= 0.10:
+            proj = (proj_rr + (realizado / frac) * peso_curva) / (1 + peso_curva)
+        else:
+            proj = proj_rr
+        erros.append(abs(proj - total) / total * 100)
+    if not erros:
+        return None, 0
+    return round(sum(erros) / len(erros), 1), len(erros)
 
 
 def _previsao_estatistica(db, hoje: date, inicio: date, fim: date, realizado: float,
@@ -434,26 +477,40 @@ def _previsao_estatistica(db, hoje: date, inicio: date, fim: date, realizado: fl
 
     media_hist = round(sum(m["total"] for m in meses) / len(meses), 2) if meses else None
 
+    # Peso da curva cresce com a amostra: o backtest mostra que, da metade do mês
+    # em diante, ela erra bem menos que o run-rate (16,8% x 28,5% a 82% do mês).
+    peso_curva = min(3.0, float(amostra))
     candidatos = [("run_rate", proj_run_rate, 1.0)]
     if proj_curva is not None:
-        candidatos.append(("curva_historica", proj_curva, min(3.0, float(amostra))))
+        candidatos.append(("curva_historica", proj_curva, peso_curva))
 
     peso_total = sum(p for _, _, p in candidatos)
     previsao = round(sum(v * p for _, v, p in candidatos) / peso_total, 2)
     previsao = max(previsao, round(garantido, 2))
 
-    valores = [v for _, v, _ in candidatos] + [garantido]
-    if amostra >= 3:
+    # Faixa a partir do erro medido no histórico, não de chute. O piso nunca fica
+    # abaixo do garantido (esse dinheiro já está em NF ou em OV no pipeline).
+    erro_pct, testados = _erro_historico(meses, progresso, peso_curva)
+    if erro_pct:
+        minimo = max(round(previsao * (1 - erro_pct / 100), 2), round(garantido, 2))
+        maximo = round(previsao * (1 + erro_pct / 100), 2)
+    else:
+        valores = [v for _, v, _ in candidatos] + [garantido]
+        minimo, maximo = round(min(valores), 2), round(max(valores), 2)
+
+    if amostra >= 6:
         confianca = "ALTA"
-    elif amostra >= 1:
+    elif amostra >= 2:
         confianca = "MEDIA"
     else:
         confianca = "BAIXA"
 
     return {
         "previsao": previsao,
-        "minimo": round(min(valores), 2),
-        "maximo": round(max(valores), 2),
+        "minimo": minimo,
+        "maximo": maximo,
+        "erro_medio_pct": erro_pct,
+        "backtest_meses": testados,
         "metodo": "+".join(n for n, _, _ in candidatos),
         "confianca": confianca,
         "amostra_meses": amostra,

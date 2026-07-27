@@ -19,3 +19,9 @@ Thumbs.db
 # Scripts de importação (contêm caminhos locais)
 backend/importar_*.py
 backend/migrar_*.py
+
+# Exports do D365 usados nas importações — têm cliente, receita e preço.
+# Dado de negócio não vai para o repositório.
+*.xlsx
+*.xls
+*.csv

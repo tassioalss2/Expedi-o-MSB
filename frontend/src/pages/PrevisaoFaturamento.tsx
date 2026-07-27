@@ -46,6 +46,7 @@ interface Resumo {
 }
 interface Estatistica {
   previsao: number; minimo: number; maximo: number
+  erro_medio_pct: number | null; backtest_meses: number
   metodo: string; confianca: 'BAIXA' | 'MEDIA' | 'ALTA'; amostra_meses: number
   run_rate_diario: number; projecao_run_rate: number
   projecao_curva: number | null; fracao_esperada_pct: number | null
@@ -118,8 +119,10 @@ export function PrevisaoFaturamento() {
               </p>
               <p className="text-3xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(mes.previsao)}</p>
               <p className="text-[11px] text-gray-400 mt-0.5">
-                faixa {fmtBRL(estatistica.minimo)} – {fmtBRL(estatistica.maximo)} · <ChipConfianca c={estatistica.confianca} n={estatistica.amostra_meses} />
+                faixa {fmtBRL(estatistica.minimo)} – {fmtBRL(estatistica.maximo)}
+                {estatistica.erro_medio_pct != null && <> · erro histórico ±{estatistica.erro_medio_pct}%</>}
               </p>
+              <p className="mt-1"><ChipConfianca c={estatistica.confianca} n={estatistica.amostra_meses} /></p>
             </button>
             <button onClick={() => setDetalhe('real_no_app')} className="text-left group">
               <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">
@@ -429,13 +432,31 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
 
               <div className="bg-indigo-50 rounded-xl p-3">
                 <div className="flex justify-between items-baseline">
-                  <span className="text-indigo-800 font-semibold">Previsão (média ponderada dos métodos)</span>
+                  <span className="text-indigo-800 font-semibold">
+                    Previsão {est.projecao_curva != null ? '(média ponderada — a curva pesa 3×)' : '(só o ritmo do mês)'}
+                  </span>
                   <span className="text-lg font-bold text-indigo-700 tabular-nums">{fmtBRL(est.previsao)}</span>
                 </div>
                 <p className="text-[11px] text-indigo-600/80 mt-1">
-                  faixa {fmtBRL(est.minimo)} – {fmtBRL(est.maximo)} · método {est.metodo.replace(/_/g, ' ')} · <ChipConfianca c={est.confianca} n={est.amostra_meses} />
+                  faixa {fmtBRL(est.minimo)} – {fmtBRL(est.maximo)} · <ChipConfianca c={est.confianca} n={est.amostra_meses} />
                 </p>
               </div>
+
+              {est.erro_medio_pct != null && (
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">Quanto esse método erra</p>
+                  <p className="text-xs text-gray-600">
+                    Testei o método contra os {est.backtest_meses} meses do histórico: para cada um, reprojetei o
+                    fechamento nesta mesma altura do mês usando <strong>só os outros meses</strong> como base, e comparei
+                    com o total real. Erro médio: <strong>±{est.erro_medio_pct}%</strong> — é daí que sai a faixa acima,
+                    não de chute.
+                  </p>
+                  <p className="text-[11px] text-gray-400 mt-1.5">
+                    O erro cai conforme o mês avança: no começo do mês quase nada é previsível; perto do fim, a
+                    projeção aperta.
+                  </p>
+                </div>
+              )}
 
               <div>
                 <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">Base histórica usada</p>
@@ -457,7 +478,7 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
                     {est.media_historica != null && (
                       <p className="text-[11px] text-gray-400 mt-1.5">Média histórica: {fmtBRL(est.media_historica)}/mês</p>
                     )}
-                    {est.amostra_meses < 3 && (
+                    {est.confianca !== 'ALTA' && (
                       <p className="text-[11px] text-amber-700 mt-1.5">
                         Com {est.amostra_meses} mês(es) de base a curva ainda é frágil. Cada mês novo melhora — e importar 2025 em diante acelera isso.
                       </p>
