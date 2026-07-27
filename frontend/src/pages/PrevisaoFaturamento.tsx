@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info, Layers } from 'lucide-react'
+import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info, Layers, Activity } from 'lucide-react'
 import api from '../lib/api'
 import { fmtBRL, fmtData, msgErro } from '../lib/crm'
 
@@ -28,8 +28,10 @@ interface Resumo {
   mes: {
     realizado: number; em_processo: number; saldo_contratos: number; garantido: number
     negociacao_bruto: number; negociacao_ponderado: number; previsao: number
-    meta: number | null; atingimento_previsto_pct: number | null
+    real_no_app: number
+    meta: number | null; atingimento_previsto_pct: number | null; atingimento_real_pct: number | null
   }
+  estatistica: Estatistica
   dia: {
     sai_hoje: number; no_kanban: number; realizado_hoje: number; ovs_kanban: number; quase_nf: number; negociacao_hoje: number
     dias_uteis_restantes: number; falta_meta: number | null; ritmo_necessario: number | null
@@ -41,6 +43,16 @@ interface Resumo {
   negocios: Negocio[]
   realizado_itens: RealizadoItem[]
   contratos: ContratoItem[]
+}
+interface Estatistica {
+  previsao: number; minimo: number; maximo: number
+  metodo: string; confianca: 'BAIXA' | 'MEDIA' | 'ALTA'; amostra_meses: number
+  run_rate_diario: number; projecao_run_rate: number
+  projecao_curva: number | null; fracao_esperada_pct: number | null
+  media_historica: number | null
+  dias_uteis_total: number; dias_uteis_decorridos: number; dias_uteis_futuros: number
+  progresso_pct: number
+  meses: { competencia: string; total: number; origem: string }[]
 }
 interface BlocoTransfer {
   realizado: number; em_processo: number; saldo_contratos: number
@@ -75,7 +87,7 @@ export function PrevisaoFaturamento() {
     return <div className="p-6 text-gray-400 text-sm">Carregando previsão…</div>
   }
 
-  const { mes, dia, pipeline, negocios, transfer, com_transfer } = data
+  const { mes, dia, pipeline, negocios, transfer, com_transfer, estatistica } = data
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-6xl mx-auto">
@@ -99,18 +111,36 @@ export function PrevisaoFaturamento() {
               <span className="text-xs text-gray-500">Meta {fmtBRL(mes.meta)} · previsto {mes.atingimento_previsto_pct}%</span>
             )}
           </div>
-          <button onClick={() => setDetalhe('previsao_mes')} className="text-left group">
-            <p className="text-3xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(mes.previsao)}</p>
-          </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button onClick={() => setDetalhe('previsao_mes')} className="text-left group">
+              <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">
+                Previsão estatística <Info size={11} className="opacity-40" />
+              </p>
+              <p className="text-3xl font-bold text-indigo-600 tabular-nums group-hover:underline decoration-indigo-300 underline-offset-4">{fmtBRL(mes.previsao)}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                faixa {fmtBRL(estatistica.minimo)} – {fmtBRL(estatistica.maximo)} · <ChipConfianca c={estatistica.confianca} n={estatistica.amostra_meses} />
+              </p>
+            </button>
+            <button onClick={() => setDetalhe('real_no_app')} className="text-left group">
+              <p className="text-[11px] text-gray-400 uppercase font-semibold flex items-center gap-1">
+                Real (no app) <Info size={11} className="opacity-40" />
+              </p>
+              <p className="text-3xl font-bold text-emerald-600 tabular-nums group-hover:underline decoration-emerald-300 underline-offset-4">{fmtBRL(mes.real_no_app)}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                faturado + em processo + negociação{mes.meta != null ? ` · ${mes.atingimento_real_pct}% da meta` : ''}
+              </p>
+            </button>
+          </div>
           {mes.meta != null && (
-            <div className="mt-3 h-2.5 rounded-full bg-gray-100 overflow-hidden">
-              <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(100, mes.atingimento_previsto_pct || 0)}%` }} />
+            <div className="mt-3 h-2.5 rounded-full bg-gray-100 overflow-hidden relative">
+              <div className="h-full bg-emerald-500 rounded-full absolute inset-y-0 left-0" style={{ width: `${Math.min(100, mes.atingimento_real_pct || 0)}%` }} />
+              <div className="h-full bg-indigo-400/40 rounded-full absolute inset-y-0 left-0" style={{ width: `${Math.min(100, mes.atingimento_previsto_pct || 0)}%` }} />
             </div>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
             <Mini titulo="Realizado" icone={<CircleDollarSign size={14} />} valor={mes.realizado} cor="text-emerald-600" onClick={() => setDetalhe('realizado')} />
             <Mini titulo="Em processo (OVs)" icone={<Package size={14} />} valor={mes.em_processo} cor="text-blue-600" onClick={() => setDetalhe('em_processo')} />
-            <Mini titulo="Saldo de contratos" icone={<Handshake size={14} />} valor={mes.saldo_contratos} cor="text-teal-600" onClick={() => setDetalhe('saldo_contratos')} />
+            <Mini titulo="Ritmo até agora" icone={<Activity size={14} />} valor={estatistica.run_rate_diario} cor="text-indigo-600" sufixo="/dia útil" onClick={() => setDetalhe('estatistica')} />
           </div>
           <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-3">
             <button onClick={() => setDetalhe('garantido')} className="bg-emerald-50 rounded-xl p-3 text-left hover:ring-2 hover:ring-emerald-200">
@@ -124,6 +154,16 @@ export function PrevisaoFaturamento() {
               <p className="text-[11px] text-amber-600/70">bruto {fmtBRL(mes.negociacao_bruto)} × chance</p>
             </button>
           </div>
+          <button onClick={() => setDetalhe('saldo_contratos')}
+            className="mt-3 w-full flex items-center justify-between gap-2 bg-gray-50 rounded-xl p-3 text-left hover:ring-2 hover:ring-gray-200">
+            <span className="min-w-0">
+              <span className="text-[11px] text-gray-500 font-semibold uppercase flex items-center gap-1">
+                <Handshake size={12} /> Saldo de contratos <Info size={11} className="opacity-50" />
+              </span>
+              <span className="block text-[11px] text-gray-400">potencial — fora da previsão (o órgão pede quando quer, sem data)</span>
+            </span>
+            <span className="text-lg font-bold text-gray-500 tabular-nums flex-shrink-0">{fmtBRL(mes.saldo_contratos)}</span>
+          </button>
         </div>
 
         {/* ── Previsão do DIA ───────────────────────────────────────── */}
@@ -287,17 +327,33 @@ export function PrevisaoFaturamento() {
   )
 }
 
-function Mini({ titulo, valor, cor, icone, onClick }: { titulo: string; valor: number; cor: string; icone: React.ReactNode; onClick?: () => void }) {
+function Mini({ titulo, valor, cor, icone, sufixo, onClick }: { titulo: string; valor: number; cor: string; icone: React.ReactNode; sufixo?: string; onClick?: () => void }) {
   return (
     <button onClick={onClick} disabled={!onClick} className="bg-gray-50 rounded-xl p-3 text-left w-full enabled:hover:ring-2 enabled:hover:ring-gray-200 enabled:cursor-pointer">
       <p className="text-[11px] text-gray-400 font-medium flex items-center gap-1">{icone} {titulo} {onClick && <Info size={10} className="opacity-40" />}</p>
-      <p className={`text-base font-bold tabular-nums ${cor}`}>{fmtBRL(valor)}</p>
+      <p className={`text-base font-bold tabular-nums ${cor}`}>
+        {fmtBRL(valor)}{sufixo && <span className="text-[11px] font-normal text-gray-400">{sufixo}</span>}
+      </p>
     </button>
   )
 }
 
+const CONFIANCA_CFG: Record<string, { cor: string; label: string }> = {
+  BAIXA: { cor: 'bg-red-100 text-red-700', label: 'confiança baixa' },
+  MEDIA: { cor: 'bg-amber-100 text-amber-700', label: 'confiança média' },
+  ALTA: { cor: 'bg-emerald-100 text-emerald-700', label: 'confiança alta' },
+}
+function ChipConfianca({ c, n }: { c: string; n: number }) {
+  const cfg = CONFIANCA_CFG[c] || CONFIANCA_CFG.BAIXA
+  return (
+    <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${cfg.cor}`}>
+      {cfg.label} · {n} {n === 1 ? 'mês' : 'meses'} de base
+    </span>
+  )
+}
+
 // ── Modal de detalhe: mostra o que gera cada número ──────────────────────────────
-type DetalheTipo = 'previsao_mes' | 'realizado' | 'em_processo' | 'saldo_contratos' | 'garantido' | 'negociacao' | 'sai_hoje' | 'no_kanban' | 'ritmo'
+type DetalheTipo = 'previsao_mes' | 'real_no_app' | 'estatistica' | 'realizado' | 'em_processo' | 'saldo_contratos' | 'garantido' | 'negociacao' | 'sai_hoje' | 'no_kanban' | 'ritmo'
 
 function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo; onClose: () => void }) {
   const nav = useNavigate()
@@ -311,8 +367,11 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
   const negHoje = negocios.filter(n => n.previsao_fechamento === data.hoje)
   const irParaOV = (id: string) => { onClose(); nav(`/expedicao/${id}`) }
 
+  const est = data.estatistica
   const TITULOS: Record<DetalheTipo, string> = {
-    previsao_mes: 'Previsão do mês', realizado: 'Realizado no mês', em_processo: 'Em processo (OVs)',
+    previsao_mes: 'Previsão estatística do mês', real_no_app: 'Real (no app)',
+    estatistica: 'Como a previsão é calculada',
+    realizado: 'Realizado no mês', em_processo: 'Em processo (OVs)',
     saldo_contratos: 'Saldo de contratos', garantido: 'Garantido', negociacao: 'Em negociação',
     sai_hoje: 'Sai hoje (prestes a faturar)', no_kanban: 'No kanban (potencial)', ritmo: 'Ritmo p/ bater a meta',
   }
@@ -328,12 +387,98 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
         </div>
         <div className="p-5 overflow-y-auto">
-          {tipo === 'previsao_mes' && (
-            <Composicao linhas={[
-              { rotulo: 'Garantido (realizado + processo)', valor: mes.garantido },
-              { rotulo: 'A realizar — saldo de contratos (sem data garantida)', valor: mes.saldo_contratos, sub: true },
-              { rotulo: 'Em negociação (ponderado pela chance)', valor: mes.negociacao_ponderado, sub: true },
-            ]} total={mes.previsao} />
+          {(tipo === 'previsao_mes' || tipo === 'estatistica') && (
+            <div className="space-y-4 text-sm">
+              <p className="text-xs text-gray-500">
+                Projeção de fechamento do mês por estatística — o saldo de contratos <strong>não entra</strong>: é esporádico
+                e sem data, não dá para prever. A previsão nunca fica abaixo do <strong>real do app</strong>, que já é quase certo.
+              </p>
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="flex justify-between text-gray-700">
+                  <span>Estamos a</span>
+                  <span className="tabular-nums font-medium">
+                    {est.dias_uteis_decorridos} de {est.dias_uteis_total} dias úteis ({est.progresso_pct}% do mês) · faltam {est.dias_uteis_futuros}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">Método 1 · ritmo do próprio mês</p>
+                <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+                  <Linha rotulo={`Faturado ÷ ${est.dias_uteis_decorridos} dias úteis`} valor={est.run_rate_diario} sufixo="/dia útil" />
+                  <Linha rotulo={`Projeção: faturado + ritmo × ${est.dias_uteis_futuros} dia(s)`} valor={est.projecao_run_rate} destaque />
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">Método 2 · curva de ritmo histórica</p>
+                {est.projecao_curva != null ? (
+                  <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+                    <div className="flex justify-between px-3 py-2 text-gray-600">
+                      <span>Historicamente, a {est.progresso_pct}% do mês já estava faturado</span>
+                      <span className="tabular-nums font-medium">{est.fracao_esperada_pct}%</span>
+                    </div>
+                    <Linha rotulo={`Projeção: faturado ÷ ${est.fracao_esperada_pct}%`} valor={est.projecao_curva} destaque />
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 px-1">
+                    Ainda sem base suficiente (precisa de histórico e de pelo menos 10% do mês faturado).
+                  </p>
+                )}
+              </div>
+
+              <div className="bg-indigo-50 rounded-xl p-3">
+                <div className="flex justify-between items-baseline">
+                  <span className="text-indigo-800 font-semibold">Previsão (média ponderada dos métodos)</span>
+                  <span className="text-lg font-bold text-indigo-700 tabular-nums">{fmtBRL(est.previsao)}</span>
+                </div>
+                <p className="text-[11px] text-indigo-600/80 mt-1">
+                  faixa {fmtBRL(est.minimo)} – {fmtBRL(est.maximo)} · método {est.metodo.replace(/_/g, ' ')} · <ChipConfianca c={est.confianca} n={est.amostra_meses} />
+                </p>
+              </div>
+
+              <div>
+                <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">Base histórica usada</p>
+                {est.meses.length === 0 ? (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2">
+                    ⚠️ Nenhum mês completo de histórico — a previsão está usando só o ritmo do mês atual.
+                    Importar o faturamento de 2025 em diante deixa a projeção muito mais firme.
+                  </p>
+                ) : (
+                  <>
+                    <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+                      {est.meses.map(m => (
+                        <div key={m.competencia} className="flex justify-between px-3 py-2 text-gray-600">
+                          <span>{mes_label(m.competencia)} <span className="text-[10px] text-gray-400">{m.origem === 'APP' ? 'do app' : 'importado'}</span></span>
+                          <span className="tabular-nums font-medium">{fmtBRL(m.total)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {est.media_historica != null && (
+                      <p className="text-[11px] text-gray-400 mt-1.5">Média histórica: {fmtBRL(est.media_historica)}/mês</p>
+                    )}
+                    {est.amostra_meses < 3 && (
+                      <p className="text-[11px] text-amber-700 mt-1.5">
+                        Com {est.amostra_meses} mês(es) de base a curva ainda é frágil. Cada mês novo melhora — e importar 2025 em diante acelera isso.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {tipo === 'real_no_app' && (
+            <>
+              <Composicao linhas={[
+                { rotulo: 'Realizado (NFs já faturadas no mês)', valor: mes.realizado },
+                { rotulo: 'Em processo (OVs no pipeline)', valor: mes.em_processo },
+                { rotulo: 'Em negociação (ponderado pela chance)', valor: mes.negociacao_ponderado, sub: true },
+              ]} total={mes.real_no_app} totalCor="text-emerald-600" />
+              <p className="text-[11px] text-gray-400 mt-3">
+                O que existe de concreto no app hoje. O saldo de contratos ({fmtBRL(mes.saldo_contratos)}) fica fora —
+                é potencial sem data, o órgão empenha/pede quando quer.
+              </p>
+            </>
           )}
           {tipo === 'garantido' && (
             <>
@@ -430,6 +575,17 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function Linha({ rotulo, valor, sufixo, destaque }: { rotulo: string; valor: number; sufixo?: string; destaque?: boolean }) {
+  return (
+    <div className={`flex justify-between px-3 py-2 ${destaque ? 'text-gray-800 font-medium bg-gray-50/60' : 'text-gray-600'}`}>
+      <span>{rotulo}</span>
+      <span className="tabular-nums">
+        {fmtBRL(valor)}{sufixo && <span className="text-[11px] font-normal text-gray-400">{sufixo}</span>}
+      </span>
     </div>
   )
 }

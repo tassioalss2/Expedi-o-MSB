@@ -306,6 +306,170 @@ def _saldo_contratos(db) -> tuple[float, float, list]:
     return round(saldo_total, 2), round(saldo_transfer, 2), contratos
 
 
+def _dias_uteis_do_mes(inicio: date, fim: date) -> list:
+    """Lista dos dias úteis do período (seg-sex)."""
+    dias, d = [], inicio
+    while d <= fim:
+        if d.weekday() < 5:
+            dias.append(d)
+        d += timedelta(days=1)
+    return dias
+
+
+def _faturado_por_dia_app(db, inicio: date, fim: date) -> dict:
+    """data ISO -> faturado no dia, só vendas gerais (sem transfer price)."""
+    _, _, itens = _realizado_mes(db, inicio, fim)
+    por_dia: dict = {}
+    for it in itens:
+        if it.get("transfer"):
+            continue
+        d = it.get("data")
+        if d:
+            por_dia[d] = round(por_dia.get(d, 0.0) + float(it.get("valor") or 0), 2)
+    return por_dia
+
+
+def _faturado_por_dia_import(db, inicio: date, fim: date) -> dict:
+    """Mesma coisa, vindo do histórico importado (meses anteriores ao app)."""
+    try:
+        rows = db.table("faturamento_historico").select("data, valor, transfer")\
+            .gte("data", inicio.isoformat()).lte("data", fim.isoformat()).execute().data
+    except Exception:
+        # Tabela ainda não migrada (v18) — degrada sem quebrar a previsão.
+        return {}
+    por_dia: dict = {}
+    for r in rows:
+        if r.get("transfer"):
+            continue
+        d = r.get("data")
+        if d:
+            por_dia[d] = round(por_dia.get(d, 0.0) + float(r.get("valor") or 0), 2)
+    return por_dia
+
+
+def _meses_historicos(db, mes_atual_inicio: date, n_meses: int = 24) -> list:
+    """Meses COMPLETOS antes do atual, cada um com o total e a curva acumulada
+    por dia útil. Um mês que tem dados no app usa o app; os demais usam o
+    histórico importado — nunca as duas fontes juntas (evita dobrar valor)."""
+    meses: list = []
+    ref = mes_atual_inicio
+    for _ in range(n_meses):
+        # Anda um mês para trás.
+        fim = ref - timedelta(days=1)
+        ini = date(fim.year, fim.month, 1)
+        ref = ini
+
+        por_dia = _faturado_por_dia_app(db, ini, fim)
+        origem = "APP"
+        if not por_dia:
+            por_dia = _faturado_por_dia_import(db, ini, fim)
+            origem = "HISTORICO"
+        if not por_dia:
+            continue
+
+        dias_uteis = _dias_uteis_do_mes(ini, fim)
+        acumulado, soma = [], 0.0
+        for d in dias_uteis:
+            soma += por_dia.get(d.isoformat(), 0.0)
+            acumulado.append(round(soma, 2))
+        # Faturamento em fim de semana (raro) entra no total para não sumir.
+        total = round(sum(por_dia.values()), 2)
+        if total <= 0:
+            continue
+        meses.append({
+            "competencia": f"{ini.year:04d}-{ini.month:02d}",
+            "total": total,
+            "acumulado": acumulado,
+            "dias_uteis": len(dias_uteis),
+            "origem": origem,
+        })
+    meses.sort(key=lambda m: m["competencia"])
+    return meses
+
+
+def _fracao_esperada(meses: list, progresso: float) -> tuple:
+    """Fração do total do mês que costuma estar faturada quando `progresso`
+    (0..1) dos dias úteis já passou. Os meses têm quantidades diferentes de dias
+    úteis, então a comparação é pelo progresso relativo, não pelo dia absoluto.
+    Devolve (fracao_media, qtd_meses_usados)."""
+    fracoes = []
+    for m in meses:
+        acum, total = m["acumulado"], m["total"]
+        n = len(acum)
+        if n == 0 or total <= 0:
+            continue
+        idx = min(n - 1, max(0, int(round(progresso * n)) - 1))
+        fracoes.append(acum[idx] / total)
+    if not fracoes:
+        return None, 0
+    return sum(fracoes) / len(fracoes), len(fracoes)
+
+
+def _previsao_estatistica(db, hoje: date, inicio: date, fim: date, realizado: float,
+                          garantido: float) -> dict:
+    """Projeta o fechamento do mês por estatística, sem usar saldo de contratos
+    (que é esporádico e sem data — não dá para prever).
+
+    Dois métodos, combinados por peso conforme o histórico disponível:
+      1. Run-rate do próprio mês — média diária até agora × dias que faltam.
+         Sempre disponível, mas ignora que o mês costuma ser desigual.
+      2. Curva de ritmo histórica — se historicamente X% do mês já estava
+         faturado a esta altura, o total projetado é realizado ÷ X%.
+         Precisa de histórico; quanto mais meses, mais peso.
+    O piso é o garantido (realizado + OVs em processo), que é quase certo."""
+    dias_totais = len(_dias_uteis_do_mes(inicio, fim))
+    dias_decorridos = len(_dias_uteis_do_mes(inicio, min(hoje, fim)))
+    dias_futuros = max(0, dias_totais - dias_decorridos)
+    progresso = (dias_decorridos / dias_totais) if dias_totais else 0.0
+
+    meses = _meses_historicos(db, inicio)
+
+    run_rate = round(realizado / dias_decorridos, 2) if dias_decorridos else 0.0
+    proj_run_rate = round(realizado + run_rate * dias_futuros, 2)
+
+    fracao, amostra = _fracao_esperada(meses, progresso)
+    # Fração muito baixa (início do mês) dispara projeções absurdas — só usa a
+    # curva quando já há base suficiente para dividir.
+    proj_curva = round(realizado / fracao, 2) if (fracao and fracao >= 0.10) else None
+
+    media_hist = round(sum(m["total"] for m in meses) / len(meses), 2) if meses else None
+
+    candidatos = [("run_rate", proj_run_rate, 1.0)]
+    if proj_curva is not None:
+        candidatos.append(("curva_historica", proj_curva, min(3.0, float(amostra))))
+
+    peso_total = sum(p for _, _, p in candidatos)
+    previsao = round(sum(v * p for _, v, p in candidatos) / peso_total, 2)
+    previsao = max(previsao, round(garantido, 2))
+
+    valores = [v for _, v, _ in candidatos] + [garantido]
+    if amostra >= 3:
+        confianca = "ALTA"
+    elif amostra >= 1:
+        confianca = "MEDIA"
+    else:
+        confianca = "BAIXA"
+
+    return {
+        "previsao": previsao,
+        "minimo": round(min(valores), 2),
+        "maximo": round(max(valores), 2),
+        "metodo": "+".join(n for n, _, _ in candidatos),
+        "confianca": confianca,
+        "amostra_meses": amostra,
+        "run_rate_diario": run_rate,
+        "projecao_run_rate": proj_run_rate,
+        "projecao_curva": proj_curva,
+        "fracao_esperada_pct": round(fracao * 100, 1) if fracao else None,
+        "media_historica": media_hist,
+        "dias_uteis_total": dias_totais,
+        "dias_uteis_decorridos": dias_decorridos,
+        "dias_uteis_futuros": dias_futuros,
+        "progresso_pct": round(progresso * 100, 1),
+        "meses": [{"competencia": m["competencia"], "total": m["total"], "origem": m["origem"]} for m in meses],
+    }
+
+
 def resumo() -> dict:
     db = get_service_db()
     hoje = date.today()
@@ -338,8 +502,14 @@ def resumo() -> dict:
     neg_mes = [n for n in negocios if _no_mes(n)]
     negociacao_bruto = round(sum(n["valor"] for n in neg_mes), 2)
     negociacao_ponderado = round(sum(n["valor_ponderado"] for n in neg_mes), 2)
-    # Previsão = garantido + a realizar (saldo de contratos) + negociação ponderada.
-    previsao_mes = round(garantido + saldo_contratos + negociacao_ponderado, 2)
+    # "Real" = o que está no app + negociação ponderada. O saldo de contratos NÃO
+    # entra: é esporádico e sem data (o órgão pede quando quer), então serve só
+    # como potencial informativo — não como previsão.
+    real_no_app = round(garantido + negociacao_ponderado, 2)
+    # Previsão = projeção estatística (run-rate do mês + curva de ritmo histórica),
+    # com piso no real do app.
+    estatistica = _previsao_estatistica(db, hoje, inicio, fim, realizado, real_no_app)
+    previsao_mes = estatistica["previsao"]
 
     # Previsão do dia — duas visões, ambas somando o que JÁ faturou hoje (senão
     # o dia parece "abaixo do ritmo" mesmo depois de já ter batido a meta):
@@ -372,17 +542,21 @@ def resumo() -> dict:
             "garantido": garantido,
             "negociacao_bruto": negociacao_bruto,
             "negociacao_ponderado": negociacao_ponderado,
+            "real_no_app": real_no_app,
             "previsao": previsao_mes,
             "meta": meta,
             "atingimento_previsto_pct": round(previsao_mes / meta * 100, 1) if meta else None,
+            "atingimento_real_pct": round(real_no_app / meta * 100, 1) if meta else None,
         },
+        "estatistica": estatistica,
         # Transfer price (vendas para a Biomedical) — fora da meta, isolado aqui.
         "transfer": {
             "realizado": realizado_transfer,
             "em_processo": em_processo_transfer,
             "saldo_contratos": saldo_contratos_transfer,
             "garantido": round(realizado_transfer + em_processo_transfer, 2),
-            "previsao": round(realizado_transfer + em_processo_transfer + saldo_contratos_transfer, 2),
+            # Sem saldo de contratos: esporádico e sem data, não é previsível.
+            "previsao": round(realizado_transfer + em_processo_transfer, 2),
             "realizado_hoje": realizado_hoje_transfer,
             "sai_hoje": sai_hoje_transfer,
             "no_kanban": no_kanban_transfer,
@@ -393,7 +567,7 @@ def resumo() -> dict:
             "em_processo": round(em_processo_total + em_processo_transfer, 2),
             "saldo_contratos": round(saldo_contratos + saldo_contratos_transfer, 2),
             "garantido": round(garantido + realizado_transfer + em_processo_transfer, 2),
-            "previsao": round(previsao_mes + realizado_transfer + em_processo_transfer + saldo_contratos_transfer, 2),
+            "previsao": round(previsao_mes + realizado_transfer + em_processo_transfer, 2),
             "realizado_hoje": round(realizado_hoje + realizado_hoje_transfer, 2),
             "sai_hoje": round(sai_hoje + sai_hoje_transfer, 2),
             "no_kanban": round(no_kanban + no_kanban_transfer, 2),
