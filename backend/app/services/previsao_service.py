@@ -583,6 +583,26 @@ def resumo() -> dict:
     sai_hoje_transfer = round(realizado_hoje_transfer + quase_nf_transfer, 2)
     no_kanban_transfer = round(realizado_hoje_transfer + em_processo_transfer, 2)
 
+    # Série para o gráfico: meses fechados como realizado, e o mês corrente como
+    # projeção + faixa. O parcial do mês corrente vai em campo separado — plotar
+    # ele na mesma linha dos meses fechados pareceria uma queda, não um mês em
+    # andamento.
+    serie_mensal = [
+        {"competencia": m["competencia"], "realizado": m["total"], "origem": m["origem"]}
+        for m in estatistica["meses"]
+    ]
+    serie_mensal.append({
+        "competencia": comp,
+        "parcial": realizado,
+        "projecao": previsao_mes,
+        "minimo": estatistica["minimo"],
+        "maximo": estatistica["maximo"],
+        "corrente": True,
+    })
+    # A linha tracejada da projeção sai do último mês fechado.
+    if len(serie_mensal) >= 2:
+        serie_mensal[-2]["projecao"] = serie_mensal[-2]["realizado"]
+
     meta_info = pedido_service.obter_meta(comp)
     meta = meta_info.get("valor")
     dias_restantes = _dias_uteis(hoje, fim)
@@ -606,6 +626,7 @@ def resumo() -> dict:
             "atingimento_real_pct": round(real_no_app / meta * 100, 1) if meta else None,
         },
         "estatistica": estatistica,
+        "serie_mensal": serie_mensal,
         # Transfer price (vendas para a Biomedical) — fora da meta, isolado aqui.
         "transfer": {
             "realizado": realizado_transfer,

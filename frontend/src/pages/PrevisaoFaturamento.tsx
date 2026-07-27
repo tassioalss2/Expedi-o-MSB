@@ -3,8 +3,21 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info, Layers, Activity } from 'lucide-react'
+import {
+  ComposedChart, Line, ErrorBar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer,
+} from 'recharts'
 import api from '../lib/api'
 import { fmtBRL, fmtData, msgErro } from '../lib/crm'
+
+// Paleta do gráfico — azul validado (contraste ≥3:1 sobre o branco do card).
+const VIZ = {
+  serie: '#2a78d6',
+  faixa: 'rgba(42,120,214,0.13)',
+  grid: '#e1e0d9',
+  eixo: '#c3c2b7',
+  rotulo: '#898781',
+  meta: '#52514e',
+}
 
 interface Negocio {
   id: string
@@ -39,10 +52,16 @@ interface Resumo {
   }
   transfer: BlocoTransfer
   com_transfer: BlocoTransfer
+  serie_mensal: PontoMes[]
   pipeline: PipelineItem[]
   negocios: Negocio[]
   realizado_itens: RealizadoItem[]
   contratos: ContratoItem[]
+}
+interface PontoMes {
+  competencia: string
+  realizado?: number; origem?: string
+  parcial?: number; projecao?: number; minimo?: number; maximo?: number; corrente?: boolean
 }
 interface Estatistica {
   previsao: number; minimo: number; maximo: number
@@ -89,6 +108,7 @@ export function PrevisaoFaturamento() {
   }
 
   const { mes, dia, pipeline, negocios, transfer, com_transfer, estatistica } = data
+  const contratosComSaldo = data.contratos.filter(c => !c.transfer).length
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-6xl mx-auto">
@@ -157,16 +177,6 @@ export function PrevisaoFaturamento() {
               <p className="text-[11px] text-amber-600/70">bruto {fmtBRL(mes.negociacao_bruto)} × chance</p>
             </button>
           </div>
-          <button onClick={() => setDetalhe('saldo_contratos')}
-            className="mt-3 w-full flex items-center justify-between gap-2 bg-gray-50 rounded-xl p-3 text-left hover:ring-2 hover:ring-gray-200">
-            <span className="min-w-0">
-              <span className="text-[11px] text-gray-500 font-semibold uppercase flex items-center gap-1">
-                <Handshake size={12} /> Saldo de contratos <Info size={11} className="opacity-50" />
-              </span>
-              <span className="block text-[11px] text-gray-400">potencial — fora da previsão (o órgão pede quando quer, sem data)</span>
-            </span>
-            <span className="text-lg font-bold text-gray-500 tabular-nums flex-shrink-0">{fmtBRL(mes.saldo_contratos)}</span>
-          </button>
         </div>
 
         {/* ── Previsão do DIA ───────────────────────────────────────── */}
@@ -217,66 +227,56 @@ export function PrevisaoFaturamento() {
         </div>
       </div>
 
-      {/* ── Consolidado: vendas gerais + transfer price ──────────────── */}
+      {/* ── Gráfico: histórico + projeção ──────────────────────────────── */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="font-semibold text-gray-700 flex items-center gap-2"><Layers size={16} /> Vendas gerais + Transfer price</h2>
-          <span className="text-[11px] text-gray-400">volume total da operação · fora da meta</span>
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+          <h2 className="font-semibold text-gray-700 flex items-center gap-2"><Activity size={16} /> Histórico e projeção</h2>
+          <span className="text-[11px] text-gray-400">
+            {estatistica.meses.length} meses fechados · vendas gerais, sem transfer price
+          </span>
         </div>
-        <p className="text-xs text-gray-400 mb-4">
-          A meta do mês cobre só as vendas gerais. O transfer price (vendas para a Biomedical) aparece aqui para você ver o volume cheio.
+        <p className="text-xs text-gray-400 mb-3">
+          Faturamento mês a mês e onde o mês corrente deve fechar.
         </p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[11px] uppercase text-gray-400 text-left border-b">
-                <th className="py-2 font-medium"></th>
-                <th className="py-2 font-medium text-right">Realizado</th>
-                <th className="py-2 font-medium text-right">Em processo</th>
-                <th className="py-2 font-medium text-right">Saldo contratos</th>
-                <th className="py-2 font-medium text-right">Previsão</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              <tr>
-                <td className="py-2.5 text-gray-600">Vendas gerais <span className="text-[11px] text-gray-400">(na meta)</span></td>
-                <td className="py-2.5 text-right tabular-nums text-emerald-600 font-medium">{fmtBRL(mes.realizado)}</td>
-                <td className="py-2.5 text-right tabular-nums text-blue-600">{fmtBRL(mes.em_processo)}</td>
-                <td className="py-2.5 text-right tabular-nums text-teal-600">{fmtBRL(mes.saldo_contratos)}</td>
-                <td className="py-2.5 text-right tabular-nums font-semibold text-indigo-600">{fmtBRL(mes.previsao)}</td>
-              </tr>
-              <tr>
-                <td className="py-2.5 text-gray-600">Transfer price <span className="text-[11px] text-gray-400">(fora da meta)</span></td>
-                <td className="py-2.5 text-right tabular-nums text-emerald-600 font-medium">{fmtBRL(transfer.realizado)}</td>
-                <td className="py-2.5 text-right tabular-nums text-blue-600">{fmtBRL(transfer.em_processo)}</td>
-                <td className="py-2.5 text-right tabular-nums text-teal-600">{fmtBRL(transfer.saldo_contratos)}</td>
-                <td className="py-2.5 text-right tabular-nums font-semibold text-indigo-600">{fmtBRL(transfer.previsao)}</td>
-              </tr>
-              <tr className="bg-gray-50 font-bold">
-                <td className="py-2.5 text-gray-800">Total</td>
-                <td className="py-2.5 text-right tabular-nums text-emerald-700">{fmtBRL(com_transfer.realizado)}</td>
-                <td className="py-2.5 text-right tabular-nums text-blue-700">{fmtBRL(com_transfer.em_processo)}</td>
-                <td className="py-2.5 text-right tabular-nums text-teal-700">{fmtBRL(com_transfer.saldo_contratos)}</td>
-                <td className="py-2.5 text-right tabular-nums text-indigo-700">{fmtBRL(com_transfer.previsao)}</td>
-              </tr>
-            </tbody>
-          </table>
+        <GraficoPrevisao serie={data.serie_mensal} meta={mes.meta} est={estatistica} />
+      </div>
+
+      {/* ── Fora da previsão: potencial e transfer price ───────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <h2 className="font-semibold text-gray-700 flex items-center gap-2 mb-1"><Handshake size={16} /> Saldo de contratos</h2>
+          <p className="text-xs text-gray-400 mb-3">
+            Potencial. <strong>Não entra na previsão</strong> — é esporádico e sem data: o órgão empenha e pede quando quer.
+          </p>
+          <button onClick={() => setDetalhe('saldo_contratos')} className="text-left group">
+            <p className="text-2xl font-bold text-gray-700 tabular-nums group-hover:underline decoration-gray-300 underline-offset-4">
+              {fmtBRL(mes.saldo_contratos)}
+            </p>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              {contratosComSaldo} contrato(s) com saldo a entregar · ver detalhe
+            </p>
+          </button>
         </div>
-        <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <div className="bg-gray-50 rounded-xl p-3">
-            <p className="text-[11px] text-gray-400 uppercase font-semibold">Já faturado hoje (total)</p>
-            <p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(com_transfer.realizado_hoje)}</p>
-            <p className="text-[11px] text-gray-400">gerais {fmtBRL(dia.realizado_hoje)} + transfer {fmtBRL(transfer.realizado_hoje)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-xl p-3">
-            <p className="text-[11px] text-gray-400 uppercase font-semibold">Sai hoje (total)</p>
-            <p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(com_transfer.sai_hoje)}</p>
-            <p className="text-[11px] text-gray-400">gerais {fmtBRL(dia.sai_hoje)} + transfer {fmtBRL(transfer.sai_hoje)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-xl p-3">
-            <p className="text-[11px] text-gray-400 uppercase font-semibold">Garantido (total)</p>
-            <p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(com_transfer.garantido)}</p>
-            <p className="text-[11px] text-gray-400">gerais {fmtBRL(mes.garantido)} + transfer {fmtBRL(transfer.garantido)}</p>
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+          <h2 className="font-semibold text-gray-700 flex items-center gap-2 mb-1"><Layers size={16} /> Transfer price</h2>
+          <p className="text-xs text-gray-400 mb-3">
+            Vendas para a Biomedical. <strong>Fora da meta</strong>, então fora de todos os números acima.
+          </p>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between text-gray-600">
+              <span>Faturado no mês</span><span className="tabular-nums font-medium">{fmtBRL(transfer.realizado)}</span>
+            </div>
+            <div className="flex justify-between text-gray-600">
+              <span>Em processo</span><span className="tabular-nums font-medium">{fmtBRL(transfer.em_processo)}</span>
+            </div>
+            <div className="flex justify-between pt-2 mt-1 border-t border-gray-100">
+              <span className="font-semibold text-gray-700">Volume total da operação</span>
+              <span className="tabular-nums font-bold text-gray-800">{fmtBRL(com_transfer.realizado)}</span>
+            </div>
+            <p className="text-[11px] text-gray-400">
+              vendas gerais {fmtBRL(mes.realizado)} + transfer {fmtBRL(transfer.realizado)}
+            </p>
           </div>
         </div>
       </div>
@@ -596,6 +596,92 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Gráfico: histórico mensal + projeção do mês corrente ─────────────────────────
+const mesCurto = (comp: string) => {
+  const [a, m] = comp.split('-')
+  return `${['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][Number(m) - 1]}/${a.slice(2)}`
+}
+const fmtMi = (v: number) => `${(v / 1_000_000).toFixed(1).replace('.', ',')}M`
+
+function GraficoPrevisao({ serie, meta, est }: { serie: PontoMes[]; meta: number | null; est: Estatistica }) {
+  const dados = serie.map(p => ({
+    ...p,
+    rotulo: mesCurto(p.competencia),
+    // Faixa de incerteza como whisker no ponto projetado. Área não serve aqui: a
+    // incerteza existe num único ponto, e área de um ponto vira path degenerado
+    // (invisível na tela — verificado).
+    erroFaixa: p.corrente && p.minimo != null && p.maximo != null && p.projecao != null
+      ? [p.projecao - p.minimo, p.maximo - p.projecao]
+      : undefined,
+  }))
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-3 text-[11px] text-gray-500">
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke={VIZ.serie} strokeWidth="2" /></svg>
+          Faturado (mês fechado)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke={VIZ.serie} strokeWidth="2" strokeDasharray="4 3" /></svg>
+          Projeção
+        </span>
+        {est.erro_medio_pct != null && (
+          <span className="flex items-center gap-1.5">
+            <svg width="10" height="12"><line x1="5" y1="1" x2="5" y2="11" stroke={VIZ.serie} strokeWidth="2" opacity="0.5" />
+              <line x1="1" y1="1" x2="9" y2="1" stroke={VIZ.serie} strokeWidth="2" opacity="0.5" />
+              <line x1="1" y1="11" x2="9" y2="11" stroke={VIZ.serie} strokeWidth="2" opacity="0.5" /></svg>
+            Faixa (±{est.erro_medio_pct}%)
+          </span>
+        )}
+        <span className="flex items-center gap-1.5">
+          <svg width="12" height="12"><circle cx="6" cy="6" r="4" fill="#fff" stroke={VIZ.serie} strokeWidth="2" /></svg>
+          Faturado até agora
+        </span>
+        {meta != null && (
+          <span className="flex items-center gap-1.5">
+            <svg width="18" height="8"><line x1="0" y1="4" x2="18" y2="4" stroke={VIZ.meta} strokeWidth="1.5" strokeDasharray="3 3" /></svg>
+            Meta
+          </span>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={260}>
+        <ComposedChart data={dados} margin={{ top: 8, right: 12, bottom: 0, left: 4 }}>
+          <CartesianGrid stroke={VIZ.grid} strokeWidth={1} vertical={false} />
+          <XAxis dataKey="rotulo" tick={{ fontSize: 11, fill: VIZ.rotulo }} stroke={VIZ.eixo}
+            tickLine={false} interval="preserveStartEnd" />
+          <YAxis tickFormatter={fmtMi} tick={{ fontSize: 11, fill: VIZ.rotulo }} stroke={VIZ.eixo}
+            tickLine={false} width={44} />
+          <Tooltip
+            contentStyle={{ fontSize: 12, borderRadius: 10, border: `1px solid ${VIZ.grid}` }}
+            formatter={(v: any, nome: string) => [fmtBRL(Number(v)), nome]}
+          />
+          {meta != null && (
+            <ReferenceLine y={meta} stroke={VIZ.meta} strokeDasharray="3 3" strokeWidth={1.5} />
+          )}
+          {/* isAnimationActive={false} é obrigatório: a animação do recharts escreve
+              stroke-dasharray própria e some com a linha / mata o tracejado. */}
+          <Line dataKey="realizado" name="Faturado" stroke={VIZ.serie} strokeWidth={2}
+            dot={{ r: 3, fill: VIZ.serie, strokeWidth: 0 }} activeDot={{ r: 5 }}
+            connectNulls={false} isAnimationActive={false} />
+          <Line dataKey="projecao" name="Projeção" stroke={VIZ.serie} strokeWidth={2} strokeDasharray="5 4"
+            dot={{ r: 3, fill: VIZ.serie, strokeWidth: 0 }} activeDot={{ r: 5 }}
+            connectNulls isAnimationActive={false}>
+            <ErrorBar dataKey="erroFaixa" width={6} strokeWidth={2} stroke={VIZ.serie} opacity={0.5} />
+          </Line>
+          <Line dataKey="parcial" name="Faturado até agora" stroke="none" legendType="none"
+            dot={{ r: 5, fill: '#fff', stroke: VIZ.serie, strokeWidth: 2 }} activeDot={{ r: 6 }}
+            isAnimationActive={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+      <p className="text-[11px] text-gray-400 mt-1.5">
+        O círculo vazado no último mês é o <strong>faturado até agora</strong> ({est.progresso_pct}% dos dias úteis) —
+        não é queda, é mês em andamento.
+      </p>
     </div>
   )
 }
