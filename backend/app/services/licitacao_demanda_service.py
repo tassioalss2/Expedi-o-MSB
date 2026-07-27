@@ -281,36 +281,24 @@ def relatorio(tipo: Optional[str] = None, canal: Optional[str] = None,
     return out
 
 
-def _pregao_id_se_existir(db, numero_pregao: str, itens_empenho: list) -> str | None:
-    """Se já existe um PREGÃO MESTRE com esse número, valida que os itens/qtds
-    da NE cabem no saldo dele e devolve o pregao_id — a NE vira uma linha do
-    contrato (consumindo o saldo), não um contrato novo e desconectado. Sem
-    isso, a NE só se juntaria ao pregão bem depois (no backfill da aba
-    Contratos) e sem validar saldo, deixando o pregão errado silenciosamente.
-    Devolve None se o pregão ainda não existe (aí o contrato nasce solto, como
-    sempre — vira o próprio pregão quando alguém abrir a aba Contratos)."""
+def _pregao_id_por_numero(db, numero_pregao: str) -> str | None:
+    """Se já existe um PREGÃO MESTRE com esse número, devolve o pregao_id — a NE
+    entra como uma linha desse contrato (consumindo o saldo), não como um
+    contrato novo e desconectado. Sem isso, a NE só se juntaria ao pregão bem
+    depois, no backfill da aba Contratos.
+
+    Não recusa por saldo: o total de pregões vindos do backfill legado é
+    presumido (= o que já estava empenhado), então o saldo aparece zerado e
+    barrar aqui trancaria o lançamento de NEs novas. Se o empenhado passar do
+    total, o pregão sinaliza isso na tela para o total ser corrigido.
+
+    Devolve None se o pregão ainda não existe (o contrato nasce solto, como
+    antes — vira o próprio pregão quando alguém abrir a aba Contratos)."""
     numero_pregao = (numero_pregao or "").strip()
     if not numero_pregao:
         return None
-    pregao_rows = db.table("pregoes").select("id").eq("numero", numero_pregao).eq("ativo", True).execute().data
-    if not pregao_rows:
-        return None
-    from app.services import pregao_service
-    detalhe = pregao_service.obter_pregao(pregao_rows[0]["id"])
-    saldo = {i["produto_id"]: i["qtd_saldo"] for i in detalhe["itens"]}
-    for it in itens_empenho:
-        pid = str(it.produto_id)
-        if pid not in saldo:
-            raise HTTPException(
-                status_code=422,
-                detail=f"O pregão {numero_pregao} já existe na aba Contratos, mas este item não faz parte dele — confira o item ou o número do pregão.",
-            )
-        if it.qtd_empenhada > saldo[pid] + 0.001:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Quantidade acima do saldo do pregão {numero_pregao} para este item (saldo {saldo[pid]}). Confira o pregão na aba Contratos.",
-            )
-    return pregao_rows[0]["id"]
+    rows = db.table("pregoes").select("id").eq("numero", numero_pregao).eq("ativo", True).execute().data
+    return rows[0]["id"] if rows else None
 
 
 def _garantir_contrato_vd(db, d: dict) -> str | None:
@@ -335,7 +323,7 @@ def _garantir_contrato_vd(db, d: dict) -> str | None:
 
     from app.services import licitacao_service
     numero_pregao = (d.get("numero_pregao") or "").strip()
-    pregao_id = _pregao_id_se_existir(db, numero_pregao, itens_emp)
+    pregao_id = _pregao_id_por_numero(db, numero_pregao)
     emp = licitacao_service.criar_empenho(EmpenhoCreate(
         numero=contrato_num,
         numero_pregao=numero_pregao or None,
@@ -364,8 +352,18 @@ def criar_demanda(payload: DemandaCreate) -> dict:
             raise HTTPException(status_code=422, detail="Informe o número da NF.")
         if not payload.data_procedimento:
             raise HTTPException(status_code=422, detail="Informe a data do procedimento.")
-    elif payload.tipo_operacao in ("VENDA_DIRETA", "CONSIGNACAO") and not num:
-        raise HTTPException(status_code=422, detail="Informe a Nota de Empenho (NE).")
+    elif payload.tipo_operacao in ("VENDA_DIRETA", "CONSIGNACAO"):
+        if not num:
+            raise HTTPException(status_code=422, detail="Informe a Nota de Empenho (NE).")
+        # Sem itens a NE não vira linha do contrato (não há o que empenhar) — a
+        # demanda ficava no painel e o contrato nunca recebia a linha, calado.
+        if payload.tipo_operacao == "VENDA_DIRETA" and not [
+            it for it in (payload.itens or []) if it.produto_id and float(it.qtd or 0) > 0
+        ]:
+            raise HTTPException(
+                status_code=422,
+                detail="Informe os itens e quantidades da NE — é o que vira a linha do contrato do pregão.",
+            )
     # Anti-duplicidade: o mesmo número (empenho/AF/pregão) não pode ter duas
     # demandas ativas — evita o time processar o mesmo pedido duas vezes.
     if num:
@@ -696,6 +694,15 @@ def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
         update["itens"] = _itens_json(payload.itens)
 
     db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
+
+    # Itens preenchidos depois (demanda criada sem eles, antes de virarem
+    # obrigatórios): agora dá para criar a linha (NE) no contrato do pregão, que
+    # na criação foi pulada por falta de item. Best-effort — não trava a edição.
+    if payload.itens is not None:
+        try:
+            _garantir_contrato_vd(db, obter_demanda(demanda_id))
+        except Exception:
+            pass
     return obter_demanda(demanda_id)
 
 
@@ -762,7 +769,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         itens_empenho = [EmpenhoItemCreate(produto_id=it.produto_id, qtd_empenhada=float(it.qtd),
                                             valor_unitario=float(it.valor or 0)) for it in itens_emp]
         numero_pregao_final = (payload.numero_pregao or "").strip() or d.get("numero_pregao")
-        pregao_id = _pregao_id_se_existir(db, numero_pregao_final, itens_empenho)
+        pregao_id = _pregao_id_por_numero(db, numero_pregao_final)
         emp = licitacao_service.criar_empenho(
             EmpenhoCreate(
                 numero=payload.numero.strip(),

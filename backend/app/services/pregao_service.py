@@ -70,14 +70,35 @@ def _resumo_ne(db, emp: dict) -> dict:
 
 
 def _montar_pregao(db, p: dict, nes: list) -> dict:
-    """Consolida um pregão com suas NEs (total, empenhado, saldo, entregue)."""
+    """Consolida um pregão com suas NEs (total, empenhado, saldo, entregue).
+
+    Tolera empenhado > total: o total de pregões vindos do backfill de contratos
+    legados é presumido (= o que já estava empenhado), então uma NE nova
+    legitimamente estoura esse total. Em vez de esconder ou recusar a NE, marca
+    `empenhado_acima_total` para a tela pedir a correção do total.
+    """
     itens = p.get("itens") or []
     preco = {i["produto_id"]: float(i.get("valor_unitario") or 0) for i in itens}
-    total_un = sum(float(i.get("qtd_total") or 0) for i in itens)
-    total_valor = sum(float(i.get("qtd_total") or 0) * preco.get(i["produto_id"], 0.0) for i in itens)
 
     ne_ids = [n["id"] for n in nes]
     empenhado_prod = _empenhado_por_produto(db, ne_ids)
+
+    # Itens que só aparecem nas NEs (não estão no total do pregão) entram como
+    # linha extra com total 0 — aparecer com saldo negativo é melhor que sumir.
+    itens_norm = list(itens)
+    conhecidos = {i["produto_id"] for i in itens}
+    faltantes = [pid for pid in empenhado_prod if pid not in conhecidos]
+    if faltantes:
+        prods = {pr["id"]: pr for pr in db.table("produtos")
+                 .select("id, codigo, descricao").in_("id", faltantes).execute().data}
+        for pid in faltantes:
+            pr = prods.get(pid, {})
+            itens_norm.append({"produto_id": pid, "codigo": pr.get("codigo"),
+                               "descricao": pr.get("descricao"), "qtd_total": 0.0,
+                               "valor_unitario": 0.0})
+
+    total_un = sum(float(i.get("qtd_total") or 0) for i in itens_norm)
+    total_valor = sum(float(i.get("qtd_total") or 0) * preco.get(i["produto_id"], 0.0) for i in itens_norm)
     empenhado_un = sum(empenhado_prod.values())
     empenhado_valor = sum(q * preco.get(pid, 0.0) for pid, q in empenhado_prod.items())
 
@@ -85,18 +106,20 @@ def _montar_pregao(db, p: dict, nes: list) -> dict:
     entregue_valor = sum(n["faturado_valor"] for n in nes_out)
 
     itens_out = []
-    for i in itens:
+    for i in itens_norm:
         pid = i["produto_id"]
         qt = float(i.get("qtd_total") or 0)
-        emp = min(empenhado_prod.get(pid, 0.0), qt)
+        emp = empenhado_prod.get(pid, 0.0)
         itens_out.append({
             "produto_id": pid,
             "codigo": i.get("codigo"),
             "descricao": i.get("descricao"),
             "qtd_total": round(qt),
             "valor_unitario": preco.get(pid, 0.0),
-            "qtd_empenhada": round(empenhado_prod.get(pid, 0.0)),
+            "qtd_empenhada": round(emp),
             "qtd_saldo": round(max(0.0, qt - emp)),
+            # Empenhou mais do que o total registrado para o item.
+            "excedente": round(max(0.0, emp - qt)),
         })
 
     saldo_un = max(0.0, total_un - empenhado_un)
@@ -120,6 +143,10 @@ def _montar_pregao(db, p: dict, nes: list) -> dict:
         "entregue_valor": round(entregue_valor, 2),
         "percentual_empenhado": round(empenhado_valor / total_valor * 100) if total_valor else 0,
         "qtd_nes": len(nes),
+        # Total ganho registrado está abaixo do que as NEs já empenharam — sinal
+        # de total presumido (backfill legado) ou digitado errado; a tela pede a
+        # correção em vez de o app recusar a NE.
+        "empenhado_acima_total": empenhado_un > total_un + 0.001,
         "itens": itens_out,
         "nes": nes_out,
     }
@@ -229,15 +256,16 @@ def criar_ne(pregao_id: str, payload: NeCreate, usuario) -> dict:
     if not payload.itens:
         raise HTTPException(status_code=422, detail="Informe ao menos um item da nota de empenho.")
 
-    saldo = {i["produto_id"]: i["qtd_saldo"] for i in detalhe["itens"]}
     preco = {i["produto_id"]: float(i.get("valor_unitario") or 0) for i in detalhe["itens"]}
     itens_emp = []
     for it in payload.itens:
         pid = str(it.produto_id)
-        if pid not in saldo:
+        if pid not in preco:
             raise HTTPException(status_code=422, detail="Item não pertence a este pregão.")
-        if it.qtd > saldo[pid] + 0.001:
-            raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do pregão para o item (saldo {saldo[pid]}).")
+        # A quantidade NÃO é limitada pelo saldo: o total de pregões vindos do
+        # backfill legado é presumido (= o já empenhado), então o saldo aparece
+        # zerado e recusar a NE aqui trancaria o lançamento. Se estourar, o
+        # pregão passa a sinalizar "empenhado acima do total" para corrigir.
         itens_emp.append(EmpenhoItemCreate(produto_id=it.produto_id, qtd_empenhada=float(it.qtd), valor_unitario=preco.get(pid, 0.0)))
 
     vig = payload.vigencia

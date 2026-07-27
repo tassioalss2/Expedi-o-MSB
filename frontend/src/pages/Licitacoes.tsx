@@ -602,8 +602,10 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
     ? pregoesExistentes.find(p => p.numero.trim().toLowerCase() === numeroPregao.trim().toLowerCase())
     : null
   // Venda direta / consignação viram contrato regido pelo PREGÃO + NE → ambos obrigatórios.
+  // Na venda direta os itens também são: é o que vira a linha (NE) do contrato.
   const pregaoObrigatorio = !ehComunicado
-  const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim())
+  const itensVdOk = tipo !== 'VENDA_DIRETA' || itens.some(i => i.produto_id && i.qtd > 0)
+  const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim() && itensVdOk)
   // Comunicado de uso é regido pela AF + paciente + prontuário + NF + data do procedimento + itens com valor.
   const itensComunicadoOk = itens.length > 0 && itens.every(i => i.qtd > 0 && (i.valor || 0) > 0)
   const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!numeroNf.trim() && !!dataProcedimento && itensComunicadoOk)
@@ -720,13 +722,20 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 
         <div>
           <label className="text-sm text-gray-600">
-            Itens {ehComunicado ? '(o que foi usado, com valor unitário) *' : '(quantidades TOTAIS do contrato, com valor)'}
+            Itens {ehComunicado ? '(o que foi usado, com valor unitário) *'
+              : tipo === 'VENDA_DIRETA' ? '(quantidades desta NE, com valor) *'
+              : '(quantidades TOTAIS do contrato, com valor)'}
           </label>
           <p className="text-xs text-gray-400 mb-1.5">
             {tipo === 'VENDA_DIRETA'
-              ? 'Coloque o total ganho no pregão. As entregas parciais você lança depois, na aba Contratos.'
+              ? pregaoEncontrado
+                ? 'Quantidades desta NE — é isto que vira a linha do contrato, consumindo o saldo do pregão.'
+                : 'Quantidades desta NE. As entregas parciais você lança depois, na aba Contratos.'
               : ehComunicado ? 'Informe o que foi usado com o valor unitário — o valor da NF é calculado ao concluir.' : 'Opcional agora — pode completar ao processar.'}
           </p>
+          {tipo === 'VENDA_DIRETA' && !itensVdOk && (
+            <p className="text-xs text-red-500 mb-1.5">Obrigatório — sem itens a NE não vira linha do contrato do pregão.</p>
+          )}
           <ItensPedido value={itens} onChange={setItens} comValor={comValor} />
         </div>
       </div>
@@ -1723,6 +1732,14 @@ function ModalPregaoMestre({ pregao, onClose, onAbrirNE, onChanged }: {
           <div className="bg-gray-50 rounded-xl p-3"><p className="text-[11px] text-gray-400 uppercase">Entregue</p><p className="text-base font-bold text-emerald-600 tabular-nums">{fmtBRL(pregao.entregue_valor)}</p></div>
         </div>
 
+        {pregao.empenhado_acima_total && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-700">
+            ⚠️ As NEs já empenharam mais do que o <strong>total ganho</strong> registrado. Isso acontece em pregões
+            convertidos de contratos antigos, onde o total foi presumido pelo que já estava empenhado.
+            Ajuste o total real em <strong>✏️ Corrigir</strong> para o saldo a empenhar voltar a fazer sentido.
+          </div>
+        )}
+
         {/* Itens do pregão */}
         <div>
           <h3 className="text-sm font-semibold text-gray-700 mb-2">Itens do pregão · saldo a empenhar</h3>
@@ -1739,7 +1756,10 @@ function ModalPregaoMestre({ pregao, onClose, onAbrirNE, onChanged }: {
                     <td className="py-2 px-3 text-gray-600 truncate max-w-[240px]">{i.descricao}</td>
                     <td className="py-2 px-3 text-right tabular-nums">{i.qtd_total}</td>
                     <td className="py-2 px-3 text-right tabular-nums text-indigo-600">{i.qtd_empenhada}</td>
-                    <td className="py-2 px-3 text-right tabular-nums font-medium text-gray-800">{i.qtd_saldo}</td>
+                    <td className="py-2 px-3 text-right tabular-nums font-medium text-gray-800">
+                      {i.qtd_saldo}
+                      {i.excedente > 0 && <span className="block text-[11px] font-normal text-amber-600">+{i.excedente} além do total</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1790,7 +1810,10 @@ function ModalNovaNE({ pregao, onClose, onSaved }: { pregao: any; onClose: () =>
   const [numero, setNumero] = useState('')
   const [data, setData] = useState(new Date().toISOString().slice(0, 10))
   const [vigencia, setVigencia] = useState('')
-  const disponiveis = pregao.itens.filter((i: any) => i.qtd_saldo > 0)
+  // Mostra TODOS os itens do pregão, não só os com saldo: em pregões
+  // convertidos de contratos antigos o total é presumido (= o já empenhado),
+  // então o saldo vem zerado e a NE nova ficaria impossível de lançar.
+  const disponiveis = pregao.itens
   const [qtds, setQtds] = useState<Record<string, string>>({})
 
   const criar = useMutation({
@@ -1805,6 +1828,7 @@ function ModalNovaNE({ pregao, onClose, onSaved }: { pregao: any; onClose: () =>
   })
   const algumItem = disponiveis.some((i: any) => Number(qtds[i.produto_id]) > 0)
   const valido = numero.trim() && algumItem
+  const estourando = disponiveis.filter((i: any) => Number(qtds[i.produto_id] || 0) > i.qtd_saldo)
 
   return (
     <ModalBase titulo={<span className="font-mono">Nova NE · Pregão {pregao.numero}</span>} onClose={onClose} max="max-w-lg">
@@ -1816,24 +1840,33 @@ function ModalNovaNE({ pregao, onClose, onSaved }: { pregao: any; onClose: () =>
         </div>
         <div>
           <label className="text-sm text-gray-600">Quantidades desta NE *</label>
-          <p className="text-xs text-gray-400 mb-1.5">Informe quanto desta NE por item (limitado ao saldo do pregão).</p>
+          <p className="text-xs text-gray-400 mb-1.5">Informe quanto desta NE por item.</p>
           {disponiveis.length === 0 ? (
-            <p className="text-sm text-gray-400 py-2">Pregão sem saldo a empenhar.</p>
+            <p className="text-sm text-gray-400 py-2">Este pregão não tem itens cadastrados — use “✏️ Corrigir” para informá-los.</p>
           ) : (
             <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
-              {disponiveis.map((i: any) => (
-                <div key={i.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                  <div className="flex-1 min-w-0">
-                    <span className="font-mono text-gray-700">{i.codigo}</span>
-                    <span className="text-gray-500 ml-2 truncate">{i.descricao}</span>
-                    <span className="text-[11px] text-gray-400 ml-1">(saldo {i.qtd_saldo})</span>
+              {disponiveis.map((i: any) => {
+                const excede = Number(qtds[i.produto_id] || 0) > i.qtd_saldo
+                return (
+                  <div key={i.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <span className="font-mono text-gray-700">{i.codigo}</span>
+                      <span className="text-gray-500 ml-2 truncate">{i.descricao}</span>
+                      <span className="text-[11px] text-gray-400 ml-1">(saldo {i.qtd_saldo})</span>
+                    </div>
+                    <input type="number" min="0" value={qtds[i.produto_id] || ''}
+                      onChange={e => setQtds(q => ({ ...q, [i.produto_id]: e.target.value }))}
+                      className={`w-24 border rounded-lg px-2 py-1 text-sm text-right ${excede ? 'border-amber-400 bg-amber-50' : ''}`} placeholder="0" />
                   </div>
-                  <input type="number" min="0" max={i.qtd_saldo} value={qtds[i.produto_id] || ''}
-                    onChange={e => setQtds(q => ({ ...q, [i.produto_id]: e.target.value }))}
-                    className="w-24 border rounded-lg px-2 py-1 text-sm text-right" placeholder="0" />
-                </div>
-              ))}
+                )
+              })}
             </div>
+          )}
+          {estourando.length > 0 && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-2">
+              ⚠️ {estourando.length === 1 ? 'Um item passa' : `${estourando.length} itens passam`} do saldo registrado do pregão.
+              A NE será lançada normalmente — se o total ganho do pregão estiver desatualizado, ajuste em <strong>✏️ Corrigir</strong>.
+            </p>
           )}
         </div>
       </div>
