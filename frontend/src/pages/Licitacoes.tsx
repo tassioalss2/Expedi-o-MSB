@@ -586,6 +586,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const [observacao, setObservacao] = useState('')
   const [itens, setItens] = useState<ItemLinha[]>([])
   const [qtdsPregao, setQtdsPregao] = useState<Record<string, string>>({})
+  const [abrirNovoPregao, setAbrirNovoPregao] = useState(false)
+  const qc = useQueryClient()
 
   const cfg = TIPO_MAP[tipo]
   const ehComunicado = tipo === 'COMUNICADO_USO'
@@ -593,7 +595,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 
   // Sinaliza se o pregão digitado já existe — a demanda vira mais uma NE
   // (linha) desse contrato, não um contrato novo.
-  const { data: pregoesExistentes = [] } = useQuery<any[]>({
+  const { data: pregoesExistentes = [], isLoading: carregandoPregoes } = useQuery<any[]>({
     queryKey: ['pregoes'],
     queryFn: () => api.get('/licitacoes/pregoes').then(r => r.data),
     enabled: !ehComunicado,
@@ -611,10 +613,14 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
         .filter((i: any) => Number(qtdsPregao[i.produto_id]) > 0)
         .map((i: any) => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: Number(qtdsPregao[i.produto_id]), valor: i.valor_unitario || 0 }))
     : []
+  // Venda direta é sempre uma NE de um pregão — o contrato (itens + total ganho)
+  // nasce em "Novo pregão" (aba Contratos), nunca digitado aqui. Se o número
+  // digitado ainda não existe, bloqueia e manda cadastrar o pregão primeiro.
+  const pregaoNaoEncontrado = tipo === 'VENDA_DIRETA' && !ehComunicado && !!numeroPregao.trim() && !carregandoPregoes && !pregaoEncontrado
   // Venda direta / consignação viram contrato regido pelo PREGÃO + NE → ambos obrigatórios.
   // Na venda direta os itens também são: é o que vira a linha (NE) do contrato.
   const pregaoObrigatorio = !ehComunicado
-  const itensVdOk = tipo !== 'VENDA_DIRETA' || (usaItensDoPregao ? itensPregaoComQtd.length > 0 : itens.some(i => i.produto_id && i.qtd > 0))
+  const itensVdOk = tipo !== 'VENDA_DIRETA' ? true : usaItensDoPregao ? itensPregaoComQtd.length > 0 : false
   const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim() && itensVdOk)
   // Comunicado de uso é regido pela AF + paciente + prontuário + NF + data do procedimento + itens com valor.
   const itensComunicadoOk = itens.length > 0 && itens.every(i => i.qtd > 0 && (i.valor || 0) > 0)
@@ -746,23 +752,37 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
           {tipo === 'VENDA_DIRETA' && !itensVdOk && (
             <p className="text-xs text-red-500 mb-1.5">Obrigatório — sem itens a NE não vira linha do contrato do pregão.</p>
           )}
-          {usaItensDoPregao ? (
-            (pregaoEncontrado.itens || []).length === 0 ? (
-              <p className="text-sm text-gray-400 py-2">Este pregão não tem itens cadastrados — use "✏️ Corrigir" (aba Contratos) para informá-los.</p>
-            ) : (
-              <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
-                {(pregaoEncontrado.itens || []).map((i: any) => (
-                  <div key={i.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                    <div className="flex-1 min-w-0">
-                      <span className="font-mono text-gray-700">{i.codigo}</span>
-                      <span className="text-gray-500 ml-2 truncate">{i.descricao}</span>
-                      <span className="text-[11px] text-gray-400 ml-1">({fmtBRL(i.valor_unitario)} · saldo {i.qtd_saldo})</span>
+          {tipo === 'VENDA_DIRETA' ? (
+            !numeroPregao.trim() ? (
+              <p className="text-sm text-gray-400 py-2">Digite o Nº do pregão acima para ver os itens disponíveis.</p>
+            ) : carregandoPregoes ? (
+              <p className="text-sm text-gray-400 py-2">Verificando pregão…</p>
+            ) : usaItensDoPregao ? (
+              (pregaoEncontrado.itens || []).length === 0 ? (
+                <p className="text-sm text-gray-400 py-2">Este pregão não tem itens cadastrados — use "✏️ Corrigir" (aba Contratos) para informá-los.</p>
+              ) : (
+                <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+                  {(pregaoEncontrado.itens || []).map((i: any) => (
+                    <div key={i.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                      <div className="flex-1 min-w-0">
+                        <span className="font-mono text-gray-700">{i.codigo}</span>
+                        <span className="text-gray-500 ml-2 truncate">{i.descricao}</span>
+                        <span className="text-[11px] text-gray-400 ml-1">({fmtBRL(i.valor_unitario)} · saldo {i.qtd_saldo})</span>
+                      </div>
+                      <input type="number" min="0" value={qtdsPregao[i.produto_id] || ''}
+                        onChange={e => setQtdsPregao(q => ({ ...q, [i.produto_id]: e.target.value }))}
+                        className="w-24 border rounded-lg px-2 py-1 text-sm text-right" placeholder="0" />
                     </div>
-                    <input type="number" min="0" value={qtdsPregao[i.produto_id] || ''}
-                      onChange={e => setQtdsPregao(q => ({ ...q, [i.produto_id]: e.target.value }))}
-                      className="w-24 border rounded-lg px-2 py-1 text-sm text-right" placeholder="0" />
-                  </div>
-                ))}
+                  ))}
+                </div>
+              )
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+                <p className="text-amber-700">⚠️ Pregão <strong>{numeroPregao.trim()}</strong> não cadastrado. Cadastre o contrato ganho (itens + quantidade total) primeiro — depois volte aqui pra lançar esta NE.</p>
+                <button type="button" onClick={() => setAbrirNovoPregao(true)}
+                  className="mt-2 text-sm text-blue-600 hover:text-blue-500 font-medium">
+                  + Cadastrar pregão {numeroPregao.trim()}
+                </button>
               </div>
             )
           ) : (
@@ -770,6 +790,13 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
           )}
         </div>
       </div>
+      {abrirNovoPregao && (
+        <ModalNovoPregao
+          pregao={{ numero: numeroPregao.trim() }}
+          onClose={() => setAbrirNovoPregao(false)}
+          onSaved={() => { qc.invalidateQueries({ queryKey: ['pregoes'] }); setAbrirNovoPregao(false) }}
+        />
+      )}
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
         <button onClick={() => criar.mutate()} disabled={!clienteId || !pregaoOk || !comunicadoOk || criar.isPending}
@@ -1802,8 +1829,8 @@ function ModalPregaoMestre({ pregao, onClose, onAbrirNE, onChanged }: {
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-gray-700">Notas de empenho ({pregao.nes.length})</h3>
-            <button onClick={() => setNovaNE(true)} disabled={pregao.saldo_un <= 0}
-              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-500 font-medium disabled:opacity-40">
+            <button onClick={() => setNovaNE(true)}
+              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-500 font-medium">
               <Plus size={15} /> Nova NE
             </button>
           </div>
