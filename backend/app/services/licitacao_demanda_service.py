@@ -466,6 +466,21 @@ def _saldo_demanda(db, d: dict) -> dict:
     return {pid: max(0.0, q - entregue.get(pid, 0.0)) for pid, q in total.items()}
 
 
+def _itens_do_pregao(db, numero_pregao: str) -> dict:
+    """produto_id -> item do pregão (com qtd_saldo e preço), para demandas que
+    ficaram sem itens na triagem: sem isso o saldo delas é zero e a OV fica
+    impossível de gerar, mesmo o pregão tendo saldo de sobra."""
+    pregao_id = _pregao_id_por_numero(db, numero_pregao or "")
+    if not pregao_id:
+        return {}
+    from app.services import pregao_service
+    try:
+        det = pregao_service.obter_pregao(pregao_id)
+    except Exception:
+        return {}
+    return {i["produto_id"]: i for i in (det.get("itens") or [])}
+
+
 # tipo_operacao da OV no fluxo logístico conforme o tipo da demanda
 _TIPO_OP_OV = {"VENDA_DIRETA": "VENDA_NORMAL", "CONSIGNACAO": "CONSIGNADO"}
 
@@ -492,12 +507,36 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
     # NF no faturamento sem redigitar).
     preco_triagem = {it.get("produto_id"): float(it.get("valor") or 0)
                      for it in (d.get("itens") or []) if it.get("produto_id")}
+    # Demanda sem itens na triagem (criada antes de virarem obrigatórios): o teto
+    # passa a ser o saldo do PREGÃO, e o que for escolhido aqui é gravado como os
+    # itens da demanda — senão ela fica presa em "sem saldo a faturar".
+    itens_pregao = {} if (d.get("itens") or []) else _itens_do_pregao(db, d.get("numero_pregao"))
+    if itens_pregao:
+        saldo = {pid: float(i.get("qtd_saldo") or 0) for pid, i in itens_pregao.items()}
+        preco_triagem = {pid: float(i.get("valor_unitario") or 0) for pid, i in itens_pregao.items()}
     for it in payload.itens:
         pid = str(it.produto_id)
         if it.qtd_solicitada > saldo.get(pid, 0.0) + 0.001:
             raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {round(saldo.get(pid, 0.0))}).")
         if it.valor_unitario is None and preco_triagem.get(pid):
             it.valor_unitario = preco_triagem[pid]
+
+    if itens_pregao:
+        novos_itens = []
+        for it in payload.itens:
+            base = itens_pregao.get(str(it.produto_id), {})
+            novos_itens.append({
+                "produto_id": str(it.produto_id),
+                "codigo": base.get("codigo"),
+                "descricao": base.get("descricao"),
+                "qtd": float(it.qtd_solicitada),
+                "valor": float(it.valor_unitario or base.get("valor_unitario") or 0),
+            })
+        # Grava antes de _garantir_contrato_vd para a linha (NE) do contrato nascer
+        # com essas quantidades.
+        d["itens"] = novos_itens
+        db.table("licitacao_demandas").update({"itens": novos_itens, "atualizado_em": _agora()})\
+            .eq("id", demanda_id).execute()
 
     # Frete cotado na demanda vai para a OV (transportadora + tipo). O valor cotado
     # entra nas observações (o valor de frete formal é confirmado no faturamento).

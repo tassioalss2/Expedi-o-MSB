@@ -2065,7 +2065,23 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
 function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
   const hoje = new Date().toISOString().slice(0, 10)
-  const saldoLinhas = mesclarItens(demanda.itens || [], demanda.ov_itens || []).filter(l => l.saldo > 0)
+  const semItens = (demanda.itens || []).length === 0
+  // Demanda sem itens na triagem: o saldo vem do PREGÃO (o backend aceita e grava
+  // esses itens na demanda), senão a tela travaria em "sem saldo a faturar".
+  const { data: pregoes = [] } = useQuery<any[]>({
+    queryKey: ['pregoes'],
+    queryFn: () => api.get('/licitacoes/pregoes').then(r => r.data),
+    enabled: semItens && !!demanda.numero_pregao,
+    staleTime: 60000,
+  })
+  const pregaoDaDemanda = semItens && demanda.numero_pregao
+    ? pregoes.find(p => (p.numero || '').trim().toLowerCase() === String(demanda.numero_pregao).trim().toLowerCase())
+    : null
+  const saldoLinhas = semItens
+    ? ((pregaoDaDemanda?.itens || []) as any[])
+        .filter(i => (i.qtd_saldo || 0) > 0)
+        .map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, triagem: 0, ov: 0, saldo: Number(i.qtd_saldo) || 0 }))
+    : mesclarItens(demanda.itens || [], demanda.ov_itens || []).filter(l => l.saldo > 0)
   const consignacao = demanda.tipo_operacao === 'CONSIGNACAO'
   const frete = demanda.frete || {}
   const [numero, setNumero] = useState('')
@@ -2073,8 +2089,11 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
   const [canal, setCanal] = useState(demanda.canal || '')
   const [dataEntrega, setDataEntrega] = useState('')
   const [local, setLocal] = useState('')
+  // Quando o saldo vem do pregão a lista chega depois (query), então não dá para
+  // pré-preencher no estado inicial — deixa em branco e o operador informa.
   const [qtds, setQtds] = useState<Record<string, string>>(
-    () => Object.fromEntries(saldoLinhas.map(l => [l.produto_id, String(l.saldo)])))
+    () => semItens ? {} : Object.fromEntries(
+      mesclarItens(demanda.itens || [], demanda.ov_itens || []).filter(l => l.saldo > 0).map(l => [l.produto_id, String(l.saldo)])))
 
   const gerar = useMutation({
     mutationFn: () => api.post(`/licitacoes/demandas/${demanda.id}/gerar-ov`, {
@@ -2129,10 +2148,20 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
         <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         <div>
           <label className="text-sm text-gray-600">Quantidades desta OV *</label>
-          <p className="text-xs text-gray-400 mb-1.5">Pré-preenchido com o saldo — ajuste se a entrega for menor.</p>
+          <p className="text-xs text-gray-400 mb-1.5">
+            {semItens
+              ? `Esta demanda não tinha itens na triagem — o saldo abaixo é do pregão ${demanda.numero_pregao || ''}. Informe o que vai nesta OV.`
+              : 'Pré-preenchido com o saldo — ajuste se a entrega for menor.'}
+          </p>
           <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
             {saldoLinhas.length === 0 ? (
-              <p className="px-3 py-3 text-xs text-gray-400">Sem saldo a faturar nesta demanda.</p>
+              <p className="px-3 py-3 text-xs text-gray-400">
+                {semItens
+                  ? (demanda.numero_pregao
+                    ? `Pregão ${demanda.numero_pregao} sem saldo a empenhar — confira o "Total ganho" dele na aba Contratos (✏️ Corrigir).`
+                    : 'Demanda sem itens e sem pregão vinculado — adicione os itens no card da demanda.')
+                  : 'Sem saldo a faturar nesta demanda.'}
+              </p>
             ) : saldoLinhas.map(l => (
               <div key={l.produto_id} className="flex items-center gap-2 px-3 py-2 text-sm">
                 <div className="flex-1 min-w-0">
