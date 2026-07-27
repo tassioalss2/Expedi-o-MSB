@@ -62,6 +62,16 @@ def _valor_liquido_nf(p: dict) -> float:
     return round(nf, 2)
 
 
+def _eh_transfer(registro: dict) -> bool:
+    """Transfer price = venda para a Biomedical (empresa do grupo). A META não
+    contempla transfer price, então ele fica fora de todos os números que são
+    comparados com a meta e aparece só no total consolidado.
+
+    Mesma regra do dashboard financeiro (app/api/pedidos.py::_eh_biomedical)."""
+    nome = ((registro.get("clientes") or {}).get("nome") or registro.get("cliente") or "")
+    return "BIOMEDICAL" in nome.upper()
+
+
 # ── CRUD dos negócios (entrada rápida) ──────────────────────────────────────────
 
 def _serializar(n: dict) -> dict:
@@ -155,9 +165,10 @@ def _dias_uteis(inicio: date, fim: date) -> int:
     return n
 
 
-def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, list]:
+def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, float, list]:
     """NFs faturadas no mês (BRT), líquidas, só operações de faturamento.
-    Devolve (total, itens) — itens detalham cada OV que gerou o número."""
+    Devolve (total_geral, total_transfer, itens) — geral exclui transfer price
+    (a meta não o contempla); itens detalham cada OV que gerou o número."""
     janela_ini = (inicio - timedelta(days=1)).isoformat()
     janela_fim = (fim + timedelta(days=1)).isoformat()
     movs = db.table("movimentacoes").select("pedido_id, criado_em")\
@@ -179,8 +190,9 @@ def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, list]:
             if atual is None or dia.isoformat() < atual:
                 dia_por_ped[pid] = dia.isoformat()
     if not dia_por_ped:
-        return 0.0, []
+        return 0.0, 0.0, []
     total = 0.0
+    total_transfer = 0.0
     itens: list = []
     ids = list(dia_por_ped)
     for i in range(0, len(ids), 40):
@@ -190,16 +202,21 @@ def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, list]:
         for p in rows:
             if _conta_faturamento(p.get("tipo_operacao")):
                 v = _valor_liquido_nf(p)
-                total += v
+                transfer = _eh_transfer(p)
+                if transfer:
+                    total_transfer += v
+                else:
+                    total += v
                 itens.append({
                     "numero_pedido": p.get("numero_pedido"),
                     "cliente": (p.get("clientes") or {}).get("nome"),
                     "numero_nf": p.get("numero_nf"),
                     "data": dia_por_ped.get(p["id"]),
                     "valor": v,
+                    "transfer": transfer,
                 })
     itens.sort(key=lambda x: x.get("data") or "", reverse=True)
-    return round(total, 2), itens
+    return round(total, 2), round(total_transfer, 2), itens
 
 
 def _itens_por_pedido(db, ids: list) -> dict:
@@ -232,17 +249,18 @@ def _pipeline(db) -> list:
             "data_prevista_entrega": p.get("data_prevista_entrega"),
             "valor_estimado": est.get(p["id"], 0.0),
             "quase_nf": p.get("status") in _STATUS_QUASE_NF,
+            "transfer": _eh_transfer(p),
         })
     out.sort(key=lambda x: x.get("data_prevista_entrega") or "9999")
     return out
 
 
-def _saldo_contratos(db) -> tuple[float, list]:
+def _saldo_contratos(db) -> tuple[float, float, list]:
     """Σ (valor total do contrato − já faturado das OVs vinculadas), por empenho ativo.
-    Devolve (saldo_total, contratos) — contratos detalham cada empenho com saldo."""
-    emps = db.table("empenhos").select("id, numero, numero_pregao").eq("ativo", True).execute().data
+    Devolve (saldo_geral, saldo_transfer, contratos) — geral exclui transfer price."""
+    emps = db.table("empenhos").select("id, numero, numero_pregao, clientes(nome)").eq("ativo", True).execute().data
     if not emps:
-        return 0.0, []
+        return 0.0, 0.0, []
     emp_ids = [e["id"] for e in emps]
     emp_por_id = {e["id"]: e for e in emps}
 
@@ -263,22 +281,29 @@ def _saldo_contratos(db) -> tuple[float, list]:
                 faturado_por_emp[p["empenho_id"]] = faturado_por_emp.get(p["empenho_id"], 0.0) + _valor_liquido_nf(p)
 
     saldo_total = 0.0
+    saldo_transfer = 0.0
     contratos: list = []
     for eid, total in total_contrato.items():
         fat = faturado_por_emp.get(eid, 0.0)
         saldo = max(0.0, total - fat)
-        saldo_total += saldo
+        emp = emp_por_id.get(eid, {})
+        transfer = _eh_transfer(emp)
+        if transfer:
+            saldo_transfer += saldo
+        else:
+            saldo_total += saldo
         if saldo > 0.005:
-            emp = emp_por_id.get(eid, {})
             contratos.append({
                 "numero": emp.get("numero"),
                 "numero_pregao": emp.get("numero_pregao"),
+                "cliente": (emp.get("clientes") or {}).get("nome"),
                 "total": round(total, 2),
                 "faturado": round(fat, 2),
                 "saldo": round(saldo, 2),
+                "transfer": transfer,
             })
     contratos.sort(key=lambda x: x["saldo"], reverse=True)
-    return round(saldo_total, 2), contratos
+    return round(saldo_total, 2), round(saldo_transfer, 2), contratos
 
 
 def resumo() -> dict:
@@ -288,10 +313,13 @@ def resumo() -> dict:
     fim = date(hoje.year + (hoje.month // 12), (hoje.month % 12) + 1, 1) - timedelta(days=1)
     comp = f"{hoje.year:04d}-{hoje.month:02d}"
 
-    realizado, realizado_itens = _realizado_mes(db, inicio, fim)
+    # Tudo abaixo é SEM transfer price (a meta não o contempla). O transfer price
+    # é somado à parte e aparece apenas no consolidado (`com_transfer`).
+    realizado, realizado_transfer, realizado_itens = _realizado_mes(db, inicio, fim)
     pipeline = _pipeline(db)
-    em_processo_total = round(sum(p["valor_estimado"] for p in pipeline), 2)
-    saldo_contratos, contratos = _saldo_contratos(db)
+    em_processo_total = round(sum(p["valor_estimado"] for p in pipeline if not p["transfer"]), 2)
+    em_processo_transfer = round(sum(p["valor_estimado"] for p in pipeline if p["transfer"]), 2)
+    saldo_contratos, saldo_contratos_transfer, contratos = _saldo_contratos(db)
     # Garantido = só o que vai faturar de fato: NFs do mês + OVs no pipeline.
     # Saldo de contratos NÃO entra (o órgão pede quando quer — sem data garantida).
     garantido = round(realizado + em_processo_total, 2)
@@ -319,11 +347,14 @@ def resumo() -> dict:
     #              negócios de hoje (o que realisticamente deve sair hoje);
     #  no_kanban = já faturado hoje + TODO o pipeline + negócios de hoje (volume
     #              total do dia, usado para checar se bate o ritmo).
-    realizado_hoje, _ = _realizado_mes(db, hoje, hoje)
-    quase_nf = round(sum(p["valor_estimado"] for p in pipeline if p["quase_nf"]), 2)
+    realizado_hoje, realizado_hoje_transfer, _ = _realizado_mes(db, hoje, hoje)
+    quase_nf = round(sum(p["valor_estimado"] for p in pipeline if p["quase_nf"] and not p["transfer"]), 2)
+    quase_nf_transfer = round(sum(p["valor_estimado"] for p in pipeline if p["quase_nf"] and p["transfer"]), 2)
     neg_hoje = round(sum(n["valor_ponderado"] for n in negocios if n.get("previsao_fechamento") == hoje_iso), 2)
     sai_hoje = round(realizado_hoje + quase_nf + neg_hoje, 2)
     no_kanban = round(realizado_hoje + em_processo_total + neg_hoje, 2)
+    sai_hoje_transfer = round(realizado_hoje_transfer + quase_nf_transfer, 2)
+    no_kanban_transfer = round(realizado_hoje_transfer + em_processo_transfer, 2)
 
     meta_info = pedido_service.obter_meta(comp)
     meta = meta_info.get("valor")
@@ -344,6 +375,28 @@ def resumo() -> dict:
             "previsao": previsao_mes,
             "meta": meta,
             "atingimento_previsto_pct": round(previsao_mes / meta * 100, 1) if meta else None,
+        },
+        # Transfer price (vendas para a Biomedical) — fora da meta, isolado aqui.
+        "transfer": {
+            "realizado": realizado_transfer,
+            "em_processo": em_processo_transfer,
+            "saldo_contratos": saldo_contratos_transfer,
+            "garantido": round(realizado_transfer + em_processo_transfer, 2),
+            "previsao": round(realizado_transfer + em_processo_transfer + saldo_contratos_transfer, 2),
+            "realizado_hoje": realizado_hoje_transfer,
+            "sai_hoje": sai_hoje_transfer,
+            "no_kanban": no_kanban_transfer,
+        },
+        # Consolidado: vendas gerais + transfer price (volume total da operação).
+        "com_transfer": {
+            "realizado": round(realizado + realizado_transfer, 2),
+            "em_processo": round(em_processo_total + em_processo_transfer, 2),
+            "saldo_contratos": round(saldo_contratos + saldo_contratos_transfer, 2),
+            "garantido": round(garantido + realizado_transfer + em_processo_transfer, 2),
+            "previsao": round(previsao_mes + realizado_transfer + em_processo_transfer + saldo_contratos_transfer, 2),
+            "realizado_hoje": round(realizado_hoje + realizado_hoje_transfer, 2),
+            "sai_hoje": round(sai_hoje + sai_hoje_transfer, 2),
+            "no_kanban": round(no_kanban + no_kanban_transfer, 2),
         },
         "dia": {
             "sai_hoje": sai_hoje,

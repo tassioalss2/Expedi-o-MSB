@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info } from 'lucide-react'
+import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info, Layers } from 'lucide-react'
 import api from '../lib/api'
 import { fmtBRL, fmtData, msgErro } from '../lib/crm'
 
@@ -21,6 +21,7 @@ interface Negocio {
 interface PipelineItem {
   id: string; numero_pedido: string; status: string; cliente?: string
   canal?: string; data_prevista_entrega?: string; valor_estimado: number; quase_nf: boolean
+  transfer?: boolean
 }
 interface Resumo {
   competencia: string; hoje: string
@@ -34,16 +35,23 @@ interface Resumo {
     dias_uteis_restantes: number; falta_meta: number | null; ritmo_necessario: number | null
     no_ritmo: boolean | null
   }
+  transfer: BlocoTransfer
+  com_transfer: BlocoTransfer
   pipeline: PipelineItem[]
   negocios: Negocio[]
   realizado_itens: RealizadoItem[]
   contratos: ContratoItem[]
 }
+interface BlocoTransfer {
+  realizado: number; em_processo: number; saldo_contratos: number
+  garantido: number; previsao: number
+  realizado_hoje: number; sai_hoje: number; no_kanban: number
+}
 interface RealizadoItem {
-  numero_pedido: string; cliente?: string; numero_nf?: string; data?: string; valor: number
+  numero_pedido: string; cliente?: string; numero_nf?: string; data?: string; valor: number; transfer?: boolean
 }
 interface ContratoItem {
-  numero?: string; numero_pregao?: string; total: number; faturado: number; saldo: number
+  numero?: string; numero_pregao?: string; cliente?: string; total: number; faturado: number; saldo: number; transfer?: boolean
 }
 
 const STATUS_OV: Record<string, string> = {
@@ -67,7 +75,7 @@ export function PrevisaoFaturamento() {
     return <div className="p-6 text-gray-400 text-sm">Carregando previsão…</div>
   }
 
-  const { mes, dia, pipeline, negocios } = data
+  const { mes, dia, pipeline, negocios, transfer, com_transfer } = data
 
   return (
     <div className="p-4 sm:p-6 space-y-5 max-w-6xl mx-auto">
@@ -83,7 +91,10 @@ export function PrevisaoFaturamento() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-gray-700 flex items-center gap-2"><CalendarDays size={16} /> Previsão do mês</h2>
+            <div>
+              <h2 className="font-semibold text-gray-700 flex items-center gap-2"><CalendarDays size={16} /> Previsão do mês</h2>
+              <p className="text-[11px] text-gray-400">vendas gerais — sem transfer price (a meta não o contempla)</p>
+            </div>
             {mes.meta != null && (
               <span className="text-xs text-gray-500">Meta {fmtBRL(mes.meta)} · previsto {mes.atingimento_previsto_pct}%</span>
             )}
@@ -163,6 +174,70 @@ export function PrevisaoFaturamento() {
         </div>
       </div>
 
+      {/* ── Consolidado: vendas gerais + transfer price ──────────────── */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="font-semibold text-gray-700 flex items-center gap-2"><Layers size={16} /> Vendas gerais + Transfer price</h2>
+          <span className="text-[11px] text-gray-400">volume total da operação · fora da meta</span>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">
+          A meta do mês cobre só as vendas gerais. O transfer price (vendas para a Biomedical) aparece aqui para você ver o volume cheio.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase text-gray-400 text-left border-b">
+                <th className="py-2 font-medium"></th>
+                <th className="py-2 font-medium text-right">Realizado</th>
+                <th className="py-2 font-medium text-right">Em processo</th>
+                <th className="py-2 font-medium text-right">Saldo contratos</th>
+                <th className="py-2 font-medium text-right">Previsão</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              <tr>
+                <td className="py-2.5 text-gray-600">Vendas gerais <span className="text-[11px] text-gray-400">(na meta)</span></td>
+                <td className="py-2.5 text-right tabular-nums text-emerald-600 font-medium">{fmtBRL(mes.realizado)}</td>
+                <td className="py-2.5 text-right tabular-nums text-blue-600">{fmtBRL(mes.em_processo)}</td>
+                <td className="py-2.5 text-right tabular-nums text-teal-600">{fmtBRL(mes.saldo_contratos)}</td>
+                <td className="py-2.5 text-right tabular-nums font-semibold text-indigo-600">{fmtBRL(mes.previsao)}</td>
+              </tr>
+              <tr>
+                <td className="py-2.5 text-gray-600">Transfer price <span className="text-[11px] text-gray-400">(fora da meta)</span></td>
+                <td className="py-2.5 text-right tabular-nums text-emerald-600 font-medium">{fmtBRL(transfer.realizado)}</td>
+                <td className="py-2.5 text-right tabular-nums text-blue-600">{fmtBRL(transfer.em_processo)}</td>
+                <td className="py-2.5 text-right tabular-nums text-teal-600">{fmtBRL(transfer.saldo_contratos)}</td>
+                <td className="py-2.5 text-right tabular-nums font-semibold text-indigo-600">{fmtBRL(transfer.previsao)}</td>
+              </tr>
+              <tr className="bg-gray-50 font-bold">
+                <td className="py-2.5 text-gray-800">Total</td>
+                <td className="py-2.5 text-right tabular-nums text-emerald-700">{fmtBRL(com_transfer.realizado)}</td>
+                <td className="py-2.5 text-right tabular-nums text-blue-700">{fmtBRL(com_transfer.em_processo)}</td>
+                <td className="py-2.5 text-right tabular-nums text-teal-700">{fmtBRL(com_transfer.saldo_contratos)}</td>
+                <td className="py-2.5 text-right tabular-nums text-indigo-700">{fmtBRL(com_transfer.previsao)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="bg-gray-50 rounded-xl p-3">
+            <p className="text-[11px] text-gray-400 uppercase font-semibold">Já faturado hoje (total)</p>
+            <p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(com_transfer.realizado_hoje)}</p>
+            <p className="text-[11px] text-gray-400">gerais {fmtBRL(dia.realizado_hoje)} + transfer {fmtBRL(transfer.realizado_hoje)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-xl p-3">
+            <p className="text-[11px] text-gray-400 uppercase font-semibold">Sai hoje (total)</p>
+            <p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(com_transfer.sai_hoje)}</p>
+            <p className="text-[11px] text-gray-400">gerais {fmtBRL(dia.sai_hoje)} + transfer {fmtBRL(transfer.sai_hoje)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-xl p-3">
+            <p className="text-[11px] text-gray-400 uppercase font-semibold">Garantido (total)</p>
+            <p className="text-base font-bold text-gray-800 tabular-nums">{fmtBRL(com_transfer.garantido)}</p>
+            <p className="text-[11px] text-gray-400">gerais {fmtBRL(mes.garantido)} + transfer {fmtBRL(transfer.garantido)}</p>
+          </div>
+        </div>
+      </div>
+
       {/* ── Em negociação (entrada rápida) ──────────────────────────── */}
       <SecaoNegocios negocios={negocios} onChange={recarregar} />
 
@@ -188,7 +263,10 @@ export function PrevisaoFaturamento() {
                 {pipeline.map(p => (
                   <tr key={p.id} onClick={() => nav(`/expedicao/${p.id}`)} className="hover:bg-indigo-50/60 cursor-pointer">
                     <td className="py-2 font-mono text-indigo-600 underline decoration-indigo-200 underline-offset-2">{p.numero_pedido}</td>
-                    <td className="py-2 text-gray-700 truncate max-w-[200px]">{p.cliente || '—'}</td>
+                    <td className="py-2 text-gray-700 truncate max-w-[200px]">
+                      {p.cliente || '—'}
+                      {p.transfer && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 align-middle">transfer</span>}
+                    </td>
                     <td className="py-2">
                       <span className={`text-[11px] px-2 py-0.5 rounded-full ${p.quase_nf ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'}`}>
                         {STATUS_OV[p.status] || p.status}
@@ -224,7 +302,12 @@ type DetalheTipo = 'previsao_mes' | 'realizado' | 'em_processo' | 'saldo_contrat
 function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo; onClose: () => void }) {
   const nav = useNavigate()
   const { mes, dia, pipeline, negocios, realizado_itens, contratos } = data
-  const quaseNf = pipeline.filter(p => p.quase_nf)
+  // Os cards da meta são de vendas gerais, então os detalhes também excluem o
+  // transfer price — senão a lista não fecharia com o total exibido.
+  const realizadoGerais = realizado_itens.filter(r => !r.transfer)
+  const pipelineGerais = pipeline.filter(p => !p.transfer)
+  const contratosGerais = contratos.filter(c => !c.transfer)
+  const quaseNf = pipelineGerais.filter(p => p.quase_nf)
   const negHoje = negocios.filter(n => n.previsao_fechamento === data.hoje)
   const irParaOV = (id: string) => { onClose(); nav(`/expedicao/${id}`) }
 
@@ -307,36 +390,36 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
                 { rotulo: 'Todas as OVs no kanban', valor: dia.ovs_kanban },
                 { rotulo: 'Negócios com fechamento previsto para hoje', valor: dia.negociacao_hoje },
               ]} total={dia.no_kanban} />
-              {pipeline.length > 0 && (
+              {pipelineGerais.length > 0 && (
                 <div>
                   <p className="text-[11px] uppercase text-gray-400 font-semibold mb-1">OVs no kanban</p>
                   <Tabela cols={['OV', 'Cliente', 'Etapa', 'Valor est.']} total={dia.ovs_kanban}
-                    onRowClick={i => irParaOV(pipeline[i].id)}
-                    linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
+                    onRowClick={i => irParaOV(pipelineGerais[i].id)}
+                    linhas={pipelineGerais.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtBRL(p.valor_estimado)])} />
                 </div>
               )}
             </div>
           )}
           {tipo === 'realizado' && (
-            realizado_itens.length === 0
-              ? <Vazio texto="Nenhuma NF faturada no mês ainda." />
+            realizadoGerais.length === 0
+              ? <Vazio texto="Nenhuma NF de venda geral faturada no mês ainda." />
               : <Tabela cols={['OV', 'Cliente', 'NF', 'Data', 'Valor']} total={mes.realizado}
-                  linhas={realizado_itens.map(r => [r.numero_pedido, r.cliente || '—', r.numero_nf || '—', fmtData(r.data), fmtBRL(r.valor)])} />
+                  linhas={realizadoGerais.map(r => [r.numero_pedido, r.cliente || '—', r.numero_nf || '—', fmtData(r.data), fmtBRL(r.valor)])} />
           )}
           {tipo === 'em_processo' && (
-            pipeline.length === 0
-              ? <Vazio texto="Nenhuma OV em processo." />
+            pipelineGerais.length === 0
+              ? <Vazio texto="Nenhuma OV de venda geral em processo." />
               : <Tabela cols={['OV', 'Cliente', 'Etapa', 'Entrega', 'Valor est.']} total={mes.em_processo}
-                  onRowClick={i => irParaOV(pipeline[i].id)}
-                  linhas={pipeline.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtData(p.data_prevista_entrega), fmtBRL(p.valor_estimado)])} />
+                  onRowClick={i => irParaOV(pipelineGerais[i].id)}
+                  linhas={pipelineGerais.map(p => [p.numero_pedido, p.cliente || '—', STATUS_OV[p.status] || p.status, fmtData(p.data_prevista_entrega), fmtBRL(p.valor_estimado)])} />
           )}
           {tipo === 'saldo_contratos' && (
             <>
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2 mb-3">⚠️ Valor a realizar, não garantido no mês — o órgão empenha/pede quando quer, sem data definida.</p>
-              {contratos.length === 0
+              {contratosGerais.length === 0
                 ? <Vazio texto="Nenhum contrato com saldo a faturar." />
                 : <Tabela cols={['Contrato / Pregão', 'Total', 'Faturado', 'Saldo']} total={mes.saldo_contratos}
-                    linhas={contratos.map(c => [c.numero_pregao || c.numero || '—', fmtBRL(c.total), fmtBRL(c.faturado), fmtBRL(c.saldo)])} />}
+                    linhas={contratosGerais.map(c => [c.numero_pregao || c.numero || '—', fmtBRL(c.total), fmtBRL(c.faturado), fmtBRL(c.saldo)])} />}
             </>
           )}
           {tipo === 'negociacao' && (
