@@ -1593,6 +1593,7 @@ function AbaContratos() {
   const [abertoId, setAbertoId] = useState<string | null>(null)
   const [pregaoMestreId, setPregaoMestreId] = useState<string | null>(null)
   const [tipoFiltro, setTipoFiltro] = useState('')
+  const [busca, setBusca] = useState('')
 
   const { data: pregoes = [], isLoading } = useQuery<any[]>({
     queryKey: ['pregoes'],
@@ -1605,12 +1606,36 @@ function AbaContratos() {
     if (abertoId) qc.invalidateQueries({ queryKey: ['empenho', abertoId] })
   }
 
-  const pregoesFiltrados = tipoFiltro ? pregoes.filter(p => (p.tipo || 'VENDA_DIRETA') === tipoFiltro) : pregoes
+  // Busca por pregão, NE, cliente, canal ou item (código/descrição) — os itens
+  // entram porque é comum procurar "que contrato tem esse produto".
+  const termo = busca.trim().toLowerCase()
+  const pregoesFiltrados = pregoes.filter(p => {
+    if (tipoFiltro && (p.tipo || 'VENDA_DIRETA') !== tipoFiltro) return false
+    if (!termo) return true
+    const alvos = [
+      p.numero, p.cliente, p.canal, CANAL_LABEL[p.canal] || '',
+      ...(p.nes || []).map((n: any) => n.numero),
+      ...(p.itens || []).flatMap((i: any) => [i.codigo, i.descricao]),
+    ]
+    return alvos.some(v => String(v || '').toLowerCase().includes(termo))
+  })
   const pregaoMestreAberto = pregoes.find(p => p.id === pregaoMestreId) || null
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+        <div className="relative flex-1 max-w-xs">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar pregão, NE, cliente ou item…"
+            className="w-full border rounded-lg pl-9 pr-8 py-2 text-sm" />
+          {busca && (
+            <button onClick={() => setBusca('')} title="Limpar busca"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600">
+              <X size={14} />
+            </button>
+          )}
+        </div>
         <div className="flex gap-1">
           <button onClick={() => setTipoFiltro('')} className={`text-sm px-3 py-1.5 rounded-lg ${!tipoFiltro ? 'bg-blue-600 text-white' : 'bg-white border text-gray-600'}`}>Todos</button>
           {Object.entries(CONTRATO_TIPO).map(([k, v]) => (
@@ -1618,16 +1643,30 @@ function AbaContratos() {
           ))}
         </div>
         <button onClick={() => setNovoPregao(true)}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg lg:ml-auto">
           <Plus size={16} /> Novo pregão
         </button>
       </div>
+
+      {!isLoading && pregoes.length > 0 && (
+        <p className="text-xs text-gray-400 -mt-1">
+          {pregoesFiltrados.length} de {pregoes.length} pregão(ões)
+          {termo && <> · buscando por <strong>{busca.trim()}</strong></>}
+        </p>
+      )}
 
       {isLoading ? (
         <p className="text-center text-gray-400 py-10 text-sm">Carregando...</p>
       ) : pregoesFiltrados.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-gray-400 text-sm">
-          Nenhum pregão. Clique em <strong>Novo pregão</strong> para cadastrar um contrato ganho e depois lançar as notas de empenho.
+          {pregoes.length === 0 ? (
+            <>Nenhum pregão. Clique em <strong>Novo pregão</strong> para cadastrar um contrato ganho e depois lançar as notas de empenho.</>
+          ) : (
+            <>
+              Nenhum pregão encontrado{termo && <> para <strong>{busca.trim()}</strong></>}.
+              {termo && <button onClick={() => setBusca('')} className="ml-1 text-blue-600 hover:underline">Limpar busca</button>}
+            </>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
