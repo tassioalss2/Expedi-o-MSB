@@ -137,6 +137,17 @@ def obter_demanda(demanda_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.obter_demanda(str(demanda_id))
 
 
+@router.get("/demandas/{demanda_id}/estoque-pcp")
+def estoque_pcp_da_demanda(demanda_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """Cobertura de estoque dos itens da demanda, lida do app do PCP.
+
+    Endpoint separado de /demandas/{id} de propósito: é uma chamada a um sistema
+    externo, então não pode atrasar nem derrubar o carregamento do card."""
+    from app.services import pcp_estoque_service
+    demanda = licitacao_demanda_service.obter_demanda(str(demanda_id))
+    return pcp_estoque_service.cobertura_da_demanda(demanda)
+
+
 @router.patch("/demandas/{demanda_id}")
 def atualizar_demanda(demanda_id: UUID, payload: DemandaUpdate, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.atualizar_demanda(str(demanda_id), payload)

@@ -814,6 +814,71 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   )
 }
 
+// ── Estoque real vindo do app de cobertura do PCP ────────────────────────────────
+const PCP_STATUS: Record<string, { cor: string; label: string }> = {
+  CRITICO: { cor: 'bg-red-100 text-red-700', label: '🔴 Crítico' },
+  ATENCAO: { cor: 'bg-amber-100 text-amber-700', label: '🟡 Atenção' },
+  ADEQUADO: { cor: 'bg-emerald-100 text-emerald-700', label: '🟢 Adequado' },
+  ALTO: { cor: 'bg-blue-100 text-blue-700', label: '🔵 Alto' },
+  EXCESSIVO: { cor: 'bg-purple-100 text-purple-700', label: '🟣 Excessivo' },
+  SEM_GIRO: { cor: 'bg-gray-100 text-gray-600', label: '⚪ Sem giro' },
+}
+
+function BlocoEstoquePcp({ dados }: { dados: any }) {
+  const itens = dados.itens || []
+  const naoAtende = itens.filter((i: any) => !i.atende)
+  const atualizado = itens[0]?.atualizado_em
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-3 text-sm">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className="text-xs font-medium text-gray-600 flex items-center gap-1">
+          <Package size={13} /> Estoque hoje (app do PCP)
+        </p>
+        {atualizado && <span className="text-[11px] text-gray-400">atualizado {fmtData(atualizado)}</span>}
+      </div>
+
+      {naoAtende.length > 0 && (
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2 mb-2">
+          ⚠️ {naoAtende.length === 1 ? 'Um item não tem' : `${naoAtende.length} itens não têm`} estoque acabado
+          suficiente para esta demanda.
+        </p>
+      )}
+
+      <div className="border border-gray-100 rounded divide-y divide-gray-50">
+        {itens.map((i: any) => {
+          const st = PCP_STATUS[i.status] || PCP_STATUS.SEM_GIRO
+          return (
+            <div key={i.codigo} className="px-2.5 py-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="font-mono text-gray-700">{i.codigo}</span>
+                  <span className="text-gray-500 ml-2 text-xs">{i.descricao}</span>
+                </div>
+                <span className={`text-[11px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${st.cor}`}>{st.label}</span>
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-[11px] text-gray-500">
+                <span>
+                  Pedido <strong className="text-gray-700">{i.qtd_demanda}</strong> · em estoque{' '}
+                  <strong className={i.atende ? 'text-emerald-600' : 'text-red-600'}>{i.estoque}</strong>
+                  {i.estoque_sa > 0 && <> (+{i.estoque_sa} semi-acab.)</>}
+                </span>
+                {!i.atende && <span className="text-red-600">faltam {i.falta}</span>}
+                <span>consumo {i.consumo_medio}/mês</span>
+                {i.cobertura_meses != null && <span>cobertura {String(i.cobertura_meses).replace('.', ',')} m</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <p className="text-[11px] text-gray-400 mt-1.5">
+        "Em estoque" é o produto acabado — é o que dá para faturar hoje. O semi-acabado entra na cobertura,
+        mas ainda depende da produção.
+      </p>
+    </div>
+  )
+}
+
 // ── Modal: Detalhe da demanda ────────────────────────────────────────────────────
 function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCotarFrete, onSemEstoque, onMarcarFeito }: {
   id: string; onClose: () => void; onChanged: () => void; onAcao: (d: any) => void; onGerarOv: (d: any) => void; onCotarFrete: (d: any) => void; onSemEstoque: (d: any) => void; onMarcarFeito: (d: any) => void
@@ -853,6 +918,14 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
     mutationFn: (canal: string) => api.patch(`/licitacoes/demandas/${id}`, { canal }),
     onSuccess: () => { qcDet.invalidateQueries({ queryKey: ['demanda', id] }); onChanged(); toast.success('Canal atualizado') },
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar canal')),
+  })
+  // Estoque real vindo do app do PCP. Query separada: é sistema externo, então não
+  // pode atrasar nem derrubar o carregamento do card.
+  const { data: estoquePcp } = useQuery<any>({
+    queryKey: ['estoque-pcp', id],
+    queryFn: () => api.get(`/licitacoes/demandas/${id}/estoque-pcp`).then(r => r.data),
+    staleTime: 300000,
+    retry: false,
   })
   const excluir = useMutation({
     mutationFn: () => api.delete(`/licitacoes/demandas/${id}`),
@@ -1062,6 +1135,8 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
             <p className="text-emerald-800">NF {d.nf.numero || '—'}{d.nf.enviada_em ? ` · ${fmtData(d.nf.enviada_em)}` : ''}{d.nf.enviada_por ? ` · por ${d.nf.enviada_por}` : ''}</p>
           </div>
         )}
+
+        {(estoquePcp?.itens || []).length > 0 && <BlocoEstoquePcp dados={estoquePcp} />}
 
         {etapaAtual === 'AGUARDANDO_ESTOQUE' && (
           <div className={`rounded-lg p-3 text-sm border ${riscoMulta(d) ? 'bg-red-50 border-red-200' : 'bg-orange-50 border-orange-200'}`}>
