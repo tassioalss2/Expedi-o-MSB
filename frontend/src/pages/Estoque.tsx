@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import { Boxes, Search, X, RefreshCw, AlertTriangle, Download } from 'lucide-react'
 import api from '../lib/api'
 import { msgErro } from '../lib/crm'
+import { STATUS_CONFIG } from '../lib/statusConfig'
 
 interface ItemEstoque {
   codigo: string
@@ -26,6 +27,15 @@ interface Resposta {
   desatualizado: boolean
   integracao: boolean
   sync?: { sincronizou: boolean; motivo: string | null; itens: number } | null
+}
+interface OvComprometida {
+  pedido_id: string
+  numero_pedido: string
+  status: string
+  cliente: string | null
+  qtd: number
+  criado_em: string | null
+  faturada_depois_da_foto: boolean
 }
 
 const STATUS_CFG: Record<string, { label: string; cor: string; ponto: string }> = {
@@ -53,10 +63,17 @@ export function Estoque() {
   const [statusFiltro, setStatusFiltro] = useState('')
   const [familia, setFamilia] = useState('')
   const [linha, setLinha] = useState('')
+  const [detalheCodigo, setDetalheCodigo] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery<Resposta>({
     queryKey: ['estoque'],
     queryFn: () => api.get('/estoque').then(r => r.data),
+  })
+
+  const { data: detalhe, isLoading: carregandoDetalhe } = useQuery<{ codigo: string; ovs: OvComprometida[] }>({
+    queryKey: ['estoque-comprometido', detalheCodigo],
+    queryFn: () => api.get(`/estoque/${encodeURIComponent(detalheCodigo!)}/comprometido`).then(r => r.data),
+    enabled: !!detalheCodigo,
   })
 
   const sincronizar = useMutation({
@@ -276,7 +293,12 @@ export function Estoque() {
                         {i.estoque_sa > 0 ? <span className="text-indigo-600 font-medium">{fmtNum(i.estoque_sa)}</span> : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
-                        {i.comprometido > 0 ? <span className="text-amber-600">−{fmtNum(i.comprometido)}</span> : <span className="text-gray-300">—</span>}
+                        {i.comprometido > 0 ? (
+                          <button onClick={() => setDetalheCodigo(i.codigo)}
+                            className="text-amber-600 underline decoration-dotted hover:text-amber-700">
+                            −{fmtNum(i.comprometido)}
+                          </button>
+                        ) : <span className="text-gray-300">—</span>}
                       </td>
                       <td className={`px-3 py-2 text-right tabular-nums font-bold whitespace-nowrap ${negativo ? 'text-red-600' : 'text-gray-800'}`}>
                         {fmtNum(i.disponivel)}
@@ -312,6 +334,60 @@ export function Estoque() {
           <strong> Cobertura</strong> é o disponível ÷ consumo médio dos últimos 6 meses — quando difere da do PCP, é porque
           o comprometido ainda não aparece lá.
         </p>
+      )}
+
+      {detalheCodigo && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4"
+          onClick={() => setDetalheCodigo(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[80vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white rounded-t-xl">
+              <div>
+                <h3 className="font-semibold text-gray-800">OVs comprometendo o item</h3>
+                <p className="text-xs text-gray-400 font-mono">{detalheCodigo}</p>
+              </div>
+              <button onClick={() => setDetalheCodigo(null)} className="p-1 text-gray-400 hover:text-gray-600">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4">
+              {carregandoDetalhe ? (
+                <p className="text-sm text-gray-400 py-6 text-center">Carregando…</p>
+              ) : !detalhe?.ovs.length ? (
+                <p className="text-sm text-gray-400 py-6 text-center">Nenhuma OV encontrada.</p>
+              ) : (
+                <div className="space-y-2">
+                  {detalhe.ovs.map(ov => {
+                    const cfg = STATUS_CONFIG[ov.status as keyof typeof STATUS_CONFIG]
+                    return (
+                      <div key={ov.pedido_id} className="border rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-mono font-medium text-gray-800 text-sm">{ov.numero_pedido}</div>
+                          <div className="text-xs text-gray-500 truncate">{ov.cliente || '—'}</div>
+                          <div className="flex items-center gap-1 mt-1">
+                            <span className="text-[11px] px-2 py-0.5 rounded-full"
+                              style={{ background: cfg?.cor, color: cfg?.corTexto }}>
+                              {cfg?.label || ov.status}
+                            </span>
+                            {ov.faturada_depois_da_foto && (
+                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                                faturou hoje
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-bold text-amber-600 tabular-nums">{fmtNum(ov.qtd)}</div>
+                          <div className="text-[11px] text-gray-400">{fmtQuando(ov.criado_em)}</div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

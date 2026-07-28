@@ -220,6 +220,74 @@ def _codigo_por_produto_id(db) -> dict:
     return {p["id"]: (p.get("codigo") or "").strip().upper() for p in prods if p.get("codigo")}
 
 
+def comprometido_detalhe(codigo: str) -> dict:
+    """As OVs por trás do número de 'comprometido' de um código — para o usuário
+    clicar e ver de onde vem, em vez de confiar cegamente na conta."""
+    db = get_service_db()
+    cod = (codigo or "").strip().upper()
+
+    produtos = db.table("produtos").select("id").ilike("codigo", cod).execute().data
+    produto_ids = [p["id"] for p in produtos]
+    if not produto_ids:
+        return {"codigo": codigo, "ovs": []}
+
+    dia = _hoje_brt()
+    snapshot = _snapshot_do_dia(db, dia)
+    if not snapshot:
+        ultimas = db.table("estoque_pcp_snapshot").select("data_ref")\
+            .order("data_ref", desc=True).limit(1).execute().data
+        if ultimas:
+            snapshot = _snapshot_do_dia(db, date.fromisoformat(ultimas[0]["data_ref"]))
+    sincronizado_em = snapshot[0].get("sincronizado_em") if snapshot else None
+
+    ids_abertos = set()
+    for i in range(0, len(_STATUS_ABERTOS), 10):
+        lote = _STATUS_ABERTOS[i:i + 10]
+        for p in db.table("pedidos").select("id").in_("status", lote).execute().data:
+            ids_abertos.add(p["id"])
+    ids_faturados_depois = set(_ovs_faturadas_apos(db, sincronizado_em))
+    ids_relevantes = ids_abertos | ids_faturados_depois
+    if not ids_relevantes:
+        return {"codigo": codigo, "ovs": []}
+
+    itens = []
+    for i in range(0, len(produto_ids), 40):
+        lote = produto_ids[i:i + 40]
+        itens += db.table("itens_pedido").select("pedido_id, qtd_solicitada")\
+            .in_("produto_id", lote).execute().data
+    pedido_ids = [it["pedido_id"] for it in itens if it.get("pedido_id") in ids_relevantes]
+    if not pedido_ids:
+        return {"codigo": codigo, "ovs": []}
+
+    qtd_por_pedido: dict = {}
+    for it in itens:
+        pid = it.get("pedido_id")
+        if pid in ids_relevantes:
+            qtd_por_pedido[pid] = qtd_por_pedido.get(pid, 0.0) + float(it.get("qtd_solicitada") or 0)
+
+    pedidos = []
+    for i in range(0, len(pedido_ids), 40):
+        pedidos += db.table("pedidos").select("id, numero_pedido, status, cliente_id, criado_em")\
+            .in_("id", pedido_ids[i:i + 40]).execute().data
+    cliente_ids = list({p["cliente_id"] for p in pedidos if p.get("cliente_id")})
+    clientes = {}
+    for i in range(0, len(cliente_ids), 40):
+        for c in db.table("clientes").select("id, nome").in_("id", cliente_ids[i:i + 40]).execute().data:
+            clientes[c["id"]] = c.get("nome")
+
+    ovs = [{
+        "pedido_id": p["id"],
+        "numero_pedido": p.get("numero_pedido"),
+        "status": p.get("status"),
+        "cliente": clientes.get(p.get("cliente_id")),
+        "qtd": round(qtd_por_pedido.get(p["id"], 0.0)),
+        "criado_em": p.get("criado_em"),
+        "faturada_depois_da_foto": p.get("status") not in _STATUS_ABERTOS,
+    } for p in pedidos]
+    ovs.sort(key=lambda o: o["criado_em"] or "", reverse=True)
+    return {"codigo": codigo, "ovs": ovs}
+
+
 # ── Consulta ────────────────────────────────────────────────────────────────────
 
 def listar(sincronizar_se_preciso: bool = True) -> dict:
