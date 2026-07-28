@@ -19,15 +19,18 @@ interface ItemEstoque {
   cobertura_pcp: number | null
   cobertura_disponivel: number | null
   status: string
-  vendas_30d: number
-  vendas_30d_anterior: number
+  vendido_mes_atual: number
   tendencia_pct: number | null
+  media_3m: number | null
+  media_3m_anterior: number | null
 }
 interface Resposta {
   itens: ItemEstoque[]
   data_ref: string | null
   sincronizado_em: string | null
   desatualizado: boolean
+  mes_atual: string
+  ultimo_mes_fechado: string
   integracao: boolean
   sync?: { sincronizou: boolean; motivo: string | null; itens: number } | null
 }
@@ -44,11 +47,14 @@ interface HistoricoVendas {
   codigo: string
   descricao: string | null
   meses: { mes: string; qtd: number }[]
-  total_periodo: number
+  total_fechado: number
   consumo_medio: number | null
   cobertura_atual: number | null
   tendencia_pct: number | null
-  historico_desde: string
+  media_3m: number | null
+  media_3m_anterior: number | null
+  vendido_mes_atual: number
+  mes_atual: string
 }
 
 function fmtMes(mes: string) {
@@ -57,11 +63,10 @@ function fmtMes(mes: string) {
   return `${nomes[Number(m) - 1]}/${ano.slice(2)}`
 }
 
-function Tendencia({ pct, vendas30 }: { pct: number | null; vendas30: number }) {
-  if (pct == null) {
-    if (vendas30 > 0) return <span className="text-[11px] text-gray-400">novo</span>
-    return <span className="text-gray-300">—</span>
-  }
+// Tendência vem do histórico do PCP: média dos 3 últimos meses fechados contra
+// os 3 anteriores. ±5% é ruído de mês, não movimento — fica cinza.
+function Tendencia({ pct }: { pct: number | null }) {
+  if (pct == null) return <span className="text-gray-300" title="Sem base de comparação no histórico do PCP">—</span>
   const Icone = pct > 5 ? TrendingUp : pct < -5 ? TrendingDown : Minus
   const cor = pct > 5 ? 'text-emerald-600' : pct < -5 ? 'text-red-600' : 'text-gray-400'
   return (
@@ -156,21 +161,23 @@ export function Estoque() {
     const porStatus: Record<string, number> = {}
     let negativos = 0
     let comprometidoTotal = 0
+    let vendidoMes = 0
     for (const i of itens) {
       porStatus[i.status] = (porStatus[i.status] || 0) + 1
       if (i.disponivel < 0) negativos++
       comprometidoTotal += i.comprometido
+      vendidoMes += i.vendido_mes_atual
     }
-    return { porStatus, negativos, comprometidoTotal }
+    return { porStatus, negativos, comprometidoTotal, vendidoMes }
   }, [itens])
 
   const exportar = () => {
-    const cols = ['Código', 'Descrição', 'Linha', 'Família', 'Estoque PCP', 'SA', 'Comprometido', 'Disponível', 'Consumo médio', 'Cobertura PCP', 'Cobertura disponível', 'Vendido 30d', 'Tendência 30d (%)', 'Status']
+    const cols = ['Código', 'Descrição', 'Linha', 'Família', 'Estoque PA', 'Estoque SA', 'Comprometido', 'Disponível', 'Consumo médio', 'Cobertura PCP', 'Cobertura disponível', 'Vendido no mês', 'Tendência (%)', 'Média 3m', 'Média 3m anterior', 'Status']
     const linhasCsv = filtrados.map(i => [
       i.codigo, i.descricao || '', i.linha || '', i.familia || '', i.estoque_pcp, i.estoque_sa,
       i.comprometido, i.disponivel, i.consumo_medio,
       i.cobertura_pcp ?? '', i.cobertura_disponivel ?? '',
-      i.vendas_30d, i.tendencia_pct ?? '',
+      i.vendido_mes_atual, i.tendencia_pct ?? '', i.media_3m ?? '', i.media_3m_anterior ?? '',
       STATUS_CFG[i.status]?.label || i.status,
     ])
     const csv = [cols, ...linhasCsv].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n')
@@ -222,7 +229,7 @@ export function Estoque() {
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
           Nenhuma foto de estoque gravada ainda.
           {data?.sync?.motivo === 'tabela_ausente'
-            ? <> Rode a <strong>migration v19</strong> no Supabase e clique em "Sincronizar agora".</>
+            ? <> Rode as <strong>migrations v19 e v20</strong> no Supabase e clique em "Sincronizar agora".</>
             : <> Clique em <strong>Sincronizar agora</strong> para puxar do PCP.</>}
         </div>
       )}
@@ -291,6 +298,7 @@ export function Estoque() {
           <span className="text-xs text-gray-400 lg:ml-auto">
             {filtrados.length} de {itens.length} itens
             {kpis.comprometidoTotal > 0 && <> · {fmtNum(Math.round(kpis.comprometidoTotal))} un. comprometidas</>}
+            {kpis.vendidoMes > 0 && data?.mes_atual && <> · {fmtNum(kpis.vendidoMes)} un. faturadas em {fmtMes(data.mes_atual)}</>}
           </span>
         </div>
       )}
@@ -300,69 +308,81 @@ export function Estoque() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
+                {/* Dois níveis: os números só fazem sentido agrupados — o que o PCP
+                    manda, o que o nosso app tirou, e o que sobrou. */}
+                <tr className="text-[10px] uppercase tracking-wide text-gray-400 border-b bg-gray-50/60">
+                  <th className="px-3 pt-2 pb-1 font-semibold text-left" colSpan={2}>Item</th>
+                  <th className="px-3 pt-2 pb-1 font-semibold text-center border-l border-gray-200" colSpan={2}>Foto do PCP</th>
+                  <th className="px-3 pt-2 pb-1 font-semibold text-center border-l border-gray-200">Nosso app</th>
+                  <th className="px-3 pt-2 pb-1 font-semibold text-center border-l border-gray-200" colSpan={2}>Situação</th>
+                  <th className="px-3 pt-2 pb-1 font-semibold text-center border-l border-gray-200" colSpan={3}>Vendas</th>
+                </tr>
                 <tr className="text-[11px] uppercase text-gray-400 text-left border-b bg-gray-50/60">
-                  <th className="px-3 py-2 font-medium">Código</th>
-                  <th className="px-3 py-2 font-medium">Descrição</th>
-                  <th className="px-3 py-2 font-medium">Linha</th>
-                  <th className="px-3 py-2 font-medium text-right">Estoque PCP</th>
-                  <th className="px-3 py-2 font-medium text-right">SA (a liberar)</th>
-                  <th className="px-3 py-2 font-medium text-right">Comprometido</th>
-                  <th className="px-3 py-2 font-medium text-right">Disponível</th>
-                  <th className="px-3 py-2 font-medium text-right">Consumo/mês</th>
-                  <th className="px-3 py-2 font-medium text-right">Cobertura</th>
-                  <th className="px-3 py-2 font-medium text-right">Tendência 30d</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 pb-2 font-medium">Código</th>
+                  <th className="px-3 pb-2 font-medium">Descrição</th>
+                  <th className="px-3 pb-2 font-medium text-right border-l border-gray-200">PA</th>
+                  <th className="px-3 pb-2 font-medium text-right">SA</th>
+                  <th className="px-3 pb-2 font-medium text-right border-l border-gray-200">Compromet.</th>
+                  <th className="px-3 pb-2 font-medium text-right border-l border-gray-200">Disponível</th>
+                  <th className="px-3 pb-2 font-medium text-right">Cobertura</th>
+                  <th className="px-3 pb-2 font-medium text-right border-l border-gray-200">Média/mês</th>
+                  <th className="px-3 pb-2 font-medium text-right">No mês</th>
+                  <th className="px-3 pb-2 font-medium text-right">Tendência</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-gray-100">
                 {filtrados.length === 0 ? (
-                  <tr><td colSpan={11} className="px-3 py-10 text-center text-gray-400">Nenhum item encontrado.</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-10 text-center text-gray-400">Nenhum item encontrado.</td></tr>
                 ) : filtrados.map(i => {
                   const cfg = STATUS_CFG[i.status] || STATUS_CFG.SEM_GIRO
                   const negativo = i.disponivel < 0
                   return (
                     <tr key={i.codigo} className={`hover:bg-gray-50/60 ${negativo ? 'bg-red-50/40' : ''}`}>
-                      <td className="px-3 py-2 font-mono font-medium text-gray-800 whitespace-nowrap">{i.codigo}</td>
-                      <td className="px-3 py-2 text-gray-600 max-w-[240px] truncate" title={i.descricao}>
-                        <button onClick={() => setHistoricoCodigo(i.codigo)} className="text-left hover:underline decoration-dotted">
+                      <td className="px-3 py-2 align-top whitespace-nowrap">
+                        <span className="font-mono font-medium text-gray-800">{i.codigo}</span>
+                        <span className={`block mt-0.5 text-[11px] px-1.5 py-px rounded w-fit ${cfg.cor}`}>{cfg.label}</span>
+                      </td>
+                      <td className="px-3 py-2 align-top max-w-[260px]">
+                        <button onClick={() => setHistoricoCodigo(i.codigo)}
+                          className="text-left text-gray-700 hover:text-blue-600 hover:underline decoration-dotted block truncate w-full"
+                          title={`${i.descricao} — ver histórico de vendas`}>
                           {i.descricao || '—'}
                         </button>
-                        {i.familia && <span className="block text-[11px] text-gray-400">{i.familia}</span>}
+                        <span className="block text-[11px] text-gray-400 truncate">
+                          {i.linha}{i.familia ? ` · ${i.familia}` : ''}
+                        </span>
                       </td>
-                      <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{i.linha || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-700 whitespace-nowrap border-l border-gray-100">
                         {fmtNum(i.estoque_pcp)}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
-                        {i.estoque_sa > 0 ? <span className="text-indigo-600 font-medium">{fmtNum(i.estoque_sa)}</span> : <span className="text-gray-300">—</span>}
+                        {i.estoque_sa > 0 ? <span className="text-indigo-600">{fmtNum(i.estoque_sa)}</span> : <span className="text-gray-300">—</span>}
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap border-l border-gray-100">
                         {i.comprometido > 0 ? (
                           <button onClick={() => setDetalheCodigo(i.codigo)}
-                            className="text-amber-600 underline decoration-dotted hover:text-amber-700">
+                            className="text-amber-600 underline decoration-dotted hover:text-amber-700"
+                            title="Ver as OVs que comprometem este item">
                             −{fmtNum(i.comprometido)}
                           </button>
                         ) : <span className="text-gray-300">—</span>}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums font-bold whitespace-nowrap ${negativo ? 'text-red-600' : 'text-gray-800'}`}>
+                      <td className={`px-3 py-2 text-right tabular-nums font-bold whitespace-nowrap border-l border-gray-100 ${negativo ? 'text-red-600' : 'text-gray-900'}`}>
                         {fmtNum(i.disponivel)}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-500 whitespace-nowrap">
-                        {i.consumo_medio > 0 ? fmtNum(Math.round(i.consumo_medio)) : '—'}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                         <span className={negativo ? 'text-red-600 font-medium' : 'text-gray-700'}>{fmtCob(i.cobertura_disponivel)}</span>
-                        {i.cobertura_pcp != null && i.cobertura_disponivel != null && Math.abs(i.cobertura_pcp - i.cobertura_disponivel) >= 0.1 && (
-                          <span className="block text-[11px] text-gray-400">PCP: {fmtCob(i.cobertura_pcp)}</span>
-                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-500 whitespace-nowrap border-l border-gray-100">
+                        {i.consumo_medio > 0 ? fmtNum(Math.round(i.consumo_medio)) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                        {i.vendido_mes_atual > 0
+                          ? <span className="text-gray-800 font-medium">{fmtNum(i.vendido_mes_atual)}</span>
+                          : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
-                        <Tendencia pct={i.tendencia_pct} vendas30={i.vendas_30d} />
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full ${cfg.cor}`}>
-                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${cfg.ponto}`} /> {cfg.label}
-                        </span>
+                        <Tendencia pct={i.tendencia_pct} />
                       </td>
                     </tr>
                   )
@@ -378,10 +398,11 @@ export function Estoque() {
           <strong>Estoque PCP</strong> é o produto acabado pronto pra faturar, na foto da manhã.
           <strong> SA (a liberar)</strong> é o semi-acabado — ainda depende da produção, não entra no disponível.
           <strong> Comprometido</strong> são as OVs deste app que ainda não faturaram, mais as que faturaram depois da foto.
-          <strong> Cobertura</strong> é o disponível ÷ consumo médio dos últimos 6 meses — quando difere da do PCP, é porque
-          o comprometido ainda não aparece lá.
-          <strong> Tendência</strong> compara o vendido nos últimos 30 dias com os 30 anteriores (clique na descrição do item
-          pra ver o histórico completo) — como o app é recente, ainda não tem base de comparação pra todo item.
+          <strong> Cobertura</strong> é o disponível ÷ consumo médio dos últimos 6 meses.
+          <strong> No mês</strong> é o acumulado faturado das OVs daqui{data?.mes_atual ? ` em ${fmtMes(data.mes_atual)}` : ''}.
+          <strong> Tendência</strong> vem do histórico do PCP: média dos 3 últimos meses fechados
+          {data?.ultimo_mes_fechado ? ` (até ${fmtMes(data.ultimo_mes_fechado)})` : ''} contra os 3 anteriores.
+          Clique na descrição do item pra ver o histórico mês a mês.
         </p>
       )}
 
@@ -459,45 +480,58 @@ export function Estoque() {
               ) : (
                 <>
                   <p className="text-sm text-gray-700 mb-4">{historico.descricao}</p>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {(() => {
-                      const max = Math.max(1, ...historico.meses.map(m => m.qtd))
-                      return historico.meses.map(m => (
-                        <div key={m.mes} className="flex items-center gap-3">
-                          <span className="w-12 text-xs text-gray-400 shrink-0">{fmtMes(m.mes)}</span>
+                      const max = Math.max(1, historico.vendido_mes_atual, ...historico.meses.map(m => m.qtd))
+                      const barra = (chave: string, rotulo: string, qtd: number, parcial: boolean) => (
+                        <div key={chave} className="flex items-center gap-3">
+                          <span className={`w-14 text-xs shrink-0 ${parcial ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>{rotulo}</span>
                           <div className="flex-1 bg-gray-100 rounded h-4 overflow-hidden">
-                            <div className="bg-blue-400 h-full rounded" style={{ width: `${(m.qtd / max) * 100}%` }} />
+                            <div className={`h-full rounded ${parcial ? 'bg-blue-600' : 'bg-blue-300'}`}
+                              style={{ width: `${(qtd / max) * 100}%` }} />
                           </div>
-                          <span className="w-10 text-right text-xs tabular-nums text-gray-600 shrink-0">{fmtNum(m.qtd)}</span>
+                          <span className={`w-12 text-right text-xs tabular-nums shrink-0 ${parcial ? 'text-blue-700 font-semibold' : 'text-gray-600'}`}>
+                            {fmtNum(qtd)}
+                          </span>
                         </div>
-                      ))
+                      )
+                      return [
+                        ...historico.meses.map(m => barra(m.mes, fmtMes(m.mes), m.qtd, false)),
+                        barra(historico.mes_atual, fmtMes(historico.mes_atual), historico.vendido_mes_atual, true),
+                      ]
                     })()}
                   </div>
-                  {historico.meses.slice(0, 5).every(m => m.qtd === 0) && (
-                    <p className="text-[11px] text-gray-400 mt-2">
-                      O app só tem OVs faturadas com data real desde {fmtMes(historico.historico_desde)} — meses antes disso aparecem zerados por falta de dado, não por falta de venda.
-                    </p>
-                  )}
-                  <div className="flex items-center justify-between mt-4 pt-3 border-t text-sm">
-                    <div>
-                      <span className="text-gray-400">Total no período: </span>
-                      <span className="font-semibold text-gray-800">{fmtNum(historico.total_periodo)} un.</span>
+                  <p className="text-[11px] text-gray-400 mt-2">
+                    Meses fechados vêm do app do PCP (D365). {fmtMes(historico.mes_atual)} é o acumulado
+                    parcial, calculado das OVs já faturadas aqui.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2 mt-4 pt-3 border-t text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Total 6 meses</span>
+                      <span className="font-semibold text-gray-800">{fmtNum(historico.total_fechado)} un.</span>
                     </div>
-                    <div>
-                      <span className="text-gray-400">Consumo médio: </span>
-                      <span className="font-semibold text-gray-800">{historico.consumo_medio != null ? `${fmtNum(Math.round(historico.consumo_medio))} un/mês` : '—'}</span>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Consumo médio</span>
+                      <span className="font-semibold text-gray-800">
+                        {historico.consumo_medio != null ? `${fmtNum(Math.round(historico.consumo_medio))} un/mês` : '—'}
+                      </span>
                     </div>
-                  </div>
-                  <div className="flex items-center justify-between mt-2 text-sm">
-                    <div>
-                      <span className="text-gray-400">Cobertura atual: </span>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Cobertura atual</span>
                       <span className="font-semibold text-gray-800">{fmtCob(historico.cobertura_atual)}</span>
                     </div>
-                    <div>
-                      <span className="text-gray-400">Tendência 30d: </span>
-                      <Tendencia pct={historico.tendencia_pct} vendas30={historico.meses[historico.meses.length - 1]?.qtd || 0} />
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Tendência</span>
+                      <Tendencia pct={historico.tendencia_pct} />
                     </div>
                   </div>
+                  {historico.media_3m != null && historico.media_3m_anterior != null && (
+                    <p className="text-[11px] text-gray-400 mt-2">
+                      Tendência = média dos 3 últimos meses fechados ({fmtNum(historico.media_3m)}/mês) contra
+                      os 3 anteriores ({fmtNum(historico.media_3m_anterior)}/mês).
+                    </p>
+                  )}
                 </>
               )}
             </div>

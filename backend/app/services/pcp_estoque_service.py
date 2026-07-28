@@ -20,6 +20,10 @@ Colunas da view (conforme combinado com o PCP):
     coverage_months                stock_total ÷ avg_consumption; null = sem
                                     venda nos últimos 6 meses
 
+O histórico mensal de vendas não está na view — vem da tabela `pa_products`
+(coluna `sales_history`, um jsonb {"AAAA-MM": qtd} com os meses FECHADOS do
+D365). É a mesma fonte que alimenta o gráfico de histórico do app deles.
+
 Configuração (Render → Environment, ou .env local). Sem as duas variáveis a
 integração fica desligada e o app segue funcionando como antes:
     PCP_SUPABASE_URL
@@ -69,7 +73,7 @@ def _status(cobertura, consumo_medio: float) -> str:
     return "EXCESSIVO"
 
 
-def _montar(row: dict) -> dict:
+def _montar(row: dict, historico: dict) -> dict:
     consumo_medio = round(float(row.get("avg_consumption") or 0), 2)
     cobertura = row.get("coverage_months")
     cobertura = round(float(cobertura), 1) if cobertura is not None else None
@@ -85,7 +89,32 @@ def _montar(row: dict) -> dict:
         "consumo_medio": consumo_medio,
         "cobertura_meses": cobertura,
         "status": _status(cobertura, consumo_medio),
+        # Vendido por mês fechado, do D365. Só meses completos — o mês corrente
+        # o nosso app calcula das OVs faturadas.
+        "sales_history": historico,
     }
+
+
+def _buscar_historico_vendas(url: str, key: str) -> dict:
+    """codigo -> {"AAAA-MM": qtd}. Vem de pa_products (a pa_coverage não tem
+    histórico). Best-effort: sem isso a tela só perde a tendência."""
+    try:
+        resp = requests.get(
+            f"{url}/rest/v1/pa_products",
+            params={"select": "code,sales_history"},
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            timeout=_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except Exception:
+        return {}
+    out = {}
+    for row in resp.json():
+        codigo = (row.get("code") or "").strip().upper()
+        hist = row.get("sales_history")
+        if codigo and isinstance(hist, dict):
+            out[codigo] = {k: float(v or 0) for k, v in hist.items()}
+    return out
 
 
 def _buscar_tudo() -> dict:
@@ -112,11 +141,12 @@ def _buscar_tudo() -> dict:
         # Mantém o último cache válido, se houver — melhor dado de 1h atrás que nada.
         return dados or {}
 
+    historicos = _buscar_historico_vendas(url, key)
     mapa = {}
     for row in linhas:
         codigo = (row.get("code") or "").strip()
         if codigo:
-            mapa[codigo.upper()] = _montar(row)
+            mapa[codigo.upper()] = _montar(row, historicos.get(codigo.upper(), {}))
     _cache["em"], _cache["dados"] = agora, mapa
     return mapa
 

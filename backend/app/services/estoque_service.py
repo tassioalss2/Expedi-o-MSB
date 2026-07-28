@@ -113,6 +113,25 @@ def _snapshot_do_dia(db, dia: date) -> list:
         return []
 
 
+def _tem_coluna_historico(db) -> bool:
+    """Se a v20 já rodou. Checado ANTES de inserir: descobrir pelo erro no meio
+    dos lotes deixaria a foto do dia gravada pela metade."""
+    try:
+        db.table("estoque_pcp_snapshot").select("sales_history").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def _inserir_snapshot(db, linhas: list) -> None:
+    """Grava a foto. Sem a coluna sales_history (v20 não rodada) grava sem ela —
+    o estoque é o essencial, o histórico do PCP é o extra."""
+    if not _tem_coluna_historico(db):
+        linhas = [{k: v for k, v in linha.items() if k != "sales_history"} for linha in linhas]
+    for i in range(0, len(linhas), 200):
+        db.table("estoque_pcp_snapshot").insert(linhas[i:i + 200]).execute()
+
+
 def sincronizar(forcar: bool = False) -> dict:
     """Grava a foto do PCP do dia. Idempotente: se já existe foto de hoje e
     `forcar` é falso, não faz nada (a primeira abertura do dia sincroniza; o
@@ -146,6 +165,7 @@ def sincronizar(forcar: bool = False) -> dict:
         "estoque_total": c.get("estoque_total") or 0,
         "consumo_medio": c.get("consumo_medio") or 0,
         "cobertura_meses": c.get("cobertura_meses"),
+        "sales_history": c.get("sales_history") or {},
         "sincronizado_em": agora,
     } for c in dados.values() if c.get("codigo")]
 
@@ -153,8 +173,7 @@ def sincronizar(forcar: bool = False) -> dict:
         if existente:
             # Re-sincronização do mesmo dia: troca a foto (unique data_ref+codigo).
             db.table("estoque_pcp_snapshot").delete().eq("data_ref", dia.isoformat()).execute()
-        for i in range(0, len(linhas), 200):
-            db.table("estoque_pcp_snapshot").insert(linhas[i:i + 200]).execute()
+        _inserir_snapshot(db, linhas)
     except Exception:
         # Tabela ainda não migrada (v19).
         return {"sincronizou": False, "motivo": "tabela_ausente", "itens": 0,
@@ -290,42 +309,76 @@ def comprometido_detalhe(codigo: str) -> dict:
 
 # ── Histórico de vendas e tendência ─────────────────────────────────────────────
 #
-# O app só está no ar desde 29/05/2026 — ainda não tem 6 meses de histórico real
-# por item. Em vez de fingir um calendário de 6 meses cheio, a tendência usa
-# janelas móveis de 30 dias (funciona com pouco histórico e fica mais precisa
-# sozinha conforme os dias passam). "Vendido" aqui é sempre pela data em que a
-# OV virou FATURADO — mesmo corte que o comprometido usa, é quando o D365 baixa
-# o estoque de verdade.
-
-def _resumo_tendencia(pares: list, agora: datetime) -> tuple:
-    """pares = [(data_faturamento_iso, qtd), ...]. Devolve (vendido_30d,
-    vendido_30d_anterior, tendencia_pct). tendencia_pct é None quando não há
-    base de comparação (item novo ou sem giro nos últimos 60 dias)."""
-    atual = anterior = 0.0
-    limite_30 = agora - timedelta(days=30)
-    limite_60 = agora - timedelta(days=60)
-    for data_str, qtd in pares:
-        try:
-            d = datetime.fromisoformat(str(data_str).replace("Z", "+00:00"))
-        except Exception:
-            continue
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=timezone.utc)
-        if d >= limite_30:
-            atual += qtd
-        elif d >= limite_60:
-            anterior += qtd
-    if anterior > 0:
-        return round(atual), round(anterior), round((atual - anterior) / anterior * 100)
-    return round(atual), 0, None
+# O histórico mensal vem do PCP (pa_products.sales_history, do D365) porque tem
+# 6 meses fechados — o nosso app só existe desde 29/05/2026. A tendência compara
+# os 3 últimos meses fechados com os 3 anteriores, que é o mesmo período da média
+# de consumo e amortece a variação mês a mês (compra de licitação num mês só).
+#
+# O mês CORRENTE não está no histórico do PCP (eles importam mês fechado), então
+# o acumulado do mês em curso é calculado das OVs faturadas daqui — é a fonte que
+# sabe o que aconteceu hoje. Nunca soma as duas: o PCP cobre meses fechados, o
+# app cobre o mês em curso.
 
 
-def _vendas_recentes_por_codigo(db, dias: int) -> dict:
-    """codigo -> [(data_faturamento_iso, qtd), ...] dos últimos `dias` dias."""
-    desde = datetime.now(timezone.utc) - timedelta(days=dias)
-    filtro = _ts_para_filtro(desde.isoformat())
-    movs = db.table("movimentacoes").select("pedido_id, criado_em")\
-        .eq("status_novo", "FATURADO").gte("criado_em", filtro).execute().data
+def _meses_ate(fim_mes: str, quantidade: int) -> list:
+    """['AAAA-MM', ...] terminando em fim_mes (inclusive), do mais antigo ao mais
+    recente."""
+    ano, mes = int(fim_mes[:4]), int(fim_mes[5:7])
+    chaves = []
+    for _ in range(quantidade):
+        chaves.append(f"{ano:04d}-{mes:02d}")
+        mes -= 1
+        if mes < 1:
+            mes = 12
+            ano -= 1
+    return list(reversed(chaves))
+
+
+def _mes_anterior(mes_ref: str) -> str:
+    ano, mes = int(mes_ref[:4]), int(mes_ref[5:7])
+    mes -= 1
+    if mes < 1:
+        mes, ano = 12, ano - 1
+    return f"{ano:04d}-{mes:02d}"
+
+
+def _tendencia_do_historico(historico: dict, ultimo_mes: str) -> tuple:
+    """Compara os 3 meses fechados até ultimo_mes com os 3 anteriores. Devolve
+    (media_recente, media_anterior, pct). pct é None sem base de comparação —
+    item novo ou parado, onde qualquer percentual seria invenção."""
+    if not historico:
+        return None, None, None
+    recentes = _meses_ate(ultimo_mes, 3)
+    anteriores = _meses_ate(_meses_ate(ultimo_mes, 3)[0], 4)[:3]
+
+    def media(chaves):
+        # Mês ausente no histórico = sem venda no mês, conta como zero: o PCP só
+        # inclui a chave quando houve movimento.
+        return sum(float(historico.get(k) or 0) for k in chaves) / len(chaves)
+
+    m_rec, m_ant = media(recentes), media(anteriores)
+    if m_ant <= 0:
+        return round(m_rec, 1), round(m_ant, 1), None
+    return round(m_rec, 1), round(m_ant, 1), round((m_rec - m_ant) / m_ant * 100)
+
+
+def _ultimo_mes_fechado(historicos: list) -> str:
+    """O mês mais recente presente no histórico do PCP. Vem do dado em vez de ser
+    calculado do calendário: se eles atrasarem a importação, a tendência
+    acompanha o que existe em vez de comparar contra meses vazios."""
+    chaves = {k for h in historicos if h for k in h}
+    if chaves:
+        return max(chaves)
+    return _mes_anterior(_hoje_brt().strftime("%Y-%m"))
+
+
+def _vendido_no_mes_por_codigo(db, mes_ref: str) -> dict:
+    """codigo -> qtd faturada no mês corrente, das OVs daqui. Mesmo corte do
+    comprometido: conta pela data em que a OV virou FATURADO."""
+    inicio = datetime(int(mes_ref[:4]), int(mes_ref[5:7]), 1, tzinfo=timezone.utc)
+    movs = db.table("movimentacoes").select("pedido_id, criado_em")        .eq("status_novo", "FATURADO").gte("criado_em", _ts_para_filtro(inicio.isoformat())).execute().data
+    # Uma OV pode ter várias movimentações para FATURADO (correção de status);
+    # a primeira é a que marca a saída.
     data_por_pedido: dict = {}
     for m in movs:
         pid, d = m.get("pedido_id"), m.get("criado_em")
@@ -337,88 +390,69 @@ def _vendas_recentes_por_codigo(db, dias: int) -> dict:
     pedido_ids = list(data_por_pedido.keys())
     itens = []
     for i in range(0, len(pedido_ids), 40):
-        itens += db.table("itens_pedido").select("pedido_id, produto_id, qtd_solicitada")\
-            .in_("pedido_id", pedido_ids[i:i + 40]).execute().data
+        itens += db.table("itens_pedido").select("pedido_id, produto_id, qtd_solicitada")            .in_("pedido_id", pedido_ids[i:i + 40]).execute().data
 
     cod_por_pid = _codigo_por_produto_id(db)
     out: dict = {}
     for it in itens:
-        pid = it.get("pedido_id")
         cod = cod_por_pid.get(it.get("produto_id"))
-        if not cod or pid not in data_por_pedido:
-            continue
-        out.setdefault(cod, []).append((data_por_pedido[pid], float(it.get("qtd_solicitada") or 0)))
+        if cod and it.get("pedido_id") in data_por_pedido:
+            out[cod] = out.get(cod, 0.0) + float(it.get("qtd_solicitada") or 0)
     return out
 
 
 def historico_vendas(codigo: str) -> dict:
-    """Vendido por mês (últimos 6 meses de calendário, incluindo o atual
-    parcial) para um item, mais a tendência — para o modal de histórico."""
+    """Histórico mensal do PCP (6 meses fechados) + o acumulado do mês corrente
+    calculado das OVs daqui, para o modal do item."""
     db = get_service_db()
     cod = (codigo or "").strip().upper()
 
-    resumo = listar(sincronizar_se_preciso=False)
-    item_atual = next((i for i in resumo["itens"] if (i["codigo"] or "").strip().upper() == cod), None)
+    mes_atual = _hoje_brt().strftime("%Y-%m")
+    vazio = {"codigo": codigo, "descricao": None, "meses": [], "total_fechado": 0,
+             "consumo_medio": None, "cobertura_atual": None, "tendencia_pct": None,
+             "media_3m": None, "media_3m_anterior": None,
+             "vendido_mes_atual": 0, "mes_atual": mes_atual}
 
-    hoje = _hoje_brt()
-    ano, mes = hoje.year, hoje.month - 5
-    while mes < 1:
-        mes += 12
-        ano -= 1
-    inicio = date(ano, mes, 1)
-    filtro = _ts_para_filtro(datetime(inicio.year, inicio.month, inicio.day, tzinfo=timezone.utc).isoformat())
+    dia = _hoje_brt()
+    snapshot = _snapshot_do_dia(db, dia)
+    if not snapshot:
+        try:
+            ultimas = db.table("estoque_pcp_snapshot").select("data_ref")\
+                .order("data_ref", desc=True).limit(1).execute().data
+        except Exception:
+            ultimas = []
+        if not ultimas:
+            return vazio
+        snapshot = _snapshot_do_dia(db, date.fromisoformat(ultimas[0]["data_ref"]))
 
-    movs = db.table("movimentacoes").select("pedido_id, criado_em")\
-        .eq("status_novo", "FATURADO").gte("criado_em", filtro).execute().data
-    data_por_pedido: dict = {}
-    for m in movs:
-        pid, d = m.get("pedido_id"), m.get("criado_em")
-        if pid and d and (pid not in data_por_pedido or d < data_por_pedido[pid]):
-            data_por_pedido[pid] = d
+    row = next((r for r in snapshot if (r.get("codigo") or "").strip().upper() == cod), None)
+    if not row:
+        return vazio
 
-    produtos = db.table("produtos").select("id").ilike("codigo", cod).execute().data
-    produto_ids = [p["id"] for p in produtos]
+    historico = row.get("sales_history") or {}
+    ultimo_fechado = _ultimo_mes_fechado([r.get("sales_history") for r in snapshot])
+    meses = [{"mes": k, "qtd": round(float(historico.get(k) or 0))} for k in _meses_ate(ultimo_fechado, 6)]
+    media_3m, media_3m_ant, tendencia_pct = _tendencia_do_historico(historico, ultimo_fechado)
 
-    qtd_por_mes: dict = {}
-    pares_tendencia = []
-    if produto_ids and data_por_pedido:
-        pedido_ids = list(data_por_pedido.keys())
-        itens = []
-        for i in range(0, len(pedido_ids), 40):
-            itens += db.table("itens_pedido").select("pedido_id, produto_id, qtd_solicitada")\
-                .in_("pedido_id", pedido_ids[i:i + 40]).in_("produto_id", produto_ids).execute().data
-        for it in itens:
-            pid = it.get("pedido_id")
-            if pid not in data_por_pedido:
-                continue
-            data_str = data_por_pedido[pid]
-            qtd = float(it.get("qtd_solicitada") or 0)
-            qtd_por_mes[data_str[:7]] = qtd_por_mes.get(data_str[:7], 0.0) + qtd
-            pares_tendencia.append((data_str, qtd))
-
-    meses_chaves = []
-    y, m = inicio.year, inicio.month
-    for _ in range(6):
-        meses_chaves.append(f"{y:04d}-{m:02d}")
-        m += 1
-        if m > 12:
-            m = 1
-            y += 1
-    meses = [{"mes": k, "qtd": round(qtd_por_mes.get(k, 0.0))} for k in meses_chaves]
-
-    _, _, tendencia_pct = _resumo_tendencia(pares_tendencia, datetime.now(timezone.utc))
+    consumo = float(row.get("consumo_medio") or 0)
+    comprometido = _comprometido_por_produto(db, row.get("sincronizado_em"))
+    cod_por_pid = _codigo_por_produto_id(db)
+    comp = sum(q for pid, q in comprometido.items() if cod_por_pid.get(pid) == cod)
+    disponivel = float(row.get("estoque_pa") or 0) - comp
+    sa = float(row.get("estoque_sa") or 0)
 
     return {
-        "codigo": codigo,
-        "descricao": item_atual.get("descricao") if item_atual else None,
+        "codigo": row.get("codigo"),
+        "descricao": row.get("descricao"),
         "meses": meses,
-        "total_periodo": round(sum(mm["qtd"] for mm in meses)),
-        "consumo_medio": item_atual.get("consumo_medio") if item_atual else None,
-        "cobertura_atual": item_atual.get("cobertura_disponivel") if item_atual else None,
+        "total_fechado": round(sum(m["qtd"] for m in meses)),
+        "consumo_medio": round(consumo, 1),
+        "cobertura_atual": round((disponivel + sa) / consumo, 1) if consumo > 0 else None,
         "tendencia_pct": tendencia_pct,
-        # Desde quando o app tem OVs faturadas com data real — antes disso os
-        # meses aparecem zerados, não é "sem venda", é "sem dado ainda".
-        "historico_desde": "2026-06",
+        "media_3m": media_3m,
+        "media_3m_anterior": media_3m_ant,
+        "vendido_mes_atual": round(_vendido_no_mes_por_codigo(db, mes_atual).get(cod, 0.0)),
+        "mes_atual": mes_atual,
     }
 
 
@@ -460,8 +494,9 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
         if cod:
             comprometido_por_codigo[cod] = comprometido_por_codigo.get(cod, 0.0) + qtd
 
-    vendas_por_codigo = _vendas_recentes_por_codigo(db, 60)
-    agora = datetime.now(timezone.utc)
+    mes_atual = _hoje_brt().strftime("%Y-%m")
+    vendido_mes = _vendido_no_mes_por_codigo(db, mes_atual)
+    ultimo_fechado = _ultimo_mes_fechado([row.get("sales_history") for row in snapshot])
 
     itens = []
     for row in snapshot:
@@ -478,7 +513,8 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
         # Cobertura do disponível (PA+SA já comprometidos descontados), que é a
         # que responde "por quanto tempo ainda dá conta".
         cob_disp = round((disponivel + sa) / consumo, 1) if consumo > 0 else None
-        vendas_30d, vendas_30d_anterior, tendencia_pct = _resumo_tendencia(vendas_por_codigo.get(cod, []), agora)
+        historico = row.get("sales_history") or {}
+        media_3m, media_3m_ant, tendencia_pct = _tendencia_do_historico(historico, ultimo_fechado)
         itens.append({
             "codigo": row.get("codigo"),
             "descricao": row.get("descricao"),
@@ -492,9 +528,10 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
             "cobertura_pcp": cobertura_pcp,
             "cobertura_disponivel": cob_disp,
             "status": _status_cobertura(cob_disp, consumo),
-            "vendas_30d": vendas_30d,
-            "vendas_30d_anterior": vendas_30d_anterior,
+            "vendido_mes_atual": round(vendido_mes.get(cod, 0.0)),
             "tendencia_pct": tendencia_pct,
+            "media_3m": media_3m,
+            "media_3m_anterior": media_3m_ant,
         })
 
     itens.sort(key=lambda i: (i["cobertura_disponivel"] is None, i["cobertura_disponivel"] or 0))
@@ -503,6 +540,8 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
         "data_ref": dia.isoformat(),
         "sincronizado_em": sincronizado_em,
         "desatualizado": dia != _hoje_brt(),
+        "mes_atual": mes_atual,
+        "ultimo_mes_fechado": ultimo_fechado,
         "sync": sync,
         "integracao": pcp_estoque_service.integracao_ativa(),
     }
