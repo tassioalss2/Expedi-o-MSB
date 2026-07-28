@@ -373,8 +373,16 @@ export function Estoque() {
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                         <span className={negativo ? 'text-red-600 font-medium' : 'text-gray-700'}>{fmtCob(i.cobertura_disponivel)}</span>
                       </td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-500 whitespace-nowrap border-l border-gray-100">
-                        {i.consumo_medio > 0 ? fmtNum(Math.round(i.consumo_medio)) : '—'}
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap border-l border-gray-100">
+                        {i.consumo_medio > 0 ? (
+                          // Mesma affordance do app do PCP: é aqui que se clica
+                          // para ver o histórico mês a mês.
+                          <button onClick={() => setHistoricoCodigo(i.codigo)}
+                            className="text-gray-600 underline decoration-dotted hover:text-blue-600"
+                            title="Ver histórico de vendas mês a mês">
+                            {fmtNum(Math.round(i.consumo_medio))}
+                          </button>
+                        ) : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                         {i.vendido_mes_atual > 0
@@ -402,7 +410,7 @@ export function Estoque() {
           <strong> No mês</strong> é o acumulado faturado das OVs daqui{data?.mes_atual ? ` em ${fmtMes(data.mes_atual)}` : ''}.
           <strong> Tendência</strong> vem do histórico do PCP: média dos 3 últimos meses fechados
           {data?.ultimo_mes_fechado ? ` (até ${fmtMes(data.ultimo_mes_fechado)})` : ''} contra os 3 anteriores.
-          Clique na descrição do item pra ver o histórico mês a mês.
+          Clique na <strong>média/mês</strong> (ou na descrição) pra ver o histórico mês a mês.
         </p>
       )}
 
