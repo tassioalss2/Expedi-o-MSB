@@ -21,15 +21,19 @@ Se o PCP mudar a fórmula, os dois apps passam a mostrar números diferentes par
 mesmo item — pior que não ter integração. Por isso a confirmação da fórmula faz
 parte do combinado com eles, e a origem fica sempre explícita na tela.
 
-Configuração (Render → Environment). Sem as duas variáveis a integração fica
-desligada e o app segue funcionando como antes:
+Configuração (Render → Environment, ou .env local). Sem as duas variáveis a
+integração fica desligada e o app segue funcionando como antes:
     PCP_SUPABASE_URL
     PCP_SUPABASE_KEY
+
+Ambas precisam estar declaradas em app/core/config.py: o Settings recusa
+variável extra, então configurar no ambiente sem declarar lá derruba o boot.
 """
-import os
 from datetime import date, datetime, timedelta, timezone
 
 import requests
+
+from app.core.config import settings
 
 # O PCP atualiza o estoque uma vez ao dia; cache curto já evita repetir a chamada
 # a cada card aberto no painel, sem deixar o dado velho.
@@ -43,8 +47,8 @@ _CRITICO, _ATENCAO, _ADEQUADO, _ALTO = 1.0, 2.0, 6.0, 12.0
 
 
 def _config() -> tuple:
-    url = (os.getenv("PCP_SUPABASE_URL") or "").strip().rstrip("/")
-    key = (os.getenv("PCP_SUPABASE_KEY") or "").strip()
+    url = (settings.pcp_supabase_url or "").strip().rstrip("/")
+    key = (settings.pcp_supabase_key or "").strip()
     return (url, key) if (url and key) else (None, None)
 
 
