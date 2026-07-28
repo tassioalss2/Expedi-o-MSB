@@ -1,25 +1,24 @@
 """Integração com o app de cobertura de estoque do PCP (projeto Supabase próprio).
 
-O PCP mantém `pa_products` com estoque de produto acabado e o histórico de vendas
-por mês. Aqui a gente só LÊ: nada é escrito no banco deles.
+Lê a view `pa_coverage`, combinada com o PCP: eles calculam a cobertura do lado
+deles (mesma fórmula que a gente tinha deduzido e conferido — confirmada por
+eles) e expõem já pronta, em vez da gente reimplementar a conta aqui. Se um dia
+mudarem a fórmula, avisam antes — combinado com eles.
+
+Aqui a gente só LÊ, com uma chave de leitura dedicada (`ace-msb-integracao`);
+nada é escrito no banco deles.
 
 Cruzamento pelo CÓDIGO do produto, que é o mesmo dos dois lados
-(`produtos.codigo` aqui, `pa_products.code` lá) — não precisa de tabela de mapeamento.
+(`produtos.codigo` aqui, `pa_coverage.code` lá) — não precisa de tabela de
+mapeamento.
 
-Fórmula da cobertura (derivada dos números que o app do PCP exibe e conferida
-item a item contra a tela deles):
-
-    consumo_medio   = Σ vendas dos 6 meses ANTERIORES ao corrente ÷ 6
-    estoque_total   = stock (PA) + stock_sa (semi-acabado)
-    cobertura_meses = estoque_total ÷ consumo_medio
-
-O SA entra na conta: no VCET-5110CK1 a tela do PCP mostra 1,6 mês, que é
-(701 PA + 547 SA) ÷ 796, não 701 ÷ 796 (daria 0,9 e mudaria o status de Atenção
-para Crítico). Conferido também no 62038: (211 + 187) ÷ 796 = 0,5, igual à tela.
-
-Se o PCP mudar a fórmula, os dois apps passam a mostrar números diferentes para o
-mesmo item — pior que não ter integração. Por isso a confirmação da fórmula faz
-parte do combinado com eles, e a origem fica sempre explícita na tela.
+Colunas da view (conforme combinado com o PCP):
+    code, description, family      identificação do item
+    stock, stock_sa                estoque PA e SA separados
+    stock_total                    PA + SA
+    avg_consumption                média de venda dos últimos 6 meses
+    coverage_months                stock_total ÷ avg_consumption; null = sem
+                                    venda nos últimos 6 meses
 
 Configuração (Render → Environment, ou .env local). Sem as duas variáveis a
 integração fica desligada e o app segue funcionando como antes:
@@ -29,7 +28,7 @@ integração fica desligada e o app segue funcionando como antes:
 Ambas precisam estar declaradas em app/core/config.py: o Settings recusa
 variável extra, então configurar no ambiente sem declarar lá derruba o boot.
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import requests
 
@@ -56,19 +55,8 @@ def integracao_ativa() -> bool:
     return _config()[0] is not None
 
 
-def _janela_6_meses(hoje: date) -> list:
-    """As 6 competências anteriores à corrente, no formato 'AAAA-MM'."""
-    comps, ref = [], date(hoje.year, hoje.month, 1)
-    for _ in range(6):
-        ref = date(ref.year, ref.month, 1) - timedelta(days=1)
-        comps.append(f"{ref.year:04d}-{ref.month:02d}")
-    return comps
-
-
 def _status(cobertura, consumo_medio: float) -> str:
-    if consumo_medio <= 0:
-        return "SEM_GIRO"
-    if cobertura is None:
+    if consumo_medio <= 0 or cobertura is None:
         return "SEM_GIRO"
     if cobertura < _CRITICO:
         return "CRITICO"
@@ -81,27 +69,22 @@ def _status(cobertura, consumo_medio: float) -> str:
     return "EXCESSIVO"
 
 
-def _montar(row: dict, janela: list) -> dict:
-    historico = row.get("sales_history") or {}
-    vendas = sum(float(historico.get(c) or 0) for c in janela)
-    consumo_medio = round(vendas / 6, 2)
-    estoque_pa = float(row.get("stock") or 0)
-    estoque_sa = float(row.get("stock_sa") or 0)
-    estoque_total = estoque_pa + estoque_sa
-    cobertura = round(estoque_total / consumo_medio, 1) if consumo_medio > 0 else None
+def _montar(row: dict) -> dict:
+    consumo_medio = round(float(row.get("avg_consumption") or 0), 2)
+    cobertura = row.get("coverage_months")
+    cobertura = round(float(cobertura), 1) if cobertura is not None else None
     return {
         "codigo": row.get("code"),
         "descricao": row.get("description"),
         "familia": row.get("family"),
         # PA e SA separados: a expedição só pode contar com o PA hoje; o SA ainda
-        # precisa passar pela produção. A cobertura usa os dois (regra do PCP).
-        "estoque": round(estoque_pa),
-        "estoque_sa": round(estoque_sa),
-        "estoque_total": round(estoque_total),
+        # precisa passar pela produção. A cobertura (do PCP) usa os dois.
+        "estoque": round(float(row.get("stock") or 0)),
+        "estoque_sa": round(float(row.get("stock_sa") or 0)),
+        "estoque_total": round(float(row.get("stock_total") or 0)),
         "consumo_medio": consumo_medio,
         "cobertura_meses": cobertura,
         "status": _status(cobertura, consumo_medio),
-        "atualizado_em": row.get("updated_at"),
     }
 
 
@@ -118,8 +101,8 @@ def _buscar_tudo() -> dict:
         return {}
     try:
         resp = requests.get(
-            f"{url}/rest/v1/pa_products",
-            params={"select": "code,description,family,stock,stock_sa,sales_history,updated_at"},
+            f"{url}/rest/v1/pa_coverage",
+            params={"select": "code,description,family,stock,stock_sa,stock_total,avg_consumption,coverage_months"},
             headers={"apikey": key, "Authorization": f"Bearer {key}"},
             timeout=_TIMEOUT,
         )
@@ -129,12 +112,11 @@ def _buscar_tudo() -> dict:
         # Mantém o último cache válido, se houver — melhor dado de 1h atrás que nada.
         return dados or {}
 
-    janela = _janela_6_meses(date.today())
     mapa = {}
     for row in linhas:
         codigo = (row.get("code") or "").strip()
         if codigo:
-            mapa[codigo.upper()] = _montar(row, janela)
+            mapa[codigo.upper()] = _montar(row)
     _cache["em"], _cache["dados"] = agora, mapa
     return mapa
 
