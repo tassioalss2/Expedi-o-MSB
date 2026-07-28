@@ -624,7 +624,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim() && itensVdOk)
   // Comunicado de uso é regido pela AF + paciente + prontuário + NF + data do procedimento + itens com valor.
   const itensComunicadoOk = itens.length > 0 && itens.every(i => i.qtd > 0 && (i.valor || 0) > 0)
-  const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!numeroNf.trim() && !!dataProcedimento && itensComunicadoOk)
+  const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!numeroNf.trim() && !!dataProcedimento && !!canal && itensComunicadoOk)
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/demandas', {
@@ -712,11 +712,12 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
           </>
         )}
         <div className="grid grid-cols-2 gap-3">
-          <Campo label="Canal">
+          <Campo label={ehComunicado ? 'Canal *' : 'Canal'}>
             <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
               <option value="">A definir…</option>
               {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
             </select>
+            {ehComunicado && !canal && <p className="text-xs text-red-500 mt-1">Obrigatório.</p>}
           </Campo>
           {!ehComunicado && (
             <Campo label="Prazo / vigência">
@@ -848,6 +849,11 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
     mutationFn: (prioridade: string) => api.patch(`/licitacoes/demandas/${id}`, { prioridade }),
     onSuccess: onChanged,
   })
+  const canalMut = useMutation({
+    mutationFn: (canal: string) => api.patch(`/licitacoes/demandas/${id}`, { canal }),
+    onSuccess: () => { qcDet.invalidateQueries({ queryKey: ['demanda', id] }); onChanged(); toast.success('Canal atualizado') },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar canal')),
+  })
   const excluir = useMutation({
     mutationFn: () => api.delete(`/licitacoes/demandas/${id}`),
     onSuccess: () => { toast.success('Demanda removida'); onChanged(); onClose() },
@@ -877,7 +883,19 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-1">
             {d.numero_pregao && <span className="font-mono text-gray-700 font-medium">Pregão {d.numero_pregao}</span>}
             {d.numero && <span className="font-mono">{d.tipo_operacao === 'COMUNICADO_USO' ? `AF ${d.numero}` : `NE ${d.numero}`}</span>}
-            {d.canal && <span>Canal: {CANAL_LABEL[d.canal] || d.canal}</span>}
+            {d.canal ? (
+              <span>Canal: {CANAL_LABEL[d.canal] || d.canal}</span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-amber-600">
+                Canal: —
+                <select onChange={e => e.target.value && canalMut.mutate(e.target.value)} defaultValue=""
+                  disabled={canalMut.isPending}
+                  className="text-[11px] border border-amber-300 rounded px-1 py-0.5 bg-amber-50 text-amber-700">
+                  <option value="" disabled>Corrigir…</option>
+                  {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+                </select>
+              </span>
+            )}
             {d.prazo && <span className={prazoCor(d.prazo)}>Prazo: {fmtData(d.prazo)}</span>}
           </div>
           {d.tipo_operacao === 'COMUNICADO_USO' && (d.nome_paciente || d.prontuario || d.numero_nf || d.data_procedimento) && (
@@ -1414,11 +1432,18 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 // ── Aba Relatório (tudo que já foi feito — VD, comunicado de uso, consignação) ───
 function AbaRelatorio() {
   const navigate = useNavigate()
+  const qc = useQueryClient()
   const [tipo, setTipo] = useState('')
   const [canal, setCanal] = useState('')
   const [dataInicio, setDataInicio] = useState('')
   const [dataFim, setDataFim] = useState('')
   const [busca, setBusca] = useState('')
+
+  const canalMut = useMutation({
+    mutationFn: ({ id, canal }: { id: string; canal: string }) => api.patch(`/licitacoes/demandas/${id}`, { canal }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['relatorio-licitacoes'] }); toast.success('Canal atualizado') },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao salvar canal')),
+  })
 
   const { data: itens = [], isLoading } = useQuery<any[]>({
     queryKey: ['relatorio-licitacoes', tipo, canal, dataInicio, dataFim],
@@ -1562,7 +1587,16 @@ function AbaRelatorio() {
                       ) : '—'}
                     </td>
                     <td className="px-3 py-2 font-mono text-gray-600 whitespace-nowrap">{d.numero_nf || '—'}</td>
-                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{d.canal ? (CANAL_LABEL[d.canal] || d.canal) : '—'}</td>
+                    <td className="px-3 py-2 text-gray-500 whitespace-nowrap">
+                      {d.canal ? (CANAL_LABEL[d.canal] || d.canal) : (
+                        <select onChange={e => e.target.value && canalMut.mutate({ id: d.id, canal: e.target.value })} defaultValue=""
+                          disabled={canalMut.isPending}
+                          className="text-[11px] border border-amber-300 rounded px-1 py-0.5 bg-amber-50 text-amber-700">
+                          <option value="" disabled>Corrigir…</option>
+                          {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+                        </select>
+                      )}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className={`text-xs ${ehFinal(d) ? 'text-emerald-600' : 'text-amber-600'}`}>{ehFinal(d) ? '✓ ' : '⏳ '}{ETAPA_LABEL[normEtapa(d.etapa)] || d.etapa}</span>
                     </td>

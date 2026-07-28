@@ -352,6 +352,8 @@ def criar_demanda(payload: DemandaCreate) -> dict:
             raise HTTPException(status_code=422, detail="Informe o número da NF.")
         if not payload.data_procedimento:
             raise HTTPException(status_code=422, detail="Informe a data do procedimento.")
+        if not (payload.canal or "").strip():
+            raise HTTPException(status_code=422, detail="Informe o canal.")
     elif payload.tipo_operacao in ("VENDA_DIRETA", "CONSIGNACAO"):
         if not num:
             raise HTTPException(status_code=422, detail="Informe a Nota de Empenho (NE).")
