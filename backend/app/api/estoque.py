@@ -28,3 +28,10 @@ def comprometido_detalhe(codigo: str, _: UsuarioOut = Depends(get_current_user))
     """As OVs por trás do número de 'comprometido' de um item — clicar na coluna
     do estoque abre isto, para auditar de onde vem a conta."""
     return estoque_service.comprometido_detalhe(codigo)
+
+
+@router.get("/{codigo}/historico-vendas")
+def historico_vendas(codigo: str, _: UsuarioOut = Depends(get_current_user)):
+    """Vendido por mês (últimos 6 meses de calendário) e tendência (30d vs 30d
+    anteriores) de um item — para o modal de histórico de vendas."""
+    return estoque_service.historico_vendas(codigo)
