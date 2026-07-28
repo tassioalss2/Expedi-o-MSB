@@ -43,6 +43,47 @@ _STATUS_FATURADOS = ["FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO"]
 
 _FAIXA_CRITICO, _FAIXA_ATENCAO, _FAIXA_ADEQUADO, _FAIXA_ALTO = 1.0, 2.0, 6.0, 12.0
 
+# A view do PCP (pa_coverage) não tem coluna "linha" — só família. O app deles
+# tem as duas (família = tipo específico do produto; linha = Urologia/Vascular/
+# Acessórios). Mapeamento conferido item a item contra a tela deles.
+_FAMILIA_LINHA = {
+    "BAINHA INTRODUTORA URETERAL": "Urologia",
+    "BAINHA SPEED CROSS": "Vascular",
+    "BAINHA SPEED CROSS TWIST": "Vascular",
+    "CAMERA DE DRENAGEM": "Acessórios",
+    "CATETER ARTERIAL": "Vascular",
+    "CATETER BALAO PTA": "Vascular",
+    "CATETER DIAGNOSTICO": "Vascular",
+    "CATETER EMBOLECTOMIA": "Vascular",
+    "CATETER LACO SNARE": "Vascular",
+    "DILATADOR URETERAL": "Urologia",
+    "ELETRODO TEMPORARIO": "Vascular",
+    "FIBRA LASER UROLOGIA": "Urologia",
+    "FIO GUIA HIDROFILICO": "Vascular",
+    "FIO GUIA HIDROFILICO UROLOGICO": "Urologia",
+    "FIO GUIA TEFLONADO": "Vascular",
+    "INSUFLADOR": "Acessórios",
+    "INTRODUTOR FEMORAL": "Acessórios",
+    "IRRIGADOR URETERAL": "Urologia",
+    "KIT DUPLO J": "Urologia",
+    "PIGTAIL CENTIMETRADO": "Acessórios",
+    "REALCLOSURE": "Vascular",
+    "SONDA BASKET": "Urologia",
+    "SONDA URETERAL DUPLO J": "Urologia",
+    "TUNELIZADOR": "Vascular",
+    "URETERESCOPIOS FLEXIVEIS": "Urologia",
+}
+
+
+def _norm_familia(familia) -> str:
+    return " ".join((familia or "").strip().upper().split())
+
+
+def _linha_da_familia(familia) -> str:
+    # Sem correspondência (família nova que o PCP ainda não tinha quando
+    # conferimos): cai em "Outros" em vez de sumir da lista.
+    return _FAMILIA_LINHA.get(_norm_familia(familia), "Outros")
+
 
 def _hoje_brt() -> date:
     return (datetime.now(timezone.utc) - timedelta(hours=3)).date()
@@ -236,6 +277,7 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
             "codigo": row.get("codigo"),
             "descricao": row.get("descricao"),
             "familia": row.get("familia"),
+            "linha": _linha_da_familia(row.get("familia")),
             "estoque_pcp": round(pa),
             "estoque_sa": round(sa),
             "comprometido": round(comp),

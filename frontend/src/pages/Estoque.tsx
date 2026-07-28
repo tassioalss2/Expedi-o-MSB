@@ -9,6 +9,7 @@ interface ItemEstoque {
   codigo: string
   descricao?: string
   familia?: string
+  linha?: string
   estoque_pcp: number
   estoque_sa: number
   comprometido: number
@@ -51,6 +52,7 @@ export function Estoque() {
   const [busca, setBusca] = useState('')
   const [statusFiltro, setStatusFiltro] = useState('')
   const [familia, setFamilia] = useState('')
+  const [linha, setLinha] = useState('')
 
   const { data, isLoading } = useQuery<Resposta>({
     queryKey: ['estoque'],
@@ -71,20 +73,27 @@ export function Estoque() {
   })
 
   const itens = data?.itens || []
-  const familias = useMemo(
-    () => [...new Set(itens.map(i => i.familia).filter(Boolean))].sort() as string[],
+  const linhas = useMemo(
+    () => [...new Set(itens.map(i => i.linha).filter(Boolean))].sort() as string[],
     [itens]
+  )
+  // Famílias do filtro seguem a linha escolhida — evita listar família de
+  // Urologia quando o usuário já filtrou por Vascular.
+  const familias = useMemo(
+    () => [...new Set(itens.filter(i => !linha || i.linha === linha).map(i => i.familia).filter(Boolean))].sort() as string[],
+    [itens, linha]
   )
 
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase()
     return itens.filter(i => {
       if (statusFiltro && i.status !== statusFiltro) return false
+      if (linha && i.linha !== linha) return false
       if (familia && i.familia !== familia) return false
       if (!t) return true
       return `${i.codigo} ${i.descricao || ''} ${i.familia || ''}`.toLowerCase().includes(t)
     })
-  }, [itens, busca, statusFiltro, familia])
+  }, [itens, busca, statusFiltro, familia, linha])
 
   const kpis = useMemo(() => {
     const porStatus: Record<string, number> = {}
@@ -99,14 +108,14 @@ export function Estoque() {
   }, [itens])
 
   const exportar = () => {
-    const cols = ['Código', 'Descrição', 'Família', 'Estoque PCP', 'SA', 'Comprometido', 'Disponível', 'Consumo médio', 'Cobertura PCP', 'Cobertura disponível', 'Status']
-    const linhas = filtrados.map(i => [
-      i.codigo, i.descricao || '', i.familia || '', i.estoque_pcp, i.estoque_sa,
+    const cols = ['Código', 'Descrição', 'Linha', 'Família', 'Estoque PCP', 'SA', 'Comprometido', 'Disponível', 'Consumo médio', 'Cobertura PCP', 'Cobertura disponível', 'Status']
+    const linhasCsv = filtrados.map(i => [
+      i.codigo, i.descricao || '', i.linha || '', i.familia || '', i.estoque_pcp, i.estoque_sa,
       i.comprometido, i.disponivel, i.consumo_medio,
       i.cobertura_pcp ?? '', i.cobertura_disponivel ?? '',
       STATUS_CFG[i.status]?.label || i.status,
     ])
-    const csv = [cols, ...linhas].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n')
+    const csv = [cols, ...linhasCsv].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n')
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -191,7 +200,7 @@ export function Estoque() {
               <span>
                 <strong>{kpis.negativos} {kpis.negativos === 1 ? 'item está' : 'itens estão'} com disponível negativo</strong> —
                 há mais quantidade comprometida em OVs do que material no estoque.
-                <button onClick={() => { setStatusFiltro(''); setFamilia(''); setBusca('') }} className="ml-1 underline">
+                <button onClick={() => { setStatusFiltro(''); setFamilia(''); setLinha(''); setBusca('') }} className="ml-1 underline">
                   ver na lista
                 </button> (aparecem no topo).
               </span>
@@ -213,6 +222,10 @@ export function Estoque() {
               </button>
             )}
           </div>
+          <select value={linha} onChange={e => { setLinha(e.target.value); setFamilia('') }} className="border rounded-lg px-3 py-2 text-sm">
+            <option value="">Todas as linhas</option>
+            {linhas.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
           <select value={familia} onChange={e => setFamilia(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
             <option value="">Todas as famílias</option>
             {familias.map(f => <option key={f} value={f}>{f}</option>)}
@@ -232,7 +245,9 @@ export function Estoque() {
                 <tr className="text-[11px] uppercase text-gray-400 text-left border-b bg-gray-50/60">
                   <th className="px-3 py-2 font-medium">Código</th>
                   <th className="px-3 py-2 font-medium">Descrição</th>
+                  <th className="px-3 py-2 font-medium">Linha</th>
                   <th className="px-3 py-2 font-medium text-right">Estoque PCP</th>
+                  <th className="px-3 py-2 font-medium text-right">SA (a liberar)</th>
                   <th className="px-3 py-2 font-medium text-right">Comprometido</th>
                   <th className="px-3 py-2 font-medium text-right">Disponível</th>
                   <th className="px-3 py-2 font-medium text-right">Consumo/mês</th>
@@ -242,20 +257,23 @@ export function Estoque() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filtrados.length === 0 ? (
-                  <tr><td colSpan={8} className="px-3 py-10 text-center text-gray-400">Nenhum item encontrado.</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-10 text-center text-gray-400">Nenhum item encontrado.</td></tr>
                 ) : filtrados.map(i => {
                   const cfg = STATUS_CFG[i.status] || STATUS_CFG.SEM_GIRO
                   const negativo = i.disponivel < 0
                   return (
                     <tr key={i.codigo} className={`hover:bg-gray-50/60 ${negativo ? 'bg-red-50/40' : ''}`}>
                       <td className="px-3 py-2 font-mono font-medium text-gray-800 whitespace-nowrap">{i.codigo}</td>
-                      <td className="px-3 py-2 text-gray-600 max-w-[280px] truncate" title={i.descricao}>
+                      <td className="px-3 py-2 text-gray-600 max-w-[240px] truncate" title={i.descricao}>
                         {i.descricao || '—'}
                         {i.familia && <span className="block text-[11px] text-gray-400">{i.familia}</span>}
                       </td>
+                      <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{i.linha || '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">
                         {fmtNum(i.estoque_pcp)}
-                        {i.estoque_sa > 0 && <span className="block text-[11px] text-gray-400">+{fmtNum(i.estoque_sa)} SA</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                        {i.estoque_sa > 0 ? <span className="text-indigo-600 font-medium">{fmtNum(i.estoque_sa)}</span> : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                         {i.comprometido > 0 ? <span className="text-amber-600">−{fmtNum(i.comprometido)}</span> : <span className="text-gray-300">—</span>}
@@ -288,7 +306,8 @@ export function Estoque() {
 
       {itens.length > 0 && (
         <p className="text-[11px] text-gray-400">
-          <strong>Estoque PCP</strong> é a foto de produto acabado da manhã (SA = semi-acabado, ainda depende da produção).
+          <strong>Estoque PCP</strong> é o produto acabado pronto pra faturar, na foto da manhã.
+          <strong> SA (a liberar)</strong> é o semi-acabado — ainda depende da produção, não entra no disponível.
           <strong> Comprometido</strong> são as OVs deste app que ainda não faturaram, mais as que faturaram depois da foto.
           <strong> Cobertura</strong> é o disponível ÷ consumo médio dos últimos 6 meses — quando difere da do PCP, é porque
           o comprometido ainda não aparece lá.
