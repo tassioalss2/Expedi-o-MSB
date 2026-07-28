@@ -86,6 +86,9 @@ const STATUS_CFG: Record<string, { label: string; cor: string; ponto: string }> 
 }
 const ORDEM_STATUS = ['CRITICO', 'ATENCAO', 'ADEQUADO', 'ALTO', 'EXCESSIVO', 'SEM_GIRO']
 
+// Piso de volume para o ranking de tendência (un/mês na maior das duas janelas).
+const VOLUME_MINIMO = 10
+
 const fmtCob = (v: number | null) => (v == null ? '—' : `${v.toFixed(1).replace('.', ',')} m`)
 const fmtNum = (v: number) => v.toLocaleString('pt-BR')
 
@@ -101,6 +104,7 @@ export function Estoque() {
   const [statusFiltro, setStatusFiltro] = useState('')
   const [familia, setFamilia] = useState('')
   const [linha, setLinha] = useState('')
+  const [ordem, setOrdem] = useState<'' | 'alta' | 'baixa'>('')
   const [detalheCodigo, setDetalheCodigo] = useState<string | null>(null)
   const [historicoCodigo, setHistoricoCodigo] = useState<string | null>(null)
 
@@ -148,14 +152,24 @@ export function Estoque() {
 
   const filtrados = useMemo(() => {
     const t = busca.trim().toLowerCase()
-    return itens.filter(i => {
+    const base = itens.filter(i => {
       if (statusFiltro && i.status !== statusFiltro) return false
       if (linha && i.linha !== linha) return false
       if (familia && i.familia !== familia) return false
       if (!t) return true
       return `${i.codigo} ${i.descricao || ''} ${i.familia || ''}`.toLowerCase().includes(t)
     })
-  }, [itens, busca, statusFiltro, familia, linha])
+    if (!ordem) return base
+    // Ordenar por tendência: itens sem base de comparação saem fora (a pergunta
+    // é "o que subiu/caiu"), e também os de volume irrelevante — em cima de 2
+    // un/mês qualquer oscilação vira ±100% e enterraria o que importa. Com o
+    // piso, as quedas do topo passaram de itens de ~2 un/mês para os de 80.
+    return base
+      .filter(i => i.tendencia_pct != null && Math.max(i.media_3m || 0, i.media_3m_anterior || 0) >= VOLUME_MINIMO)
+      .sort((a, b) => ordem === 'alta'
+        ? (b.tendencia_pct! - a.tendencia_pct!)
+        : (a.tendencia_pct! - b.tendencia_pct!))
+  }, [itens, busca, statusFiltro, familia, linha, ordem])
 
   const kpis = useMemo(() => {
     const porStatus: Record<string, number> = {}
@@ -265,7 +279,7 @@ export function Estoque() {
               <span>
                 <strong>{kpis.negativos} {kpis.negativos === 1 ? 'item está' : 'itens estão'} com disponível negativo</strong> —
                 há mais quantidade comprometida em OVs do que material no estoque.
-                <button onClick={() => { setStatusFiltro(''); setFamilia(''); setLinha(''); setBusca('') }} className="ml-1 underline">
+                <button onClick={() => { setStatusFiltro(''); setFamilia(''); setLinha(''); setBusca(''); setOrdem('') }} className="ml-1 underline">
                   ver na lista
                 </button> (aparecem no topo).
               </span>
@@ -295,10 +309,20 @@ export function Estoque() {
             <option value="">Todas as famílias</option>
             {familias.map(f => <option key={f} value={f}>{f}</option>)}
           </select>
+          <select value={ordem} onChange={e => setOrdem(e.target.value as '' | 'alta' | 'baixa')}
+            className="border rounded-lg px-3 py-2 text-sm">
+            <option value="">Ordem: mais crítico</option>
+            <option value="alta">Tendência: maiores altas</option>
+            <option value="baixa">Tendência: maiores quedas</option>
+          </select>
           <span className="text-xs text-gray-400 lg:ml-auto">
             {filtrados.length} de {itens.length} itens
-            {kpis.comprometidoTotal > 0 && <> · {fmtNum(Math.round(kpis.comprometidoTotal))} un. comprometidas</>}
-            {kpis.vendidoMes > 0 && data?.mes_atual && <> · {fmtNum(kpis.vendidoMes)} un. faturadas em {fmtMes(data.mes_atual)}</>}
+            {ordem
+              ? <> · com tendência e acima de {VOLUME_MINIMO} un/mês</>
+              : <>
+                  {kpis.comprometidoTotal > 0 && <> · {fmtNum(Math.round(kpis.comprometidoTotal))} un. comprometidas</>}
+                  {kpis.vendidoMes > 0 && data?.mes_atual && <> · {fmtNum(kpis.vendidoMes)} un. faturadas em {fmtMes(data.mes_atual)}</>}
+                </>}
           </span>
         </div>
       )}
