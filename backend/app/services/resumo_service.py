@@ -109,13 +109,14 @@ def montar_resumo() -> str:
     try:
         dem = db.table("licitacao_demandas").select("etapa, prazo, estoque, clientes(nome)")\
             .eq("ativo", True).eq("etapa", "AGUARDANDO_ESTOQUE").execute().data
+        from app.services import licitacao_demanda_service
         aguardando, em_risco = [], []
         for d in dem:
             nome = (d.get("clientes") or {}).get("nome") or "?"
             est = d.get("estoque") or {}
             previsao = est.get("previsao_pcp")
             prazo = d.get("prazo")
-            risco = bool(prazo) and ((previsao and previsao > prazo) or prazo < hoje)
+            risco = licitacao_demanda_service.risco_multa_estoque(d, hoje)
             rotulo = nome + (f" (PCP {_fmt(previsao)})" if previsao else "")
             aguardando.append(rotulo)
             if risco:

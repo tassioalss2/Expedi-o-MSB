@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
@@ -177,8 +177,22 @@ function prazoCor(prazo?: string | null): string {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
+type AbaLicitacao = 'painel' | 'contratos' | 'relatorio'
+
 export function Licitacoes() {
-  const [aba, setAba] = useState<'painel' | 'contratos' | 'relatorio'>('painel')
+  // A aba vem da URL para poder ser linkada de fora (a tela de início aponta
+  // direto para Contratos). Fica na URL também ao trocar, então recarregar ou
+  // compartilhar o link cai na mesma aba.
+  const [params, setParams] = useSearchParams()
+  const abaUrl = params.get('aba')
+  const aba: AbaLicitacao =
+    abaUrl === 'contratos' || abaUrl === 'relatorio' ? abaUrl : 'painel'
+  const setAba = (k: AbaLicitacao) => {
+    const p = new URLSearchParams(params)
+    if (k === 'painel') p.delete('aba')
+    else p.set('aba', k)
+    setParams(p, { replace: true })
+  }
 
   return (
     <div className="p-4 lg:p-6 max-w-[1400px] mx-auto space-y-4">

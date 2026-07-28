@@ -641,6 +641,21 @@ def enviar_nf(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
     return obter_demanda(demanda_id)
 
 
+def risco_multa_estoque(demanda: dict, hoje_iso: str) -> bool:
+    """Demanda sem estoque que já ameaça multa contratual: a previsão do PCP cai
+    depois do prazo, ou o prazo simplesmente já venceu.
+
+    Vive aqui (e não em quem consome) porque é regra de negócio de licitação — o
+    resumo do Teams e a tela de início leem a MESMA definição, senão um alerta
+    diria uma coisa e o outro diria outra para o mesmo card.
+    """
+    prazo = demanda.get("prazo")
+    if not prazo:
+        return False
+    previsao = (demanda.get("estoque") or {}).get("previsao_pcp")
+    return bool((previsao and previsao > prazo) or prazo < hoje_iso)
+
+
 def marcar_sem_estoque(demanda_id: str, payload) -> dict:
     """Sinaliza que o pedido não tem estoque disponível. O card vai para a coluna
     'Aguardando estoque (PCP)' e NÃO sai do painel — fica visível até o estoque

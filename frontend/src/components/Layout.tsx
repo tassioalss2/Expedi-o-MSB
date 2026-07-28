@@ -8,6 +8,7 @@ import {
   DollarSign, Home, Users, Gavel, Handshake, TrendingUp, Boxes,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
+import { BarraMeta } from './BarraMeta'
 import { clsx } from 'clsx'
 
 type NavItem = {
@@ -120,7 +121,7 @@ export function Layout() {
               }
             >
               <Home size={18} />
-              <span className="flex-1">Visão Geral</span>
+              <span className="flex-1">Início</span>
             </NavLink>
           </div>
           {[{ titulo: 'Logística', itens: navLogistica }, { titulo: 'Comercial', itens: navComercial }].map((grupo) => (
@@ -274,10 +275,11 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* Conteúdo principal */}
-      <main className="flex-1 overflow-auto flex flex-col min-w-0">
+      {/* Conteúdo principal. O overflow fica só no container da página (abaixo),
+          para a barra de meta não rolar junto com o conteúdo. */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Topbar mobile com botão hamburguer */}
-        <div className="lg:hidden flex items-center gap-3 px-4 py-3 bg-gray-900 text-white sticky top-0 z-10">
+        <div className="lg:hidden flex items-center gap-3 px-4 py-3 bg-gray-900 text-white shrink-0">
           <button
             onClick={() => setSidebarAberto(true)}
             className="p-1 hover:bg-gray-700 rounded"
@@ -290,6 +292,10 @@ export function Layout() {
             className="h-7 w-auto object-contain brightness-0 invert"
           />
         </div>
+
+        {/* Meta do mês — fixa acima de qualquer tela: dá para saber como está o
+            faturamento sem sair de onde se está trabalhando. */}
+        <BarraMeta />
 
         {/* Página */}
         <div className="flex-1 overflow-auto">
