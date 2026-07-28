@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, Home, Users, Gavel, Handshake, TrendingUp,
+  DollarSign, Home, Users, Gavel, Handshake, TrendingUp, Boxes,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { clsx } from 'clsx'
@@ -207,6 +207,22 @@ export function Layout() {
             >
               <Handshake size={18} />
               <span className="flex-1">CRM</span>
+            </NavLink>
+            {/* Estoque — foto do PCP menos as OVs comprometidas. Todo o time usa,
+                principalmente o comercial, para saber o que pode prometer. */}
+            <NavLink
+              to="/estoque"
+              end
+              onClick={fecharSidebar}
+              className={({ isActive }) =>
+                clsx(
+                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors',
+                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                )
+              }
+            >
+              <Boxes size={18} />
+              <span className="flex-1">Estoque</span>
             </NavLink>
           </div>
 

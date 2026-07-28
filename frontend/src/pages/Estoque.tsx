@@ -1,0 +1,299 @@
+import { useMemo, useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
+import { Boxes, Search, X, RefreshCw, AlertTriangle, Download } from 'lucide-react'
+import api from '../lib/api'
+import { msgErro } from '../lib/crm'
+
+interface ItemEstoque {
+  codigo: string
+  descricao?: string
+  familia?: string
+  estoque_pcp: number
+  estoque_sa: number
+  comprometido: number
+  disponivel: number
+  consumo_medio: number
+  cobertura_pcp: number | null
+  cobertura_disponivel: number | null
+  status: string
+}
+interface Resposta {
+  itens: ItemEstoque[]
+  data_ref: string | null
+  sincronizado_em: string | null
+  desatualizado: boolean
+  integracao: boolean
+  sync?: { sincronizou: boolean; motivo: string | null; itens: number } | null
+}
+
+const STATUS_CFG: Record<string, { label: string; cor: string; ponto: string }> = {
+  CRITICO: { label: 'Crítico', cor: 'bg-red-50 text-red-700', ponto: 'bg-red-500' },
+  ATENCAO: { label: 'Atenção', cor: 'bg-amber-50 text-amber-700', ponto: 'bg-amber-500' },
+  ADEQUADO: { label: 'Adequado', cor: 'bg-emerald-50 text-emerald-700', ponto: 'bg-emerald-500' },
+  ALTO: { label: 'Alto', cor: 'bg-blue-50 text-blue-700', ponto: 'bg-blue-500' },
+  EXCESSIVO: { label: 'Excessivo', cor: 'bg-purple-50 text-purple-700', ponto: 'bg-purple-500' },
+  SEM_GIRO: { label: 'Sem giro', cor: 'bg-gray-100 text-gray-500', ponto: 'bg-gray-400' },
+}
+const ORDEM_STATUS = ['CRITICO', 'ATENCAO', 'ADEQUADO', 'ALTO', 'EXCESSIVO', 'SEM_GIRO']
+
+const fmtCob = (v: number | null) => (v == null ? '—' : `${v.toFixed(1).replace('.', ',')} m`)
+const fmtNum = (v: number) => v.toLocaleString('pt-BR')
+
+function fmtQuando(iso: string | null) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+export function Estoque() {
+  const qc = useQueryClient()
+  const [busca, setBusca] = useState('')
+  const [statusFiltro, setStatusFiltro] = useState('')
+  const [familia, setFamilia] = useState('')
+
+  const { data, isLoading } = useQuery<Resposta>({
+    queryKey: ['estoque'],
+    queryFn: () => api.get('/estoque').then(r => r.data),
+  })
+
+  const sincronizar = useMutation({
+    mutationFn: () => api.post('/estoque/sincronizar').then(r => r.data),
+    onSuccess: (res: any) => {
+      if (res?.sincronizou) toast.success(`Estoque sincronizado com o PCP (${res.itens} itens)`)
+      else if (res?.motivo === 'pcp_indisponivel') toast.error('App do PCP indisponível — mantida a última foto')
+      else if (res?.motivo === 'tabela_ausente') toast.error('Rode a migration v19 no Supabase antes de sincronizar')
+      else if (res?.motivo === 'integracao_desligada') toast.error('Integração com o PCP não configurada')
+      else toast.success('Estoque já estava sincronizado')
+      qc.invalidateQueries({ queryKey: ['estoque'] })
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao sincronizar')),
+  })
+
+  const itens = data?.itens || []
+  const familias = useMemo(
+    () => [...new Set(itens.map(i => i.familia).filter(Boolean))].sort() as string[],
+    [itens]
+  )
+
+  const filtrados = useMemo(() => {
+    const t = busca.trim().toLowerCase()
+    return itens.filter(i => {
+      if (statusFiltro && i.status !== statusFiltro) return false
+      if (familia && i.familia !== familia) return false
+      if (!t) return true
+      return `${i.codigo} ${i.descricao || ''} ${i.familia || ''}`.toLowerCase().includes(t)
+    })
+  }, [itens, busca, statusFiltro, familia])
+
+  const kpis = useMemo(() => {
+    const porStatus: Record<string, number> = {}
+    let negativos = 0
+    let comprometidoTotal = 0
+    for (const i of itens) {
+      porStatus[i.status] = (porStatus[i.status] || 0) + 1
+      if (i.disponivel < 0) negativos++
+      comprometidoTotal += i.comprometido
+    }
+    return { porStatus, negativos, comprometidoTotal }
+  }, [itens])
+
+  const exportar = () => {
+    const cols = ['Código', 'Descrição', 'Família', 'Estoque PCP', 'SA', 'Comprometido', 'Disponível', 'Consumo médio', 'Cobertura PCP', 'Cobertura disponível', 'Status']
+    const linhas = filtrados.map(i => [
+      i.codigo, i.descricao || '', i.familia || '', i.estoque_pcp, i.estoque_sa,
+      i.comprometido, i.disponivel, i.consumo_medio,
+      i.cobertura_pcp ?? '', i.cobertura_disponivel ?? '',
+      STATUS_CFG[i.status]?.label || i.status,
+    ])
+    const csv = [cols, ...linhas].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `estoque-${data?.data_ref || 'hoje'}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  if (isLoading) return <div className="p-6 text-gray-400 text-sm">Carregando estoque…</div>
+
+  return (
+    <div className="p-4 sm:p-6 space-y-4 max-w-7xl mx-auto">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Boxes className="text-blue-600" size={22} />
+          <div>
+            <h1 className="text-xl font-bold text-gray-800">Estoque disponível</h1>
+            <p className="text-sm text-gray-500">
+              Foto do PCP de {data?.data_ref ? data.data_ref.split('-').reverse().join('/') : '—'}
+              {data?.sincronizado_em && <> às {fmtQuando(data.sincronizado_em).split(' ')[1]}</>}
+              {' '}· menos as OVs já comprometidas no app
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={exportar} disabled={filtrados.length === 0}
+            className="flex items-center gap-1.5 text-sm border rounded-lg px-3 py-2 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            <Download size={15} /> CSV
+          </button>
+          <button onClick={() => sincronizar.mutate()} disabled={sincronizar.isPending}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg">
+            <RefreshCw size={15} className={sincronizar.isPending ? 'animate-spin' : ''} />
+            {sincronizar.isPending ? 'Sincronizando…' : 'Sincronizar agora'}
+          </button>
+        </div>
+      </div>
+
+      {!data?.integracao && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+          Integração com o app do PCP não configurada — sem as variáveis <strong>PCP_SUPABASE_URL</strong> e
+          <strong> PCP_SUPABASE_KEY</strong> não há de onde puxar o estoque.
+        </div>
+      )}
+      {data?.integracao && itens.length === 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+          Nenhuma foto de estoque gravada ainda.
+          {data?.sync?.motivo === 'tabela_ausente'
+            ? <> Rode a <strong>migration v19</strong> no Supabase e clique em "Sincronizar agora".</>
+            : <> Clique em <strong>Sincronizar agora</strong> para puxar do PCP.</>}
+        </div>
+      )}
+      {data?.desatualizado && itens.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800 flex items-center gap-2">
+          <AlertTriangle size={16} />
+          Esta foto não é de hoje — o PCP pode não ter publicado a planilha ainda. Use "Sincronizar agora" quando publicar.
+        </div>
+      )}
+
+      {itens.length > 0 && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {ORDEM_STATUS.map(s => {
+              const cfg = STATUS_CFG[s]
+              const n = kpis.porStatus[s] || 0
+              const ativo = statusFiltro === s
+              return (
+                <button key={s} onClick={() => setStatusFiltro(ativo ? '' : s)}
+                  className={`bg-white rounded-xl border shadow-sm px-3 py-2 text-left transition ${ativo ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-100 hover:border-gray-300'}`}>
+                  <p className="text-xl font-bold tabular-nums text-gray-800">{n}</p>
+                  <p className="text-[11px] text-gray-500 flex items-center gap-1">
+                    <span className={`inline-block w-2 h-2 rounded-full ${cfg.ponto}`} /> {cfg.label}
+                  </p>
+                </button>
+              )
+            })}
+          </div>
+
+          {kpis.negativos > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-800 flex items-start gap-2">
+              <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+              <span>
+                <strong>{kpis.negativos} {kpis.negativos === 1 ? 'item está' : 'itens estão'} com disponível negativo</strong> —
+                há mais quantidade comprometida em OVs do que material no estoque.
+                <button onClick={() => { setStatusFiltro(''); setFamilia(''); setBusca('') }} className="ml-1 underline">
+                  ver na lista
+                </button> (aparecem no topo).
+              </span>
+            </div>
+          )}
+        </>
+      )}
+
+      {itens.length > 0 && (
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          <div className="relative flex-1 max-w-sm">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar código, descrição ou família…"
+              className="w-full border rounded-lg pl-9 pr-8 py-2 text-sm" />
+            {busca && (
+              <button onClick={() => setBusca('')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-gray-600">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <select value={familia} onChange={e => setFamilia(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
+            <option value="">Todas as famílias</option>
+            {familias.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <span className="text-xs text-gray-400 lg:ml-auto">
+            {filtrados.length} de {itens.length} itens
+            {kpis.comprometidoTotal > 0 && <> · {fmtNum(Math.round(kpis.comprometidoTotal))} un. comprometidas</>}
+          </span>
+        </div>
+      )}
+
+      {itens.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase text-gray-400 text-left border-b bg-gray-50/60">
+                  <th className="px-3 py-2 font-medium">Código</th>
+                  <th className="px-3 py-2 font-medium">Descrição</th>
+                  <th className="px-3 py-2 font-medium text-right">Estoque PCP</th>
+                  <th className="px-3 py-2 font-medium text-right">Comprometido</th>
+                  <th className="px-3 py-2 font-medium text-right">Disponível</th>
+                  <th className="px-3 py-2 font-medium text-right">Consumo/mês</th>
+                  <th className="px-3 py-2 font-medium text-right">Cobertura</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filtrados.length === 0 ? (
+                  <tr><td colSpan={8} className="px-3 py-10 text-center text-gray-400">Nenhum item encontrado.</td></tr>
+                ) : filtrados.map(i => {
+                  const cfg = STATUS_CFG[i.status] || STATUS_CFG.SEM_GIRO
+                  const negativo = i.disponivel < 0
+                  return (
+                    <tr key={i.codigo} className={`hover:bg-gray-50/60 ${negativo ? 'bg-red-50/40' : ''}`}>
+                      <td className="px-3 py-2 font-mono font-medium text-gray-800 whitespace-nowrap">{i.codigo}</td>
+                      <td className="px-3 py-2 text-gray-600 max-w-[280px] truncate" title={i.descricao}>
+                        {i.descricao || '—'}
+                        {i.familia && <span className="block text-[11px] text-gray-400">{i.familia}</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-600 whitespace-nowrap">
+                        {fmtNum(i.estoque_pcp)}
+                        {i.estoque_sa > 0 && <span className="block text-[11px] text-gray-400">+{fmtNum(i.estoque_sa)} SA</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                        {i.comprometido > 0 ? <span className="text-amber-600">−{fmtNum(i.comprometido)}</span> : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className={`px-3 py-2 text-right tabular-nums font-bold whitespace-nowrap ${negativo ? 'text-red-600' : 'text-gray-800'}`}>
+                        {fmtNum(i.disponivel)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-gray-500 whitespace-nowrap">
+                        {i.consumo_medio > 0 ? fmtNum(Math.round(i.consumo_medio)) : '—'}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                        <span className={negativo ? 'text-red-600 font-medium' : 'text-gray-700'}>{fmtCob(i.cobertura_disponivel)}</span>
+                        {i.cobertura_pcp != null && i.cobertura_disponivel != null && Math.abs(i.cobertura_pcp - i.cobertura_disponivel) >= 0.1 && (
+                          <span className="block text-[11px] text-gray-400">PCP: {fmtCob(i.cobertura_pcp)}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full ${cfg.cor}`}>
+                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${cfg.ponto}`} /> {cfg.label}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {itens.length > 0 && (
+        <p className="text-[11px] text-gray-400">
+          <strong>Estoque PCP</strong> é a foto de produto acabado da manhã (SA = semi-acabado, ainda depende da produção).
+          <strong> Comprometido</strong> são as OVs deste app que ainda não faturaram, mais as que faturaram depois da foto.
+          <strong> Cobertura</strong> é o disponível ÷ consumo médio dos últimos 6 meses — quando difere da do PCP, é porque
+          o comprometido ainda não aparece lá.
+        </p>
+      )}
+    </div>
+  )
+}

@@ -121,6 +121,13 @@ def _buscar_tudo() -> dict:
     return mapa
 
 
+def buscar_cobertura_pcp() -> dict:
+    """codigo -> cobertura do PCP, tudo. Usado pela sincronização diária do
+    estoque (estoque_service), que precisa da lista completa e não do cache."""
+    _cache["em"], _cache["dados"] = None, None
+    return _buscar_tudo()
+
+
 def cobertura_por_codigos(codigos: list) -> dict:
     """codigo -> cobertura, só para os códigos pedidos (os que o PCP não conhece
     ficam de fora)."""

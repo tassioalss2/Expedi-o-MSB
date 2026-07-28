@@ -21,6 +21,7 @@ import { InventarioContinuo } from './pages/InventarioContinuo'
 import { InventarioContagem } from './pages/InventarioContagem'
 import { Usuarios } from './pages/Usuarios'
 import { Licitacoes } from './pages/Licitacoes'
+import { Estoque } from './pages/Estoque'
 import { Crm } from './pages/crm/Crm'
 import { CotacaoImprimir } from './pages/crm/CotacaoImprimir'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -79,6 +80,7 @@ export default function App() {
             <Route path="inventario/contagem" element={<InventarioContagem />} />
             <Route path="usuarios" element={<AdminRoute><Usuarios /></AdminRoute>} />
             <Route path="licitacoes" element={<Licitacoes />} />
+            <Route path="estoque" element={<Estoque />} />
             <Route path="crm" element={<Crm />} />
 
             {/* Comercial */}
