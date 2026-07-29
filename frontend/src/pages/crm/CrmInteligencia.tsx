@@ -54,7 +54,7 @@ export function CrmInteligencia() {
                     <p className="text-sm font-semibold text-gray-700">{fmtBRL(w.valor_historico)}</p>
                     <button onClick={() => setPrefill({
                       titulo: `Recompra — ${w.cliente}`, cliente_id: w.cliente_id, cliente: w.cliente,
-                      canal: w.canal, valor_estimado: w.valor_historico, estagio: 'LEAD', origem: 'Cliente recorrente',
+                      canal: w.canal, valor_estimado: w.valor_historico, estagio: 'QUALIFICACAO', origem: 'Cliente recorrente',
                     })} className="text-[11px] text-blue-600 hover:underline flex items-center gap-1 ml-auto"><PlusCircle size={12} /> oportunidade</button>
                   </div>
                 </div>
@@ -74,7 +74,7 @@ export function CrmInteligencia() {
                     <p className="text-sm font-medium text-gray-800 truncate">{cs.cliente}</p>
                     <button onClick={() => setPrefill({
                       titulo: `Cross-sell — ${cs.cliente}`, cliente_id: cs.cliente_id, cliente: cs.cliente,
-                      canal: cs.canal, estagio: 'LEAD', origem: 'Prospecção ativa',
+                      canal: cs.canal, estagio: 'QUALIFICACAO', origem: 'Prospecção ativa',
                       itens: cs.sugestoes.map((s: any) => ({ produto_id: s.produto_id, codigo: s.codigo, descricao: s.descricao, qtd: 1, valor_unitario: 0 })),
                     })} className="text-[11px] text-blue-600 hover:underline flex items-center gap-1"><PlusCircle size={12} /> oportunidade</button>
                   </div>

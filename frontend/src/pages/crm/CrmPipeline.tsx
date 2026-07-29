@@ -147,13 +147,39 @@ function CardOpp({ o, onDragStart, onClick }: { o: any; onDragStart: () => void;
       {o.cliente && <p className="text-xs text-gray-500 mt-0.5 truncate">{o.cliente}</p>}
       <div className="flex items-center justify-between mt-1.5">
         <span className="text-sm font-semibold text-gray-700">{fmtBRL(o.valor_estimado)}</span>
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${cfg?.chip || ''}`}>{o.probabilidade}%</span>
+        {/* A probabilidade vem ajustada pelo servidor; quando difere da base do
+            estágio, o título explica por quê. */}
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${cfg?.chip || ''}`}
+          title={o.probabilidade_ajustes?.length
+            ? `Base do estágio ${o.probabilidade_base}% · ${o.probabilidade_ajustes.join(', ')}`
+            : undefined}>
+          {o.probabilidade}%{o.probabilidade_ajustes?.length ? ' ↓' : ''}
+        </span>
       </div>
       <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
         {o.canal && <span className="text-gray-400">{CANAL_LABEL[o.canal] || o.canal}</span>}
         {o.previsao_fechamento && <span className={`flex items-center gap-1 ${prazoCor(o.previsao_fechamento)}`}><Clock size={11} /> {fmtData(o.previsao_fechamento)}</span>}
         {o.atividades_pendentes > 0 && <span className="flex items-center gap-1 text-blue-500"><CalendarPlus size={11} /> {o.atividades_pendentes}</span>}
       </div>
+      {/* Sinais de funil abandonado — o que fazia o CRM morrer sem ninguém notar. */}
+      {(o.sem_proximo_passo || o.proximo_passo_atrasado || o.parada) && (
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {o.sem_proximo_passo && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">sem próximo passo</span>
+          )}
+          {o.proximo_passo_atrasado && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">passo atrasado</span>
+          )}
+          {o.parada && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600">
+              {o.dias_no_estagio}d parada
+            </span>
+          )}
+        </div>
+      )}
+      {o.proximo_passo && !o.proximo_passo_atrasado && (
+        <p className="text-[11px] text-gray-400 mt-1 truncate" title={o.proximo_passo}>→ {o.proximo_passo}</p>
+      )}
     </div>
   )
 }
@@ -169,7 +195,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
   const [clienteNome, setClienteNome] = useState(base.cliente || '')
   const [contatoId, setContatoId] = useState(base.contato_id || '')
   const [canal, setCanal] = useState(base.canal || '')
-  const [estagio, setEstagio] = useState<string>(base.estagio || 'LEAD')
+  const [estagio, setEstagio] = useState<string>(base.estagio || 'QUALIFICACAO')
   const [valor, setValor] = useState(base.valor_estimado ? String(base.valor_estimado) : '')
   const [previsao, setPrevisao] = useState(base.previsao_fechamento || '')
   const [origem, setOrigem] = useState(base.origem || '')
@@ -512,24 +538,66 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
   )
 }
 
+/** Perda com motivo CODIFICADO. O texto livre continua como detalhe, mas o código
+ *  é o que permite responder depois "por que a gente perde?" — antes cada um
+ *  escrevia de um jeito e não dava para agrupar nada. */
 function ModalPerder({ id, onClose, onSaved }: { id: string; onClose: () => void; onSaved: () => void }) {
+  const [codigo, setCodigo] = useState('')
   const [motivo, setMotivo] = useState('')
+  const [concorrente, setConcorrente] = useState('')
+  const [precoVencedor, setPrecoVencedor] = useState('')
+
+  const { data: motivos = [] } = useQuery<any[]>({
+    queryKey: ['crm-motivos-perda'],
+    queryFn: () => api.get('/crm/motivos-perda').then(r => r.data),
+    staleTime: Infinity,
+  })
+
   const m = useMutation({
-    mutationFn: () => api.post(`/crm/oportunidades/${id}/perder`, { motivo: motivo.trim() }),
+    mutationFn: () => api.post(`/crm/oportunidades/${id}/perder`, {
+      codigo,
+      motivo: motivo.trim() || null,
+      concorrente: concorrente.trim() || null,
+      preco_vencedor: precoVencedor ? Number(precoVencedor) : null,
+    }),
     onSuccess: () => { toast.success('Oportunidade marcada como perdida'); onSaved(); onClose() },
     onError: (e: any) => toast.error(msgErro(e, 'Erro'), { duration: 5000 }),
   })
+
+  // Concorrente/preço só fazem sentido quando perdemos para alguém.
+  const pedeConcorrente = codigo === 'PRECO' || codigo === 'CONCORRENTE'
+
   return (
     <ModalBase titulo="Marcar como perdida" onClose={onClose} max="max-w-md">
       <div className="p-5 space-y-3">
-        <p className="text-sm text-gray-500">Registrar o motivo ajuda a analisar as perdas depois.</p>
+        <p className="text-sm text-gray-500">
+          O motivo alimenta a aba Inteligência — é o que mostra onde estamos perdendo e para quem.
+        </p>
         <Campo label="Motivo da perda *">
-          <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)} className={inputCls} placeholder="Ex: preço acima do concorrente; prazo de entrega; sem verba" autoFocus />
+          <select value={codigo} onChange={e => setCodigo(e.target.value)} className={inputCls} autoFocus>
+            <option value="">Selecione…</option>
+            {motivos.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </Campo>
+        {pedeConcorrente && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Campo label="Concorrente">
+              <input value={concorrente} onChange={e => setConcorrente(e.target.value)}
+                className={inputCls} placeholder="Quem levou" />
+            </Campo>
+            <Campo label="Preço do vencedor">
+              <input type="number" value={precoVencedor} onChange={e => setPrecoVencedor(e.target.value)}
+                className={inputCls} placeholder="Se souber" />
+            </Campo>
+          </div>
+        )}
+        <Campo label="Detalhe (opcional)">
+          <textarea rows={2} value={motivo} onChange={e => setMotivo(e.target.value)} className={inputCls} />
         </Campo>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => m.mutate()} disabled={motivo.trim().length < 3 || m.isPending}
+        <button onClick={() => m.mutate()} disabled={!codigo || m.isPending}
           className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-medium rounded-lg">Confirmar perda</button>
       </div>
     </ModalBase>
