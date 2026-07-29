@@ -34,10 +34,12 @@ function proximaEtapa(atual: string): EstagioKey | null {
   if (i === -1 || i === ORDEM_AVANCO.length - 1) return null
   return ORDEM_AVANCO[i + 1]
 }
-function etapaAnterior(atual: string): EstagioKey | null {
+/** Todas as etapas anteriores à atual (não só a imediatamente anterior) — quem
+ *  errou uma passagem duas etapas atrás não deveria precisar voltar um degrau
+ *  de cada vez. */
+function etapasAnteriores(atual: string): EstagioKey[] {
   const i = ORDEM_AVANCO.indexOf(atual as EstagioKey)
-  if (i <= 0) return null
-  return ORDEM_AVANCO[i - 1]
+  return i > 0 ? ORDEM_AVANCO.slice(0, i) : []
 }
 
 export function CrmPipeline() {
@@ -190,7 +192,9 @@ function CardOpp({ o, onClick }: { o: any; onClick: () => void }) {
  *  avanço linear. Mostra também, ao lado do botão, o que o servidor exige para
  *  aquela passagem específica — é a resposta direta a "que informação preciso
  *  para passar de uma etapa para outra". */
-function FluxoAvanco({ oportunidade: o, onMover }: { oportunidade: any; onMover: (destino: string) => void }) {
+function FluxoAvanco({ oportunidade: o, onMover, onEditar }: {
+  oportunidade: any; onMover: (destino: string) => void; onEditar: () => void
+}) {
   const proxima = proximaEtapa(o.estagio)
 
   const { data: req } = useQuery<any>({
@@ -201,39 +205,66 @@ function FluxoAvanco({ oportunidade: o, onMover }: { oportunidade: any; onMover:
 
   if (o.estagio === 'DESAFIOS') {
     // Desvio automático: o servidor tira daqui sozinho quando o último
-    // bloqueante é resolvido (ver PainelDesafios). Não há o que "avançar".
+    // bloqueante é resolvido (ver PainelDesafios). Não há o que "avançar", mas
+    // quem registrou por engano precisa conseguir voltar sem esperar isso.
     return (
-      <div className="mt-3 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-xs text-orange-800 flex items-center gap-2">
-        <AlertTriangle size={14} className="shrink-0" />
-        Negociação travada por desafio(s) aberto(s) — volta sozinha para {ESTAGIO_MAP.QUALIFICACAO.label} assim que forem resolvidos, mais abaixo.
+      <div className="mt-3 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-xs text-orange-800 flex items-center justify-between gap-2 flex-wrap">
+        <span className="flex items-center gap-2">
+          <AlertTriangle size={14} className="shrink-0" />
+          Negociação travada por desafio(s) aberto(s) — volta sozinha para {ESTAGIO_MAP.QUALIFICACAO.label} assim que forem resolvidos, mais abaixo.
+        </span>
+        <button onClick={() => onMover('QUALIFICACAO')} className="flex items-center gap-1 underline whitespace-nowrap">
+          <Undo2 size={12} /> Voltar manualmente
+        </button>
       </div>
     )
   }
 
+  const anteriores = etapasAnteriores(o.estagio)
+
   if (!proxima) {
-    return <p className="mt-3 text-xs text-gray-400">Última etapa do funil — use Ganhar ou Perder para fechar.</p>
+    return (
+      <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-xs text-gray-400">Última etapa do funil — use Ganhar ou Perder para fechar.</p>
+        {anteriores.length > 0 && (
+          <select onChange={e => { if (e.target.value) onMover(e.target.value) }} value=""
+            className="text-xs text-gray-500 border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
+            <option value="">↩ Voltar para…</option>
+            {anteriores.map(k => <option key={k} value={k}>{ESTAGIO_MAP[k].label}</option>)}
+          </select>
+        )}
+      </div>
+    )
   }
 
   const cfg = ESTAGIO_MAP[proxima]
-  const anterior = etapaAnterior(o.estagio)
   const falta: string[] = req?.falta || []
+  const faltaItens = falta.some(f => f.startsWith('itens'))
 
   return (
-    <div className="mt-3 flex items-center gap-2 flex-wrap">
-      <button onClick={() => onMover(proxima)}
-        className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg text-white ${cfg.coluna} hover:opacity-90`}>
-        Avançar para {cfg.label} <ArrowRight size={14} />
-      </button>
-      {falta.length > 0 && (
-        <span className="text-[11px] text-gray-400" title={falta.join('; ')}>
-          requer: {falta.join(' · ')}
-        </span>
-      )}
-      {anterior && (
-        <button onClick={() => onMover(anterior)}
-          className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600">
-          <Undo2 size={13} /> Voltar para {ESTAGIO_MAP[anterior].label}
+    <div className="mt-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={() => onMover(proxima)}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg text-white ${cfg.coluna} hover:opacity-90`}>
+          Avançar para {cfg.label} <ArrowRight size={14} />
         </button>
+        {anteriores.length > 0 && (
+          <select onChange={e => { if (e.target.value) onMover(e.target.value) }} value=""
+            className="ml-auto text-xs text-gray-500 border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
+            <option value="">↩ Voltar para…</option>
+            {anteriores.map(k => <option key={k} value={k}>{ESTAGIO_MAP[k].label}</option>)}
+          </select>
+        )}
+      </div>
+      {falta.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 flex-wrap">
+          <span>Falta para avançar: {falta.join(' · ')}</span>
+          {faltaItens && (
+            <button onClick={onEditar} className="text-amber-900 underline font-medium whitespace-nowrap">
+              Adicionar itens
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
@@ -488,7 +519,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
               não é degrau — é desvio que o sistema entra/sai sozinho (ver
               PainelDesafios). Clicar não move direto: abre o modal que cobra a
               informação daquela passagem específica. */}
-          {!fechada && <FluxoAvanco oportunidade={o} onMover={setMoverPara} />}
+          {!fechada && <FluxoAvanco oportunidade={o} onMover={setMoverPara} onEditar={() => setEditar(true)} />}
           {o.estagio === 'PERDIDO' && o.motivo_perda && (
             <div className="mt-3 text-xs bg-red-50 text-red-700 rounded-lg p-2">Perdida — {o.motivo_perda}</div>
           )}
@@ -516,9 +547,15 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
         <div className="grid md:grid-cols-2 gap-0 divide-x divide-gray-100">
           {/* Coluna esquerda: itens + atividades */}
           <div className="p-5 space-y-4">
-            {(o.itens || []).length > 0 && (
-              <div>
-                <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Package size={15} /> Itens</h3>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Package size={15} /> Itens</h3>
+              {(o.itens || []).length === 0 ? (
+                <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-2.5">
+                  Nenhum item ainda. A proposta é gerada a partir deles — clique em{' '}
+                  <button onClick={() => setEditar(true)} className="text-blue-600 underline">Editar</button>{' '}
+                  para adicionar produto, quantidade e preço.
+                </div>
+              ) : (
                 <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
                   {o.itens.map((it: any, i: number) => (
                     <div key={i} className="flex justify-between px-3 py-1.5 text-sm">
@@ -527,8 +564,8 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><CalendarPlus size={15} /> Atividades</h3>
               {(o.atividades || []).length === 0 ? (
