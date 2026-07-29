@@ -22,6 +22,40 @@ export function ModalBase({ titulo, onClose, children, max = 'max-w-2xl' }: {
   )
 }
 
+/** Input de moeda: digita só números, formata como "120.000,00" em tempo real
+ *  (padrão de caixa eletrônico — os últimos 2 dígitos são sempre centavos).
+ *  `value`/`onChange` trafegam o número puro (ex.: 120000), não a string
+ *  formatada — quem consome não precisa saber que existe máscara aqui. */
+export function InputMoeda({ value, onChange, placeholder, className }: {
+  value: number | null; onChange: (v: number | null) => void; placeholder?: string; className?: string
+}) {
+  const centavos = value == null ? '' : String(Math.round(value * 100))
+
+  const formatar = (digitos: string) => {
+    if (!digitos) return ''
+    const n = Number(digitos) / 100
+    return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+
+  const handle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const digitos = e.target.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '')
+    onChange(digitos ? Number(digitos) / 100 : null)
+  }
+
+  return (
+    <div className="relative">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">R$</span>
+      <input
+        inputMode="numeric"
+        value={formatar(centavos)}
+        onChange={handle}
+        placeholder={placeholder || '0,00'}
+        className={`${className || inputCls} pl-9 text-right tabular-nums`}
+      />
+    </div>
+  )
+}
+
 export function KPI({ label, valor, sub, cor = 'text-gray-800' }: { label: string; valor: string; sub?: string; cor?: string }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">

@@ -15,7 +15,7 @@ import {
   ESTAGIOS, ESTAGIOS_PIPELINE, ESTAGIO_MAP, ORIGENS, TIPOS_ATIVIDADE, TIPO_ATIV_MAP,
   fmtBRL, fmtBRLcurto, fmtData, fmtDataHora, prazoCor, msgErro, type EstagioKey,
 } from '../../lib/crm'
-import { ModalBase, Campo, inputCls } from './CrmShared'
+import { ModalBase, Campo, inputCls, InputMoeda } from './CrmShared'
 
 // CRM é do comercial — licitação NÃO entra aqui (tem módulo próprio).
 const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE']
@@ -196,7 +196,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
   const [contatoId, setContatoId] = useState(base.contato_id || '')
   const [canal, setCanal] = useState(base.canal || '')
   const [estagio, setEstagio] = useState<string>(base.estagio || 'QUALIFICACAO')
-  const [valor, setValor] = useState(base.valor_estimado ? String(base.valor_estimado) : '')
+  const [valor, setValor] = useState<number | null>(base.valor_estimado ? Number(base.valor_estimado) : null)
   const [previsao, setPrevisao] = useState(base.previsao_fechamento || '')
   const [origem, setOrigem] = useState(base.origem || '')
   const [itens, setItens] = useState<ItemLinha[]>(
@@ -238,7 +238,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
         contato_id: contatoId || null,
         canal: canal || null,
         estagio,
-        valor_estimado: valor ? Number(valor) : (totalItens > 0 ? totalItens : null),
+        valor_estimado: valor != null ? valor : (totalItens > 0 ? totalItens : null),
         previsao_fechamento: previsao || null,
         origem: origem || null,
         itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor_unitario: i.valor || 0 })),
@@ -293,8 +293,8 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
               {ORIGENS.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           </Campo>
-          <Campo label="Valor estimado (R$)">
-            <input type="number" step="0.01" value={valor} onChange={e => setValor(e.target.value)} className={inputCls}
+          <Campo label="Valor estimado">
+            <InputMoeda value={valor} onChange={setValor}
               placeholder={totalItens > 0 ? `dos itens: ${fmtBRL(totalItens)}` : '0,00'} />
           </Campo>
           <Campo label="Previsão de fechamento">
