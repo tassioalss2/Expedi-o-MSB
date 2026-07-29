@@ -255,8 +255,9 @@ def atualizar_desafio(desafio_id: UUID, payload: DesafioUpdate,
 
 # ── Cotações ─────────────────────────────────────────────────────────────────────
 @router.get("/cotacoes")
-def listar_cotacoes(status: Optional[str] = Query(None), _: UsuarioOut = Depends(get_current_user)):
-    return crm_cotacao_service.listar_cotacoes(status)
+def listar_cotacoes(status: Optional[str] = Query(None), oportunidade_id: Optional[UUID] = Query(None),
+                    _: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.listar_cotacoes(status, str(oportunidade_id) if oportunidade_id else None)
 
 
 @router.post("/cotacoes", status_code=201)
@@ -272,6 +273,11 @@ def obter_cotacao(cotacao_id: UUID, _: UsuarioOut = Depends(get_current_user)):
 @router.patch("/cotacoes/{cotacao_id}")
 def atualizar_cotacao(cotacao_id: UUID, payload: CotacaoUpdate, usuario: UsuarioOut = Depends(get_current_user)):
     return crm_cotacao_service.atualizar_cotacao(str(cotacao_id), payload, usuario)
+
+
+@router.post("/cotacoes/{cotacao_id}/duplicar", status_code=201)
+def duplicar_cotacao(cotacao_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_cotacao_service.duplicar_cotacao(str(cotacao_id), usuario)
 
 
 @router.post("/cotacoes/{cotacao_id}/gerar-ov", status_code=201)

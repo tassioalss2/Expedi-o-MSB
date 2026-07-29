@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Search, Target, Trophy, XCircle, Trash2, Pencil, Package,
   Clock, MessageSquare, CalendarPlus, CheckCircle2, ExternalLink,
-  AlertTriangle, Circle, ArrowRight, Undo2,
+  AlertTriangle, Circle, ArrowRight, Undo2, FileText, Printer,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -451,6 +451,41 @@ function ModalNovoContato({ clienteId, clienteNome, onClose, onSaved }: {
   )
 }
 
+/** Propostas geradas para esta oportunidade. Existe porque a proposta era
+ *  invisível daqui: gerada automaticamente ao entrar em Proposta, ficava só na
+ *  aba Cotações e quem fechava a aba de impressão não sabia como voltar. Cada
+ *  proposta é persistida no momento em que nasce — reimprimir é sempre possível. */
+function PainelPropostas({ oportunidadeId }: { oportunidadeId: string }) {
+  const { data: propostas = [] } = useQuery<any[]>({
+    queryKey: ['crm-cotacoes-opp', oportunidadeId],
+    queryFn: () => api.get('/crm/cotacoes', { params: { oportunidade_id: oportunidadeId } }).then(r => r.data),
+  })
+
+  if (propostas.length === 0) return null
+
+  return (
+    <div className="px-5 py-3 border-b">
+      <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+        <FileText size={15} /> Propostas ({propostas.length})
+      </h3>
+      <div className="space-y-1.5">
+        {propostas.map(p => (
+          <div key={p.id} className="flex items-center gap-2 text-sm border border-gray-100 rounded-lg px-3 py-1.5">
+            <span className="font-mono text-gray-700">{p.numero}</span>
+            <span className="text-gray-600 tabular-nums">{fmtBRL(p.valor_total)}</span>
+            {p.validade && <span className={`text-[11px] ${prazoCor(p.validade)}`}>val. {fmtData(p.validade)}</span>}
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 ml-auto">{p.status}</span>
+            <button onClick={() => window.open(`/crm/cotacao/${p.id}/imprimir`, '_blank')}
+              className="flex items-center gap-1 text-xs text-blue-600 hover:underline whitespace-nowrap">
+              <Printer size={12} /> Abrir / imprimir
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Detalhe da oportunidade ────────────────────────────────────────────────────────
 function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
   const qc = useQueryClient()
@@ -534,6 +569,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
         </div>
 
         <PainelDesafios oportunidadeId={id} onChanged={refresh} />
+        <PainelPropostas oportunidadeId={id} />
 
         {/* Ações rápidas */}
         <div className="px-5 py-3 border-b flex flex-wrap gap-2">

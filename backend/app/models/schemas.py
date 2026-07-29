@@ -694,6 +694,9 @@ class CotacaoCreate(BaseModel):
     frete: float = 0
     desconto_pct: float = 0
     observacao: Optional[str] = None
+    cliente_cnpj: Optional[str] = None
+    contato_nome: Optional[str] = None
+    contato_email: Optional[str] = None
     endereco: Optional[str] = None
     endereco_bairro: Optional[str] = None
     endereco_cidade: Optional[str] = None
@@ -714,6 +717,9 @@ class CotacaoUpdate(BaseModel):
     desconto_pct: Optional[float] = None
     observacao: Optional[str] = None
     status: Optional[str] = None
+    cliente_cnpj: Optional[str] = None
+    contato_nome: Optional[str] = None
+    contato_email: Optional[str] = None
     endereco: Optional[str] = None
     endereco_bairro: Optional[str] = None
     endereco_cidade: Optional[str] = None

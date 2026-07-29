@@ -8,7 +8,7 @@ Inspirado nas boas práticas dos grandes CRMs:
 """
 import re
 import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException
@@ -479,7 +479,8 @@ def _gerar_cotacao_proposta(db, oportunidade_id: str, usuario: UsuarioOut) -> Op
         contato_id=opp.get("contato_id"),
         oportunidade_id=oportunidade_id,
         canal=opp.get("canal"),
-        validade=(datetime.now(timezone.utc) + timedelta(days=15)).date(),
+        # Validade recomendada — o comercial altera na tela quando precisar.
+        validade=date.fromisoformat(crm_cotacao_service.validade_sugerida()),
         endereco_cidade=endereco_cidade,
         endereco_uf=endereco_uf,
         itens=[CotacaoItem(
