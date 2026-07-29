@@ -197,9 +197,14 @@ def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, float, list]:
     ids = list(dia_por_ped)
     for i in range(0, len(ids), 40):
         rows = db.table("pedidos").select(
-            "id, numero_pedido, valor_nf, valor_frete, tipo_frete, tipo_operacao, numero_nf, clientes(nome)"
+            "id, numero_pedido, valor_nf, valor_frete, tipo_frete, tipo_operacao, numero_nf, status, clientes(nome)"
         ).in_("id", ids[i:i + 40]).execute().data
         for p in rows:
+            # OV faturada e depois CANCELADA não é receita: a NF foi desfeita.
+            # Contá-la inflava o realizado do mês e, por consequência, fazia o
+            # "ritmo p/ bater a meta" parecer menor do que realmente é.
+            if p.get("status") == "CANCELADO":
+                continue
             if _conta_faturamento(p.get("tipo_operacao")):
                 v = _valor_liquido_nf(p)
                 transfer = _eh_transfer(p)

@@ -52,11 +52,15 @@ def _ultimo_dia_do_mes(d: date) -> date:
     return date(d.year + (d.month == 12), (d.month % 12) + 1, 1) - timedelta(days=1)
 
 
+def _uteis_do_mes(hoje: date) -> tuple:
+    """(dias úteis do mês, dias úteis até hoje inclusive)."""
+    primeiro = date(hoje.year, hoje.month, 1)
+    return _dias_uteis(primeiro, _ultimo_dia_do_mes(hoje)), _dias_uteis(primeiro, hoje)
+
+
 def _ritmo(pct_realizado: float, hoje: date) -> dict:
     """Onde deveríamos estar hoje, pela fração de dias úteis já decorrida."""
-    primeiro = date(hoje.year, hoje.month, 1)
-    uteis_total = _dias_uteis(primeiro, _ultimo_dia_do_mes(hoje))
-    uteis_ate_hoje = _dias_uteis(primeiro, hoje)
+    uteis_total, uteis_ate_hoje = _uteis_do_mes(hoje)
     pct_esperado = round(uteis_ate_hoje / uteis_total * 100, 1) if uteis_total else 0.0
 
     if pct_realizado >= 100:
@@ -71,12 +75,20 @@ def _ritmo(pct_realizado: float, hoje: date) -> dict:
         "pct_esperado": pct_esperado,
         "status": status,
         "rotulo": rotulo,
-        "dias_uteis_restantes": max(0, uteis_total - uteis_ate_hoje),
+        # HOJE conta como dia disponível: o dia não acabou, ainda dá para faturar
+        # nele. É a mesma contagem da Previsão de Faturamento (_dias_uteis(hoje,
+        # fim)) — antes eu excluía hoje e a barra dizia 2 onde a Previsão dizia 3.
+        "dias_uteis_restantes": _dias_uteis(hoje, _ultimo_dia_do_mes(hoje)),
     }
 
 
 def barra_meta() -> dict:
-    """Faturamento do mês vs meta — a barra fixa do topo, em todas as telas."""
+    """Faturamento do mês e do dia vs meta — a barra fixa do topo, em todas as telas.
+
+    Mês e dia saem da MESMA função com intervalos diferentes, de propósito: se um
+    usasse `faturamento_diario` (que exclui Esterilize) e o outro `outras_vendas`
+    (que não exclui), num mês com Esterilize a própria barra se contradiria.
+    """
     # Import local: o módulo de pedidos importa serviços, e importar no topo daqui
     # fecharia um ciclo.
     from app.api.pedidos import dashboard_financeiro
@@ -86,20 +98,48 @@ def barra_meta() -> dict:
     inicio = date(hoje.year, hoje.month, 1)
     competencia = hoje.strftime("%Y-%m")
 
-    fin = dashboard_financeiro(data_inicio=inicio, data_fim=hoje, _=None)
-    realizado = float((fin.get("outras_vendas") or {}).get("faturamento_sem_frete") or 0)
+    def _vendas(ini: date, fim: date) -> tuple:
+        fin = dashboard_financeiro(data_inicio=ini, data_fim=fim, _=None)
+        ov = fin.get("outras_vendas") or {}
+        return float(ov.get("faturamento_sem_frete") or 0), int(ov.get("qtd_nfs") or 0)
+
+    realizado, _qtd_mes = _vendas(inicio, hoje)
+    # Intervalo de um dia: consulta estreita, barata o suficiente para a barra
+    # que roda em toda navegação.
+    realizado_hoje, nfs_hoje = _vendas(hoje, hoje)
 
     meta = pedido_service.obter_meta(competencia)
     valor_meta = meta.get("valor")
     pct = round(realizado / valor_meta * 100, 1) if valor_meta else 0.0
+    falta = round(max(0.0, (valor_meta or 0) - realizado), 2)
+
+    dia = None
+    if valor_meta:
+        restantes = _ritmo(pct, hoje)["dias_uteis_restantes"]
+        # Alvo do dia = ritmo p/ bater a meta (falta ÷ dias úteis restantes), o
+        # MESMO número da Previsão de Faturamento. Antes aqui era a média
+        # achatada do mês (meta ÷ dias úteis totais), que com o mês atrasado dá
+        # ~1/3 do que o dia realmente precisa entregar — a barra dizia "1% da
+        # diária" de um alvo que já não valia mais.
+        alvo = round(falta / restantes, 2) if restantes and falta else 0.0
+        dia = {
+            "data": hoje.isoformat(),
+            "realizado": round(realizado_hoje, 2),
+            "nfs": nfs_hoje,
+            "alvo": alvo,
+            "pct": round(realizado_hoje / alvo * 100, 1) if alvo else 100.0,
+            "dias_uteis_restantes": restantes,
+            "eh_dia_util": hoje.weekday() < 5,
+        }
 
     return {
         "competencia": competencia,
         "realizado": round(realizado, 2),
         "meta": valor_meta,
         "pct": pct,
-        "falta": round(max(0.0, (valor_meta or 0) - realizado), 2),
+        "falta": falta,
         "ritmo": _ritmo(pct, hoje) if valor_meta else None,
+        "dia": dia,
     }
 
 

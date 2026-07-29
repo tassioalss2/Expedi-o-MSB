@@ -8,6 +8,17 @@ interface Ritmo {
   rotulo: string
   dias_uteis_restantes: number
 }
+interface DiaMeta {
+  data: string
+  realizado: number
+  nfs: number
+  /** Ritmo p/ bater a meta: falta ÷ dias úteis restantes (mesmo número da
+   *  Previsão de Faturamento). */
+  alvo: number
+  pct: number
+  dias_uteis_restantes: number
+  eh_dia_util: boolean
+}
 interface BarraMetaResp {
   competencia: string
   realizado: number
@@ -15,6 +26,7 @@ interface BarraMetaResp {
   pct: number
   falta: number
   ritmo: Ritmo | null
+  dia: DiaMeta | null
 }
 
 const fmtR$ = (v: number) =>
@@ -41,8 +53,15 @@ const COR_BARRA: Record<Ritmo['status'], string> = {
   ATRAS: 'bg-rose-300',
 }
 
-/** Faturamento do mês vs meta, fixo no topo de todas as telas — para saber onde
- *  estamos sem precisar sair da tela em que se está trabalhando. */
+// O dia é mais volátil que o mês (uma NF grande muda tudo), então a régua é
+// frouxa de propósito: só fica vermelho quando o dia está claramente fraco.
+const corDia = (pct: number) =>
+  pct >= 100 ? 'bg-emerald-400' : pct >= 50 ? 'bg-amber-300' : 'bg-rose-300'
+const corTextoDia = (pct: number) =>
+  pct >= 100 ? 'text-emerald-300' : pct >= 50 ? 'text-amber-200' : 'text-rose-200'
+
+/** Faturamento do mês e do dia vs meta, fixo no topo de todas as telas — para
+ *  saber onde estamos sem precisar sair da tela em que se está trabalhando. */
 export function BarraMeta() {
   const { data } = useQuery<BarraMetaResp>({
     queryKey: ['barra-meta'],
@@ -62,7 +81,9 @@ export function BarraMeta() {
       className="shrink-0 bg-cyan-900 text-white hover:bg-cyan-800 transition-colors"
       title="Ver o painel comercial"
     >
-      <div className="px-4 sm:px-6 py-2 flex items-center gap-3 sm:gap-4 flex-wrap sm:flex-nowrap">
+      {/* Uma linha só a partir de lg: abaixo disso mês + ritmo + hoje não cabem
+          e empurravam a página para fora (scroll horizontal), então deixa quebrar. */}
+      <div className="px-4 sm:px-6 py-2 flex items-center gap-3 sm:gap-4 flex-wrap lg:flex-nowrap">
         <span className="text-xs font-semibold whitespace-nowrap">
           Meta · {fmtCompetencia(data.competencia)}
         </span>
@@ -80,17 +101,52 @@ export function BarraMeta() {
         </div>
 
         <span className="text-sm font-bold tabular-nums whitespace-nowrap">{data.pct.toFixed(1)}%</span>
-        <span className="text-xs text-cyan-100/80 tabular-nums whitespace-nowrap hidden sm:inline">
+        {/* Os valores absolutos do mês são o bloco mais largo e o mais
+            redundante (o % já diz a posição), então são os primeiros a sair
+            quando falta espaço. */}
+        <span className="text-xs text-cyan-100/80 tabular-nums whitespace-nowrap hidden xl:inline">
           {fmtR$(data.realizado)} / {fmtR$(data.meta)}
         </span>
 
         {data.ritmo && (
-          <span className={`text-xs font-semibold whitespace-nowrap sm:ml-auto ${COR_RITMO[data.ritmo.status]}`}>
+          <span className={`text-xs font-semibold whitespace-nowrap ${COR_RITMO[data.ritmo.status]}`}>
             {data.ritmo.rotulo}
             {data.ritmo.status !== 'BATIDA' && data.ritmo.dias_uteis_restantes > 0 && (
-              <span className="text-cyan-100/70 font-normal">
+              // Detalhe secundário: sai nas larguras médias para o bloco do dia
+              // caber na mesma linha em vez de dobrar a altura da barra.
+              <span className="text-cyan-100/70 font-normal hidden xl:inline">
                 {' '}· {data.ritmo.dias_uteis_restantes} dia{data.ritmo.dias_uteis_restantes > 1 ? 's' : ''} úte{data.ritmo.dias_uteis_restantes > 1 ? 'is' : 'l'}
               </span>
+            )}
+          </span>
+        )}
+
+        {/* Hoje — encostado à direita, separado do bloco do mês para não virar
+            uma fileira só de números sem hierarquia. */}
+        {data.dia && (
+          <span className="flex items-center gap-2 sm:ml-auto whitespace-nowrap"
+            title={`Ritmo p/ bater a meta: ${fmtR$(data.dia.alvo)}/dia útil`
+              + ` · faltam ${fmtR$(data.falta)} em ${data.dia.dias_uteis_restantes} dia(s) útil(eis)`}>
+            <span className="w-px h-5 bg-white/25 hidden sm:inline-block" />
+            <span className="text-xs font-semibold">Hoje</span>
+            <span className="text-sm font-bold tabular-nums">{fmtR$(data.dia.realizado)}</span>
+            {data.dia.eh_dia_util ? (
+              <>
+                <span className="relative w-10 h-2 bg-white/20 rounded-full overflow-hidden hidden sm:inline-block">
+                  <span className={`absolute left-0 top-0 h-2 rounded-full ${corDia(data.dia.pct)}`}
+                    style={{ width: `${Math.min(data.dia.pct, 100)}%` }} />
+                </span>
+                <span className={`text-xs font-semibold tabular-nums ${corTextoDia(data.dia.pct)}`}>
+                  {data.dia.pct.toFixed(0)}%
+                  {/* "de R$ X" em vez de só "%": sem o alvo à vista, 0% podia ser
+                      lido como alvo pequeno em vez do ritmo real que falta. */}
+                  <span className="text-cyan-100/70 font-normal"> de {fmtR$(data.dia.alvo)}</span>
+                </span>
+              </>
+            ) : (
+              // Fim de semana/feriado: comparar com a meta diária diria "0%" de
+              // um dia em que ninguém deveria faturar.
+              <span className="text-xs text-cyan-100/70">fora de dia útil</span>
             )}
           </span>
         )}
