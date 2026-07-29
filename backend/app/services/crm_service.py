@@ -385,9 +385,16 @@ def requisitos_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> li
     # "resolver antes de negociar" do processo. Vale mesmo sem passar por DESAFIOS,
     # porque um problema pode aparecer com a negociação já em andamento.
     if destino not in ("DESAFIOS", "PERDIDO") and para > de:
-        abertos = db.table("crm_desafios").select("id, descricao, crm_desafio_tipos(label)")\
-            .eq("oportunidade_id", oportunidade_id).eq("status", "ABERTO")\
-            .eq("bloqueia", True).execute().data
+        try:
+            abertos = db.table("crm_desafios").select("id, descricao, crm_desafio_tipos(label)")\
+                .eq("oportunidade_id", oportunidade_id).eq("status", "ABERTO")\
+                .eq("bloqueia", True).execute().data
+        except Exception:
+            # Migration v22 ainda não rodou: sem a tabela não há desafio para
+            # bloquear. Engolir aqui em vez de estourar 500 — o resto do portão
+            # (próximo passo, itens) continua valendo e o usuário recebe uma
+            # mensagem útil em vez de "erro ao mover".
+            abertos = []
         if abertos:
             nomes = [((d.get("crm_desafio_tipos") or {}).get("label") or d.get("descricao") or "desafio")
                      for d in abertos[:3]]
@@ -424,8 +431,13 @@ def requisitos_ganho(db, oportunidade_id: str) -> list:
 
     A proposta é o último passo do processo e é ela que decide o fechamento —
     então não se declara ganho sem proposta emitida."""
-    cots = db.table("crm_cotacoes").select("id, status, enviada_em")\
-        .eq("oportunidade_id", oportunidade_id).eq("ativo", True).execute().data
+    try:
+        cots = db.table("crm_cotacoes").select("id, status, enviada_em")\
+            .eq("oportunidade_id", oportunidade_id).eq("ativo", True).execute().data
+    except Exception:
+        # Sem a tabela de cotações (migration pendente) não dá para exigir a
+        # proposta — melhor liberar do que travar o fluxo com erro opaco.
+        return []
     emitida = [c for c in cots if c.get("enviada_em") or c.get("status") in ("ENVIADA", "ACEITA")]
     if not emitida:
         return ["proposta gerada e enviada ao cliente — é ela que fecha o negócio"]
@@ -621,8 +633,12 @@ def _serializar_desafio(d: dict) -> dict:
 
 def listar_desafios(oportunidade_id: str) -> list:
     db = get_service_db()
-    rows = db.table("crm_desafios").select("*, crm_desafio_tipos(label)")\
-        .eq("oportunidade_id", oportunidade_id).order("criado_em").execute().data
+    try:
+        rows = db.table("crm_desafios").select("*, crm_desafio_tipos(label)")\
+            .eq("oportunidade_id", oportunidade_id).order("criado_em").execute().data
+    except Exception:
+        # Migration v22 pendente: a tela mostra "nenhum desafio" em vez de quebrar.
+        return []
     return [_serializar_desafio(d) for d in rows]
 
 

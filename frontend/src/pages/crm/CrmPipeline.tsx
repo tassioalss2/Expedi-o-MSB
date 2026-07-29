@@ -25,7 +25,6 @@ export function CrmPipeline() {
   const qc = useQueryClient()
   const [novo, setNovo] = useState(false)
   const [detalheId, setDetalheId] = useState<string | null>(null)
-  const [arrastando, setArrastando] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [canal, setCanal] = useState('')
 
@@ -40,12 +39,6 @@ export function CrmPipeline() {
     qc.invalidateQueries({ queryKey: ['crm-dashboard'] })
   }
 
-  const mover = useMutation({
-    mutationFn: ({ id, estagio }: { id: string; estagio: string }) => api.patch(`/crm/oportunidades/${id}`, { estagio }),
-    onSuccess: invalidar,
-    onError: (e: any) => toast.error(msgErro(e, 'Erro ao mover'), { duration: 5000 }),
-  })
-
   const filtradas = useMemo(() => {
     const b = busca.trim().toLowerCase()
     return opps.filter(o => {
@@ -56,15 +49,6 @@ export function CrmPipeline() {
   }, [opps, busca, canal])
 
   const porEstagio = (e: string) => filtradas.filter(o => o.estagio === e)
-
-  const onDrop = (estagio: EstagioKey) => {
-    const id = arrastando
-    setArrastando(null)
-    if (!id) return
-    const o = opps.find(x => x.id === id)
-    if (!o || o.estagio === estagio) return
-    mover.mutate({ id, estagio })
-  }
 
   const totalPonderado = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_ponderado || 0), 0)
   const totalPipe = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_estimado || 0), 0)
@@ -106,8 +90,6 @@ export function CrmPipeline() {
               const soma = cards.reduce((a, o) => a + (o.valor_estimado || 0), 0)
               return (
                 <div key={ek}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={() => onDrop(ek)}
                   className="bg-gray-50 rounded-xl border border-gray-100 flex flex-col min-h-[400px]">
                   <div className={`h-1 rounded-t-xl ${cfg.coluna}`} />
                   <div className="px-3 py-2 flex items-center justify-between">
@@ -118,11 +100,11 @@ export function CrmPipeline() {
                   </div>
                   <div className="px-2 pb-2 space-y-2 flex-1 overflow-y-auto">
                     {cards.map(o => (
-                      <CardOpp key={o.id} o={o} onDragStart={() => setArrastando(o.id)} onClick={() => setDetalheId(o.id)} />
+                      <CardOpp key={o.id} o={o} onClick={() => setDetalheId(o.id)} />
                     ))}
                     {cards.length === 0 && (
-                      <div className="text-[11px] text-gray-300 text-center py-6 border-2 border-dashed border-gray-200 rounded-lg">
-                        arraste aqui
+                      <div className="text-[11px] text-gray-300 text-center py-6 rounded-lg">
+                        nenhuma
                       </div>
                     )}
                   </div>
@@ -139,10 +121,10 @@ export function CrmPipeline() {
   )
 }
 
-function CardOpp({ o, onDragStart, onClick }: { o: any; onDragStart: () => void; onClick: () => void }) {
+function CardOpp({ o, onClick }: { o: any; onClick: () => void }) {
   const cfg = ESTAGIO_MAP[o.estagio]
   return (
-    <div draggable onDragStart={onDragStart} onClick={onClick}
+    <div onClick={onClick}
       className="bg-white rounded-lg border border-gray-200 shadow-sm p-2.5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">
       <p className="text-sm font-medium text-gray-800 leading-tight line-clamp-2">{o.titulo}</p>
       {o.cliente && <p className="text-xs text-gray-500 mt-0.5 truncate">{o.cliente}</p>}
@@ -375,6 +357,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
   const [gerarOV, setGerarOV] = useState(false)
   const [nota, setNota] = useState('')
   const [novaAtiv, setNovaAtiv] = useState(false)
+  const [moverPara, setMoverPara] = useState<string | null>(null)
 
   const { data: o } = useQuery<any>({
     queryKey: ['crm-opp', id],
@@ -383,13 +366,10 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
 
   const refresh = () => { qc.invalidateQueries({ queryKey: ['crm-opp', id] }); onChanged() }
 
-  const mover = useMutation({
-    mutationFn: (estagio: string) => api.patch(`/crm/oportunidades/${id}`, { estagio }),
-    onSuccess: refresh, onError: (e: any) => toast.error(msgErro(e, 'Erro ao mover'), { duration: 5000 }),
-  })
   const ganhar = useMutation({
     mutationFn: () => api.post(`/crm/oportunidades/${id}/ganhar`),
     onSuccess: () => { toast.success('🏆 Oportunidade ganha!'); refresh() },
+    onError: (e: any) => toast.error(msgErro(e, 'Não foi possível marcar como ganha'), { duration: 6000 }),
   })
   const addNota = useMutation({
     mutationFn: () => api.post(`/crm/oportunidades/${id}/notas`, { texto: nota.trim() }),
@@ -432,11 +412,15 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
             </div>
           </div>
 
-          {/* Régua de estágios */}
+          {/* Régua de estágios. Clicar NÃO move direto: abre o modal que pede a
+              informação daquela passagem. Mover sem registrar nada era o que
+              deixava o card andar sem ninguém saber o que aconteceu. */}
           {!fechada && (
             <div className="flex gap-1 mt-3">
               {ESTAGIOS.filter(e => !['GANHO', 'PERDIDO'].includes(e.key)).map(e => (
-                <button key={e.key} onClick={() => mover.mutate(e.key)}
+                <button key={e.key}
+                  onClick={() => o.estagio !== e.key && setMoverPara(e.key)}
+                  disabled={o.estagio === e.key}
                   className={`flex-1 text-[11px] py-1.5 rounded ${o.estagio === e.key ? `${e.coluna} text-white font-medium` : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
                   {e.label}
                 </button>
@@ -533,10 +517,172 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
         </div>
       </div>
 
+      {moverPara && <ModalMover oportunidade={o} destino={moverPara}
+        onClose={() => setMoverPara(null)} onSaved={refresh} />}
       {editar && <ModalOportunidadeForm oportunidade={o} onClose={() => setEditar(false)} onSaved={refresh} />}
       {perder && <ModalPerder id={id} onClose={() => setPerder(false)} onSaved={refresh} />}
       {gerarOV && <ModalGerarOV opp={o} onClose={() => setGerarOV(false)} onSaved={refresh} />}
       {novaAtiv && <ModalNovaAtividade oportunidadeId={id} clienteId={o.cliente_id} onClose={() => setNovaAtiv(false)} onSaved={refresh} />}
+    </ModalBase>
+  )
+}
+
+/** Passagem de etapa: pede a informação e só então move.
+ *
+ *  Antes o card andava arrastando, sem registrar nada — ninguém sabia depois o
+ *  que tinha acontecido naquela passagem. Agora cada etapa cobra o que faz
+ *  sentido para ela, e o botão só libera com o que o servidor exige:
+ *
+ *    → Desafios     qual é o problema (registra o desafio)
+ *    → Negociação   o que foi acordado + próximo passo
+ *    → Proposta     itens conferidos + próximo passo
+ *
+ *  Os requisitos vêm do servidor (/requisitos), então a tela nunca discorda da
+ *  regra — e mostra o que falta antes de tentar, em vez de dar erro depois.
+ */
+function ModalMover({ oportunidade, destino, onClose, onSaved }: {
+  oportunidade: any; destino: string; onClose: () => void; onSaved: () => void
+}) {
+  const cfgDest = ESTAGIO_MAP[destino]
+  const cfgAtual = ESTAGIO_MAP[oportunidade?.estagio]
+  const id = oportunidade?.id
+
+  const [passo, setPasso] = useState(oportunidade?.proximo_passo || '')
+  const [passoEm, setPassoEm] = useState(oportunidade?.proximo_passo_em || '')
+  const [nota, setNota] = useState('')
+  // Só para → Desafios: o problema é a informação que justifica a passagem.
+  const [problema, setProblema] = useState('')
+  const [tipoId, setTipoId] = useState<string | null>(null)
+  const [prazoDesafio, setPrazoDesafio] = useState('')
+
+  const paraDesafios = destino === 'DESAFIOS'
+  // Voltar etapa é correção de rota: não se cobra nada além de saber por quê.
+  const voltando = (ESTAGIOS_PIPELINE.indexOf(destino as EstagioKey)
+    < ESTAGIOS_PIPELINE.indexOf(oportunidade?.estagio))
+
+  const { data: req } = useQuery<any>({
+    queryKey: ['crm-requisitos', id, destino],
+    queryFn: () => api.get(`/crm/oportunidades/${id}/requisitos`, { params: { destino } }).then(r => r.data),
+    enabled: !!id && !paraDesafios,
+  })
+  const { data: sugestoes = [] } = useQuery<any[]>({
+    queryKey: ['crm-desafio-tipos', problema],
+    queryFn: () => api.get('/crm/desafios/tipos', { params: problema ? { q: problema } : {} }).then(r => r.data),
+    enabled: paraDesafios,
+  })
+
+  const mover = useMutation({
+    mutationFn: async () => {
+      if (paraDesafios) {
+        // Registrar o desafio JÁ move o card para Desafios no servidor.
+        await api.post(`/crm/oportunidades/${id}/desafios`, {
+          tipo_id: tipoId, tipo_texto: tipoId ? null : problema.trim() || null,
+          prazo: prazoDesafio || null, bloqueia: true,
+        })
+      } else {
+        const body: any = { estagio: destino }
+        if (passo.trim()) body.proximo_passo = passo.trim()
+        if (passoEm) body.proximo_passo_em = passoEm
+        await api.patch(`/crm/oportunidades/${id}`, body)
+      }
+      if (nota.trim()) {
+        await api.post(`/crm/oportunidades/${id}/notas`, { texto: nota.trim() })
+      }
+    },
+    onSuccess: () => { toast.success(`Movida para ${cfgDest?.label}`); onSaved(); onClose() },
+    onError: (e: any) => toast.error(msgErro(e, 'Não foi possível mover'), { duration: 6000 }),
+  })
+
+  // O que o servidor ainda cobra, tirando o próximo passo (que este modal coleta).
+  const bloqueios = (req?.falta || []).filter((f: string) => !f.startsWith('próximo passo'))
+  const exigePasso = (req?.falta || []).some((f: string) => f.startsWith('próximo passo'))
+  const pronto = paraDesafios
+    ? !!problema.trim()
+    : bloqueios.length === 0 && (voltando || !exigePasso || !!passo.trim())
+
+  return (
+    <ModalBase titulo={`${cfgAtual?.label || '—'} → ${cfgDest?.label}`} onClose={onClose} max="max-w-lg">
+      <div className="p-5 space-y-3 overflow-y-auto">
+        {/* Bloqueios que o modal não resolve: some fora daqui (itens, proposta...). */}
+        {bloqueios.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+            <p className="text-xs font-bold text-red-800 flex items-center gap-1.5">
+              <AlertTriangle size={13} /> Falta resolver antes
+            </p>
+            <ul className="mt-1.5 space-y-1">
+              {bloqueios.map((f: string) => (
+                <li key={f} className="text-xs text-red-700">• {f}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {paraDesafios ? (
+          <>
+            <p className="text-xs text-gray-400">
+              Registre o problema que está travando. O card fica em Desafios e a negociação
+              só volta a andar quando ele for resolvido.
+            </p>
+            <Campo label="Qual é o problema? *">
+              <input value={problema} autoFocus
+                onChange={e => { setProblema(e.target.value); setTipoId(null) }}
+                placeholder="Ex.: hospital exige cadastro no portal de compras"
+                className={inputCls} />
+            </Campo>
+            {problema.trim() && sugestoes.length > 0 && !tipoId && (
+              <div className="flex flex-wrap gap-1">
+                <span className="text-[11px] text-gray-400 self-center">já existe:</span>
+                {sugestoes.slice(0, 4).map(s => (
+                  <button key={s.id} type="button"
+                    onClick={() => { setTipoId(s.id); setProblema(s.label) }}
+                    className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-orange-300 text-orange-800 hover:bg-orange-100">
+                    {s.label}{s.usos > 0 ? ` · ${s.usos}` : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+            {tipoId && <p className="text-[11px] text-emerald-700">✓ usando tipo já cadastrado</p>}
+            <Campo label="Prazo para resolver">
+              <input type="date" value={prazoDesafio} onChange={e => setPrazoDesafio(e.target.value)} className={inputCls} />
+            </Campo>
+          </>
+        ) : voltando ? (
+          <p className="text-xs text-gray-500">
+            Voltando etapa — correção de rota. Registre o motivo na nota abaixo para o
+            histórico não ficar sem explicação.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-gray-400">
+              {destino === 'NEGOCIACAO' && 'O que ficou acordado e qual o próximo passo — sem isso o card para e ninguém sabe o que fazer.'}
+              {destino === 'PROPOSTA' && 'A proposta é gerada dos itens da oportunidade. Confirme o próximo passo do envio.'}
+              {destino === 'QUALIFICACAO' && 'Defina o próximo passo para a oportunidade não ficar parada.'}
+            </p>
+            <Campo label={`Próximo passo ${exigePasso ? '*' : ''}`}>
+              <input value={passo} onChange={e => setPasso(e.target.value)} autoFocus
+                placeholder={destino === 'PROPOSTA' ? 'Ex.: enviar proposta e confirmar recebimento'
+                  : 'Ex.: retornar com desconto aprovado'}
+                className={inputCls} />
+            </Campo>
+            <Campo label="Quando">
+              <input type="date" value={passoEm} onChange={e => setPassoEm(e.target.value)} className={inputCls} />
+            </Campo>
+          </>
+        )}
+
+        <Campo label={voltando ? 'Motivo *' : 'O que aconteceu (opcional)'}>
+          <textarea value={nota} onChange={e => setNota(e.target.value)} rows={2} className={inputCls}
+            placeholder={voltando ? 'Por que está voltando esta etapa' : 'Vai para a timeline da oportunidade'} />
+        </Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancelar</button>
+        <button onClick={() => mover.mutate()}
+          disabled={!pronto || (voltando && !nota.trim()) || mover.isPending}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          {mover.isPending ? 'Movendo…' : `Mover para ${cfgDest?.label}`}
+        </button>
+      </div>
     </ModalBase>
   )
 }
