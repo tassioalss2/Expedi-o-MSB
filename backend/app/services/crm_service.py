@@ -444,6 +444,54 @@ def requisitos_ganho(db, oportunidade_id: str) -> list:
     return []
 
 
+def _gerar_cotacao_proposta(db, oportunidade_id: str, usuario: UsuarioOut) -> Optional[dict]:
+    """Gera a proposta (cotação) automaticamente ao entrar em PROPOSTA.
+
+    A cotação é o formulário que vira PDF: puxa cliente/contato/canal da
+    oportunidade, itens negociados e, quando a empresa tem cidade/UF mapeadas,
+    já preenche o endereço. Se a oportunidade já tem cotação ativa (ex.: saiu
+    de Proposta e voltou), não duplica — devolve a existente."""
+    from app.models.schemas import CotacaoCreate, CotacaoItem
+    from app.services import crm_cotacao_service
+
+    existentes = db.table("crm_cotacoes").select("id, numero")\
+        .eq("oportunidade_id", oportunidade_id).eq("ativo", True).execute().data
+    if existentes:
+        return {"id": existentes[0]["id"], "numero": existentes[0]["numero"], "nova": False}
+
+    opp = db.table("crm_oportunidades").select("*").eq("id", oportunidade_id).single().execute().data
+    if not opp:
+        return None
+    itens_rows = db.table("crm_oportunidade_itens").select("*").eq("oportunidade_id", oportunidade_id).execute().data
+    validos = [i for i in itens_rows if float(i.get("qtd") or 0) > 0 and float(i.get("valor_unitario") or 0) > 0]
+    if not validos:
+        return None
+
+    endereco_cidade = endereco_uf = None
+    if opp.get("empresa_id"):
+        emp = db.table("crm_empresas").select("cidade, uf").eq("id", opp["empresa_id"]).execute().data
+        if emp:
+            endereco_cidade = emp[0].get("cidade")
+            endereco_uf = emp[0].get("uf")
+
+    payload = CotacaoCreate(
+        cliente_id=opp.get("cliente_id"),
+        contato_id=opp.get("contato_id"),
+        oportunidade_id=oportunidade_id,
+        canal=opp.get("canal"),
+        validade=(datetime.now(timezone.utc) + timedelta(days=15)).date(),
+        endereco_cidade=endereco_cidade,
+        endereco_uf=endereco_uf,
+        itens=[CotacaoItem(
+            produto_id=i.get("produto_id"), codigo=i.get("codigo"), descricao=i.get("descricao"),
+            qtd=float(i.get("qtd") or 0), valor_unitario=float(i.get("valor_unitario") or 0),
+        ) for i in validos],
+    )
+    cot = crm_cotacao_service.criar_cotacao(payload, usuario)
+    _log_evento(db, oportunidade_id, f"📄 Proposta gerada automaticamente: {cot['numero']}", str(usuario.id))
+    return {"id": cot["id"], "numero": cot["numero"], "nova": True}
+
+
 def _validar_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> None:
     falta = requisitos_avanco(db, oportunidade_id, atual, destino)
     if falta:
@@ -523,6 +571,7 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
         update["proximo_passo_em"] = payload.proximo_passo_em.isoformat()
 
     # Mudança de estágio → valida o portão, ajusta probabilidade e registra evento
+    entrando_em_proposta = payload.estagio == "PROPOSTA" and atual.get("estagio") != "PROPOSTA"
     if payload.estagio is not None and payload.estagio != atual.get("estagio"):
         if payload.estagio not in _PROB_POR_ESTAGIO:
             raise HTTPException(status_code=422, detail="Estágio inválido")
@@ -560,7 +609,18 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
             if novo_valor > 0:
                 db.table("crm_oportunidades").update({"valor_estimado": novo_valor}).eq("id", oportunidade_id).execute()
 
-    return obter_oportunidade(oportunidade_id)
+    out = obter_oportunidade(oportunidade_id)
+    if entrando_em_proposta:
+        # A proposta é gerada automaticamente a partir do que foi negociado —
+        # sem isso o vendedor teria que redigitar tudo na aba Cotações.
+        try:
+            cot = _gerar_cotacao_proposta(db, oportunidade_id, usuario)
+        except Exception:
+            cot = None
+        if cot:
+            out["cotacao_gerada_id"] = cot["id"]
+            out["cotacao_gerada_numero"] = cot["numero"]
+    return out
 
 
 # ── Desafios: vocabulário que aprende ───────────────────────────────────────────

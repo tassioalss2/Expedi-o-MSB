@@ -635,6 +635,7 @@ function ModalMover({ oportunidade, destino, onClose, onSaved }: {
 
   const mover = useMutation({
     mutationFn: async () => {
+      let cotacaoGeradaId: string | null = null
       if (paraDesafios) {
         // Registrar o desafio JÁ move o card para Desafios no servidor.
         await api.post(`/crm/oportunidades/${id}/desafios`, {
@@ -645,13 +646,22 @@ function ModalMover({ oportunidade, destino, onClose, onSaved }: {
         const body: any = { estagio: destino }
         if (passo.trim()) body.proximo_passo = passo.trim()
         if (passoEm) body.proximo_passo_em = passoEm
-        await api.patch(`/crm/oportunidades/${id}`, body)
+        const res = await api.patch(`/crm/oportunidades/${id}`, body)
+        cotacaoGeradaId = res.data?.cotacao_gerada_id || null
       }
       if (nota.trim()) {
         await api.post(`/crm/oportunidades/${id}/notas`, { texto: nota.trim() })
       }
+      return { cotacaoGeradaId }
     },
-    onSuccess: () => { toast.success(`Movida para ${cfgDest?.label}`); onSaved(); onClose() },
+    onSuccess: ({ cotacaoGeradaId }) => {
+      toast.success(`Movida para ${cfgDest?.label}`)
+      if (cotacaoGeradaId) {
+        toast.success('Proposta gerada automaticamente a partir dos itens negociados', { duration: 5000 })
+        window.open(`/crm/cotacao/${cotacaoGeradaId}/imprimir`, '_blank')
+      }
+      onSaved(); onClose()
+    },
     onError: (e: any) => toast.error(msgErro(e, 'Não foi possível mover'), { duration: 6000 }),
   })
 
