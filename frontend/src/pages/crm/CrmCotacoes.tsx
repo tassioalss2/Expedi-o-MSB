@@ -72,12 +72,47 @@ export function CrmCotacoes() {
         </div>
       )}
 
-      {modal && <ModalCotacao cotacao={modal === 'novo' ? undefined : modal} onClose={() => setModal(null)} onSaved={invalidar} />}
+      {modal && <ModalCotacao cotacao={modal === 'novo' ? undefined : modal}
+        onClose={() => setModal(null)} onSaved={invalidar}
+        onRevisada={(novaId) => setModal({ id: novaId })} />}
     </div>
   )
 }
 
-export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?: any; prefill?: any; onClose: () => void; onSaved: () => void }) {
+/** Busca a cotação completa antes de montar o form.
+ *
+ *  Existe porque a listagem devolve uma versão resumida (sem itens e sem o
+ *  contato) — abrir o form com aquele objeto mostrava campos vazios como se o
+ *  dado nunca tivesse sido salvo. Aqui basta um `{ id }` para o form nascer
+ *  preenchido, de onde quer que ele seja aberto. */
+export function ModalCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
+  cotacao?: any; prefill?: any; onClose: () => void; onSaved: () => void
+  onRevisada?: (novaId: string) => void
+}) {
+  const id = cotacao?.id
+  const { data: completa, isLoading } = useQuery<any>({
+    queryKey: ['crm-cotacao', id],
+    queryFn: () => api.get(`/crm/cotacoes/${id}`).then(r => r.data),
+    enabled: !!id,
+  })
+
+  if (id && (isLoading || !completa)) {
+    return (
+      <ModalBase titulo="Cotação" onClose={onClose} max="max-w-3xl">
+        <p className="p-8 text-center text-gray-400 text-sm">Carregando cotação…</p>
+      </ModalBase>
+    )
+  }
+  // `key` obrigatória: ao revisar, o id muda com o modal já montado. Sem
+  // remontar, o form manteria no state os valores da cotação anterior.
+  return <FormCotacao key={id || 'nova'} cotacao={id ? completa : undefined} prefill={prefill}
+    onClose={onClose} onSaved={onSaved} onRevisada={onRevisada} />
+}
+
+function FormCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
+  cotacao?: any; prefill?: any; onClose: () => void; onSaved: () => void
+  onRevisada?: (novaId: string) => void
+}) {
   const edicao = !!cotacao?.id
   const base = cotacao || prefill || {}
   const [clienteId, setClienteId] = useState(base.cliente_id || '')
@@ -144,12 +179,15 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
     onSuccess: () => { toast.success('Cotação removida'); onSaved(); onClose() },
   })
   // Revisão de preço é proposta NOVA, não edição da que o cliente já recebeu.
+  // Abre direto no editor da nova: criar uma cópia idêntica e mandar o vendedor
+  // procurá-la não revisa nada — o objetivo do botão é mexer nos valores.
   const duplicar = useMutation({
     mutationFn: () => api.post(`/crm/cotacoes/${cotacao.id}/duplicar`),
     onSuccess: (res) => {
-      toast.success(`Nova proposta ${res.data?.numero} criada — ajuste itens e valores`)
-      onSaved(); onClose()
-      window.open(`/crm/cotacao/${res.data.id}/imprimir`, '_blank')
+      toast.success(`${res.data?.numero} criada a partir de ${cotacao.numero} — ajuste itens e valores`)
+      onSaved()
+      if (onRevisada) onRevisada(res.data.id)
+      else { onClose(); window.open(`/crm/cotacao/${res.data.id}/imprimir`, '_blank') }
     },
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao revisar proposta'), { duration: 5000 }),
   })
@@ -183,7 +221,8 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           <div className="col-span-2">
             <Campo label="Cliente / Órgão (razão social)">
-              <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
+              <ClienteAutocomplete value={clienteId} initialNome={clienteNome}
+                onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
               {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
             </Campo>
           </div>

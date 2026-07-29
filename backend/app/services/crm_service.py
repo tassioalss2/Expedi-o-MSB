@@ -440,7 +440,12 @@ def requisitos_ganho(db, oportunidade_id: str) -> list:
         return []
     emitida = [c for c in cots if c.get("enviada_em") or c.get("status") in ("ENVIADA", "ACEITA")]
     if not emitida:
-        return ["proposta gerada e enviada ao cliente — é ela que fecha o negócio"]
+        if cots:
+            # A proposta existe, só não foi marcada como enviada. Dizer ONDE
+            # resolver — a mensagem antiga deixava o usuário sem saída.
+            return ["marcar a proposta como enviada — use \"Marcar enviada\" no painel "
+                    "Propostas, aqui mesmo na oportunidade"]
+        return ["gerar e enviar a proposta ao cliente — é ela que fecha o negócio"]
     return []
 
 

@@ -25,11 +25,14 @@ export function CotacaoImprimir() {
     enabled: !!id,
   })
 
+  // Revisar abre o editor da nova proposta aqui mesmo; ao salvar, vai para a
+  // impressão dela. Antes só criava a cópia e recarregava — não revisava nada.
+  const [revisandoId, setRevisandoId] = useState<string | null>(null)
   const duplicar = useMutation({
     mutationFn: () => api.post(`/crm/cotacoes/${id}/duplicar`),
     onSuccess: (res) => {
-      toast.success(`Nova proposta ${res.data?.numero} criada — ajuste itens e valores`)
-      window.location.href = `/crm/cotacao/${res.data.id}/imprimir`
+      toast.success(`${res.data?.numero} criada — ajuste itens e valores`)
+      setRevisandoId(res.data.id)
     },
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao revisar proposta'), { duration: 5000 }),
   })
@@ -191,8 +194,14 @@ export function CotacaoImprimir() {
       </div>
 
       {editar && (
-        <ModalCotacao cotacao={c} onClose={() => setEditar(false)}
-          onSaved={() => qc.invalidateQueries({ queryKey: ['crm-cotacao', id] })} />
+        <ModalCotacao cotacao={{ id }} onClose={() => setEditar(false)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['crm-cotacao', id] })}
+          onRevisada={(novaId) => { setEditar(false); setRevisandoId(novaId) }} />
+      )}
+      {revisandoId && (
+        <ModalCotacao cotacao={{ id: revisandoId }}
+          onClose={() => setRevisandoId(null)}
+          onSaved={() => { window.location.href = `/crm/cotacao/${revisandoId}/imprimir` }} />
       )}
     </div>
   )

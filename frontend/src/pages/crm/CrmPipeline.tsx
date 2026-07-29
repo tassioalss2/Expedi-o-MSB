@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Search, Target, Trophy, XCircle, Trash2, Pencil, Package,
   Clock, MessageSquare, CalendarPlus, CheckCircle2, ExternalLink,
-  AlertTriangle, Circle, ArrowRight, Undo2, FileText, Printer,
+  AlertTriangle, Circle, ArrowRight, Undo2, FileText, Printer, Send,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -324,7 +324,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
         contato_id: contatoId || null,
         canal: canal || null,
         estagio,
-        valor_estimado: valor != null ? valor : (totalItens > 0 ? totalItens : null),
+        valor_estimado: totalItens > 0 ? totalItens : valor,
         previsao_fechamento: previsao || null,
         origem: origem || null,
         itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor_unitario: i.valor || 0 })),
@@ -380,8 +380,17 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
             </select>
           </Campo>
           <Campo label="Valor estimado">
-            <InputMoeda value={valor} onChange={setValor}
-              placeholder={totalItens > 0 ? `dos itens: ${fmtBRL(totalItens)}` : '0,00'} />
+            {/* Com itens lançados, o valor É a soma deles — deixar um campo
+                editável ao lado da lista só produzia divergência (valor de
+                50 mil com 52,5 mil em itens). Sem itens, vira palpite manual. */}
+            {totalItens > 0 ? (
+              <div className="border rounded-lg px-3 py-2 bg-gray-50">
+                <p className="text-sm font-semibold text-gray-800 tabular-nums">{fmtBRL(totalItens)}</p>
+                <p className="text-[11px] text-gray-400">soma dos {itens.length} item(ns)</p>
+              </div>
+            ) : (
+              <InputMoeda value={valor} onChange={setValor} placeholder="0,00" />
+            )}
           </Campo>
           <Campo label="Previsão de fechamento">
             <input type="date" value={previsao} onChange={e => setPrevisao(e.target.value)} className={inputCls} />
@@ -455,32 +464,73 @@ function ModalNovoContato({ clienteId, clienteNome, onClose, onSaved }: {
  *  invisível daqui: gerada automaticamente ao entrar em Proposta, ficava só na
  *  aba Cotações e quem fechava a aba de impressão não sabia como voltar. Cada
  *  proposta é persistida no momento em que nasce — reimprimir é sempre possível. */
-function PainelPropostas({ oportunidadeId }: { oportunidadeId: string }) {
+function PainelPropostas({ oportunidadeId, onChanged }: { oportunidadeId: string; onChanged: () => void }) {
+  const qc = useQueryClient()
   const { data: propostas = [] } = useQuery<any[]>({
     queryKey: ['crm-cotacoes-opp', oportunidadeId],
     queryFn: () => api.get('/crm/cotacoes', { params: { oportunidade_id: oportunidadeId } }).then(r => r.data),
   })
 
+  const mudarStatus = useMutation({
+    mutationFn: ({ pid, novo }: { pid: string; novo: string }) =>
+      api.patch(`/crm/cotacoes/${pid}`, { status: novo }),
+    onSuccess: (_r, { novo }) => {
+      toast.success(novo === 'ENVIADA' ? 'Proposta marcada como enviada' : `Proposta ${novo.toLowerCase()}`)
+      qc.invalidateQueries({ queryKey: ['crm-cotacoes-opp', oportunidadeId] })
+      qc.invalidateQueries({ queryKey: ['crm-cotacoes'] })
+      onChanged()
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao mudar status'), { duration: 5000 }),
+  })
+
   if (propostas.length === 0) return null
+
+  const alguremEnviada = propostas.some(p => p.enviada_em || ['ENVIADA', 'ACEITA'].includes(p.status))
 
   return (
     <div className="px-5 py-3 border-b">
       <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
         <FileText size={15} /> Propostas ({propostas.length})
       </h3>
+      {/* Sem proposta enviada, Ganhar é recusado pelo servidor. O caminho para
+          destravar precisa estar aqui, não escondido dentro do modal da cotação. */}
+      {!alguremEnviada && (
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 mb-2">
+          Nenhuma proposta enviada ainda — por isso <strong>Ganhar</strong> fica travado. Depois de
+          mandar ao cliente, clique em <strong>Marcar enviada</strong> abaixo.
+        </p>
+      )}
       <div className="space-y-1.5">
-        {propostas.map(p => (
-          <div key={p.id} className="flex items-center gap-2 text-sm border border-gray-100 rounded-lg px-3 py-1.5">
-            <span className="font-mono text-gray-700">{p.numero}</span>
-            <span className="text-gray-600 tabular-nums">{fmtBRL(p.valor_total)}</span>
-            {p.validade && <span className={`text-[11px] ${prazoCor(p.validade)}`}>val. {fmtData(p.validade)}</span>}
-            <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 ml-auto">{p.status}</span>
-            <button onClick={() => window.open(`/crm/cotacao/${p.id}/imprimir`, '_blank')}
-              className="flex items-center gap-1 text-xs text-blue-600 hover:underline whitespace-nowrap">
-              <Printer size={12} /> Abrir / imprimir
-            </button>
-          </div>
-        ))}
+        {propostas.map(p => {
+          const enviada = p.enviada_em || ['ENVIADA', 'ACEITA'].includes(p.status)
+          return (
+            <div key={p.id} className="flex items-center gap-2 text-sm border border-gray-100 rounded-lg px-3 py-1.5 flex-wrap">
+              <span className="font-mono text-gray-700">{p.numero}</span>
+              <span className="text-gray-600 tabular-nums">{fmtBRL(p.valor_total)}</span>
+              {p.validade && <span className={`text-[11px] ${prazoCor(p.validade)}`}>val. {fmtData(p.validade)}</span>}
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 ml-auto">{p.status}</span>
+              <button onClick={() => window.open(`/crm/cotacao/${p.id}/imprimir`, '_blank')}
+                className="flex items-center gap-1 text-xs text-blue-600 hover:underline whitespace-nowrap">
+                <Printer size={12} /> Abrir
+              </button>
+              {!enviada && (
+                <button onClick={() => mudarStatus.mutate({ pid: p.id, novo: 'ENVIADA' })}
+                  disabled={mudarStatus.isPending}
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg bg-blue-600 text-white disabled:opacity-50 whitespace-nowrap">
+                  <Send size={11} /> Marcar enviada
+                </button>
+              )}
+              {p.status !== 'ACEITA' && (
+                <button onClick={() => mudarStatus.mutate({ pid: p.id, novo: 'ACEITA' })}
+                  disabled={mudarStatus.isPending}
+                  title="Cliente aceitou — isso já marca a oportunidade como ganha"
+                  className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-emerald-300 text-emerald-700 disabled:opacity-50 whitespace-nowrap">
+                  <CheckCircle2 size={11} /> Aceita
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -569,7 +619,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
         </div>
 
         <PainelDesafios oportunidadeId={id} onChanged={refresh} />
-        <PainelPropostas oportunidadeId={id} />
+        <PainelPropostas oportunidadeId={id} onChanged={refresh} />
 
         {/* Ações rápidas */}
         <div className="px-5 py-3 border-b flex flex-wrap gap-2">
@@ -689,6 +739,10 @@ function ModalMover({ oportunidade, destino, onClose, onSaved }: {
   const [problema, setProblema] = useState('')
   const [tipoId, setTipoId] = useState<string | null>(null)
   const [prazoDesafio, setPrazoDesafio] = useState('')
+  // Vem marcado: o passo que não está na agenda é o passo que ninguém cobra.
+  const [criarAtiv, setCriarAtiv] = useState(true)
+  const [ativTipo, setAtivTipo] = useState('TAREFA')
+  const [ativHora, setAtivHora] = useState('09:00')
 
   const paraDesafios = destino === 'DESAFIOS'
   // Voltar etapa é correção de rota: não se cobra nada além de saber por quê.
@@ -722,13 +776,21 @@ function ModalMover({ oportunidade, destino, onClose, onSaved }: {
         const res = await api.patch(`/crm/oportunidades/${id}`, body)
         cotacaoGeradaId = res.data?.cotacao_gerada_id || null
       }
+      let agendou = false
+      if (criarAtiv && !paraDesafios && !voltando && passo.trim()) {
+        await api.post('/crm/atividades', {
+          oportunidade_id: id, tipo: ativTipo, titulo: passo.trim(),
+          data_hora: passoEm ? `${passoEm}T${ativHora || '09:00'}:00` : null,
+        })
+        agendou = true
+      }
       if (nota.trim()) {
         await api.post(`/crm/oportunidades/${id}/notas`, { texto: nota.trim() })
       }
-      return { cotacaoGeradaId }
+      return { cotacaoGeradaId, agendou }
     },
-    onSuccess: ({ cotacaoGeradaId }) => {
-      toast.success(`Movida para ${cfgDest?.label}`)
+    onSuccess: ({ cotacaoGeradaId, agendou }) => {
+      toast.success(`Movida para ${cfgDest?.label}${agendou ? ' · atividade agendada' : ''}`)
       if (cotacaoGeradaId) {
         toast.success('Proposta gerada automaticamente a partir dos itens negociados', { duration: 5000 })
         window.open(`/crm/cotacao/${cotacaoGeradaId}/imprimir`, '_blank')
@@ -812,6 +874,30 @@ function ModalMover({ oportunidade, destino, onClose, onSaved }: {
             <Campo label="Quando">
               <input type="date" value={passoEm} onChange={e => setPassoEm(e.target.value)} className={inputCls} />
             </Campo>
+            {/* O próximo passo é só texto no card — não cobra ninguém. Virar
+                atividade é o que faz aparecer na agenda e nos pendentes. */}
+            <label className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg p-2.5 cursor-pointer">
+              <input type="checkbox" checked={criarAtiv} onChange={e => setCriarAtiv(e.target.checked)} className="mt-0.5" />
+              <span className="text-xs text-blue-900">
+                Agendar como atividade
+                <span className="block text-blue-700/70">
+                  Cria a tarefa na agenda com esse texto e essa data — sem isso o próximo passo
+                  fica só escrito no card.
+                </span>
+              </span>
+            </label>
+            {criarAtiv && (
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Tipo de atividade">
+                  <select value={ativTipo} onChange={e => setAtivTipo(e.target.value)} className={inputCls}>
+                    {TIPOS_ATIVIDADE.map(t => <option key={t.key} value={t.key}>{t.icone} {t.label}</option>)}
+                  </select>
+                </Campo>
+                <Campo label="Hora">
+                  <input type="time" value={ativHora} onChange={e => setAtivHora(e.target.value)} className={inputCls} />
+                </Campo>
+              </div>
+            )}
           </>
         )}
 
