@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Search, Target, Trophy, XCircle, Trash2, Pencil, Package,
   Clock, MessageSquare, CalendarPlus, CheckCircle2, ExternalLink,
-  AlertTriangle, Circle,
+  AlertTriangle, Circle, ArrowRight, Undo2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -20,6 +20,25 @@ import { ModalBase, Campo, inputCls, InputMoeda } from './CrmShared'
 
 // CRM é do comercial — licitação NÃO entra aqui (tem módulo próprio).
 const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE']
+
+// Progressão linear real do funil. DESAFIOS fica de fora de propósito: não é um
+// degrau que se avança clicando — é um desvio que o sistema entra sozinho quando
+// alguém registra um problema, e sai sozinho quando o último bloqueante é
+// resolvido (server-side, em criar_desafio/atualizar_desafio). "Avançar" pula
+// direto para a etapa seguinte de negócio; quem quiser sinalizar um problema usa
+// o botão "Registrar problema" do painel de Desafios, não um clique na etapa.
+const ORDEM_AVANCO: EstagioKey[] = ['QUALIFICACAO', 'NEGOCIACAO', 'PROPOSTA']
+
+function proximaEtapa(atual: string): EstagioKey | null {
+  const i = ORDEM_AVANCO.indexOf(atual as EstagioKey)
+  if (i === -1 || i === ORDEM_AVANCO.length - 1) return null
+  return ORDEM_AVANCO[i + 1]
+}
+function etapaAnterior(atual: string): EstagioKey | null {
+  const i = ORDEM_AVANCO.indexOf(atual as EstagioKey)
+  if (i <= 0) return null
+  return ORDEM_AVANCO[i - 1]
+}
 
 export function CrmPipeline() {
   const qc = useQueryClient()
@@ -162,6 +181,59 @@ function CardOpp({ o, onClick }: { o: any; onClick: () => void }) {
       )}
       {o.proximo_passo && !o.proximo_passo_atrasado && (
         <p className="text-[11px] text-gray-400 mt-1 truncate" title={o.proximo_passo}>→ {o.proximo_passo}</p>
+      )}
+    </div>
+  )
+}
+
+/** Substitui a antiga régua de 4 caixinhas clicáveis por um único botão de
+ *  avanço linear. Mostra também, ao lado do botão, o que o servidor exige para
+ *  aquela passagem específica — é a resposta direta a "que informação preciso
+ *  para passar de uma etapa para outra". */
+function FluxoAvanco({ oportunidade: o, onMover }: { oportunidade: any; onMover: (destino: string) => void }) {
+  const proxima = proximaEtapa(o.estagio)
+
+  const { data: req } = useQuery<any>({
+    queryKey: ['crm-requisitos', o.id, proxima],
+    queryFn: () => api.get(`/crm/oportunidades/${o.id}/requisitos`, { params: { destino: proxima } }).then(r => r.data),
+    enabled: !!proxima,
+  })
+
+  if (o.estagio === 'DESAFIOS') {
+    // Desvio automático: o servidor tira daqui sozinho quando o último
+    // bloqueante é resolvido (ver PainelDesafios). Não há o que "avançar".
+    return (
+      <div className="mt-3 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 text-xs text-orange-800 flex items-center gap-2">
+        <AlertTriangle size={14} className="shrink-0" />
+        Negociação travada por desafio(s) aberto(s) — volta sozinha para {ESTAGIO_MAP.QUALIFICACAO.label} assim que forem resolvidos, mais abaixo.
+      </div>
+    )
+  }
+
+  if (!proxima) {
+    return <p className="mt-3 text-xs text-gray-400">Última etapa do funil — use Ganhar ou Perder para fechar.</p>
+  }
+
+  const cfg = ESTAGIO_MAP[proxima]
+  const anterior = etapaAnterior(o.estagio)
+  const falta: string[] = req?.falta || []
+
+  return (
+    <div className="mt-3 flex items-center gap-2 flex-wrap">
+      <button onClick={() => onMover(proxima)}
+        className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg text-white ${cfg.coluna} hover:opacity-90`}>
+        Avançar para {cfg.label} <ArrowRight size={14} />
+      </button>
+      {falta.length > 0 && (
+        <span className="text-[11px] text-gray-400" title={falta.join('; ')}>
+          requer: {falta.join(' · ')}
+        </span>
+      )}
+      {anterior && (
+        <button onClick={() => onMover(anterior)}
+          className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600">
+          <Undo2 size={13} /> Voltar para {ESTAGIO_MAP[anterior].label}
+        </button>
       )}
     </div>
   )
@@ -412,21 +484,11 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
             </div>
           </div>
 
-          {/* Régua de estágios. Clicar NÃO move direto: abre o modal que pede a
-              informação daquela passagem. Mover sem registrar nada era o que
-              deixava o card andar sem ninguém saber o que aconteceu. */}
-          {!fechada && (
-            <div className="flex gap-1 mt-3">
-              {ESTAGIOS.filter(e => !['GANHO', 'PERDIDO'].includes(e.key)).map(e => (
-                <button key={e.key}
-                  onClick={() => o.estagio !== e.key && setMoverPara(e.key)}
-                  disabled={o.estagio === e.key}
-                  className={`flex-1 text-[11px] py-1.5 rounded ${o.estagio === e.key ? `${e.coluna} text-white font-medium` : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-                  {e.label}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* Fluxo linear, não seletor de etapa: um botão só, "Avançar". Desafios
+              não é degrau — é desvio que o sistema entra/sai sozinho (ver
+              PainelDesafios). Clicar não move direto: abre o modal que cobra a
+              informação daquela passagem específica. */}
+          {!fechada && <FluxoAvanco oportunidade={o} onMover={setMoverPara} />}
           {o.estagio === 'PERDIDO' && o.motivo_perda && (
             <div className="mt-3 text-xs bg-red-50 text-red-700 rounded-lg p-2">Perdida — {o.motivo_perda}</div>
           )}
