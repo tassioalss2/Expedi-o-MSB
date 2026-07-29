@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.deps import get_current_user
 from app.models.schemas import (
@@ -13,6 +13,7 @@ from app.models.schemas import (
     CotacaoCreate,
     CotacaoUpdate,
     GerarOVRequest,
+    LeadContatoRequest,
     LeadCreate,
     LeadUpdate,
     NotaCreate,
@@ -103,6 +104,27 @@ def ganhar_oportunidade(oportunidade_id: UUID, usuario: UsuarioOut = Depends(get
     return crm_service.ganhar_oportunidade(str(oportunidade_id), usuario)
 
 
+@router.get("/oportunidades/{oportunidade_id}/requisitos")
+def requisitos_avanco(oportunidade_id: UUID, destino: str = Query(...),
+                      _: UsuarioOut = Depends(get_current_user)):
+    """O que falta para a oportunidade entrar em `destino`.
+
+    A tela consulta antes de oferecer o botão, para o vendedor ver o que buscar em
+    vez de tomar um erro depois de tentar mover o card."""
+    from app.core.database import get_service_db
+    db = get_service_db()
+    atual = db.table("crm_oportunidades").select("*").eq("id", str(oportunidade_id)).single().execute().data
+    if not atual:
+        raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
+    falta = crm_service.requisitos_avanco(db, str(oportunidade_id), atual, destino)
+    return {"destino": destino, "pode_avancar": not falta, "falta": falta}
+
+
+@router.get("/motivos-perda")
+def motivos_perda(_: UsuarioOut = Depends(get_current_user)):
+    return [{"key": k, "label": v} for k, v in crm_service.MOTIVOS_PERDA.items()]
+
+
 @router.post("/oportunidades/{oportunidade_id}/perder")
 def perder_oportunidade(oportunidade_id: UUID, payload: PerderRequest, usuario: UsuarioOut = Depends(get_current_user)):
     return crm_service.perder_oportunidade(str(oportunidade_id), payload, usuario)
@@ -158,6 +180,12 @@ def excluir_atividade(atividade_id: UUID, _: UsuarioOut = Depends(get_current_us
 
 
 # ── Leads ────────────────────────────────────────────────────────────────────────
+@router.get("/leads/opcoes")
+def opcoes_lead(_: UsuarioOut = Depends(get_current_user)):
+    """Vocabulário do fluxo (papéis, janelas, motivos) — a tela não repete listas."""
+    return crm_leads_service.opcoes()
+
+
 @router.get("/leads")
 def listar_leads(status: Optional[str] = Query(None), _: UsuarioOut = Depends(get_current_user)):
     return crm_leads_service.listar_leads(status)
@@ -176,6 +204,15 @@ def obter_lead(lead_id: UUID, _: UsuarioOut = Depends(get_current_user)):
 @router.patch("/leads/{lead_id}")
 def atualizar_lead(lead_id: UUID, payload: LeadUpdate, _: UsuarioOut = Depends(get_current_user)):
     return crm_leads_service.atualizar_lead(str(lead_id), payload)
+
+
+@router.post("/leads/{lead_id}/contato")
+def registrar_contato(lead_id: UUID, payload: LeadContatoRequest,
+                      usuario: UsuarioOut = Depends(get_current_user)):
+    """Registra uma interação e move NOVO → Em contato.
+
+    É o portão da primeira etapa: "em contato" passa a exigir contato registrado."""
+    return crm_leads_service.registrar_contato(str(lead_id), payload, usuario)
 
 
 @router.post("/leads/{lead_id}/converter")

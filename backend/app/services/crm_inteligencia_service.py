@@ -42,6 +42,62 @@ def _carregar():
     return db, pedidos, cli_nome
 
 
+def _analise_perdas(db) -> dict:
+    """Por que a gente perde — agrupado por motivo codificado.
+
+    Só existe porque o motivo da perda passou a ser código (antes era texto livre,
+    e não havia como agrupar nada). Com concorrente e preço do vencedor, vira
+    referência de mercado: dá para ver se perdemos por preço e de quem.
+    """
+    from app.services.crm_service import MOTIVOS_PERDA
+
+    try:
+        rows = db.table("crm_oportunidades").select(
+            "motivo_perda_codigo, concorrente, preco_vencedor, valor_estimado, canal"
+        ).eq("estagio", "PERDIDO").eq("ativo", True).limit(_LIMITE_LINHAS).execute().data
+    except Exception:
+        # Migration v21 ainda não rodou — a aba segue funcionando sem esta seção.
+        return {"total": 0, "por_motivo": [], "concorrentes": [], "disponivel": False}
+
+    if not rows:
+        return {"total": 0, "por_motivo": [], "concorrentes": [], "disponivel": True}
+
+    por_motivo: dict = {}
+    concorrentes: dict = {}
+    for r in rows:
+        cod = r.get("motivo_perda_codigo") or "OUTRO"
+        valor = float(r.get("valor_estimado") or 0)
+        m = por_motivo.setdefault(cod, {"codigo": cod, "label": MOTIVOS_PERDA.get(cod, cod),
+                                        "qtd": 0, "valor": 0.0})
+        m["qtd"] += 1
+        m["valor"] += valor
+
+        nome = (r.get("concorrente") or "").strip()
+        if nome:
+            c = concorrentes.setdefault(nome.upper(), {"nome": nome, "qtd": 0, "valor": 0.0,
+                                                       "diferencas": []})
+            c["qtd"] += 1
+            c["valor"] += valor
+            pv = r.get("preco_vencedor")
+            if pv is not None and valor > 0:
+                # Quanto o vencedor ficou abaixo da nossa proposta.
+                c["diferencas"].append((valor - float(pv)) / valor * 100)
+
+    for m in por_motivo.values():
+        m["valor"] = round(m["valor"], 2)
+    for c in concorrentes.values():
+        c["valor"] = round(c["valor"], 2)
+        difs = c.pop("diferencas")
+        c["gap_medio_pct"] = round(sum(difs) / len(difs), 1) if difs else None
+
+    return {
+        "total": len(rows),
+        "disponivel": True,
+        "por_motivo": sorted(por_motivo.values(), key=lambda x: -x["qtd"]),
+        "concorrentes": sorted(concorrentes.values(), key=lambda x: -x["qtd"])[:10],
+    }
+
+
 def dashboard_inteligencia(dias_inatividade: int = 90) -> dict:
     db, pedidos, cli_nome = _carregar()
     agora = datetime.now(timezone.utc)
@@ -172,6 +228,7 @@ def dashboard_inteligencia(dias_inatividade: int = 90) -> dict:
         "top_clientes": top[:15],
         "produtos_por_canal": produtos_por_canal,
         "cross_sell": cross_sell[:20],
+        "perdas": _analise_perdas(db),
         "resumo": {
             "clientes_ativos": sum(1 for c in por_cliente.values() if c["ultima_ts"] and (agora - c["ultima_ts"]).days <= 180),
             "clientes_inativos": len(win_back),

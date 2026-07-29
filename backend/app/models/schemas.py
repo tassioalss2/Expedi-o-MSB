@@ -497,11 +497,14 @@ class OportunidadeCreate(BaseModel):
     cliente_id: Optional[UUID] = None
     contato_id: Optional[UUID] = None
     canal: Optional[str] = None
-    estagio: str = "LEAD"
+    # O funil começa em QUALIFICACAO: o estágio LEAD duplicava o status do lead.
+    estagio: str = "QUALIFICACAO"
     valor_estimado: Optional[float] = None
     probabilidade: Optional[int] = None
     origem: Optional[str] = None
     previsao_fechamento: Optional[date] = None
+    proximo_passo: Optional[str] = None
+    proximo_passo_em: Optional[date] = None
     itens: list[OportunidadeItem] = []
 
 
@@ -515,11 +518,19 @@ class OportunidadeUpdate(BaseModel):
     probabilidade: Optional[int] = None
     origem: Optional[str] = None
     previsao_fechamento: Optional[date] = None
+    proximo_passo: Optional[str] = None
+    proximo_passo_em: Optional[date] = None
+    custo_estimado: Optional[float] = None
     itens: Optional[list[OportunidadeItem]] = None
 
 
 class PerderRequest(BaseModel):
-    motivo: str
+    """Perda estruturada: `codigo` é o que permite aprender por que perdemos.
+    O texto livre continua, como complemento."""
+    codigo: Optional[str] = None
+    motivo: Optional[str] = None
+    concorrente: Optional[str] = None
+    preco_vencedor: Optional[float] = None
 
 
 class AtividadeCreate(BaseModel):
@@ -552,6 +563,41 @@ class GerarOVRequest(BaseModel):
 
 
 # ── CRM · Leads ────────────────────────────────────────────────────────────────
+# Blocos da qualificação. São objetos (e não campos soltos) porque a regra é
+# "o bloco está completo ou não está" — o portão avalia o conjunto.
+class LeadNecessidade(BaseModel):
+    """O que o cliente compra e quanto por mês."""
+    familia: Optional[str] = None
+    codigos: list[str] = []
+    consumo_mes: Optional[float] = None
+    unidade: Optional[str] = None
+    # Usado só quando nenhum código é reconhecido e não há preço de referência.
+    valor_mensal_estimado: Optional[float] = None
+    observacao: Optional[str] = None
+
+
+class LeadDecisor(BaseModel):
+    """Quem assina a compra. `papel` vem de crm_leads_service.PAPEIS."""
+    nome: Optional[str] = None
+    papel: Optional[str] = None
+    email: Optional[str] = None
+    telefone: Optional[str] = None
+
+
+class LeadPrazo(BaseModel):
+    """Quando compra: data firme ou janela. `tipo`: DATA | JANELA."""
+    tipo: Optional[str] = None
+    data: Optional[date] = None
+    janela: Optional[str] = None
+
+
+class LeadVerba(BaseModel):
+    """Não obrigatória para qualificar, mas pesa no score quando confirmada."""
+    confirmada: Optional[bool] = None
+    valor: Optional[float] = None
+    observacao: Optional[str] = None
+
+
 class LeadCreate(BaseModel):
     empresa: str
     contato_nome: Optional[str] = None
@@ -560,9 +606,12 @@ class LeadCreate(BaseModel):
     cnpj: Optional[str] = None
     canal: Optional[str] = None
     origem: Optional[str] = None
-    valor_potencial: Optional[float] = 0
     observacao: Optional[str] = None
     cliente_id: Optional[UUID] = None
+    necessidade: Optional[LeadNecessidade] = None
+    decisor: Optional[LeadDecisor] = None
+    prazo: Optional[LeadPrazo] = None
+    verba: Optional[LeadVerba] = None
 
 
 class LeadUpdate(BaseModel):
@@ -573,11 +622,25 @@ class LeadUpdate(BaseModel):
     cnpj: Optional[str] = None
     canal: Optional[str] = None
     origem: Optional[str] = None
-    valor_potencial: Optional[float] = None
     status: Optional[str] = None
     observacao: Optional[str] = None
     cliente_id: Optional[UUID] = None
+    necessidade: Optional[LeadNecessidade] = None
+    decisor: Optional[LeadDecisor] = None
+    prazo: Optional[LeadPrazo] = None
+    verba: Optional[LeadVerba] = None
     motivo_descarte: Optional[str] = None
+    motivo_descarte_codigo: Optional[str] = None
+    proximo_passo: Optional[str] = None
+    proximo_passo_em: Optional[date] = None
+
+
+class LeadContatoRequest(BaseModel):
+    """Registro de uma interação — destrava NOVO → EM_CONTATO."""
+    tipo: Optional[str] = None
+    descricao: Optional[str] = None
+    proximo_passo: Optional[str] = None
+    proximo_passo_em: Optional[date] = None
 
 
 # ── CRM · Cotações ────────────────────────────────────────────────────────────────

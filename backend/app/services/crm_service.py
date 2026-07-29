@@ -25,18 +25,38 @@ from app.models.schemas import (
     UsuarioOut,
 )
 
-# Estágios do funil e probabilidade padrão de cada um (%).
+# Estágios do funil e probabilidade BASE de cada um (%).
+#
+# O estágio LEAD saiu: era a mesma etapa que o status do lead, em duas tabelas.
+# Uma oportunidade só nasce depois de qualificada — antes disso é lead.
 ESTAGIOS = [
-    {"key": "LEAD", "label": "Lead", "prob": 10},
-    {"key": "QUALIFICACAO", "label": "Qualificação", "prob": 25},
+    {"key": "QUALIFICACAO", "label": "Qualificada", "prob": 30},
     {"key": "PROPOSTA", "label": "Proposta", "prob": 50},
-    {"key": "NEGOCIACAO", "label": "Negociação", "prob": 75},
+    {"key": "NEGOCIACAO", "label": "Negociação", "prob": 70},
     {"key": "GANHO", "label": "Ganho", "prob": 100},
     {"key": "PERDIDO", "label": "Perdido", "prob": 0},
 ]
 _PROB_POR_ESTAGIO = {e["key"]: e["prob"] for e in ESTAGIOS}
-_ESTAGIOS_ABERTOS = ["LEAD", "QUALIFICACAO", "PROPOSTA", "NEGOCIACAO"]
+_ESTAGIOS_ABERTOS = ["QUALIFICACAO", "PROPOSTA", "NEGOCIACAO"]
 _ESTAGIO_LABEL = {e["key"]: e["label"] for e in ESTAGIOS}
+# Ordem para não deixar pular etapa (não se negocia o que não foi proposto).
+_ORDEM_ESTAGIO = {"QUALIFICACAO": 1, "PROPOSTA": 2, "NEGOCIACAO": 3}
+
+MOTIVOS_PERDA = {
+    "PRECO": "Preço acima do concorrente",
+    "PRAZO_ENTREGA": "Prazo de entrega",
+    "CONCORRENTE": "Concorrente já estabelecido",
+    "SEM_VERBA": "Cliente sem verba",
+    "PRODUTO_NAO_ATENDE": "Produto não atende",
+    "SEM_RESPOSTA": "Cliente parou de responder",
+    "TIMING": "Momento errado / adiou a compra",
+    "OUTRO": "Outro",
+}
+
+# Card parado é o principal sintoma de funil abandonado. A partir daqui o painel
+# sinaliza — e a probabilidade cai, porque previsão de negócio parado é ficção.
+_DIAS_PARADO_ALERTA = 15
+_DIAS_PARADO_GRAVE = 30
 
 
 def _agora() -> str:
@@ -163,9 +183,63 @@ def _itens_json(itens, oportunidade_id: str) -> list:
     return out
 
 
+def _dias_no_estagio(o: dict) -> Optional[int]:
+    ref = o.get("estagio_em") or o.get("criado_em")
+    if not ref:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ref).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days
+    except Exception:
+        return None
+
+
+def _probabilidade_ajustada(o: dict, dias_parado: Optional[int]) -> tuple:
+    """Probabilidade = base do estágio, corrigida por sinais reais.
+
+    Antes era fixa: toda proposta valia 50%, boa ou ruim, viva ou parada há dois
+    meses. Isso inflava a previsão ponderada que alimenta o forecast. Aqui o
+    número cai quando o negócio dá sinal de estar morrendo.
+    """
+    estagio = o.get("estagio")
+    if estagio in ("GANHO", "PERDIDO"):
+        return (100 if estagio == "GANHO" else 0), []
+
+    base = _PROB_POR_ESTAGIO.get(estagio, 0)
+    prob, motivos = base, []
+
+    if dias_parado is not None and dias_parado >= _DIAS_PARADO_GRAVE:
+        prob -= 20
+        motivos.append(f"parada há {dias_parado} dias")
+    elif dias_parado is not None and dias_parado >= _DIAS_PARADO_ALERTA:
+        prob -= 10
+        motivos.append(f"parada há {dias_parado} dias")
+
+    # Sem próximo passo definido, ninguém está conduzindo o negócio.
+    if not o.get("proximo_passo"):
+        prob -= 10
+        motivos.append("sem próximo passo")
+
+    # Concorrente conhecido no jogo reduz a chance.
+    if (o.get("concorrente") or "").strip():
+        prob -= 5
+        motivos.append("concorrente identificado")
+
+    return max(5, min(95, prob)), motivos
+
+
 def _serializar_opp(o: dict, itens: Optional[list] = None) -> dict:
     valor = float(o.get("valor_estimado") or 0)
-    prob = int(o.get("probabilidade") or 0)
+    dias_parado = _dias_no_estagio(o)
+    prob, ajustes = _probabilidade_ajustada(o, dias_parado)
+    custo = o.get("custo_estimado")
+    custo = float(custo) if custo is not None else None
+    # Margem só é informativa (decisão do negócio: calcular, não julgar).
+    margem_pct = round((valor - custo) / valor * 100, 1) if (custo is not None and valor > 0) else None
+    hoje = (datetime.now(timezone.utc) - timedelta(hours=3)).date().isoformat()
+    aberta = o.get("estagio") in _ESTAGIOS_ABERTOS
     return {
         "id": o["id"],
         "titulo": o.get("titulo"),
@@ -176,12 +250,29 @@ def _serializar_opp(o: dict, itens: Optional[list] = None) -> dict:
         "estagio": o.get("estagio"),
         "estagio_label": _ESTAGIO_LABEL.get(o.get("estagio"), o.get("estagio")),
         "valor_estimado": round(valor, 2),
+        "custo_estimado": custo,
+        "margem_pct": margem_pct,
         "probabilidade": prob,
+        "probabilidade_base": _PROB_POR_ESTAGIO.get(o.get("estagio"), 0),
+        "probabilidade_ajustes": ajustes,
         "valor_ponderado": round(valor * prob / 100, 2),
         "origem": o.get("origem"),
         "previsao_fechamento": o.get("previsao_fechamento"),
         "responsavel_id": o.get("responsavel_id"),
+        # Qualificação herdada do lead: o funil não perde o "por que isso existe".
+        "qualificacao": o.get("qualificacao"),
+        "proximo_passo": o.get("proximo_passo"),
+        "proximo_passo_em": o.get("proximo_passo_em"),
+        "proximo_passo_atrasado": bool(aberta and o.get("proximo_passo_em")
+                                       and str(o["proximo_passo_em"])[:10] < hoje),
+        "sem_proximo_passo": bool(aberta and not o.get("proximo_passo")),
+        "dias_no_estagio": dias_parado,
+        "parada": bool(aberta and dias_parado is not None and dias_parado >= _DIAS_PARADO_ALERTA),
         "motivo_perda": o.get("motivo_perda"),
+        "motivo_perda_codigo": o.get("motivo_perda_codigo"),
+        "motivo_perda_label": MOTIVOS_PERDA.get(o.get("motivo_perda_codigo")),
+        "concorrente": o.get("concorrente"),
+        "preco_vencedor": float(o["preco_vencedor"]) if o.get("preco_vencedor") is not None else None,
         "ganho_em": o.get("ganho_em"),
         "perdido_em": o.get("perdido_em"),
         "gerado_ov_id": o.get("gerado_ov_id"),
@@ -268,24 +359,79 @@ def _log_evento(db, oportunidade_id: str, texto: str, autor_id: Optional[str]) -
     }).execute()
 
 
-def criar_oportunidade(payload: OportunidadeCreate, usuario: UsuarioOut) -> dict:
+def requisitos_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> list:
+    """O que falta para a oportunidade entrar em `destino`.
+
+    Mesma ideia do checklist do lead: em vez de aceitar qualquer pulo de etapa
+    (dava para ir de Qualificada direto a Negociação), cada avanço exige a prova
+    de que a etapa anterior aconteceu de verdade.
+    """
+    falta = []
+    de = _ORDEM_ESTAGIO.get(atual.get("estagio"), 0)
+    para = _ORDEM_ESTAGIO.get(destino, 0)
+
+    # Só cobra ao AVANÇAR. Voltar etapa é correção de rota e fica livre.
+    if para <= de:
+        return falta
+
+    if para >= 2:  # → Proposta
+        itens = db.table("crm_oportunidade_itens").select("id, qtd, valor_unitario")\
+            .eq("oportunidade_id", oportunidade_id).execute().data
+        validos = [i for i in itens if float(i.get("qtd") or 0) > 0 and float(i.get("valor_unitario") or 0) > 0]
+        if not validos:
+            falta.append("itens cotados (produto, quantidade e preço) — não há proposta sem o que propor")
+
+    if para >= 3:  # → Negociação
+        cots = db.table("crm_cotacoes").select("id, status, enviada_em")\
+            .eq("oportunidade_id", oportunidade_id).eq("ativo", True).execute().data
+        enviada = [c for c in cots if c.get("enviada_em") or c.get("status") in ("ENVIADA", "ACEITA", "RECUSADA")]
+        if not enviada:
+            falta.append("proposta enviada ao cliente — negociação começa depois do envio")
+
+    if destino in _ESTAGIOS_ABERTOS and not (atual.get("proximo_passo") or "").strip():
+        falta.append("próximo passo definido (o que acontece agora e quando)")
+
+    return falta
+
+
+def _validar_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> None:
+    falta = requisitos_avanco(db, oportunidade_id, atual, destino)
+    if falta:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Para mover para {_ESTAGIO_LABEL.get(destino, destino)}, falta: " + "; ".join(falta) + ".",
+        )
+
+
+def criar_oportunidade(payload: OportunidadeCreate, usuario: UsuarioOut,
+                       qualificacao: Optional[dict] = None) -> dict:
+    """Cria a oportunidade no funil.
+
+    `qualificacao` vem da conversão do lead (o que compra, quem decide, quando) —
+    é o contexto que justifica o card existir.
+    """
     db = get_service_db()
-    estagio = payload.estagio if payload.estagio in _PROB_POR_ESTAGIO else "LEAD"
+    estagio = payload.estagio if payload.estagio in _PROB_POR_ESTAGIO else "QUALIFICACAO"
     prob = payload.probabilidade if payload.probabilidade is not None else _PROB_POR_ESTAGIO[estagio]
     valor = payload.valor_estimado
     if valor is None:
         valor = _valor_itens(payload.itens)
 
+    agora = _agora()
     row = db.table("crm_oportunidades").insert({
         "titulo": payload.titulo.strip(),
         "cliente_id": str(payload.cliente_id) if payload.cliente_id else None,
         "contato_id": str(payload.contato_id) if payload.contato_id else None,
         "canal": payload.canal,
         "estagio": estagio,
+        "estagio_em": agora,
         "valor_estimado": float(valor or 0),
         "probabilidade": int(prob),
         "origem": payload.origem,
         "previsao_fechamento": payload.previsao_fechamento.isoformat() if payload.previsao_fechamento else None,
+        "proximo_passo": payload.proximo_passo,
+        "proximo_passo_em": payload.proximo_passo_em.isoformat() if payload.proximo_passo_em else None,
+        "qualificacao": qualificacao,
         "responsavel_id": str(usuario.id),
         "ativo": True,
     }).execute().data[0]
@@ -317,8 +463,14 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
         update["previsao_fechamento"] = payload.previsao_fechamento.isoformat()
     if payload.valor_estimado is not None:
         update["valor_estimado"] = float(payload.valor_estimado)
+    if payload.custo_estimado is not None:
+        update["custo_estimado"] = float(payload.custo_estimado)
+    if payload.proximo_passo is not None:
+        update["proximo_passo"] = payload.proximo_passo.strip() or None
+    if payload.proximo_passo_em is not None:
+        update["proximo_passo_em"] = payload.proximo_passo_em.isoformat()
 
-    # Mudança de estágio → ajusta probabilidade e registra evento na timeline
+    # Mudança de estágio → valida o portão, ajusta probabilidade e registra evento
     if payload.estagio is not None and payload.estagio != atual.get("estagio"):
         if payload.estagio not in _PROB_POR_ESTAGIO:
             raise HTTPException(status_code=422, detail="Estágio inválido")
@@ -326,12 +478,17 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
             return ganhar_oportunidade(oportunidade_id, usuario)
         if payload.estagio == "PERDIDO":
             raise HTTPException(status_code=400, detail="Para marcar como perdida, informe o motivo (use a ação Perder).")
+        # Estado RESULTANTE: permite definir o próximo passo e avançar na mesma
+        # chamada, que é como a tela faz.
+        _validar_avanco(db, oportunidade_id, {**atual, **update}, payload.estagio)
         update["estagio"] = payload.estagio
+        update["estagio_em"] = _agora()
         update["probabilidade"] = _PROB_POR_ESTAGIO[payload.estagio]
         # sai de um estado fechado → reabre
         update["ganho_em"] = None
         update["perdido_em"] = None
         update["motivo_perda"] = None
+        update["motivo_perda_codigo"] = None
         _log_evento(db, oportunidade_id,
                     f"Estágio: {_ESTAGIO_LABEL.get(atual.get('estagio'), atual.get('estagio'))} → {_ESTAGIO_LABEL[payload.estagio]}",
                     str(usuario.id))
@@ -359,22 +516,43 @@ def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut) -> dict:
     agora = _agora()
     db.table("crm_oportunidades").update({
         "estagio": "GANHO", "probabilidade": 100, "ganho_em": agora,
-        "perdido_em": None, "motivo_perda": None, "atualizado_em": agora,
+        "estagio_em": agora,
+        "perdido_em": None, "motivo_perda": None, "motivo_perda_codigo": None,
+        "atualizado_em": agora,
     }).eq("id", oportunidade_id).execute()
     _log_evento(db, oportunidade_id, "🏆 Oportunidade marcada como GANHA", str(usuario.id))
     return obter_oportunidade(oportunidade_id)
 
 
 def perder_oportunidade(oportunidade_id: str, payload: PerderRequest, usuario: UsuarioOut) -> dict:
-    if not payload.motivo or len(payload.motivo.strip()) < 3:
-        raise HTTPException(status_code=422, detail="Informe o motivo da perda.")
+    """Fecha como perdida, exigindo motivo CODIFICADO.
+
+    Antes o motivo era texto livre, então não havia como responder "por que a
+    gente perde?" — cada um escrevia de um jeito. Com o código, a aba Inteligência
+    agrupa e o concorrente/preço do vencedor viram referência de mercado.
+    """
+    codigo = (payload.codigo or "").strip().upper()
+    if codigo not in MOTIVOS_PERDA:
+        raise HTTPException(
+            status_code=422,
+            detail="Informe o motivo da perda. Opções: " + ", ".join(MOTIVOS_PERDA),
+        )
     db = get_service_db()
     agora = _agora()
+    texto = (payload.motivo or "").strip() or MOTIVOS_PERDA[codigo]
     db.table("crm_oportunidades").update({
         "estagio": "PERDIDO", "probabilidade": 0, "perdido_em": agora,
-        "motivo_perda": payload.motivo.strip(), "ganho_em": None, "atualizado_em": agora,
+        "estagio_em": agora,
+        "motivo_perda_codigo": codigo,
+        "motivo_perda": texto,
+        "concorrente": (payload.concorrente or "").strip() or None,
+        "preco_vencedor": float(payload.preco_vencedor) if payload.preco_vencedor is not None else None,
+        "ganho_em": None, "atualizado_em": agora,
     }).eq("id", oportunidade_id).execute()
-    _log_evento(db, oportunidade_id, f"❌ Oportunidade PERDIDA — {payload.motivo.strip()}", str(usuario.id))
+    detalhe = MOTIVOS_PERDA[codigo]
+    if payload.concorrente:
+        detalhe += f" · concorrente: {payload.concorrente.strip()}"
+    _log_evento(db, oportunidade_id, f"❌ PERDIDA — {detalhe}", str(usuario.id))
     return obter_oportunidade(oportunidade_id)
 
 
