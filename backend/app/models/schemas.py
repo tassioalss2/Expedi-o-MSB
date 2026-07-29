@@ -562,11 +562,11 @@ class GerarOVRequest(BaseModel):
     local_entrega: Optional[str] = None
 
 
-# ── CRM · Leads ────────────────────────────────────────────────────────────────
+# ── CRM · Empresas (prospecção e qualificação) ─────────────────────────────────
 # Blocos da qualificação. São objetos (e não campos soltos) porque a regra é
 # "o bloco está completo ou não está" — o portão avalia o conjunto.
-class LeadNecessidade(BaseModel):
-    """O que o cliente compra e quanto por mês."""
+class QualNecessidade(BaseModel):
+    """O que a empresa compra e quanto por mês."""
     familia: Optional[str] = None
     codigos: list[str] = []
     consumo_mes: Optional[float] = None
@@ -576,71 +576,100 @@ class LeadNecessidade(BaseModel):
     observacao: Optional[str] = None
 
 
-class LeadDecisor(BaseModel):
-    """Quem assina a compra. `papel` vem de crm_leads_service.PAPEIS."""
+class QualDecisor(BaseModel):
+    """Quem assina a compra. `papel` vem de crm_empresas_service.PAPEIS."""
     nome: Optional[str] = None
     papel: Optional[str] = None
     email: Optional[str] = None
     telefone: Optional[str] = None
 
 
-class LeadPrazo(BaseModel):
+class QualPrazo(BaseModel):
     """Quando compra: data firme ou janela. `tipo`: DATA | JANELA."""
     tipo: Optional[str] = None
     data: Optional[date] = None
     janela: Optional[str] = None
 
 
-class LeadVerba(BaseModel):
+class QualVerba(BaseModel):
     """Não obrigatória para qualificar, mas pesa no score quando confirmada."""
     confirmada: Optional[bool] = None
     valor: Optional[float] = None
     observacao: Optional[str] = None
 
 
-class LeadCreate(BaseModel):
-    empresa: str
-    contato_nome: Optional[str] = None
-    email: Optional[str] = None
-    telefone: Optional[str] = None
-    cnpj: Optional[str] = None
-    canal: Optional[str] = None
-    origem: Optional[str] = None
-    observacao: Optional[str] = None
-    cliente_id: Optional[UUID] = None
-    necessidade: Optional[LeadNecessidade] = None
-    decisor: Optional[LeadDecisor] = None
-    prazo: Optional[LeadPrazo] = None
-    verba: Optional[LeadVerba] = None
+class Qualificacao(BaseModel):
+    """A qualificação inteira. Guardada como jsonb na empresa e arquivada em
+    crm_qualificacao_historico quando a empresa volta a prospectada."""
+    necessidade: Optional[QualNecessidade] = None
+    decisor: Optional[QualDecisor] = None
+    prazo: Optional[QualPrazo] = None
+    verba: Optional[QualVerba] = None
 
 
-class LeadUpdate(BaseModel):
-    empresa: Optional[str] = None
-    contato_nome: Optional[str] = None
-    email: Optional[str] = None
-    telefone: Optional[str] = None
+class EmpresaCreate(BaseModel):
+    """Prospecção: só identificação e porte. O resto vem na qualificação."""
+    razao_social: str
     cnpj: Optional[str] = None
+    nome_fantasia: Optional[str] = None
+    cidade: Optional[str] = None
+    uf: Optional[str] = None
+    tipo: Optional[str] = None
+    porte: Optional[str] = None
     canal: Optional[str] = None
-    origem: Optional[str] = None
-    status: Optional[str] = None
-    observacao: Optional[str] = None
+    fonte: Optional[str] = None
     cliente_id: Optional[UUID] = None
-    necessidade: Optional[LeadNecessidade] = None
-    decisor: Optional[LeadDecisor] = None
-    prazo: Optional[LeadPrazo] = None
-    verba: Optional[LeadVerba] = None
+    observacao: Optional[str] = None
+    qualificacao: Optional[Qualificacao] = None
+
+
+class EmpresaUpdate(BaseModel):
+    razao_social: Optional[str] = None
+    cnpj: Optional[str] = None
+    nome_fantasia: Optional[str] = None
+    cidade: Optional[str] = None
+    uf: Optional[str] = None
+    tipo: Optional[str] = None
+    porte: Optional[str] = None
+    canal: Optional[str] = None
+    fonte: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    observacao: Optional[str] = None
+    estado: Optional[str] = None
+    qualificacao: Optional[Qualificacao] = None
     motivo_descarte: Optional[str] = None
     motivo_descarte_codigo: Optional[str] = None
     proximo_passo: Optional[str] = None
     proximo_passo_em: Optional[date] = None
 
 
-class LeadContatoRequest(BaseModel):
-    """Registro de uma interação — destrava NOVO → EM_CONTATO."""
+class EmpresaContatoRequest(BaseModel):
+    """Registro de uma interação — é movimentação real e zera o relógio do ciclo."""
     tipo: Optional[str] = None
     descricao: Optional[str] = None
     proximo_passo: Optional[str] = None
     proximo_passo_em: Optional[date] = None
+
+
+# ── CRM · Desafios ─────────────────────────────────────────────────────────────
+class DesafioCreate(BaseModel):
+    """`tipo_id` escolhe um tipo existente; `tipo_texto` cria um novo a partir do
+    que o operador escreveu (o sistema normaliza e reaproveita)."""
+    tipo_id: Optional[UUID] = None
+    tipo_texto: Optional[str] = None
+    descricao: Optional[str] = None
+    bloqueia: Optional[bool] = None
+    responsavel_id: Optional[UUID] = None
+    prazo: Optional[date] = None
+
+
+class DesafioUpdate(BaseModel):
+    descricao: Optional[str] = None
+    bloqueia: Optional[bool] = None
+    status: Optional[str] = None
+    responsavel_id: Optional[UUID] = None
+    prazo: Optional[date] = None
+    resolucao: Optional[str] = None
 
 
 # ── CRM · Cotações ────────────────────────────────────────────────────────────────

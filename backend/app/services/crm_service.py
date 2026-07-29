@@ -6,6 +6,8 @@ Inspirado nas boas práticas dos grandes CRMs:
 - Timeline de atividades e notas por oportunidade — HubSpot.
 - Taxa de ganho, motivo de perda e previsão de fechamento para forecast.
 """
+import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -27,20 +29,29 @@ from app.models.schemas import (
 
 # Estágios do funil e probabilidade BASE de cada um (%).
 #
-# O estágio LEAD saiu: era a mesma etapa que o status do lead, em duas tabelas.
-# Uma oportunidade só nasce depois de qualificada — antes disso é lead.
+# A ordem segue o processo real: alinha-se volume/preço/condições na NEGOCIAÇÃO e a
+# PROPOSTA formaliza o acordo — é ela que decide ganho/perda. (Antes estava o
+# contrário, proposta antes de negociar, o que não é como o time trabalha.)
+#
+# DESAFIOS é etapa OPCIONAL: existe para dar visibilidade a negócio parado
+# esperando cadastro de fornecedor, registro ANVISA, amostra com o médico etc.
+# O que trava o avanço não é "passar por Desafios" — é ter desafio bloqueante
+# aberto, de qualquer etapa.
 ESTAGIOS = [
-    {"key": "QUALIFICACAO", "label": "Qualificada", "prob": 30},
-    {"key": "PROPOSTA", "label": "Proposta", "prob": 50},
-    {"key": "NEGOCIACAO", "label": "Negociação", "prob": 70},
+    {"key": "QUALIFICACAO", "label": "Qualificada", "prob": 25},
+    {"key": "DESAFIOS", "label": "Desafios", "prob": 30},
+    {"key": "NEGOCIACAO", "label": "Negociação", "prob": 50},
+    {"key": "PROPOSTA", "label": "Proposta", "prob": 75},
     {"key": "GANHO", "label": "Ganho", "prob": 100},
     {"key": "PERDIDO", "label": "Perdido", "prob": 0},
 ]
 _PROB_POR_ESTAGIO = {e["key"]: e["prob"] for e in ESTAGIOS}
-_ESTAGIOS_ABERTOS = ["QUALIFICACAO", "PROPOSTA", "NEGOCIACAO"]
+_ESTAGIOS_ABERTOS = ["QUALIFICACAO", "DESAFIOS", "NEGOCIACAO", "PROPOSTA"]
 _ESTAGIO_LABEL = {e["key"]: e["label"] for e in ESTAGIOS}
-# Ordem para não deixar pular etapa (não se negocia o que não foi proposto).
-_ORDEM_ESTAGIO = {"QUALIFICACAO": 1, "PROPOSTA": 2, "NEGOCIACAO": 3}
+# Ordem para não deixar pular etapa. DESAFIOS compartilha posição com
+# QUALIFICACAO porque é um desvio, não um degrau: sair dela para NEGOCIACAO é o
+# mesmo avanço que sair de QUALIFICACAO.
+_ORDEM_ESTAGIO = {"QUALIFICACAO": 1, "DESAFIOS": 1, "NEGOCIACAO": 2, "PROPOSTA": 3}
 
 MOTIVOS_PERDA = {
     "PRECO": "Preço acima do concorrente",
@@ -370,28 +381,55 @@ def requisitos_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> li
     de = _ORDEM_ESTAGIO.get(atual.get("estagio"), 0)
     para = _ORDEM_ESTAGIO.get(destino, 0)
 
+    # Desafios bloqueantes travam a saída para qualquer etapa adiante: é o
+    # "resolver antes de negociar" do processo. Vale mesmo sem passar por DESAFIOS,
+    # porque um problema pode aparecer com a negociação já em andamento.
+    if destino not in ("DESAFIOS", "PERDIDO") and para > de:
+        abertos = db.table("crm_desafios").select("id, descricao, crm_desafio_tipos(label)")\
+            .eq("oportunidade_id", oportunidade_id).eq("status", "ABERTO")\
+            .eq("bloqueia", True).execute().data
+        if abertos:
+            nomes = [((d.get("crm_desafio_tipos") or {}).get("label") or d.get("descricao") or "desafio")
+                     for d in abertos[:3]]
+            falta.append(f"resolver {len(abertos)} desafio(s) bloqueante(s): " + "; ".join(nomes))
+
     # Só cobra ao AVANÇAR. Voltar etapa é correção de rota e fica livre.
     if para <= de:
         return falta
 
-    if para >= 2:  # → Proposta
+    # Pular etapa não é permitido: a proposta formaliza o que foi negociado, então
+    # ir de Qualificada direto a Proposta significaria propor sem ter negociado.
+    if para - de > 1:
+        intermediaria = next((k for k, v in _ORDEM_ESTAGIO.items() if v == de + 1), None)
+        falta.append(f"passar por {_ESTAGIO_LABEL.get(intermediaria, intermediaria)} antes "
+                     f"de {_ESTAGIO_LABEL.get(destino, destino)}")
+        return falta
+
+    if destino == "PROPOSTA":
+        # A proposta é gerada a partir dos itens — sem eles não há o que gerar.
         itens = db.table("crm_oportunidade_itens").select("id, qtd, valor_unitario")\
             .eq("oportunidade_id", oportunidade_id).execute().data
         validos = [i for i in itens if float(i.get("qtd") or 0) > 0 and float(i.get("valor_unitario") or 0) > 0]
         if not validos:
-            falta.append("itens cotados (produto, quantidade e preço) — não há proposta sem o que propor")
-
-    if para >= 3:  # → Negociação
-        cots = db.table("crm_cotacoes").select("id, status, enviada_em")\
-            .eq("oportunidade_id", oportunidade_id).eq("ativo", True).execute().data
-        enviada = [c for c in cots if c.get("enviada_em") or c.get("status") in ("ENVIADA", "ACEITA", "RECUSADA")]
-        if not enviada:
-            falta.append("proposta enviada ao cliente — negociação começa depois do envio")
+            falta.append("itens com quantidade e preço — a proposta é gerada a partir deles")
 
     if destino in _ESTAGIOS_ABERTOS and not (atual.get("proximo_passo") or "").strip():
         falta.append("próximo passo definido (o que acontece agora e quando)")
 
     return falta
+
+
+def requisitos_ganho(db, oportunidade_id: str) -> list:
+    """O que falta para marcar como ganha.
+
+    A proposta é o último passo do processo e é ela que decide o fechamento —
+    então não se declara ganho sem proposta emitida."""
+    cots = db.table("crm_cotacoes").select("id, status, enviada_em")\
+        .eq("oportunidade_id", oportunidade_id).eq("ativo", True).execute().data
+    emitida = [c for c in cots if c.get("enviada_em") or c.get("status") in ("ENVIADA", "ACEITA")]
+    if not emitida:
+        return ["proposta gerada e enviada ao cliente — é ela que fecha o negócio"]
+    return []
 
 
 def _validar_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> None:
@@ -404,7 +442,8 @@ def _validar_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> None
 
 
 def criar_oportunidade(payload: OportunidadeCreate, usuario: UsuarioOut,
-                       qualificacao: Optional[dict] = None) -> dict:
+                       qualificacao: Optional[dict] = None,
+                       empresa_id: Optional[str] = None) -> dict:
     """Cria a oportunidade no funil.
 
     `qualificacao` vem da conversão do lead (o que compra, quem decide, quando) —
@@ -432,6 +471,7 @@ def criar_oportunidade(payload: OportunidadeCreate, usuario: UsuarioOut,
         "proximo_passo": payload.proximo_passo,
         "proximo_passo_em": payload.proximo_passo_em.isoformat() if payload.proximo_passo_em else None,
         "qualificacao": qualificacao,
+        "empresa_id": empresa_id,
         "responsavel_id": str(usuario.id),
         "ativo": True,
     }).execute().data[0]
@@ -511,8 +551,179 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
     return obter_oportunidade(oportunidade_id)
 
 
+# ── Desafios: vocabulário que aprende ───────────────────────────────────────────
+#
+# O operador escreve o problema com as palavras dele e o sistema cadastra como tipo
+# reutilizável. Lista fixa nunca cobre a realidade; texto livre impede agrupar. O
+# `slug` deduplica e `usos` ordena o autocomplete, para quem digita "cadastro"
+# receber o tipo existente em vez de criar a 50ª variação do mesmo problema.
+
+def _slug_desafio(texto: str) -> str:
+    s = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
+    s = re.sub(r"[^a-zA-Z0-9\s]", " ", s.lower())
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def listar_tipos_desafio(busca: Optional[str] = None) -> list:
+    db = get_service_db()
+    rows = db.table("crm_desafio_tipos").select("*").eq("ativo", True).execute().data
+    if busca:
+        termos = [t for t in _slug_desafio(busca).split() if t]
+        rows = [r for r in rows if all(t in (r.get("slug") or "") for t in termos)]
+    rows.sort(key=lambda r: (-(r.get("usos") or 0), r.get("label") or ""))
+    return [{"id": r["id"], "label": r["label"], "usos": r.get("usos") or 0} for r in rows]
+
+
+def _resolver_tipo_desafio(db, tipo_id: Optional[str], tipo_texto: Optional[str],
+                           usuario_id: str) -> Optional[str]:
+    """Id do tipo, criando-o quando o operador escreveu algo que ainda não existe."""
+    if tipo_id:
+        atual = db.table("crm_desafio_tipos").select("usos").eq("id", tipo_id).single().execute().data
+        if atual:
+            db.table("crm_desafio_tipos").update({"usos": int(atual.get("usos") or 0) + 1})\
+                .eq("id", tipo_id).execute()
+        return tipo_id
+
+    texto = (tipo_texto or "").strip()
+    slug = _slug_desafio(texto)
+    if not slug:
+        return None
+    ja = db.table("crm_desafio_tipos").select("id, usos").eq("slug", slug).limit(1).execute().data
+    if ja:
+        db.table("crm_desafio_tipos").update({"usos": int(ja[0].get("usos") or 0) + 1})\
+            .eq("id", ja[0]["id"]).execute()
+        return ja[0]["id"]
+    novo = db.table("crm_desafio_tipos").insert({
+        "label": texto, "slug": slug, "usos": 1, "criado_por": usuario_id, "ativo": True,
+    }).execute().data
+    return novo[0]["id"] if novo else None
+
+
+def _serializar_desafio(d: dict) -> dict:
+    hoje = (datetime.now(timezone.utc) - timedelta(hours=3)).date().isoformat()
+    return {
+        "id": d["id"],
+        "oportunidade_id": d.get("oportunidade_id"),
+        "tipo_id": d.get("tipo_id"),
+        "tipo": (d.get("crm_desafio_tipos") or {}).get("label") if d.get("crm_desafio_tipos") else None,
+        "descricao": d.get("descricao"),
+        "bloqueia": bool(d.get("bloqueia")),
+        "status": d.get("status"),
+        "responsavel_id": d.get("responsavel_id"),
+        "prazo": d.get("prazo"),
+        "atrasado": bool(d.get("status") == "ABERTO" and d.get("prazo")
+                         and str(d["prazo"])[:10] < hoje),
+        "resolucao": d.get("resolucao"),
+        "resolvido_em": d.get("resolvido_em"),
+        "criado_em": d.get("criado_em"),
+    }
+
+
+def listar_desafios(oportunidade_id: str) -> list:
+    db = get_service_db()
+    rows = db.table("crm_desafios").select("*, crm_desafio_tipos(label)")\
+        .eq("oportunidade_id", oportunidade_id).order("criado_em").execute().data
+    return [_serializar_desafio(d) for d in rows]
+
+
+def criar_desafio(oportunidade_id: str, payload, usuario: UsuarioOut) -> dict:
+    db = get_service_db()
+    opp = db.table("crm_oportunidades").select("id, estagio, empresa_id")\
+        .eq("id", oportunidade_id).single().execute().data
+    if not opp:
+        raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
+
+    tipo_id = _resolver_tipo_desafio(
+        db, str(payload.tipo_id) if payload.tipo_id else None,
+        payload.tipo_texto, str(usuario.id))
+    if not tipo_id:
+        raise HTTPException(status_code=422,
+                            detail="Descreva o desafio (escolha um tipo existente ou escreva um novo).")
+
+    db.table("crm_desafios").insert({
+        "oportunidade_id": oportunidade_id,
+        "tipo_id": tipo_id,
+        "descricao": payload.descricao,
+        "bloqueia": True if payload.bloqueia is None else bool(payload.bloqueia),
+        "status": "ABERTO",
+        "responsavel_id": str(payload.responsavel_id) if payload.responsavel_id else str(usuario.id),
+        "prazo": payload.prazo.isoformat() if payload.prazo else None,
+        "criado_por": str(usuario.id),
+    }).execute()
+
+    # Abrir desafio move o card para DESAFIOS — o negócio está de fato parado
+    # esperando isso, e o funil precisa mostrar onde ele está.
+    if opp.get("estagio") == "QUALIFICACAO":
+        db.table("crm_oportunidades").update({
+            "estagio": "DESAFIOS", "estagio_em": _agora(), "atualizado_em": _agora(),
+        }).eq("id", oportunidade_id).execute()
+
+    _log_evento(db, oportunidade_id, "⚠️ Desafio registrado", str(usuario.id))
+    _marcar_movimentacao(db, opp.get("empresa_id"))
+    return {"desafios": listar_desafios(oportunidade_id),
+            "oportunidade": obter_oportunidade(oportunidade_id)}
+
+
+def atualizar_desafio(desafio_id: str, payload, usuario: UsuarioOut) -> dict:
+    db = get_service_db()
+    atual = db.table("crm_desafios").select("*").eq("id", desafio_id).single().execute().data
+    if not atual:
+        raise HTTPException(status_code=404, detail="Desafio não encontrado")
+
+    update: dict = {"atualizado_em": _agora()}
+    if payload.descricao is not None:
+        update["descricao"] = payload.descricao
+    if payload.bloqueia is not None:
+        update["bloqueia"] = bool(payload.bloqueia)
+    if payload.responsavel_id is not None:
+        update["responsavel_id"] = str(payload.responsavel_id)
+    if payload.prazo is not None:
+        update["prazo"] = payload.prazo.isoformat()
+    if payload.resolucao is not None:
+        update["resolucao"] = payload.resolucao
+    if payload.status is not None:
+        if payload.status not in ("ABERTO", "RESOLVIDO", "CANCELADO"):
+            raise HTTPException(status_code=422, detail="Status de desafio inválido")
+        update["status"] = payload.status
+        update["resolvido_em"] = _agora() if payload.status != "ABERTO" else None
+
+    db.table("crm_desafios").update(update).eq("id", desafio_id).execute()
+
+    oid = atual["oportunidade_id"]
+    opp = db.table("crm_oportunidades").select("estagio, empresa_id").eq("id", oid).single().execute().data
+    # Resolvido o último bloqueante, o card volta de DESAFIOS para Qualificada e
+    # segue o fluxo normal — não faz sentido ficar parado numa etapa sem pendência.
+    if update.get("status") in ("RESOLVIDO", "CANCELADO") and opp and opp.get("estagio") == "DESAFIOS":
+        restam = db.table("crm_desafios").select("id").eq("oportunidade_id", oid)\
+            .eq("status", "ABERTO").eq("bloqueia", True).execute().data
+        if not restam:
+            db.table("crm_oportunidades").update({
+                "estagio": "QUALIFICACAO", "estagio_em": _agora(), "atualizado_em": _agora(),
+            }).eq("id", oid).execute()
+            _log_evento(db, oid, "✅ Desafios resolvidos — liberada para negociação", str(usuario.id))
+
+    _marcar_movimentacao(db, (opp or {}).get("empresa_id"))
+    return {"desafios": listar_desafios(oid), "oportunidade": obter_oportunidade(oid)}
+
+
+def _marcar_movimentacao(db, empresa_id: Optional[str]) -> None:
+    """Zera o relógio do ciclo de 1 ano da empresa. Import local para não fechar
+    ciclo entre os dois serviços."""
+    if not empresa_id:
+        return
+    try:
+        from app.services import crm_empresas_service
+        crm_empresas_service.registrar_movimentacao(db, empresa_id)
+    except Exception:
+        pass
+
+
 def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut) -> dict:
     db = get_service_db()
+    falta = requisitos_ganho(db, oportunidade_id)
+    if falta:
+        raise HTTPException(status_code=422,
+                            detail="Para marcar como ganha, falta: " + "; ".join(falta) + ".")
     agora = _agora()
     db.table("crm_oportunidades").update({
         "estagio": "GANHO", "probabilidade": 100, "ganho_em": agora,

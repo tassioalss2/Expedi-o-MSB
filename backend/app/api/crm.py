@@ -13,9 +13,11 @@ from app.models.schemas import (
     CotacaoCreate,
     CotacaoUpdate,
     GerarOVRequest,
-    LeadContatoRequest,
-    LeadCreate,
-    LeadUpdate,
+    DesafioCreate,
+    DesafioUpdate,
+    EmpresaContatoRequest,
+    EmpresaCreate,
+    EmpresaUpdate,
     NotaCreate,
     OportunidadeCreate,
     OportunidadeUpdate,
@@ -24,8 +26,8 @@ from app.models.schemas import (
 )
 from app.services import (
     crm_cotacao_service,
+    crm_empresas_service,
     crm_inteligencia_service,
-    crm_leads_service,
     crm_service,
 )
 
@@ -179,50 +181,76 @@ def excluir_atividade(atividade_id: UUID, _: UsuarioOut = Depends(get_current_us
     return crm_service.excluir_atividade(str(atividade_id))
 
 
-# ── Leads ────────────────────────────────────────────────────────────────────────
-@router.get("/leads/opcoes")
-def opcoes_lead(_: UsuarioOut = Depends(get_current_user)):
-    """Vocabulário do fluxo (papéis, janelas, motivos) — a tela não repete listas."""
-    return crm_leads_service.opcoes()
+# ── Empresas (prospectadas e qualificadas) ──────────────────────────────────────
+@router.get("/empresas/opcoes")
+def opcoes_empresa(_: UsuarioOut = Depends(get_current_user)):
+    """Vocabulário do fluxo (tipos, portes, papéis, janelas, motivos, fontes)."""
+    return crm_empresas_service.opcoes()
 
 
-@router.get("/leads")
-def listar_leads(status: Optional[str] = Query(None), _: UsuarioOut = Depends(get_current_user)):
-    return crm_leads_service.listar_leads(status)
+@router.get("/empresas")
+def listar_empresas(estado: Optional[str] = Query(None), _: UsuarioOut = Depends(get_current_user)):
+    """Empresas ativas. `estado=PROSPECTADA` ou `QUALIFICADA` filtra o banco."""
+    return crm_empresas_service.listar_empresas(estado)
 
 
-@router.post("/leads", status_code=201)
-def criar_lead(payload: LeadCreate, _: UsuarioOut = Depends(get_current_user)):
-    return crm_leads_service.criar_lead(payload)
+@router.post("/empresas", status_code=201)
+def criar_empresa(payload: EmpresaCreate, usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_empresas_service.criar_empresa(payload, usuario)
 
 
-@router.get("/leads/{lead_id}")
-def obter_lead(lead_id: UUID, _: UsuarioOut = Depends(get_current_user)):
-    return crm_leads_service.obter_lead(str(lead_id))
+@router.get("/empresas/{empresa_id}")
+def obter_empresa(empresa_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return crm_empresas_service.obter_empresa(str(empresa_id))
 
 
-@router.patch("/leads/{lead_id}")
-def atualizar_lead(lead_id: UUID, payload: LeadUpdate, _: UsuarioOut = Depends(get_current_user)):
-    return crm_leads_service.atualizar_lead(str(lead_id), payload)
-
-
-@router.post("/leads/{lead_id}/contato")
-def registrar_contato(lead_id: UUID, payload: LeadContatoRequest,
+@router.patch("/empresas/{empresa_id}")
+def atualizar_empresa(empresa_id: UUID, payload: EmpresaUpdate,
                       usuario: UsuarioOut = Depends(get_current_user)):
-    """Registra uma interação e move NOVO → Em contato.
-
-    É o portão da primeira etapa: "em contato" passa a exigir contato registrado."""
-    return crm_leads_service.registrar_contato(str(lead_id), payload, usuario)
+    return crm_empresas_service.atualizar_empresa(str(empresa_id), payload, usuario)
 
 
-@router.post("/leads/{lead_id}/converter")
-def converter_lead(lead_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
-    return crm_leads_service.converter_lead(str(lead_id), usuario)
+@router.post("/empresas/{empresa_id}/contato")
+def registrar_contato_empresa(empresa_id: UUID, payload: EmpresaContatoRequest,
+                              usuario: UsuarioOut = Depends(get_current_user)):
+    """Registra interação. É movimentação real: zera o relógio do ciclo de 1 ano."""
+    return crm_empresas_service.registrar_contato(str(empresa_id), payload, usuario)
 
 
-@router.delete("/leads/{lead_id}")
-def excluir_lead(lead_id: UUID, _: UsuarioOut = Depends(get_current_user)):
-    return crm_leads_service.excluir_lead(str(lead_id))
+@router.post("/empresas/{empresa_id}/gerar-oportunidade")
+def gerar_oportunidade(empresa_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    """Cria o card no funil a partir de uma empresa qualificada."""
+    return crm_empresas_service.gerar_oportunidade(str(empresa_id), usuario)
+
+
+@router.delete("/empresas/{empresa_id}")
+def excluir_empresa(empresa_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return crm_empresas_service.excluir_empresa(str(empresa_id))
+
+
+# ── Desafios ────────────────────────────────────────────────────────────────────
+@router.get("/desafios/tipos")
+def listar_tipos_desafio(q: Optional[str] = Query(None), _: UsuarioOut = Depends(get_current_user)):
+    """Autocomplete dos tipos, mais usados primeiro — evita criar variações do
+    mesmo problema."""
+    return crm_service.listar_tipos_desafio(q)
+
+
+@router.get("/oportunidades/{oportunidade_id}/desafios")
+def listar_desafios(oportunidade_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    return crm_service.listar_desafios(str(oportunidade_id))
+
+
+@router.post("/oportunidades/{oportunidade_id}/desafios", status_code=201)
+def criar_desafio(oportunidade_id: UUID, payload: DesafioCreate,
+                  usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_service.criar_desafio(str(oportunidade_id), payload, usuario)
+
+
+@router.patch("/desafios/{desafio_id}")
+def atualizar_desafio(desafio_id: UUID, payload: DesafioUpdate,
+                      usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_service.atualizar_desafio(str(desafio_id), payload, usuario)
 
 
 # ── Cotações ─────────────────────────────────────────────────────────────────────
