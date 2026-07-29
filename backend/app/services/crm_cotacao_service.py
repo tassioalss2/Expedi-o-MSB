@@ -67,17 +67,24 @@ def _serializar(c: dict, itens: Optional[list] = None) -> dict:
         "frete": float(c.get("frete") or 0),
         "desconto_pct": float(c.get("desconto_pct") or 0),
         "observacao": c.get("observacao"),
+        "endereco": c.get("endereco"),
+        "endereco_bairro": c.get("endereco_bairro"),
+        "endereco_cidade": c.get("endereco_cidade"),
+        "endereco_uf": c.get("endereco_uf"),
+        "endereco_cep": c.get("endereco_cep"),
         "valor_bruto": float(c.get("valor_bruto") or 0),
         "valor_total": float(c.get("valor_total") or 0),
         "criado_em": c.get("criado_em"),
         "enviada_em": c.get("enviada_em"),
+        "responsavel": (c.get("usuarios") or {}).get("nome") if c.get("usuarios") else None,
+        "responsavel_email": (c.get("usuarios") or {}).get("email") if c.get("usuarios") else None,
         "itens": itens if itens is not None else None,
     }
 
 
 def listar_cotacoes(status: Optional[str] = None) -> list:
     db = get_service_db()
-    q = db.table("crm_cotacoes").select("*, clientes(nome, cnpj)").eq("ativo", True)
+    q = db.table("crm_cotacoes").select("*, clientes(nome, cnpj), usuarios(nome, email)").eq("ativo", True)
     if status:
         q = q.eq("status", status)
     rows = q.order("criado_em", desc=True).execute().data
@@ -86,7 +93,7 @@ def listar_cotacoes(status: Optional[str] = None) -> list:
 
 def obter_cotacao(cotacao_id: str) -> dict:
     db = get_service_db()
-    c = db.table("crm_cotacoes").select("*, clientes(nome, cnpj)").eq("id", cotacao_id).single().execute().data
+    c = db.table("crm_cotacoes").select("*, clientes(nome, cnpj), usuarios(nome, email)").eq("id", cotacao_id).single().execute().data
     if not c:
         raise HTTPException(status_code=404, detail="Cotação não encontrada")
     itens = db.table("crm_cotacao_itens").select("*").eq("cotacao_id", cotacao_id).execute().data
@@ -127,6 +134,11 @@ def criar_cotacao(payload: CotacaoCreate, usuario: UsuarioOut) -> dict:
         "frete": float(payload.frete or 0),
         "desconto_pct": float(payload.desconto_pct or 0),
         "observacao": payload.observacao,
+        "endereco": payload.endereco,
+        "endereco_bairro": payload.endereco_bairro,
+        "endereco_cidade": payload.endereco_cidade,
+        "endereco_uf": payload.endereco_uf,
+        "endereco_cep": payload.endereco_cep,
         "valor_bruto": bruto,
         "valor_total": total,
         "responsavel_id": str(usuario.id),
@@ -151,7 +163,8 @@ def atualizar_cotacao(cotacao_id: str, payload: CotacaoUpdate, usuario: UsuarioO
         update["cliente_id"] = str(payload.cliente_id)
     if payload.contato_id is not None:
         update["contato_id"] = str(payload.contato_id) if payload.contato_id else None
-    for campo in ("canal", "condicao_pagamento", "prazo_entrega", "observacao"):
+    for campo in ("canal", "condicao_pagamento", "prazo_entrega", "observacao",
+                  "endereco", "endereco_bairro", "endereco_cidade", "endereco_uf", "endereco_cep"):
         val = getattr(payload, campo)
         if val is not None:
             update[campo] = val

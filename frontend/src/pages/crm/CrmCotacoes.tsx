@@ -89,6 +89,11 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
   const [frete, setFrete] = useState(base.frete ? String(base.frete) : '')
   const [descPct, setDescPct] = useState(base.desconto_pct ? String(base.desconto_pct) : '')
   const [observacao, setObservacao] = useState(base.observacao || '')
+  const [endereco, setEndereco] = useState(base.endereco || '')
+  const [enderecoBairro, setEnderecoBairro] = useState(base.endereco_bairro || '')
+  const [enderecoCidade, setEnderecoCidade] = useState(base.endereco_cidade || '')
+  const [enderecoUf, setEnderecoUf] = useState(base.endereco_uf || '')
+  const [enderecoCep, setEnderecoCep] = useState(base.endereco_cep || '')
   const [status, setStatus] = useState(base.status || 'RASCUNHO')
   const [itens, setItens] = useState<ItemLinha[]>(
     (base.itens || []).filter((i: any) => i.produto_id).map((i: any) => ({
@@ -106,6 +111,8 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
         cliente_id: clienteId || null, canal: canal || null,
         validade: validade || null, condicao_pagamento: condPagamento || null, prazo_entrega: prazoEntrega || null,
         frete: Number(frete) || 0, desconto_pct: Number(descPct) || 0, observacao: observacao || null,
+        endereco: endereco || null, endereco_bairro: enderecoBairro || null,
+        endereco_cidade: enderecoCidade || null, endereco_uf: enderecoUf || null, endereco_cep: enderecoCep || null,
         oportunidade_id: base.oportunidade_id || null,
         itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor_unitario: i.valor || 0 })),
         ...(edicao ? { status } : {}),
@@ -150,7 +157,18 @@ export function ModalCotacao({ cotacao, prefill, onClose, onSaved }: { cotacao?:
           <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
           {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
         </Campo>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="col-span-2 lg:col-span-3">
+            <Campo label="Endereço (rua, número, complemento)"><input value={endereco} onChange={e => setEndereco(e.target.value)} className={inputCls} placeholder="Ex: Av. Professor Magalhães Neto, 1541" /></Campo>
+          </div>
+          <Campo label="Bairro"><input value={enderecoBairro} onChange={e => setEnderecoBairro(e.target.value)} className={inputCls} /></Campo>
+          <div className="grid grid-cols-3 gap-2 col-span-2 lg:col-span-1">
+            <div className="col-span-1"><Campo label="UF"><input value={enderecoUf} maxLength={2} onChange={e => setEnderecoUf(e.target.value.toUpperCase())} className={inputCls} /></Campo></div>
+            <div className="col-span-2"><Campo label="Cidade"><input value={enderecoCidade} onChange={e => setEnderecoCidade(e.target.value)} className={inputCls} /></Campo></div>
+          </div>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Campo label="CEP"><input value={enderecoCep} onChange={e => setEnderecoCep(e.target.value)} className={inputCls} placeholder="00000-000" /></Campo>
           <Campo label="Canal">
             <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
               <option value="">—</option>{CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}

@@ -694,6 +694,11 @@ class CotacaoCreate(BaseModel):
     frete: float = 0
     desconto_pct: float = 0
     observacao: Optional[str] = None
+    endereco: Optional[str] = None
+    endereco_bairro: Optional[str] = None
+    endereco_cidade: Optional[str] = None
+    endereco_uf: Optional[str] = None
+    endereco_cep: Optional[str] = None
     itens: list[CotacaoItem] = []
 
 
@@ -709,6 +714,11 @@ class CotacaoUpdate(BaseModel):
     desconto_pct: Optional[float] = None
     observacao: Optional[str] = None
     status: Optional[str] = None
+    endereco: Optional[str] = None
+    endereco_bairro: Optional[str] = None
+    endereco_cidade: Optional[str] = None
+    endereco_uf: Optional[str] = None
+    endereco_cep: Optional[str] = None
     itens: Optional[list[CotacaoItem]] = None
 
 
