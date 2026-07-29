@@ -1,6 +1,6 @@
 // Config compartilhada do CRM — estágios do funil, cores e helpers de formato.
 
-export type EstagioKey = 'QUALIFICACAO' | 'PROPOSTA' | 'NEGOCIACAO' | 'GANHO' | 'PERDIDO'
+export type EstagioKey = 'QUALIFICACAO' | 'DESAFIOS' | 'NEGOCIACAO' | 'PROPOSTA' | 'GANHO' | 'PERDIDO'
 
 export interface EstagioCfg {
   key: EstagioKey
@@ -12,22 +12,26 @@ export interface EstagioCfg {
   ponto: string    // bolinha/cor sólida
 }
 
-// O estágio LEAD saiu do funil: era a mesma etapa que o status do lead, repetida
-// em duas tabelas. Uma oportunidade só nasce depois de qualificada — antes disso
-// é lead, e vive na aba Leads.
-// As probabilidades aqui são só o valor BASE de cada estágio; o servidor devolve
-// `probabilidade` já ajustada por dias parado, ausência de próximo passo e
-// concorrente identificado.
+// A ordem segue o processo real: negocia-se volume/preço/condições e a PROPOSTA
+// formaliza o acordo — é ela que decide ganho/perda. (Antes estava o contrário.)
+//
+// DESAFIOS é etapa opcional: dá visibilidade a negócio parado esperando cadastro
+// de fornecedor, registro ANVISA, amostra com o médico. O que trava o avanço não é
+// "passar por lá", é ter desafio bloqueante aberto.
+//
+// As probabilidades aqui são só o valor BASE; o servidor devolve `probabilidade`
+// já ajustada por dias parado, ausência de próximo passo e concorrente conhecido.
 export const ESTAGIOS: EstagioCfg[] = [
-  { key: 'QUALIFICACAO', label: 'Qualificada',  prob: 30,  coluna: 'bg-sky-500',      chip: 'bg-sky-100 text-sky-700',       ponto: 'bg-sky-500' },
-  { key: 'PROPOSTA',     label: 'Proposta',     prob: 50,  coluna: 'bg-violet-500',   chip: 'bg-violet-100 text-violet-700', ponto: 'bg-violet-500' },
-  { key: 'NEGOCIACAO',   label: 'Negociação',   prob: 70,  coluna: 'bg-amber-500',    chip: 'bg-amber-100 text-amber-700',   ponto: 'bg-amber-500' },
+  { key: 'QUALIFICACAO', label: 'Qualificada',  prob: 25,  coluna: 'bg-sky-500',      chip: 'bg-sky-100 text-sky-700',       ponto: 'bg-sky-500' },
+  { key: 'DESAFIOS',     label: 'Desafios',     prob: 30,  coluna: 'bg-orange-500',   chip: 'bg-orange-100 text-orange-700', ponto: 'bg-orange-500' },
+  { key: 'NEGOCIACAO',   label: 'Negociação',   prob: 50,  coluna: 'bg-amber-500',    chip: 'bg-amber-100 text-amber-700',   ponto: 'bg-amber-500' },
+  { key: 'PROPOSTA',     label: 'Proposta',     prob: 75,  coluna: 'bg-violet-500',   chip: 'bg-violet-100 text-violet-700', ponto: 'bg-violet-500' },
   { key: 'GANHO',        label: 'Ganho',        prob: 100, coluna: 'bg-emerald-600',  chip: 'bg-emerald-100 text-emerald-700', ponto: 'bg-emerald-600' },
   { key: 'PERDIDO',      label: 'Perdido',      prob: 0,   coluna: 'bg-red-500',      chip: 'bg-red-100 text-red-700',       ponto: 'bg-red-500' },
 ]
 
 // Colunas exibidas no funil (abertas + ganho). Perdido é acessível pelo card.
-export const ESTAGIOS_PIPELINE: EstagioKey[] = ['QUALIFICACAO', 'PROPOSTA', 'NEGOCIACAO', 'GANHO']
+export const ESTAGIOS_PIPELINE: EstagioKey[] = ['QUALIFICACAO', 'DESAFIOS', 'NEGOCIACAO', 'PROPOSTA', 'GANHO']
 
 export const ESTAGIO_MAP: Record<string, EstagioCfg> = Object.fromEntries(ESTAGIOS.map(e => [e.key, e])) as any
 

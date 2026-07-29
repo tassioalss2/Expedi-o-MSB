@@ -1,19 +1,19 @@
 import { useState } from 'react'
-import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Sparkles, UserPlus, FileText } from 'lucide-react'
+import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Sparkles, Building2, FileText } from 'lucide-react'
 import { CrmDashboard } from './CrmDashboard'
 import { CrmPipeline } from './CrmPipeline'
 import { CrmContatos } from './CrmContatos'
 import { CrmAtividades } from './CrmAtividades'
-import { CrmLeads } from './CrmLeads'
+import { CrmEmpresas } from './CrmEmpresas'
 import { CrmCotacoes } from './CrmCotacoes'
 import { CrmInteligencia } from './CrmInteligencia'
 
-type Aba = 'dashboard' | 'funil' | 'leads' | 'cotacoes' | 'inteligencia' | 'contatos' | 'atividades'
+type Aba = 'dashboard' | 'funil' | 'empresas' | 'cotacoes' | 'inteligencia' | 'contatos' | 'atividades'
 
 const ABAS: { key: Aba; label: string; icone: any }[] = [
   { key: 'dashboard', label: 'Dashboard', icone: LayoutDashboard },
   { key: 'funil', label: 'Funil de vendas', icone: Target },
-  { key: 'leads', label: 'Leads', icone: UserPlus },
+  { key: 'empresas', label: 'Empresas', icone: Building2 },
   { key: 'cotacoes', label: 'Cotações', icone: FileText },
   { key: 'inteligencia', label: 'Inteligência', icone: Sparkles },
   { key: 'contatos', label: 'Contatos', icone: Users },
@@ -43,7 +43,7 @@ export function Crm() {
 
       {aba === 'dashboard' && <CrmDashboard />}
       {aba === 'funil' && <CrmPipeline />}
-      {aba === 'leads' && <CrmLeads />}
+      {aba === 'empresas' && <CrmEmpresas />}
       {aba === 'cotacoes' && <CrmCotacoes />}
       {aba === 'inteligencia' && <CrmInteligencia />}
       {aba === 'contatos' && <CrmContatos />}

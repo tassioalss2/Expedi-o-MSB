@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Search, Target, Trophy, XCircle, Trash2, Pencil, Package,
   Clock, MessageSquare, CalendarPlus, CheckCircle2, ExternalLink,
+  AlertTriangle, Circle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -455,6 +456,8 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
           )}
         </div>
 
+        <PainelDesafios oportunidadeId={id} onChanged={refresh} />
+
         {/* Ações rápidas */}
         <div className="px-5 py-3 border-b flex flex-wrap gap-2">
           <button onClick={() => setEditar(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 border rounded-lg text-gray-600 hover:bg-gray-50"><Pencil size={14} /> Editar</button>
@@ -535,6 +538,173 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
       {gerarOV && <ModalGerarOV opp={o} onClose={() => setGerarOV(false)} onSaved={refresh} />}
       {novaAtiv && <ModalNovaAtividade oportunidadeId={id} clienteId={o.cliente_id} onClose={() => setNovaAtiv(false)} onSaved={refresh} />}
     </ModalBase>
+  )
+}
+
+/** Desafios/problemas que travam a negociação.
+ *
+ *  O tipo é um vocabulário que APRENDE: o operador escreve o problema com as
+ *  palavras dele e o sistema cadastra como tipo reutilizável. O autocomplete
+ *  (ordenado por uso) é o que faz a próxima pessoa escolher o tipo existente em
+ *  vez de criar a 50ª variação do mesmo problema. */
+function PainelDesafios({ oportunidadeId, onChanged }: { oportunidadeId: string; onChanged: () => void }) {
+  const qc = useQueryClient()
+  const [novo, setNovo] = useState(false)
+  const [texto, setTexto] = useState('')
+  const [tipoId, setTipoId] = useState<string | null>(null)
+  const [descricao, setDescricao] = useState('')
+  const [prazo, setPrazo] = useState('')
+  const [bloqueia, setBloqueia] = useState(true)
+
+  const { data: desafios = [] } = useQuery<any[]>({
+    queryKey: ['crm-desafios', oportunidadeId],
+    queryFn: () => api.get(`/crm/oportunidades/${oportunidadeId}/desafios`).then(r => r.data),
+  })
+  // Sugestões conforme digita — busca no servidor pelo texto normalizado.
+  const { data: sugestoes = [] } = useQuery<any[]>({
+    queryKey: ['crm-desafio-tipos', texto],
+    queryFn: () => api.get('/crm/desafios/tipos', { params: texto ? { q: texto } : {} }).then(r => r.data),
+    enabled: novo,
+  })
+
+  const recarregar = () => {
+    qc.invalidateQueries({ queryKey: ['crm-desafios', oportunidadeId] })
+    qc.invalidateQueries({ queryKey: ['crm-desafio-tipos'] })
+    onChanged()
+  }
+
+  const criar = useMutation({
+    mutationFn: () => api.post(`/crm/oportunidades/${oportunidadeId}/desafios`, {
+      tipo_id: tipoId, tipo_texto: tipoId ? null : texto.trim() || null,
+      descricao: descricao || null, prazo: prazo || null, bloqueia,
+    }).then(r => r.data),
+    onSuccess: () => {
+      toast.success('Desafio registrado')
+      setNovo(false); setTexto(''); setTipoId(null); setDescricao(''); setPrazo(''); setBloqueia(true)
+      recarregar()
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao registrar'), { duration: 5000 }),
+  })
+
+  const mudar = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: any }) =>
+      api.patch(`/crm/desafios/${id}`, body).then(r => r.data),
+    onSuccess: () => { recarregar() },
+    onError: (e: any) => toast.error(msgErro(e, 'Erro ao atualizar')),
+  })
+
+  const abertos = desafios.filter(d => d.status === 'ABERTO')
+  const bloqueantes = abertos.filter(d => d.bloqueia)
+
+  return (
+    <div className="border-t px-5 py-4">
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <p className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
+            <AlertTriangle size={14} className={bloqueantes.length ? 'text-orange-500' : 'text-gray-300'} />
+            Desafios
+            {abertos.length > 0 && <span className="text-xs font-normal text-gray-400">({abertos.length} aberto)</span>}
+          </p>
+          {bloqueantes.length > 0 && (
+            <p className="text-[11px] text-orange-600 mt-0.5">
+              {bloqueantes.length} bloqueante(s) — a negociação não avança até resolver
+            </p>
+          )}
+        </div>
+        {!novo && (
+          <button onClick={() => setNovo(true)}
+            className="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-orange-50 text-orange-700 hover:bg-orange-100">
+            + Registrar problema
+          </button>
+        )}
+      </div>
+
+      {novo && (
+        <div className="bg-orange-50/60 border border-orange-200 rounded-xl p-3 space-y-2 mb-3">
+          <div>
+            <label className="text-xs text-gray-600">Qual é o problema?</label>
+            <input value={texto} autoFocus
+              onChange={e => { setTexto(e.target.value); setTipoId(null) }}
+              placeholder="Escreva com suas palavras — ex.: hospital exige cadastro no portal de compras"
+              className={inputCls} />
+            {/* Se já existe algo parecido, oferece antes de criar tipo novo. */}
+            {texto.trim() && sugestoes.length > 0 && !tipoId && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                <span className="text-[11px] text-gray-400 self-center">já existe:</span>
+                {sugestoes.slice(0, 4).map(s => (
+                  <button key={s.id} type="button"
+                    onClick={() => { setTipoId(s.id); setTexto(s.label) }}
+                    className="text-[11px] px-2 py-0.5 rounded-full bg-white border border-orange-300 text-orange-800 hover:bg-orange-100">
+                    {s.label}{s.usos > 0 ? ` · ${s.usos}` : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+            {tipoId && <p className="text-[11px] text-emerald-700 mt-1">✓ usando tipo já cadastrado</p>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input value={descricao} onChange={e => setDescricao(e.target.value)}
+              placeholder="Detalhe do caso (opcional)" className={inputCls} />
+            <input type="date" value={prazo} onChange={e => setPrazo(e.target.value)} className={inputCls} />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-gray-600">
+            <input type="checkbox" checked={bloqueia} onChange={e => setBloqueia(e.target.checked)} />
+            Impede avançar para negociação
+          </label>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => { setNovo(false); setTexto(''); setTipoId(null) }}
+              className="px-3 py-1.5 text-xs text-gray-600 hover:bg-white rounded-lg">Cancelar</button>
+            <button onClick={() => criar.mutate()} disabled={!texto.trim() || criar.isPending}
+              className="px-3 py-1.5 text-xs bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50">
+              Registrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {desafios.length === 0 ? (
+        <p className="text-xs text-gray-400">Nenhum desafio registrado — o caminho está livre.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {desafios.map(d => (
+            <div key={d.id}
+              className={`flex items-start gap-2 rounded-lg px-2.5 py-2 ${
+                d.status !== 'ABERTO' ? 'bg-gray-50' : d.bloqueia ? 'bg-orange-50' : 'bg-amber-50/50'}`}>
+              <button onClick={() => mudar.mutate({
+                id: d.id, body: { status: d.status === 'ABERTO' ? 'RESOLVIDO' : 'ABERTO' },
+              })}
+                title={d.status === 'ABERTO' ? 'Marcar como resolvido' : 'Reabrir'}
+                className="mt-0.5 shrink-0">
+                {d.status === 'ABERTO'
+                  ? <Circle size={15} className="text-gray-400 hover:text-emerald-600" />
+                  : <CheckCircle2 size={15} className="text-emerald-600" />}
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className={`text-xs font-medium ${d.status !== 'ABERTO' ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
+                  {d.tipo || d.descricao}
+                </p>
+                {d.tipo && d.descricao && <p className="text-[11px] text-gray-500">{d.descricao}</p>}
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {d.status === 'ABERTO' && d.bloqueia && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-200 text-orange-800">bloqueia</span>
+                  )}
+                  {d.prazo && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${d.atrasado ? 'bg-red-100 text-red-700' : 'bg-white text-gray-500'}`}>
+                      {d.atrasado ? 'atrasado · ' : ''}{fmtData(d.prazo)}
+                    </span>
+                  )}
+                  {d.status !== 'ABERTO' && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                      {d.status === 'RESOLVIDO' ? 'resolvido' : 'cancelado'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
