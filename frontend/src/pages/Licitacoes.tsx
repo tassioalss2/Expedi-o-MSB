@@ -521,15 +521,28 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplic
           {!final && !emEstoque && parado >= 2 && <span className={`flex items-center gap-1 ${parado >= 4 ? 'text-red-500 font-medium' : 'text-amber-500'}`} title="Dias sem movimento">⏳ parado {parado}d</span>}
         </div>
         {emEstoque && (
-          <div className={`mt-1.5 rounded-md px-2 py-1 text-[11px] flex items-start gap-1 ${risco ? 'bg-red-50 text-red-700 font-medium' : 'bg-orange-50 text-orange-700'}`}
-            title={risco ? 'A previsão do PCP passa do prazo do contrato — risco de multa' : 'Aguardando o material do PCP'}>
-            <Package size={12} className="mt-px shrink-0" />
-            <span>
-              {risco ? '🔴 Risco de multa · ' : ''}
-              {d.estoque?.previsao_pcp ? `PCP prevê ${fmtData(d.estoque.previsao_pcp)}` : 'Sem previsão do PCP'}
-              {(d.estoque?.itens_faltantes || []).length > 0 ? ` · faltam: ${d.estoque.itens_faltantes.slice(0, 3).join(', ')}` : ''}
-            </span>
-          </div>
+          <>
+            {/* Cruza os itens da demanda com o PCP (view pa_coverage) ao vivo —
+                a previsão logo abaixo é só o que o operador digitou à mão ao
+                marcar "sem estoque"; se o PCP repôs antes do previsto, sem
+                este selo ninguém percebe e a venda direta fica parada à toa. */}
+            {d.estoque_pcp?.disponivel_agora && (
+              <div className="mt-1.5 rounded-md px-2 py-1 text-[11px] flex items-center gap-1.5 bg-emerald-50 text-emerald-700 font-medium"
+                title="Todos os itens desta demanda já têm estoque PA suficiente no PCP agora">
+                <PackageCheck size={12} className="shrink-0" />
+                <span>✅ Estoque já disponível no PCP — dá para liberar</span>
+              </div>
+            )}
+            <div className={`mt-1.5 rounded-md px-2 py-1 text-[11px] flex items-start gap-1 ${risco ? 'bg-red-50 text-red-700 font-medium' : 'bg-orange-50 text-orange-700'}`}
+              title={risco ? 'A previsão do PCP passa do prazo do contrato — risco de multa' : 'Aguardando o material do PCP'}>
+              <Package size={12} className="mt-px shrink-0" />
+              <span>
+                {risco ? '🔴 Risco de multa · ' : ''}
+                {d.estoque?.previsao_pcp ? `PCP prevê ${fmtData(d.estoque.previsao_pcp)}` : 'Sem previsão do PCP'}
+                {(d.estoque?.itens_faltantes || []).length > 0 ? ` · faltam: ${d.estoque.itens_faltantes.slice(0, 3).join(', ')}` : ''}
+              </span>
+            </div>
+          </>
         )}
         {d.frete && (d.frete.transportadora_nome || d.frete.valor) && (
           <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1"><Truck size={11} /> {d.frete.transportadora_nome || 'Frete'}{d.frete.valor ? ` · ${fmtBRL(d.frete.valor)}` : ''}</p>

@@ -171,6 +171,35 @@ def _anexar_ov_status(db, demandas: list) -> None:
             d["ov_itens"] = list(agg.values())
 
 
+def _anexar_estoque_pcp(demandas: list) -> None:
+    """Para demandas AGUARDANDO_ESTOQUE, cruza os itens com o PCP (view
+    `pa_coverage`) e sinaliza quando o material já está disponível AGORA.
+
+    Motivo: o card hoje só mostra a previsão que o operador digitou à mão ao
+    marcar "sem estoque" — se o PCP repôs antes da data prevista, ninguém
+    percebe até checar manualmente, e a venda direta fica parada por engano
+    mesmo com estoque de sobra. `pcp_estoque_service.cobertura_da_demanda` já
+    existia pronta para isso, só não estava plugada em lugar nenhum."""
+    from app.services import pcp_estoque_service
+    for d in demandas:
+        if d.get("etapa") != "AGUARDANDO_ESTOQUE":
+            continue
+        try:
+            cob = pcp_estoque_service.cobertura_da_demanda(d)
+        except Exception:
+            # Integração do PCP fora do ar: card segue com a previsão manual,
+            # sem o selo — não pode derrubar o painel de licitações.
+            cob = {"itens": [], "pior_status": None, "integracao": False}
+        itens = cob.get("itens") or []
+        d["estoque_pcp"] = {
+            "integracao": cob.get("integracao", False),
+            "itens": itens,
+            # Só fecha "disponível agora" se TODOS os itens da demanda atendem —
+            # material parcial não libera a venda direta.
+            "disponivel_agora": bool(itens) and len(itens) == len(d.get("itens") or []) and all(it.get("atende") for it in itens),
+        }
+
+
 def listar_demandas() -> list:
     """Painel do dia: pendentes (qualquer dia) + concluídas HOJE. As concluídas de
     dias anteriores saem do painel automaticamente (ficam no histórico)."""
@@ -188,6 +217,7 @@ def listar_demandas() -> list:
 
     demandas = [d for d in demandas if visivel(d)]
     _anexar_ov_status(db, demandas)
+    _anexar_estoque_pcp(demandas)
     demandas.sort(key=lambda d: (_PRIORIDADE_PESO.get(d["prioridade"], 3), d.get("prazo") or "9999"))
     return demandas
 
