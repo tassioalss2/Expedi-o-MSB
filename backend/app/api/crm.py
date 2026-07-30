@@ -12,6 +12,7 @@ from app.models.schemas import (
     ClienteRapidoCreate,
     CotacaoCreate,
     CotacaoUpdate,
+    GanharRequest,
     GerarOVRequest,
     DesafioCreate,
     DesafioUpdate,
@@ -102,8 +103,22 @@ def atualizar_oportunidade(
 
 
 @router.post("/oportunidades/{oportunidade_id}/ganhar")
-def ganhar_oportunidade(oportunidade_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
-    return crm_service.ganhar_oportunidade(str(oportunidade_id), usuario)
+def ganhar_oportunidade(oportunidade_id: UUID, payload: Optional[GanharRequest] = None,
+                        usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_service.ganhar_oportunidade(
+        str(oportunidade_id), usuario, payload.repasse_nota if payload else None)
+
+
+# ── Repasse: ganho do comercial → OV emitida por operações de vendas ─────────────
+@router.get("/repasses")
+def listar_repasses(_: UsuarioOut = Depends(get_current_user)):
+    """Fila de vendas ganhas que ainda não têm OV cadastrada no app."""
+    return crm_service.listar_repasses()
+
+
+@router.post("/oportunidades/{oportunidade_id}/assumir")
+def assumir_repasse(oportunidade_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    return crm_service.assumir_repasse(str(oportunidade_id), usuario)
 
 
 @router.get("/oportunidades/{oportunidade_id}/requisitos")

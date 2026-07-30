@@ -533,6 +533,13 @@ class PerderRequest(BaseModel):
     preco_vencedor: Optional[float] = None
 
 
+class GanharRequest(BaseModel):
+    """Ganhar abre o repasse para operações de vendas. `repasse_nota` é o recado
+    que hoje vai por mensagem de Teams — opcional, mas é onde cabe o que foi
+    combinado com o cliente e não tem campo próprio."""
+    repasse_nota: Optional[str] = None
+
+
 class AtividadeCreate(BaseModel):
     oportunidade_id: Optional[UUID] = None
     contato_id: Optional[UUID] = None

@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 480
     # Webhook do canal Teams da Expedição (opcional — se vazio, notificação é ignorada)
     teams_webhook_expedicao: Optional[str] = None
+    # Canal do repasse comercial → operações de vendas. Se vazio, cai no canal da
+    # Expedição: melhor o aviso sair no canal errado do que não sair.
+    teams_webhook_comercial: Optional[str] = None
     # App de cobertura de estoque do PCP (opcional — projeto Supabase deles, só
     # leitura). Precisam estar declarados aqui: o Settings recusa variável extra,
     # então uma var não declarada no ambiente derruba o boot do backend.

@@ -288,6 +288,13 @@ def _serializar_opp(o: dict, itens: Optional[list] = None) -> dict:
         "perdido_em": o.get("perdido_em"),
         "gerado_ov_id": o.get("gerado_ov_id"),
         "gerado_ov_ref": o.get("gerado_ov_ref"),
+        "repasse_status": o.get("repasse_status"),
+        "repasse_em": o.get("repasse_em"),
+        "repasse_nota": o.get("repasse_nota"),
+        "repasse_assumido_em": o.get("repasse_assumido_em"),
+        # Preenchido por quem tem o nome em mão (obter_oportunidade); o serializador
+        # não faz lookup para não gerar uma query por card na listagem.
+        "repasse_assumido_por_nome": o.get("_assumido_nome"),
         "criado_em": o.get("criado_em"),
         "itens": itens if itens is not None else None,
     }
@@ -332,6 +339,8 @@ def obter_oportunidade(oportunidade_id: str) -> dict:
     o = db.table("crm_oportunidades").select("*, clientes(nome)").eq("id", oportunidade_id).single().execute().data
     if not o:
         raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
+    if o.get("repasse_assumido_por"):
+        o["_assumido_nome"] = _nomes_usuarios(db, [o["repasse_assumido_por"]]).get(o["repasse_assumido_por"])
 
     itens = db.table("crm_oportunidade_itens").select("*").eq("oportunidade_id", oportunidade_id).execute().data
     itens_out = [{
@@ -800,21 +809,182 @@ def _marcar_movimentacao(db, empresa_id: Optional[str]) -> None:
         pass
 
 
-def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut) -> dict:
+# ── Repasse: comercial ganhou → operações de vendas gera a OV ───────────────────
+#
+# O passo que faltava no app. O comercial ganha, alguém de operações precisa
+# emitir a OV no D365 e só então cadastrá-la aqui. Esse aviso viajava por Teams
+# ou e-mail, fora do sistema — então nada sabia que o pedido existia e ninguém
+# conseguia responder "o que está pendente?" nem "alguém já pegou?".
+#
+# Estados: AGUARDANDO (ninguém pegou) → ASSUMIDO (operações está fazendo)
+# → CONCLUIDO (OV cadastrada). O primeiro é derivável de ganho+sem OV; o segundo
+# não é — e é exatamente a informação que a mensagem de Teams carregava.
+
+REPASSE_STATUS = {
+    "AGUARDANDO": "Aguardando operações",
+    "ASSUMIDO": "Em emissão no D365",
+    "CONCLUIDO": "OV cadastrada",
+}
+
+
+def _notificar_comercial(texto: str) -> None:
+    """Avisa o canal do repasse. Cai no canal da Expedição quando o específico não
+    está configurado — aviso no canal errado é menos ruim do que aviso nenhum."""
+    from app.core.config import settings
+    from app.services.pedido_service import _enviar_teams
+    webhook = settings.teams_webhook_comercial
+    if webhook:
+        import requests as _req
+        try:
+            _req.post(webhook, json={"text": texto}, timeout=5)
+        except Exception:
+            pass
+        return
+    _enviar_teams(texto)
+
+
+def ganhas_sem_ov(db) -> list:
+    """Fila do repasse: ganhas que ainda não viraram OV no app.
+
+    Fonte ÚNICA da definição — a tela de Início, o resumo do Teams, o badge da
+    sidebar e o painel de repasse leem daqui. Mesmo motivo de
+    `risco_multa_estoque` na licitação: duas definições paralelas acabam
+    divergindo e um alerta passa a contradizer o outro.
+    """
+    try:
+        rows = db.table("crm_oportunidades")\
+            .select("id, titulo, valor_estimado, canal, ganho_em, repasse_status, repasse_em, "
+                    "repasse_nota, repasse_assumido_em, repasse_assumido_por, clientes(nome)")\
+            .eq("ativo", True).eq("estagio", "GANHO").is_("gerado_ov_id", "null")\
+            .order("ganho_em", desc=False).execute().data
+    except Exception:
+        # Migration v25 pendente: sem as colunas de repasse a fila fica vazia em
+        # vez de derrubar a tela de Início inteira.
+        return []
+
+    # Nome de quem assumiu resolvido à parte: crm_oportunidades tem mais de uma FK
+    # para usuarios, então `usuarios(nome)` embutido sairia ambíguo.
+    nomes = _nomes_usuarios(db, [r.get("repasse_assumido_por") for r in rows])
+
+    agora = datetime.now(timezone.utc)
+    out = []
+    for r in rows:
+        ref = _parse_dt(r.get("repasse_em") or r.get("ganho_em"))
+        dias = (agora - ref).days if ref else 0
+        out.append({
+            "id": r["id"],
+            "titulo": r.get("titulo"),
+            "cliente": (r.get("clientes") or {}).get("nome"),
+            "canal": r.get("canal"),
+            "valor_estimado": float(r.get("valor_estimado") or 0),
+            "ganho_em": r.get("ganho_em"),
+            "repasse_em": r.get("repasse_em") or r.get("ganho_em"),
+            "repasse_status": r.get("repasse_status") or "AGUARDANDO",
+            "repasse_nota": r.get("repasse_nota"),
+            "repasse_assumido_em": r.get("repasse_assumido_em"),
+            "repasse_assumido_por_nome": nomes.get(r.get("repasse_assumido_por")),
+            "dias_esperando": dias,
+        })
+    return out
+
+
+def _nomes_usuarios(db, ids: list) -> dict:
+    limpos = list({i for i in ids if i})
+    if not limpos:
+        return {}
+    try:
+        rows = db.table("usuarios").select("id, nome").in_("id", limpos).execute().data
+        return {r["id"]: r.get("nome") for r in rows}
+    except Exception:
+        return {}
+
+
+def _parse_dt(valor):
+    if not valor:
+        return None
+    try:
+        d = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def listar_repasses() -> list:
+    return ganhas_sem_ov(get_service_db())
+
+
+def assumir_repasse(oportunidade_id: str, usuario: UsuarioOut) -> dict:
+    """Operações de vendas declara que pegou o pedido.
+
+    É o "deixa comigo" da mensagem de Teams. Sem isso, comercial não distingue
+    "ninguém olhou" de "já está sendo emitido" — a dúvida que gerava a cobrança
+    por mensagem."""
+    db = get_service_db()
+    o = db.table("crm_oportunidades").select("id, titulo, estagio, gerado_ov_id, repasse_status")\
+        .eq("id", oportunidade_id).single().execute().data
+    if not o:
+        raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
+    if o.get("estagio") != "GANHO":
+        raise HTTPException(status_code=422, detail="Só oportunidade ganha entra no repasse.")
+    if o.get("gerado_ov_id"):
+        raise HTTPException(status_code=400, detail="Esta oportunidade já tem OV cadastrada.")
+
+    agora = _agora()
+    db.table("crm_oportunidades").update({
+        "repasse_status": "ASSUMIDO",
+        "repasse_assumido_por": str(usuario.id),
+        "repasse_assumido_em": agora,
+        "atualizado_em": agora,
+    }).eq("id", oportunidade_id).execute()
+    _log_evento(db, oportunidade_id,
+                f"🙋 {usuario.nome} assumiu o repasse — emitindo a OV no D365", str(usuario.id))
+    _notificar_comercial(
+        f"🙋 **Repasse assumido** — {o.get('titulo')}\n\n"
+        f"{usuario.nome} está emitindo a OV no D365.")
+    return obter_oportunidade(oportunidade_id)
+
+
+def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
+                        repasse_nota: Optional[str] = None) -> dict:
     db = get_service_db()
     falta = requisitos_ganho(db, oportunidade_id)
     if falta:
         raise HTTPException(status_code=422,
                             detail="Para marcar como ganha, falta: " + "; ".join(falta) + ".")
     agora = _agora()
-    db.table("crm_oportunidades").update({
+    update = {
         "estagio": "GANHO", "probabilidade": 100, "ganho_em": agora,
         "estagio_em": agora,
         "perdido_em": None, "motivo_perda": None, "motivo_perda_codigo": None,
         "atualizado_em": agora,
-    }).eq("id", oportunidade_id).execute()
+    }
+    nota = (repasse_nota or "").strip() or None
+    # Ganhar abre o repasse automaticamente: é o ponto onde o pedido deixa de ser
+    # do comercial e passa a ser trabalho de operações de vendas.
+    try:
+        db.table("crm_oportunidades").update(
+            {**update, "repasse_status": "AGUARDANDO", "repasse_em": agora, "repasse_nota": nota}
+        ).eq("id", oportunidade_id).execute()
+    except Exception:
+        # v25 pendente — ganha do mesmo jeito, só sem entrar na fila.
+        db.table("crm_oportunidades").update(update).eq("id", oportunidade_id).execute()
+
     _log_evento(db, oportunidade_id, "🏆 Oportunidade marcada como GANHA", str(usuario.id))
-    return obter_oportunidade(oportunidade_id)
+    _log_evento(db, oportunidade_id,
+                "➡️ Repasse aberto para operações de vendas emitir a OV no D365", str(usuario.id))
+
+    opp = obter_oportunidade(oportunidade_id)
+    _notificar_comercial(
+        f"🏆 **Venda ganha — gerar OV no D365**\n\n"
+        f"**{opp.get('titulo')}**\n"
+        f"Cliente: {opp.get('cliente') or '—'}\n"
+        f"Valor: R$ {float(opp.get('valor_estimado') or 0):,.2f}\n"
+        f"Comercial: {usuario.nome}\n"
+        + (f"Recado: {opp.get('repasse_nota')}\n" if opp.get("repasse_nota") else "")
+        + "\nOperações de vendas: emita a OV no D365 e cadastre no app pelo painel "
+          "Repasse do CRM."
+    )
+    return opp
 
 
 def perder_oportunidade(oportunidade_id: str, payload: PerderRequest, usuario: UsuarioOut) -> dict:
@@ -856,7 +1026,12 @@ def excluir_oportunidade(oportunidade_id: str) -> dict:
 
 
 def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut) -> dict:
-    """Converte uma oportunidade ganha em OV no fluxo logístico."""
+    """Cadastra no app a OV já emitida no D365, fechando o repasse.
+
+    `numero_pedido` é o número que veio do D365 — o app não emite OV lá, ele
+    registra a que operações de vendas acabou de criar. É o último passo do
+    repasse: daqui em diante a OV segue o fluxo logístico normal.
+    """
     from app.services import pedido_service
     from app.models.schemas import ItemPedidoCreate, PedidoCreate
 
@@ -866,6 +1041,12 @@ def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut)
         raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
     if o.get("gerado_ov_id"):
         raise HTTPException(status_code=400, detail="Esta oportunidade já gerou uma OV.")
+    # A OV nasce de venda fechada. Sem esta guarda dava para cadastrar OV de
+    # oportunidade ainda em negociação, e o funil passava a mentir.
+    if o.get("estagio") != "GANHO":
+        raise HTTPException(
+            status_code=422,
+            detail="Só oportunidade GANHA gera OV — marque como ganha antes (exige proposta enviada).")
     if not o.get("cliente_id"):
         raise HTTPException(status_code=400, detail="Defina o cliente da oportunidade antes de gerar a OV.")
 
@@ -888,10 +1069,25 @@ def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut)
         ),
         usuario,
     )
-    db.table("crm_oportunidades").update({
-        "gerado_ov_id": ov.get("id"), "gerado_ov_ref": ov.get("numero_pedido"), "atualizado_em": _agora(),
-    }).eq("id", oportunidade_id).execute()
-    _log_evento(db, oportunidade_id, f"📦 OV gerada no fluxo logístico: {ov.get('numero_pedido')}", str(usuario.id))
+    vinculo = {"gerado_ov_id": ov.get("id"), "gerado_ov_ref": ov.get("numero_pedido"),
+               "atualizado_em": _agora()}
+    try:
+        db.table("crm_oportunidades").update({**vinculo, "repasse_status": "CONCLUIDO"})\
+            .eq("id", oportunidade_id).execute()
+    except Exception:
+        db.table("crm_oportunidades").update(vinculo).eq("id", oportunidade_id).execute()
+
+    _log_evento(db, oportunidade_id,
+                f"📦 OV {ov.get('numero_pedido')} cadastrada — repasse concluído, segue no fluxo logístico",
+                str(usuario.id))
+    # Fecha o ciclo para o comercial: ele abriu o repasse e agora sabe o número
+    # da OV sem precisar perguntar.
+    _notificar_comercial(
+        f"📦 **OV cadastrada — repasse concluído**\n\n"
+        f"**{o.get('titulo')}**\n"
+        f"OV: {ov.get('numero_pedido')}\n"
+        f"Cadastrada por: {usuario.nome}\n\n"
+        f"Segue agora no fluxo normal da expedição.")
     return obter_oportunidade(oportunidade_id)
 
 

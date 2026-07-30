@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
   Package, DollarSign, Gavel, ArrowRight, AlertTriangle, Clock,
-  TrendingDown, Boxes, FileText, CheckCircle2,
+  TrendingDown, Boxes, FileText, CheckCircle2, Handshake,
 } from 'lucide-react'
 import api from '../lib/api'
 import { useAuthStore } from '../store/authStore'
@@ -74,6 +74,7 @@ const ICONE_PENDENCIA: Record<string, any> = {
   demandas_paradas: FileText,
   ocorrencias: AlertTriangle,
   ovs_liberadas: Package,
+  ganhas_sem_ov: Handshake,
 }
 const ESTILO_GRAVIDADE = {
   ALTA: { ic: 'text-red-600 bg-red-50', acao: 'text-red-600 hover:text-red-700' },

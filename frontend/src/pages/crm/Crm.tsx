@@ -1,20 +1,25 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Sparkles, Building2, FileText } from 'lucide-react'
+import api from '../../lib/api'
 import { CrmDashboard } from './CrmDashboard'
 import { CrmPipeline } from './CrmPipeline'
 import { CrmContatos } from './CrmContatos'
 import { CrmAtividades } from './CrmAtividades'
 import { CrmEmpresas } from './CrmEmpresas'
 import { CrmCotacoes } from './CrmCotacoes'
+import { CrmRepasse } from './CrmRepasse'
 import { CrmInteligencia } from './CrmInteligencia'
 
-type Aba = 'dashboard' | 'funil' | 'empresas' | 'cotacoes' | 'inteligencia' | 'contatos' | 'atividades'
+type Aba = 'dashboard' | 'funil' | 'empresas' | 'cotacoes' | 'repasse' | 'inteligencia' | 'contatos' | 'atividades'
 
 const ABAS: { key: Aba; label: string; icone: any }[] = [
   { key: 'dashboard', label: 'Dashboard', icone: LayoutDashboard },
   { key: 'funil', label: 'Funil de vendas', icone: Target },
   { key: 'empresas', label: 'Empresas', icone: Building2 },
   { key: 'cotacoes', label: 'Cotações', icone: FileText },
+  // Fica logo depois de Cotações: é o passo seguinte do processo (ganhou → OV).
+  { key: 'repasse', label: 'Repasse p/ OV', icone: Handshake },
   { key: 'inteligencia', label: 'Inteligência', icone: Sparkles },
   { key: 'contatos', label: 'Contatos', icone: Users },
   { key: 'atividades', label: 'Atividades', icone: CalendarClock },
@@ -22,6 +27,15 @@ const ABAS: { key: Aba; label: string; icone: any }[] = [
 
 export function Crm() {
   const [aba, setAba] = useState<Aba>('funil')
+
+  // Contador na aba: sem isso a fila de repasse fica escondida atrás de um
+  // clique e volta a depender de alguém avisar por mensagem.
+  const { data: repasses = [] } = useQuery<any[]>({
+    queryKey: ['crm-repasses'],
+    queryFn: () => api.get('/crm/repasses').then(r => r.data),
+    refetchInterval: 120000,
+  })
+  const pendentes = repasses.filter(r => r.repasse_status === 'AGUARDANDO').length
 
   return (
     <div className="p-4 lg:p-6 max-w-[1500px] mx-auto space-y-4">
@@ -37,6 +51,11 @@ export function Crm() {
               aba === key ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}>
             <Icone size={16} /> {label}
+            {key === 'repasse' && repasses.length > 0 && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+                pendentes > 0 ? 'bg-amber-500 text-white' : 'bg-gray-200 text-gray-600'
+              }`}>{repasses.length}</span>
+            )}
           </button>
         ))}
       </div>
@@ -45,6 +64,7 @@ export function Crm() {
       {aba === 'funil' && <CrmPipeline />}
       {aba === 'empresas' && <CrmEmpresas />}
       {aba === 'cotacoes' && <CrmCotacoes />}
+      {aba === 'repasse' && <CrmRepasse />}
       {aba === 'inteligencia' && <CrmInteligencia />}
       {aba === 'contatos' && <CrmContatos />}
       {aba === 'atividades' && <CrmAtividades />}

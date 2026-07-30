@@ -245,7 +245,32 @@ def pendencias() -> dict:
     except Exception:
         pass
 
-    # 6) Canal comercial atrás do ritmo do mês.
+    # 6) Vendas ganhas esperando OV — o repasse do comercial para operações de
+    #    vendas. Mesma definição usada pelo resumo do Teams e pelo painel de
+    #    Repasse (crm_service.ganhas_sem_ov), para os três não divergirem.
+    try:
+        from app.services import crm_service
+        fila = crm_service.ganhas_sem_ov(db)
+        if fila:
+            n = len(fila)
+            sem_dono = [f for f in fila if f["repasse_status"] == "AGUARDANDO"]
+            mais_antiga = max((f["dias_esperando"] for f in fila), default=0)
+            if sem_dono:
+                detalhe = (f"{len(sem_dono)} sem ninguém responsável"
+                           + (f" · a mais antiga há {mais_antiga} dia{'s' if mais_antiga > 1 else ''}"
+                              if mais_antiga > 0 else ""))
+                grav = "ALTA" if mais_antiga >= 1 else "MEDIA"
+            else:
+                detalhe = "todas já assumidas, aguardando emissão no D365"
+                grav = "BAIXA"
+            itens.append(_pendencia(
+                "ganhas_sem_ov",
+                f"{n} venda{'s' if n > 1 else ''} ganha{'s' if n > 1 else ''} sem OV cadastrada",
+                detalhe, n, "/crm", "Gerar OV", grav))
+    except Exception:
+        pass
+
+    # 7) Canal comercial atrás do ritmo do mês.
     try:
         itens += _canais_atras_do_ritmo(hoje)
     except Exception:

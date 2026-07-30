@@ -536,12 +536,47 @@ function PainelPropostas({ oportunidadeId, onChanged }: { oportunidadeId: string
   )
 }
 
+/** Ganhar não é só mudar o status: é entregar o pedido para operações de vendas.
+ *  O recado opcional aqui é o conteúdo da mensagem de Teams que o comercial
+ *  mandava à mão — o que foi combinado e não cabe em campo estruturado. */
+function ModalGanhar({ oportunidade: o, pendente, onClose, onConfirmar }: {
+  oportunidade: any; pendente: boolean; onClose: () => void; onConfirmar: (nota: string) => void
+}) {
+  const [nota, setNota] = useState('')
+  return (
+    <ModalBase titulo="Marcar como ganha" onClose={onClose} max="max-w-md">
+      <div className="p-5 space-y-3">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900">
+          <p className="font-semibold">{o.titulo}</p>
+          <p className="mt-0.5">{o.cliente || 'Sem cliente'} · {fmtBRL(o.valor_estimado)}</p>
+        </div>
+        <div className="bg-blue-50 border border-blue-100 rounded-lg p-2.5 text-xs text-blue-800">
+          Ao confirmar, o pedido entra na fila de <strong>Repasse p/ OV</strong> e operações de
+          vendas é avisada no Teams automaticamente — não precisa mandar mensagem.
+        </div>
+        <Campo label="Recado para operações de vendas (opcional)">
+          <textarea value={nota} onChange={e => setNota(e.target.value)} rows={3} className={inputCls}
+            placeholder="Ex.: cliente precisa receber até dia 10, combinei frete CIF" autoFocus />
+        </Campo>
+      </div>
+      <div className="p-4 border-t flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+        <button onClick={() => onConfirmar(nota)} disabled={pendente}
+          className="flex items-center gap-1.5 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
+          <Trophy size={15} /> {pendente ? 'Marcando…' : 'Confirmar ganho'}
+        </button>
+      </div>
+    </ModalBase>
+  )
+}
+
 // ── Detalhe da oportunidade ────────────────────────────────────────────────────────
 function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [editar, setEditar] = useState(false)
   const [perder, setPerder] = useState(false)
+  const [ganhando, setGanhando] = useState(false)
   const [gerarOV, setGerarOV] = useState(false)
   const [nota, setNota] = useState('')
   const [novaAtiv, setNovaAtiv] = useState(false)
@@ -555,8 +590,12 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
   const refresh = () => { qc.invalidateQueries({ queryKey: ['crm-opp', id] }); onChanged() }
 
   const ganhar = useMutation({
-    mutationFn: () => api.post(`/crm/oportunidades/${id}/ganhar`),
-    onSuccess: () => { toast.success('🏆 Oportunidade ganha!'); refresh() },
+    mutationFn: (nota?: string) => api.post(`/crm/oportunidades/${id}/ganhar`,
+      { repasse_nota: nota?.trim() || null }),
+    onSuccess: () => {
+      toast.success('🏆 Ganha! Repasse aberto para operações de vendas', { duration: 5000 })
+      setGanhando(false); refresh()
+    },
     onError: (e: any) => toast.error(msgErro(e, 'Não foi possível marcar como ganha'), { duration: 6000 }),
   })
   const addNota = useMutation({
@@ -608,12 +647,33 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
           {o.estagio === 'PERDIDO' && o.motivo_perda && (
             <div className="mt-3 text-xs bg-red-50 text-red-700 rounded-lg p-2">Perdida — {o.motivo_perda}</div>
           )}
+          {/* Ganha: mostra em que pé está o repasse para operações de vendas.
+              Antes só havia o botão "Gerar OV" — o comercial não tinha como
+              saber se alguém já tinha pegado o pedido sem perguntar no Teams. */}
           {o.estagio === 'GANHO' && (
-            <div className="mt-3 text-xs bg-emerald-50 text-emerald-700 rounded-lg p-2 flex items-center justify-between">
-              <span>🏆 Ganha em {fmtData(o.ganho_em)}</span>
-              {o.gerado_ov_ref
-                ? <button onClick={() => o.gerado_ov_id && navigate(`/expedicao/${o.gerado_ov_id}`)} className="underline flex items-center gap-1"><ExternalLink size={12} /> OV {o.gerado_ov_ref}</button>
-                : <button onClick={() => setGerarOV(true)} className="flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded"><Package size={12} /> Gerar OV</button>}
+            <div className="mt-3 space-y-2">
+              <div className="text-xs bg-emerald-50 text-emerald-700 rounded-lg p-2 flex items-center justify-between gap-2 flex-wrap">
+                <span>🏆 Ganha em {fmtData(o.ganho_em)}</span>
+                {o.gerado_ov_ref
+                  ? <button onClick={() => o.gerado_ov_id && navigate(`/expedicao/${o.gerado_ov_id}`)} className="underline flex items-center gap-1"><ExternalLink size={12} /> OV {o.gerado_ov_ref}</button>
+                  : <button onClick={() => setGerarOV(true)} className="flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded"><Package size={12} /> Cadastrar OV do D365</button>}
+              </div>
+              {!o.gerado_ov_ref && (
+                <div className={`text-xs rounded-lg p-2 border ${
+                  o.repasse_status === 'ASSUMIDO'
+                    ? 'bg-blue-50 border-blue-200 text-blue-800'
+                    : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                  {o.repasse_status === 'ASSUMIDO' ? (
+                    <>
+                      <strong>{o.repasse_assumido_por_nome || 'Operações'}</strong> assumiu o repasse
+                      {o.repasse_assumido_em && ` em ${fmtDataHora(o.repasse_assumido_em)}`} — emitindo a OV no D365.
+                    </>
+                  ) : (
+                    <>Repasse aberto para operações de vendas · ninguém assumiu ainda. Acompanhe na aba <strong>Repasse p/ OV</strong>.</>
+                  )}
+                  {o.repasse_nota && <p className="mt-1 text-gray-600">Recado enviado: {o.repasse_nota}</p>}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -624,7 +684,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
         {/* Ações rápidas */}
         <div className="px-5 py-3 border-b flex flex-wrap gap-2">
           <button onClick={() => setEditar(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 border rounded-lg text-gray-600 hover:bg-gray-50"><Pencil size={14} /> Editar</button>
-          {!fechada && <button onClick={() => ganhar.mutate()} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"><Trophy size={14} /> Ganhar</button>}
+          {!fechada && <button onClick={() => setGanhando(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white"><Trophy size={14} /> Ganhar</button>}
           {!fechada && <button onClick={() => setPerder(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"><XCircle size={14} /> Perder</button>}
           <button onClick={() => setNovaAtiv(true)} className="flex items-center gap-1.5 text-sm px-3 py-1.5 border rounded-lg text-gray-600 hover:bg-gray-50"><CalendarPlus size={14} /> Atividade</button>
           <button onClick={() => { if (confirm('Remover esta oportunidade?')) excluir.mutate() }} className="flex items-center gap-1.5 text-sm px-3 py-1.5 text-gray-400 hover:text-red-600 ml-auto"><Trash2 size={14} /> Remover</button>
@@ -704,6 +764,8 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
 
       {moverPara && <ModalMover oportunidade={o} destino={moverPara}
         onClose={() => setMoverPara(null)} onSaved={refresh} />}
+      {ganhando && <ModalGanhar oportunidade={o} pendente={ganhar.isPending}
+        onClose={() => setGanhando(false)} onConfirmar={(nota) => ganhar.mutate(nota)} />}
       {editar && <ModalOportunidadeForm oportunidade={o} onClose={() => setEditar(false)} onSaved={refresh} />}
       {perder && <ModalPerder id={id} onClose={() => setPerder(false)} onSaved={refresh} />}
       {gerarOV && <ModalGerarOV opp={o} onClose={() => setGerarOV(false)} onSaved={refresh} />}
