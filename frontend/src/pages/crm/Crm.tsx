@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Sparkles, Building2, FileText } from 'lucide-react'
+import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Building2, FileText } from 'lucide-react'
 import api from '../../lib/api'
 import { CrmDashboard } from './CrmDashboard'
 import { CrmPipeline } from './CrmPipeline'
@@ -10,9 +10,8 @@ import { CrmAtividades } from './CrmAtividades'
 import { CrmEmpresas } from './CrmEmpresas'
 import { CrmCotacoes } from './CrmCotacoes'
 import { CrmRepasse } from './CrmRepasse'
-import { CrmInteligencia } from './CrmInteligencia'
 
-type Aba = 'dashboard' | 'funil' | 'empresas' | 'cotacoes' | 'repasse' | 'inteligencia' | 'contatos' | 'atividades'
+type Aba = 'dashboard' | 'funil' | 'empresas' | 'cotacoes' | 'repasse' | 'contatos' | 'atividades'
 
 const ABAS: { key: Aba; label: string; icone: any }[] = [
   { key: 'dashboard', label: 'Dashboard', icone: LayoutDashboard },
@@ -21,7 +20,6 @@ const ABAS: { key: Aba; label: string; icone: any }[] = [
   { key: 'cotacoes', label: 'Cotações', icone: FileText },
   // Fica logo depois de Cotações: é o passo seguinte do processo (ganhou → OV).
   { key: 'repasse', label: 'Repasse p/ OV', icone: Handshake },
-  { key: 'inteligencia', label: 'Inteligência', icone: Sparkles },
   { key: 'contatos', label: 'Contatos', icone: Users },
   { key: 'atividades', label: 'Atividades', icone: CalendarClock },
 ]
@@ -70,7 +68,6 @@ export function Crm() {
       {aba === 'empresas' && <CrmEmpresas />}
       {aba === 'cotacoes' && <CrmCotacoes />}
       {aba === 'repasse' && <CrmRepasse />}
-      {aba === 'inteligencia' && <CrmInteligencia />}
       {aba === 'contatos' && <CrmContatos />}
       {aba === 'atividades' && <CrmAtividades />}
     </div>

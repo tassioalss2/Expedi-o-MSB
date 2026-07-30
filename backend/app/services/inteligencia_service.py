@@ -1,4 +1,14 @@
-"""CRM · Inteligência de mercado.
+"""Inteligência de mercado e estratégia comercial.
+
+Saiu de dentro do CRM e virou módulo próprio: o público é a diretoria, e o
+conteúdo não depende do funil — depende do faturamento faturado, do custo e do
+estoque.
+
+Duas camadas, de propósito:
+  OPERACIONAL — o que fazer esta semana: quem parou de comprar, quem caiu, qual
+    produto vai faltar, onde o preço está abaixo do público.
+  ESTRATÉGICA — 19 meses com custo: margem por segmento/linha/região,
+    sazonalidade, e o plano por linha para fechar o gap da meta.
 
 Construída sobre os dados que a empresa REALMENTE tem, com a mesma definição de
 venda do Painel Comercial — a versão anterior somava coisa que não é venda e
@@ -564,6 +574,322 @@ def _rentabilidade(db) -> dict:
     }
 
 
+# ── Estratégia por linha: como fechar o gap da meta ─────────────────────────────
+#
+# Família do D365 → linha comercial. Precisa existir separado do mapa de
+# `estoque_service._FAMILIA_LINHA` por dois motivos concretos:
+#   1. Lá REALCLOSURE é dobrado dentro de Vascular. Aqui não pode: Realclosure
+#      tem meta PRÓPRIA em metas_faturamento, então é linha à parte.
+#   2. Lá a chave é 'REALCLOSURE', mas a família no export do D365 se chama
+#      'CATETER REALCLOSURE' — nunca casava, e R$ 1,13 milhão (o produto de
+#      MAIOR margem da casa, 87%) ficava fora de qualquer análise por linha.
+# Também cobre 'FIO GUIA LUNDERQUIST' (R$ 381 mil), que faltava no outro mapa.
+FAMILIA_LINHA = {
+    # Urologia
+    "FIBRA LASER UROLOGIA": "URO",
+    "FIO GUIA HIDROFILICO UROLOGICO": "URO",
+    "BAINHA INTRODUTORA URETERAL": "URO",
+    "SONDA BASKET": "URO",
+    "SONDA URETERAL DUPLO J": "URO",
+    "URETERESCOPIOS FLEXIVEIS": "URO",
+    "DILATADOR URETERAL": "URO",
+    "KIT DUPLO J": "URO",
+    "IRRIGADOR URETERAL": "URO",
+    # Realclosure (linha própria)
+    "CATETER REALCLOSURE": "REALCLOSURE",
+    # Vascular
+    "ELETRODO TEMPORARIO": "VASCULAR",
+    "BAINHA SPEED CROSS TWIST": "VASCULAR",
+    "BAINHA SPEED CROSS": "VASCULAR",
+    "FIO GUIA HIDROFILICO": "VASCULAR",
+    "FIO GUIA TEFLONADO": "VASCULAR",
+    "FIO GUIA LUNDERQUIST": "VASCULAR",
+    "PIGTAIL CENTIMETRADO": "VASCULAR",
+    "INSUFLADOR": "VASCULAR",
+    "CATETER BALAO PTA": "VASCULAR",
+    "CATETER LACO SNARE": "VASCULAR",
+    "CATETER ARTERIAL": "VASCULAR",
+    "INTRODUTOR FEMORAL": "VASCULAR",
+    "DRENO DE TORAX": "VASCULAR",
+}
+
+LINHA_LABEL = {"URO": "Urologia", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure"}
+
+# Recompra: só entra cliente com pelo menos 3 compras na linha (sem isso não há
+# padrão, é evento isolado) e atraso de 30% acima do próprio intervalo médio.
+_MIN_COMPRAS_PADRAO = 3
+_FATOR_ATRASO = 1.3
+
+
+def _dias_uteis_restantes(hoje: date) -> int:
+    from calendar import monthrange
+    ultimo = monthrange(hoje.year, hoje.month)[1]
+    return sum(1 for d in range(hoje.day, ultimo + 1)
+               if date(hoje.year, hoje.month, d).weekday() < 5)
+
+
+def _linha_de(familia: Optional[str]) -> Optional[str]:
+    return FAMILIA_LINHA.get((familia or "").strip().upper())
+
+
+def estrategias(db) -> dict:
+    """Plano por linha para fechar o gap da meta, com alavancas quantificadas.
+
+    Cada alavanca nomeia clientes ou produtos e diz quanto vale — estratégia sem
+    número e sem nome não vira ação. O potencial de cada uma é comparado ao gap,
+    para a diretoria ver o que sozinho já resolve e o que é complemento.
+    """
+    hoje = _hoje_brt()
+    comp = hoje.strftime("%Y-%m")
+
+    try:
+        linhas_fat = _ler_tudo(db, "faturamento_itens",
+                               "competencia, familia, cliente_nome, produto_codigo, "
+                               "produto_descricao, receita, custo_total, qtd", "competencia")
+    except Exception:
+        linhas_fat = []
+    if not linhas_fat:
+        return {"disponivel": False,
+                "motivo": "Base histórica de faturamento não carregada — sem ela não há como "
+                          "calcular ciclo de recompra nem margem por linha.",
+                "linhas": []}
+
+    for l in linhas_fat:
+        l["_linha"] = _linha_de(l.get("familia"))
+
+    meses = sorted({l["competencia"] for l in linhas_fat})
+    ultimo = meses[-1]
+    pos = {m: i for i, m in enumerate(meses)}
+
+    try:
+        metas = {m["canal"]: float(m.get("valor") or 0)
+                 for m in db.table("metas_faturamento").select("canal, valor")
+                 .eq("competencia", comp).execute().data}
+    except Exception:
+        metas = {}
+
+    # Estoque para a alavanca de ruptura (best-effort: sistema externo).
+    try:
+        from app.services import estoque_service
+        est = {i["codigo"]: i for i in (estoque_service.listar(sincronizar_se_preciso=False).get("itens") or [])}
+    except Exception:
+        est = {}
+
+    precos_pub = _precos(db)
+    pub_por_cod = {p["codigo"]: p for p in (precos_pub.get("itens") or [])}
+
+    saida = []
+    for linha in ("URO", "VASCULAR", "REALCLOSURE"):
+        da_linha = [l for l in linhas_fat if l["_linha"] == linha]
+        if not da_linha:
+            continue
+
+        por_mes: dict = {}
+        for l in da_linha:
+            por_mes[l["competencia"]] = por_mes.get(l["competencia"], 0.0) + float(l.get("receita") or 0)
+        realizado = round(por_mes.get(comp, 0.0), 2)
+        meta = metas.get(linha, 0.0)
+        gap = round(max(0.0, meta - realizado), 2)
+
+        ult12 = [por_mes.get(m, 0.0) for m in meses[-12:]]
+        media12 = round(sum(ult12) / len(ult12), 2) if ult12 else 0.0
+        meta_vs_media = round(meta / media12 * 100, 0) if media12 > 0 else None
+
+        # ── Alavanca 1: recompra atrasada (a mais forte) ──────────────────────
+        ciclo: dict = {}
+        for l in da_linha:
+            c = ciclo.setdefault(l["cliente_nome"], {})
+            c[l["competencia"]] = c.get(l["competencia"], 0.0) + float(l.get("receita") or 0)
+
+        atrasados = []
+        for cliente, mm in ciclo.items():
+            compras = sorted(pos[m] for m in mm)
+            if len(compras) < _MIN_COMPRAS_PADRAO:
+                continue
+            ints = [b - a for a, b in zip(compras, compras[1:])]
+            intervalo = sum(ints) / len(ints) if ints else 0
+            parado = pos[ultimo] - compras[-1]
+            if intervalo <= 0 or parado < 1 or parado <= intervalo * _FATOR_ATRASO:
+                continue
+            atrasados.append({
+                "cliente": cliente,
+                "intervalo_meses": round(intervalo, 1),
+                "meses_parado": parado,
+                "ticket_medio": round(sum(mm.values()) / len(mm), 2),
+                "compras": len(compras),
+            })
+        atrasados.sort(key=lambda x: -x["ticket_medio"])
+        pot_recompra = round(sum(a["ticket_medio"] for a in atrasados), 2)
+
+        # ── Alavanca 2: queda de 3m contra 3m ────────────────────────────────
+        caindo = []
+        if len(meses) >= 6:
+            rec3, ant3 = meses[-3:], meses[-6:-3]
+            for cliente, mm in ciclo.items():
+                a = sum(mm.get(m, 0.0) for m in rec3) / 3
+                b = sum(mm.get(m, 0.0) for m in ant3) / 3
+                if b <= 0 or a >= b * 0.7:
+                    continue
+                caindo.append({"cliente": cliente, "media_atual": round(a, 2),
+                               "media_anterior": round(b, 2), "recuperavel": round(b - a, 2),
+                               "queda_pct": round((a - b) / b * 100, 1)})
+            caindo.sort(key=lambda x: -x["recuperavel"])
+        pot_queda = round(sum(c["recuperavel"] for c in caindo), 2)
+
+        # ── Alavanca 3: ruptura travando venda ───────────────────────────────
+        cods_linha = {l["produto_codigo"] for l in da_linha if l.get("produto_codigo")}
+        preco_med: dict = {}
+        for l in da_linha:
+            cod, q, r = l.get("produto_codigo"), float(l.get("qtd") or 0), float(l.get("receita") or 0)
+            if cod and q > 0:
+                p = preco_med.setdefault(cod, [0.0, 0.0])
+                p[0] += r
+                p[1] += q
+        rupturas = []
+        for cod in cods_linha:
+            e = est.get(cod)
+            if not e:
+                continue
+            consumo = float(e.get("consumo_medio") or 0)
+            cob = e.get("cobertura_disponivel")
+            if consumo <= 0 or cob is None or cob >= 1:
+                continue
+            pm = preco_med.get(cod)
+            unit = (pm[0] / pm[1]) if (pm and pm[1] > 0) else 0
+            # Receita de um mês de demanda que o estoque não cobre.
+            falta_mes = max(0.0, consumo - float(e.get("disponivel") or 0))
+            rupturas.append({
+                "codigo": cod, "descricao": e.get("descricao"),
+                "disponivel": e.get("disponivel"), "consumo_medio": consumo,
+                "cobertura": cob, "preco_medio": round(unit, 2),
+                "receita_travada": round(falta_mes * unit, 2),
+            })
+        rupturas.sort(key=lambda x: -x["receita_travada"])
+        pot_ruptura = round(sum(r["receita_travada"] for r in rupturas), 2)
+
+        # ── Alavanca 4: preço abaixo do público ──────────────────────────────
+        abaixo = []
+        for cod in cods_linha:
+            p = pub_por_cod.get(cod)
+            if not p or p["diferenca_pct"] >= -5:
+                continue
+            pm = preco_med.get(cod)
+            qtd_mes = (pm[1] / max(1, len(meses))) if pm else 0
+            ganho = (p["preco_publico"] - p["preco_privado"]) * qtd_mes
+            abaixo.append({**p, "qtd_mes": round(qtd_mes, 1), "ganho_mes": round(ganho, 2)})
+        abaixo.sort(key=lambda x: -x["ganho_mes"])
+        pot_preco = round(sum(a["ganho_mes"] for a in abaixo), 2)
+
+        # ── Mix: onde cada real vendido rende mais margem ────────────────────
+        prod_agg: dict = {}
+        for l in da_linha:
+            cod = l.get("produto_codigo")
+            if not cod:
+                continue
+            a = prod_agg.setdefault(cod, {"chave": cod, "descricao": l.get("produto_descricao"),
+                                          "receita": 0.0, "custo": 0.0})
+            a["receita"] += float(l.get("receita") or 0)
+            a["custo"] += float(l.get("custo_total") or 0)
+        mix = [{**a, "receita": round(a["receita"], 2), "margem_pct": _pct(a["receita"], a["custo"])}
+               for a in prod_agg.values() if a["receita"] >= _MIN_RECEITA_RANKING]
+        mix_top = sorted([m for m in mix if m["margem_pct"] is not None],
+                         key=lambda x: -x["margem_pct"])[:5]
+        mix_pior = sorted([m for m in mix if m["margem_pct"] is not None],
+                          key=lambda x: x["margem_pct"])[:5]
+
+        receita_linha = sum(float(l.get("receita") or 0) for l in da_linha)
+        custo_linha = sum(float(l.get("custo_total") or 0) for l in da_linha)
+
+        def _alav(tipo, titulo, valor, acao, itens):
+            return {"tipo": tipo, "titulo": titulo, "valor": valor, "acao": acao,
+                    "cobre_gap_pct": round(valor / gap * 100, 0) if gap > 0 else None,
+                    "itens": itens}
+
+        alavancas = [
+            _alav("RECOMPRA",
+                  f"{len(atrasados)} cliente(s) com recompra atrasada",
+                  pot_recompra,
+                  "Ligar para estes clientes: eles compram em ciclo e o ciclo venceu. "
+                  "É a receita mais barata de trazer — já compraram antes.",
+                  atrasados[:12]),
+            _alav("QUEDA",
+                  f"{len(caindo)} cliente(s) comprando menos que antes",
+                  pot_queda,
+                  "Entender o que mudou: preço, concorrente ou desabastecimento. "
+                  "O valor é a diferença para o patamar que eles já tinham.",
+                  caindo[:12]),
+            _alav("RUPTURA",
+                  f"{len(rupturas)} produto(s) sem estoque para a demanda",
+                  pot_ruptura,
+                  "Venda que não acontece por falta de material. Puxar produção "
+                  "resolve sem precisar de esforço comercial.",
+                  rupturas[:12]),
+            _alav("PRECO",
+                  f"{len(abaixo)} produto(s) abaixo do preço que ganha licitação",
+                  pot_preco,
+                  "Corrigir tabela: o mercado público já paga mais por este item. "
+                  "Ganho de margem sem vender uma unidade a mais.",
+                  abaixo[:12]),
+        ]
+        alavancas.sort(key=lambda a: -a["valor"])
+        potencial = round(sum(a["valor"] for a in alavancas), 2)
+
+        # Diagnóstico: meta muito acima da média histórica não é problema de
+        # execução do mês, é meta fora da capacidade instalada. Dizer isso é mais
+        # útil do que fingir que a diferença sai só de esforço.
+        if meta <= 0:
+            diagnostico = "Sem meta cadastrada para esta linha neste mês."
+        elif meta_vs_media and meta_vs_media >= 140:
+            diagnostico = (f"A meta é {meta_vs_media:.0f}% da média dos últimos 12 meses "
+                           f"({_fmt(media12)}/mês). O gap não fecha só com esforço de venda: "
+                           f"exige entrada nova ou revisão da meta.")
+        elif meta_vs_media and meta_vs_media >= 110:
+            diagnostico = (f"A meta pede {meta_vs_media:.0f}% da média histórica — é esticada, "
+                           f"mas alcançável trabalhando a carteira existente.")
+        else:
+            diagnostico = "A meta está dentro do patamar histórico da linha."
+
+        saida.append({
+            "linha": linha,
+            "label": LINHA_LABEL[linha],
+            "meta": round(meta, 2),
+            "realizado": realizado,
+            "atingido_pct": round(realizado / meta * 100, 1) if meta > 0 else None,
+            "gap": gap,
+            "media_12m": media12,
+            "meta_vs_media_pct": meta_vs_media,
+            "receita_historica": round(receita_linha, 2),
+            "margem_pct": _pct(receita_linha, custo_linha),
+            "diagnostico": diagnostico,
+            "potencial_total": potencial,
+            "potencial_cobre_gap_pct": round(potencial / gap * 100, 0) if gap > 0 else None,
+            "alavancas": alavancas,
+            "mix_melhores": mix_top,
+            "mix_piores": mix_pior,
+        })
+
+    meta_total = round(sum(s["meta"] for s in saida), 2)
+    real_total = round(sum(s["realizado"] for s in saida), 2)
+    return {
+        "disponivel": True,
+        "competencia": comp,
+        "dias_uteis_restantes": _dias_uteis_restantes(hoje),
+        "meta_total": meta_total,
+        "realizado_total": real_total,
+        "gap_total": round(max(0.0, meta_total - real_total), 2),
+        "atingido_pct": round(real_total / meta_total * 100, 1) if meta_total > 0 else None,
+        "potencial_total": round(sum(s["potencial_total"] for s in saida), 2),
+        "base_ate": ultimo,
+        "linhas": saida,
+        "familias_sem_linha": sorted({(l.get("familia") or "?") for l in linhas_fat
+                                      if l["_linha"] is None}),
+    }
+
+
+def _fmt(v: float) -> str:
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 # ── Perdas no funil (CRM) ───────────────────────────────────────────────────────
 
 def _analise_perdas(db) -> dict:
@@ -666,6 +992,9 @@ def dashboard_inteligencia(janela_dias: int = _JANELA_PADRAO) -> dict:
         "escopo": "NF faturada · sem frete · exclui transfer price (grupo), bonificação, amostra e consignado",
         "ticket_medio": round(faturamento_atual / len(vendas_atual), 2) if vendas_atual else 0,
         "canais": canais,
+        # Plano por linha para fechar o gap da meta — o bloco que a diretoria lê
+        # primeiro. Vem antes por isso.
+        "estrategias": estrategias(db),
         "abc": _curva_abc(_por_cliente(todas)),
         "carteira": _movimento_carteira(cli_atual, cli_ant, janela_dias),
         "produtos": _radar_produtos(),

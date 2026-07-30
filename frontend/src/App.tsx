@@ -23,6 +23,7 @@ import { Usuarios } from './pages/Usuarios'
 import { Licitacoes } from './pages/Licitacoes'
 import { Estoque } from './pages/Estoque'
 import { Crm } from './pages/crm/Crm'
+import { Inteligencia } from './pages/Inteligencia'
 import { CotacaoImprimir } from './pages/crm/CotacaoImprimir'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAuthStore } from './store/authStore'
@@ -82,6 +83,7 @@ export default function App() {
             <Route path="licitacoes" element={<Licitacoes />} />
             <Route path="estoque" element={<Estoque />} />
             <Route path="crm" element={<Crm />} />
+            <Route path="inteligencia" element={<Inteligencia />} />
 
             {/* Comercial */}
             <Route path="comercial" element={<PainelComercial />} />

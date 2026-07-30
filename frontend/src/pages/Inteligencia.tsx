@@ -10,12 +10,12 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Sparkles, TrendingUp, TrendingDown, AlertTriangle, PackageX, Package,
   UserMinus, UserPlus, DollarSign, Info, Trophy, Boxes, PlusCircle, RefreshCw,
-  Percent, MapPin, Users,
+  Percent, MapPin, Users, Target, Repeat, ChevronDown, ChevronUp,
 } from 'lucide-react'
-import api from '../../lib/api'
-import { CANAL_LABEL } from '../../lib/statusConfig'
-import { fmtBRL, fmtBRLcurto, fmtData, msgErro } from '../../lib/crm'
-import { ModalOportunidadeForm } from './CrmPipeline'
+import api from '../lib/api'
+import { CANAL_LABEL } from '../lib/statusConfig'
+import { fmtBRL, fmtBRLcurto, fmtData, msgErro } from '../lib/crm'
+import { ModalOportunidadeForm } from './crm/CrmPipeline'
 
 const JANELAS = [30, 60, 90]
 
@@ -66,13 +66,256 @@ function Card({ titulo, icone: Icone, children, acao }: {
   )
 }
 
-export function CrmInteligencia() {
+/** Cor e ícone por tipo de alavanca. A ordem de leitura é o valor, não o tipo —
+ *  o backend já devolve ordenado por quanto cada uma vale. */
+const ALAVANCA: Record<string, { cor: string; icone: any; label: string }> = {
+  RECOMPRA: { cor: 'text-emerald-700 bg-emerald-50 border-emerald-200', icone: Repeat, label: 'Recompra vencida' },
+  QUEDA: { cor: 'text-orange-700 bg-orange-50 border-orange-200', icone: TrendingDown, label: 'Queda de patamar' },
+  RUPTURA: { cor: 'text-red-700 bg-red-50 border-red-200', icone: PackageX, label: 'Falta de estoque' },
+  PRECO: { cor: 'text-blue-700 bg-blue-50 border-blue-200', icone: DollarSign, label: 'Preço defasado' },
+}
+
+/** Plano por linha para fechar o gap da meta.
+ *
+ *  A regra que orienta o desenho: alavanca sem número e sem nome não vira ação.
+ *  Cada uma mostra quanto vale, quanto do gap cobre, e a lista de clientes ou
+ *  produtos por onde começar. */
+function PlanoMeta({ estr }: { estr: any }) {
+  const [aberta, setAberta] = useState<string | null>(null)
+
+  return (
+    <div className="bg-white rounded-xl border-2 border-blue-100 p-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+            <Target size={18} className="text-blue-600" /> Plano para bater a meta
+          </h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {estr.competencia} · {estr.dias_uteis_restantes} dia(s) útil(eis) restante(s) ·
+            base de faturamento até {estr.base_ate}
+          </p>
+        </div>
+        <div className="flex gap-3 flex-wrap">
+          <div className="text-right">
+            <p className="text-[11px] text-gray-400">Meta</p>
+            <p className="text-sm font-bold text-gray-800 tabular-nums">{fmtBRL(estr.meta_total)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] text-gray-400">Realizado</p>
+            <p className="text-sm font-bold text-gray-800 tabular-nums">{fmtBRL(estr.realizado_total)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] text-gray-400">Falta</p>
+            <p className="text-sm font-bold text-red-600 tabular-nums">{fmtBRL(estr.gap_total)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] text-gray-400">Potencial mapeado</p>
+            <p className="text-sm font-bold text-emerald-700 tabular-nums">{fmtBRL(estr.potencial_total)}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Barra do total */}
+      <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden mb-1">
+        <div className="h-full bg-blue-500 rounded-full"
+          style={{ width: `${Math.min(100, estr.atingido_pct || 0)}%` }} />
+      </div>
+      <p className="text-xs text-gray-500 mb-5">
+        {estr.atingido_pct}% da meta do mês. O potencial mapeado abaixo
+        {estr.potencial_total >= estr.gap_total
+          ? ' cobre o que falta — a questão é execução, não oportunidade.'
+          : ' não cobre todo o gap; o restante depende de venda nova.'}
+      </p>
+
+      <div className="space-y-4">
+        {estr.linhas.map((L: any) => (
+          <div key={L.linha} className="border border-gray-200 rounded-xl overflow-hidden">
+            {/* Cabeçalho da linha */}
+            <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <h3 className="text-sm font-bold text-gray-800">{L.label}</h3>
+                <div className="flex items-baseline gap-4 text-xs">
+                  <span className="text-gray-500">
+                    meta <strong className="text-gray-700 tabular-nums">{fmtBRLcurto(L.meta)}</strong>
+                  </span>
+                  <span className="text-gray-500">
+                    real <strong className="text-gray-700 tabular-nums">{fmtBRLcurto(L.realizado)}</strong>
+                  </span>
+                  <span className={`font-bold tabular-nums ${
+                    (L.atingido_pct ?? 0) >= 90 ? 'text-emerald-700'
+                      : (L.atingido_pct ?? 0) >= 60 ? 'text-amber-600' : 'text-red-600'
+                  }`}>{L.atingido_pct}%</span>
+                  {L.margem_pct != null && (
+                    <span className="text-gray-400">margem {L.margem_pct}%</span>
+                  )}
+                </div>
+              </div>
+              <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mt-2">
+                <div className={`h-full rounded-full ${
+                  (L.atingido_pct ?? 0) >= 90 ? 'bg-emerald-500'
+                    : (L.atingido_pct ?? 0) >= 60 ? 'bg-amber-500' : 'bg-red-500'
+                }`} style={{ width: `${Math.min(100, L.atingido_pct || 0)}%` }} />
+              </div>
+              {/* Diagnóstico honesto: meta muito acima da média não é problema de
+                  execução do mês, e dizer isso é mais útil que omitir. */}
+              <p className={`text-xs mt-2 ${
+                (L.meta_vs_media_pct ?? 0) >= 140 ? 'text-red-700 font-medium' : 'text-gray-500'
+              }`}>
+                {L.diagnostico}
+              </p>
+            </div>
+
+            {/* Alavancas */}
+            <div className="p-3">
+              <div className="flex items-baseline justify-between gap-2 mb-2">
+                <p className="text-xs font-medium text-gray-500">
+                  Falta {fmtBRL(L.gap)} · alavancas mapeadas somam {fmtBRL(L.potencial_total)}
+                </p>
+                {L.potencial_cobre_gap_pct != null && (
+                  <span className={`text-xs font-bold ${
+                    L.potencial_cobre_gap_pct >= 100 ? 'text-emerald-700' : 'text-amber-600'
+                  }`}>{L.potencial_cobre_gap_pct}% do gap</span>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                {L.alavancas.filter((a: any) => a.valor > 0).map((a: any) => {
+                  const cfg = ALAVANCA[a.tipo] || ALAVANCA.RECOMPRA
+                  const Icone = cfg.icone
+                  const chave = `${L.linha}-${a.tipo}`
+                  const open = aberta === chave
+                  return (
+                    <div key={a.tipo} className={`rounded-lg border ${cfg.cor.split(' ').slice(1).join(' ')}`}>
+                      <button onClick={() => setAberta(open ? null : chave)}
+                        className="w-full text-left px-3 py-2">
+                        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                          <span className={`text-sm font-semibold flex items-center gap-1.5 ${cfg.cor.split(' ')[0]}`}>
+                            <Icone size={14} /> {a.titulo}
+                          </span>
+                          <span className="flex items-baseline gap-2">
+                            <span className={`text-sm font-bold tabular-nums ${cfg.cor.split(' ')[0]}`}>
+                              {fmtBRL(a.valor)}
+                            </span>
+                            {a.cobre_gap_pct != null && (
+                              <span className="text-[11px] text-gray-500">= {a.cobre_gap_pct}% do gap</span>
+                            )}
+                            {open ? <ChevronUp size={13} className="text-gray-400" />
+                                  : <ChevronDown size={13} className="text-gray-400" />}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-600 mt-0.5">{a.acao}</p>
+                      </button>
+
+                      {open && (
+                        <div className="px-3 pb-2 border-t border-white/60 pt-2">
+                          <div className="bg-white rounded-lg divide-y divide-gray-50 max-h-72 overflow-y-auto">
+                            {a.itens.map((it: any, i: number) => (
+                              <div key={i} className="px-2.5 py-1.5 text-xs">
+                                {a.tipo === 'RECOMPRA' && (
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <span className="text-gray-700 truncate" title={it.cliente}>{it.cliente}</span>
+                                    <span className="text-gray-400 whitespace-nowrap">
+                                      compra a cada {it.intervalo_meses}m · parado {it.meses_parado}m
+                                    </span>
+                                    <span className="text-gray-700 font-medium tabular-nums w-20 text-right">
+                                      {fmtBRLcurto(it.ticket_medio)}
+                                    </span>
+                                  </div>
+                                )}
+                                {a.tipo === 'QUEDA' && (
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <span className="text-gray-700 truncate" title={it.cliente}>{it.cliente}</span>
+                                    <span className="text-orange-600 whitespace-nowrap">{it.queda_pct}%</span>
+                                    <span className="text-gray-400 tabular-nums whitespace-nowrap">
+                                      {fmtBRLcurto(it.media_anterior)} → {fmtBRLcurto(it.media_atual)}
+                                    </span>
+                                    <span className="text-gray-700 font-medium tabular-nums w-20 text-right">
+                                      {fmtBRLcurto(it.recuperavel)}
+                                    </span>
+                                  </div>
+                                )}
+                                {a.tipo === 'RUPTURA' && (
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <span className="font-mono text-gray-700">{it.codigo}</span>
+                                    <span className="text-gray-400 truncate flex-1" title={it.descricao}>{it.descricao}</span>
+                                    <span className="text-red-600 whitespace-nowrap">
+                                      tem {it.disponivel} · precisa {Math.round(it.consumo_medio)}/mês
+                                    </span>
+                                    <span className="text-gray-700 font-medium tabular-nums w-20 text-right">
+                                      {fmtBRLcurto(it.receita_travada)}
+                                    </span>
+                                  </div>
+                                )}
+                                {a.tipo === 'PRECO' && (
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <span className="font-mono text-gray-700">{it.codigo}</span>
+                                    <span className="text-gray-400 tabular-nums whitespace-nowrap">
+                                      {fmtBRL(it.preco_privado)} vs {fmtBRL(it.preco_publico)} público
+                                    </span>
+                                    <span className="text-blue-600 whitespace-nowrap">{it.diferenca_pct}%</span>
+                                    <span className="text-gray-700 font-medium tabular-nums w-20 text-right">
+                                      {fmtBRLcurto(it.ganho_mes)}/mês
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Mix: para não bater meta com produto que não dá resultado. */}
+              {(L.mix_melhores || []).length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-100 grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[11px] font-medium text-emerald-700 mb-1">
+                      Priorizar (mais margem por real vendido)
+                    </p>
+                    {L.mix_melhores.map((m: any) => (
+                      <div key={m.chave} className="flex items-baseline justify-between gap-2 text-[11px]">
+                        <span className="font-mono text-gray-600 truncate" title={m.descricao}>{m.chave}</span>
+                        <span className="text-emerald-700 font-medium tabular-nums">{m.margem_pct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-medium text-red-700 mb-1">
+                      Cuidado (volume sem resultado)
+                    </p>
+                    {(L.mix_piores || []).map((m: any) => (
+                      <div key={m.chave} className="flex items-baseline justify-between gap-2 text-[11px]">
+                        <span className="font-mono text-gray-600 truncate" title={m.descricao}>{m.chave}</span>
+                        <span className="text-red-600 font-medium tabular-nums">{m.margem_pct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {(estr.familias_sem_linha || []).length > 0 && (
+        <p className="text-[11px] text-gray-400 mt-3">
+          Famílias fora das três linhas: {estr.familias_sem_linha.join(', ')} — não entram no plano.
+        </p>
+      )}
+    </div>
+  )
+}
+
+export function Inteligencia() {
   const [janela, setJanela] = useState(30)
   const [prefill, setPrefill] = useState<any | null>(null)
 
   const { data: d, isLoading, isError, error, refetch, isFetching } = useQuery<any>({
     queryKey: ['crm-inteligencia', janela],
-    queryFn: () => api.get('/crm/inteligencia', { params: { janela_dias: janela } }).then(r => r.data),
+    queryFn: () => api.get('/inteligencia', { params: { janela_dias: janela } }).then(r => r.data),
   })
 
   if (isError) {
@@ -94,6 +337,7 @@ export function CrmInteligencia() {
   const conc = abc.concentracao || {}
   const carteira = d.carteira || {}
   const produtos = d.produtos || {}
+  const estr = d.estrategias || {}
   const rent = d.rentabilidade || {}
   const precos = d.precos || {}
   const perdas = d.perdas || {}
@@ -163,6 +407,9 @@ export function CrmInteligencia() {
           </div>
         )}
       </div>
+
+      {/* ── PLANO PARA BATER A META, POR LINHA ────────────────────────────── */}
+      {estr.disponivel && <PlanoMeta estr={estr} />}
 
       {/* ── RADAR DE PRODUTOS: o bloco com mais sinal ─────────────────────── */}
       <Card titulo="Radar de produtos" icone={Package}

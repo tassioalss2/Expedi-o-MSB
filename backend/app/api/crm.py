@@ -28,7 +28,6 @@ from app.models.schemas import (
 from app.services import (
     crm_cotacao_service,
     crm_empresas_service,
-    crm_inteligencia_service,
     crm_service,
 )
 
@@ -305,13 +304,5 @@ def excluir_cotacao(cotacao_id: UUID, _: UsuarioOut = Depends(get_current_user))
     return crm_cotacao_service.excluir_cotacao(str(cotacao_id))
 
 
-# ── Inteligência de mercado ──────────────────────────────────────────────────────
-@router.get("/inteligencia")
-def inteligencia(janela_dias: int = Query(30, ge=7, le=180),
-                 _: UsuarioOut = Depends(get_current_user)):
-    """Inteligência de mercado sobre o faturamento real.
-
-    `janela_dias` define o tamanho dos DOIS períodos comparados (atual x
-    anterior). O default é 30: a base de NFs no app começa em 29/05/2026, então
-    janelas longas ainda não têm período anterior para comparar."""
-    return crm_inteligencia_service.dashboard_inteligencia(janela_dias)
+# A Inteligência saiu daqui e virou módulo próprio (app/api/inteligencia.py,
+# rota /inteligencia): não depende do funil do CRM e o público é a diretoria.

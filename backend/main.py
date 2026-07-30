@@ -14,6 +14,7 @@ from app.api.pedidos import router as pedidos_router
 from app.api.previsao import router as previsao_router
 from app.api.estoque import router as estoque_router
 from app.api.home import router as home_router
+from app.api.inteligencia import router as inteligencia_router
 
 app = FastAPI(
     title="ACE-MSB — Aplicativo de Controle de Expedição",
@@ -45,6 +46,7 @@ app.include_router(crm_router, prefix="/api/v1")
 app.include_router(previsao_router, prefix="/api/v1")
 app.include_router(estoque_router, prefix="/api/v1")
 app.include_router(home_router, prefix="/api/v1")
+app.include_router(inteligencia_router, prefix="/api/v1")
 
 
 @app.on_event("startup")
