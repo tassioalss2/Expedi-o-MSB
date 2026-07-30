@@ -1,66 +1,455 @@
 """CRM · Inteligência de mercado.
 
-Gera oportunidades acionáveis a partir dos DADOS PRÓPRIOS de venda da empresa
-(pedidos, itens, clientes) — não de fontes externas. Entrega:
-- Win-back: clientes que compravam e pararam (inativos).
-- Ranking de clientes por faturamento.
-- Produtos mais vendidos por canal.
-- Cross-sell: produtos do canal que o cliente ainda não comprou.
+Construída sobre os dados que a empresa REALMENTE tem, com a mesma definição de
+venda do Painel Comercial — a versão anterior somava coisa que não é venda e
+ficava em branco por depender de janelas impossíveis.
+
+O que mudou e por quê:
+
+1. ESCOPO. Antes contava tudo que não estava cancelado, pelo `criado_em`, com o
+   `valor_nf` cru. Isso incluía Biomedical (transfer price, venda intragrupo que
+   não é mercado), bonificação, amostra e consignado, contava OV não faturada e
+   somava frete como se fosse receita. Agora usa exatamente o mesmo critério do
+   Painel Comercial: NF de fato FATURADA (via movimentações), só operações de
+   venda, sem frete e sem transfer price. Sem isso os números da Inteligência
+   nunca fechariam com o resto do app.
+
+2. JANELA REAL. O win-back exigia 90 dias de inatividade num app que só tem
+   faturamento desde 29/05/2026 — matematicamente impossível, por isso os KPIs
+   viviam zerados. Agora a comparação é entre dois períodos de tamanho igual
+   dentro do que existe, e a resposta diz qual janela usou.
+
+3. BASE GRANDE DE VERDADE. O sinal mais rico não está nas 2 mês de OVs daqui: está
+   nos 6 meses fechados de quantidade vendida por produto que vêm do D365 via
+   PCP (`sales_history`), cruzados com estoque disponível e cobertura. É o que
+   permite dizer "isto vende e vai faltar" e "isto está parado consumindo
+   capital" — decisões que dão dinheiro.
+
+4. NADA EM BRANCO SEM EXPLICAÇÃO. Cada bloco devolve `disponivel` e `motivo`,
+   para a tela dizer o que falta em vez de mostrar um painel vazio.
+
+Não existe custo/CMV por produto no banco (nem em `produtos`, nem em lugar
+nenhum), então margem real não é calculável hoje — o mais próximo é o preço
+praticado, que esta análise usa como referência.
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.database import get_service_db
 
-_STATUS_CANCELADO = "CANCELADO"
-_LIMITE_LINHAS = 2000
+# Mesma regra do Painel Comercial (app/api/pedidos.py): só estas naturezas são
+# faturamento; as outras geram NF mas não são venda.
+_OPERACOES_VENDA = {"VENDA_NORMAL", "COMUNICADO_USO"}
+
+# Empresas do próprio grupo: a venda para elas é transfer price, não mercado.
+# Critério por nome, igual ao resto do app (o cadastro não tem flag de grupo).
+_NOMES_GRUPO = ("BIOMEDICAL", "ESTERILIZE")
+
+_JANELA_PADRAO = 30
+_LIMITE = 5000
 
 
-def _valor(p: dict) -> float:
-    v = p.get("valor_nf")
-    if v is None:
-        v = p.get("valor_produtos")
-    return float(v or 0)
+def _hoje_brt() -> date:
+    return datetime.now(timezone(timedelta(hours=-3))).date()
 
 
-def _parse(ts: Optional[str]):
-    if not ts:
-        return None
+def _eh_grupo(nome: Optional[str]) -> bool:
+    n = (nome or "").upper()
+    return any(g in n for g in _NOMES_GRUPO)
+
+
+def _valor_liquido(p: dict) -> float:
+    """Faturamento sem frete de uma NF — idêntico ao `faturamento_sem_frete` do
+    Painel Comercial. CIF (com ou sem valor) é frete e sai; FOB é do cliente e
+    nunca entrou."""
+    bruto = float(p.get("valor_nf") or 0)
+    frete = float(p.get("valor_frete") or 0)
+    if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+        bruto -= frete
+    return bruto
+
+
+def _canal_base(canal: Optional[str]) -> str:
+    if canal == "LICITACAO_URO":
+        return "URO"
+    if canal == "LICITACAO_VASCULAR":
+        return "VASCULAR"
+    return canal or "SEM_CANAL"
+
+
+def _eh_licitacao(canal: Optional[str]) -> bool:
+    return canal in ("LICITACAO_URO", "LICITACAO_VASCULAR", "LICITACAO")
+
+
+def _faturados(db, inicio: date, fim: date) -> dict:
+    """pedido_id -> data de faturamento (BRT). Mesma lógica de
+    `_faturados_no_periodo` em app/api/pedidos.py: a data que vale é a da
+    movimentação para FATURADO, não a criação nem a última atualização."""
+    janela_ini = (inicio - timedelta(days=1)).isoformat()
+    janela_fim = (fim + timedelta(days=1)).isoformat()
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        movs = db.table("movimentacoes").select("pedido_id, criado_em")\
+            .eq("status_novo", "FATURADO")\
+            .gte("criado_em", f"{janela_ini}T00:00:00")\
+            .lte("criado_em", f"{janela_fim}T23:59:59").limit(_LIMITE).execute().data
     except Exception:
-        return None
+        return {}
+    out: dict = {}
+    for m in movs:
+        ts, pid = m.get("criado_em"), m.get("pedido_id")
+        if not ts or not pid:
+            continue
+        try:
+            d = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            dia = (d.astimezone(timezone.utc) - timedelta(hours=3)).date()
+        except Exception:
+            continue
+        if inicio <= dia <= fim:
+            out[pid] = dia.isoformat()
+    return out
 
 
-def _carregar():
-    db = get_service_db()
-    pedidos = db.table("pedidos").select(
-        "id, cliente_id, canal, status, tipo_operacao, valor_nf, valor_produtos, criado_em"
-    ).neq("status", _STATUS_CANCELADO).order("criado_em", desc=True).limit(_LIMITE_LINHAS).execute().data
-    clientes = db.table("clientes").select("id, nome, ativo").execute().data
-    cli_nome = {c["id"]: c.get("nome") for c in clientes}
-    return db, pedidos, cli_nome
+def _base_vendas(db, inicio: date, fim: date) -> list:
+    """Uma linha por NF faturada no período, já no escopo correto de venda."""
+    faturados = _faturados(db, inicio, fim)
+    if not faturados:
+        return []
+    ids = list(faturados.keys())
+    linhas: list = []
+    for i in range(0, len(ids), 80):
+        lote = ids[i:i + 80]
+        rows = db.table("pedidos").select(
+            "id, cliente_id, canal, tipo_operacao, tipo_frete, status, "
+            "valor_nf, valor_frete, numero_pedido, clientes(nome)"
+        ).in_("id", lote).execute().data
+        for p in rows:
+            if p.get("status") == "CANCELADO":
+                continue
+            if (p.get("tipo_operacao") or "VENDA_NORMAL") not in _OPERACOES_VENDA:
+                continue
+            nome = (p.get("clientes") or {}).get("nome")
+            if _eh_grupo(nome):
+                continue
+            valor = _valor_liquido(p)
+            if valor <= 0:
+                continue
+            linhas.append({
+                "pedido_id": p["id"],
+                "numero": p.get("numero_pedido"),
+                "cliente_id": p.get("cliente_id"),
+                "cliente": nome or "—",
+                "canal": _canal_base(p.get("canal")),
+                "licitacao": _eh_licitacao(p.get("canal")),
+                "valor": valor,
+                "data": faturados[p["id"]],
+            })
+    return linhas
 
+
+def _por_cliente(linhas: list) -> dict:
+    agg: dict = {}
+    for l in linhas:
+        cid = l["cliente_id"] or l["cliente"]
+        c = agg.setdefault(cid, {"cliente_id": l["cliente_id"], "cliente": l["cliente"],
+                                 "valor": 0.0, "nfs": 0, "canais": {}, "ultima": None})
+        c["valor"] += l["valor"]
+        c["nfs"] += 1
+        c["canais"][l["canal"]] = c["canais"].get(l["canal"], 0) + 1
+        if c["ultima"] is None or l["data"] > c["ultima"]:
+            c["ultima"] = l["data"]
+    for c in agg.values():
+        c["valor"] = round(c["valor"], 2)
+        c["canal"] = max(c["canais"], key=c["canais"].get) if c["canais"] else None
+        c.pop("canais")
+    return agg
+
+
+# ── Curva ABC e concentração ────────────────────────────────────────────────────
+
+def _curva_abc(clientes: dict) -> dict:
+    """Pareto de clientes: A = até 80% do faturamento, B = até 95%, C = cauda.
+
+    Serve para responder "quem eu não posso perder" e medir concentração — se
+    um cliente sozinho é 30% da receita, isso é risco, não conquista.
+    """
+    lista = sorted(clientes.values(), key=lambda c: -c["valor"])
+    total = sum(c["valor"] for c in lista)
+    if total <= 0:
+        return {"disponivel": False, "motivo": "Sem faturamento no período.",
+                "classes": [], "clientes": [], "concentracao": {}}
+
+    acum = 0.0
+    saida = []
+    contagem = {"A": 0, "B": 0, "C": 0}
+    valor_classe = {"A": 0.0, "B": 0.0, "C": 0.0}
+    for c in lista:
+        acum += c["valor"]
+        pct_acum = acum / total * 100
+        classe = "A" if pct_acum <= 80 else ("B" if pct_acum <= 95 else "C")
+        contagem[classe] += 1
+        valor_classe[classe] += c["valor"]
+        saida.append({**c, "pct": round(c["valor"] / total * 100, 1),
+                      "pct_acumulado": round(pct_acum, 1), "classe": classe})
+
+    top1 = lista[0]["valor"] / total * 100 if lista else 0
+    top5 = sum(c["valor"] for c in lista[:5]) / total * 100
+    return {
+        "disponivel": True,
+        "total": round(total, 2),
+        "classes": [{"classe": k, "clientes": contagem[k], "valor": round(valor_classe[k], 2),
+                     "pct": round(valor_classe[k] / total * 100, 1)} for k in ("A", "B", "C")],
+        "clientes": saida,
+        "concentracao": {
+            "top1_pct": round(top1, 1),
+            "top1_cliente": lista[0]["cliente"] if lista else None,
+            "top5_pct": round(top5, 1),
+            # Acima de 30% num só cliente, a carteira depende dele.
+            "risco": "ALTO" if top1 >= 30 else ("MEDIO" if top1 >= 20 else "BAIXO"),
+        },
+    }
+
+
+# ── Movimento da carteira: quem parou, quem caiu, quem é novo ───────────────────
+
+def _movimento_carteira(atual: dict, anterior: dict, janela: int) -> dict:
+    """Compara dois períodos de tamanho igual. É o win-back honesto: em vez de
+    exigir 90 dias de inatividade (impossível numa base de 2 meses), pergunta
+    "comprou antes e não comprou agora?"."""
+    ids_atual = set(atual.keys())
+    ids_ant = set(anterior.keys())
+
+    pararam = []
+    for cid in ids_ant - ids_atual:
+        c = anterior[cid]
+        pararam.append({"cliente_id": c["cliente_id"], "cliente": c["cliente"],
+                        "valor_anterior": c["valor"], "nfs_anterior": c["nfs"],
+                        "ultima_compra": c["ultima"], "canal": c.get("canal")})
+    pararam.sort(key=lambda x: -x["valor_anterior"])
+
+    caindo = []
+    for cid in ids_atual & ids_ant:
+        va, vb = atual[cid]["valor"], anterior[cid]["valor"]
+        if vb <= 0:
+            continue
+        var = (va - vb) / vb * 100
+        if var <= -30:
+            caindo.append({"cliente_id": atual[cid]["cliente_id"], "cliente": atual[cid]["cliente"],
+                           "valor_atual": va, "valor_anterior": vb,
+                           "variacao_pct": round(var, 1), "canal": atual[cid].get("canal")})
+    caindo.sort(key=lambda x: x["variacao_pct"])
+
+    novos = []
+    for cid in ids_atual - ids_ant:
+        c = atual[cid]
+        novos.append({"cliente_id": c["cliente_id"], "cliente": c["cliente"],
+                      "valor": c["valor"], "nfs": c["nfs"], "canal": c.get("canal")})
+    novos.sort(key=lambda x: -x["valor"])
+
+    return {
+        "disponivel": bool(ids_atual or ids_ant),
+        "janela_dias": janela,
+        "pararam": pararam[:15],
+        "pararam_total": round(sum(p["valor_anterior"] for p in pararam), 2),
+        "caindo": caindo[:15],
+        "novos": novos[:15],
+        "novos_total": round(sum(n["valor"] for n in novos), 2),
+    }
+
+
+# ── Radar de produtos: onde está o dinheiro na mesa ─────────────────────────────
+
+_ACOES = {
+    "RUPTURA": {
+        "label": "Vende e vai faltar",
+        "acao": "Puxar produção/compra — cada dia sem estoque é venda perdida",
+    },
+    "EM_ALTA": {
+        "label": "Demanda crescendo",
+        "acao": "Garantir estoque e ofertar ativamente antes do concorrente",
+    },
+    "EM_QUEDA": {
+        "label": "Demanda caindo",
+        "acao": "Investigar qual cliente parou de comprar",
+    },
+    "PARADO": {
+        "label": "Estoque parado",
+        "acao": "Capital imobilizado — empurrar em campanha ou bonificação",
+    },
+}
+
+
+def _radar_produtos() -> dict:
+    """Cruza 6 meses de venda real (D365 via PCP) com estoque disponível.
+
+    É a parte com mais sinal da Inteligência: 176 produtos com histórico mensal
+    fechado, contra 2 meses de OVs aqui dentro. Responde onde a empresa está
+    perdendo venda por falta e onde está com capital parado.
+    """
+    try:
+        from app.services import estoque_service
+        dados = estoque_service.listar(sincronizar_se_preciso=False)
+    except Exception:
+        return {"disponivel": False, "motivo": "Não foi possível ler o estoque do PCP.",
+                "grupos": [], "itens": []}
+
+    itens = dados.get("itens") or []
+    if not itens:
+        return {"disponivel": False,
+                "motivo": "Sem foto de estoque do PCP ainda. Abra a aba Estoque uma vez para sincronizar.",
+                "grupos": [], "itens": []}
+
+    classificados = []
+    for i in itens:
+        consumo = float(i.get("consumo_medio") or 0)
+        cob = i.get("cobertura_disponivel")
+        tend = i.get("tendencia_pct")
+        disp = float(i.get("disponivel") or 0)
+
+        acao = None
+        # Ordem importa: ruptura com demanda é o mais caro, vem primeiro.
+        if consumo > 0 and (cob is not None and cob < 1):
+            acao = "RUPTURA"
+        elif tend is not None and tend >= 25 and consumo > 0:
+            acao = "EM_ALTA"
+        elif tend is not None and tend <= -25 and consumo > 0:
+            acao = "EM_QUEDA"
+        elif disp > 0 and (consumo <= 0 or (cob is not None and cob >= 12)):
+            acao = "PARADO"
+        if not acao:
+            continue
+
+        classificados.append({
+            "codigo": i.get("codigo"), "descricao": i.get("descricao"),
+            "familia": i.get("familia"), "linha": i.get("linha"),
+            "disponivel": i.get("disponivel"), "consumo_medio": i.get("consumo_medio"),
+            "cobertura": cob, "tendencia_pct": tend,
+            "media_3m": i.get("media_3m"), "media_3m_anterior": i.get("media_3m_anterior"),
+            "vendido_mes_atual": i.get("vendido_mes_atual"),
+            "acao": acao,
+        })
+
+    grupos = []
+    for chave, cfg in _ACOES.items():
+        do_grupo = [c for c in classificados if c["acao"] == chave]
+        if chave == "RUPTURA":
+            do_grupo.sort(key=lambda x: -(x["consumo_medio"] or 0))
+        elif chave == "EM_ALTA":
+            do_grupo.sort(key=lambda x: -(x["tendencia_pct"] or 0))
+        elif chave == "EM_QUEDA":
+            do_grupo.sort(key=lambda x: (x["tendencia_pct"] or 0))
+        else:
+            do_grupo.sort(key=lambda x: -(x["disponivel"] or 0))
+        grupos.append({"chave": chave, "label": cfg["label"], "acao": cfg["acao"],
+                       "total": len(do_grupo), "itens": do_grupo[:12]})
+
+    return {
+        "disponivel": True,
+        "data_ref": dados.get("data_ref"),
+        "ultimo_mes_fechado": dados.get("ultimo_mes_fechado"),
+        "base_produtos": len(itens),
+        "grupos": grupos,
+    }
+
+
+# ── Preço: privado vs público ganho ─────────────────────────────────────────────
+
+def _precos(db) -> dict:
+    """Preço médio praticado na venda privada contra o preço que ganhou licitação.
+
+    O preço público é registro de disputa vencida — é a referência de mercado
+    mais concreta que existe no banco. Quando o privado está abaixo dele, muito
+    provavelmente há margem sendo entregue sem necessidade.
+    """
+    privado: dict = {}
+    try:
+        itens = db.table("itens_pedido").select(
+            "pedido_id, produto_id, qtd_solicitada, valor_unitario"
+        ).limit(_LIMITE).execute().data
+    except Exception:
+        itens = []
+    com_preco = [i for i in itens if i.get("valor_unitario")]
+
+    cod_por_pid: dict = {}
+    pids = list({i["produto_id"] for i in com_preco if i.get("produto_id")})
+    for i in range(0, len(pids), 80):
+        lote = pids[i:i + 80]
+        if not lote:
+            continue
+        for p in db.table("produtos").select("id, codigo, descricao").in_("id", lote).execute().data:
+            cod_por_pid[p["id"]] = p
+
+    for it in com_preco:
+        pr = cod_por_pid.get(it.get("produto_id"))
+        if not pr:
+            continue
+        cod = (pr.get("codigo") or "").strip().upper()
+        e = privado.setdefault(cod, {"codigo": pr.get("codigo"), "descricao": pr.get("descricao"),
+                                     "soma": 0.0, "qtd": 0})
+        e["soma"] += float(it["valor_unitario"])
+        e["qtd"] += 1
+
+    publico: dict = {}
+    try:
+        for ei in db.table("empenho_itens").select("codigo, valor_unitario").limit(_LIMITE).execute().data:
+            v = ei.get("valor_unitario")
+            cod = (ei.get("codigo") or "").strip().upper()
+            if not cod or not v:
+                continue
+            e = publico.setdefault(cod, {"soma": 0.0, "qtd": 0})
+            e["soma"] += float(v)
+            e["qtd"] += 1
+    except Exception:
+        pass
+
+    comparacao = []
+    for cod, pv in privado.items():
+        pb = publico.get(cod)
+        if not pb or pb["qtd"] == 0 or pv["qtd"] == 0:
+            continue
+        media_priv = pv["soma"] / pv["qtd"]
+        media_pub = pb["soma"] / pb["qtd"]
+        if media_pub <= 0:
+            continue
+        dif = (media_priv - media_pub) / media_pub * 100
+        comparacao.append({
+            "codigo": pv["codigo"], "descricao": pv["descricao"],
+            "preco_privado": round(media_priv, 2), "preco_publico": round(media_pub, 2),
+            "diferenca_pct": round(dif, 1),
+            "amostras_privado": pv["qtd"], "amostras_publico": pb["qtd"],
+        })
+    comparacao.sort(key=lambda x: x["diferenca_pct"])
+
+    if not comparacao:
+        motivo = ("Precisa de preço unitário nas OVs privadas E em empenhos do mesmo produto. "
+                  f"Hoje: {len(com_preco)} item(ns) de OV com preço, {len(publico)} código(s) em empenho.")
+        return {"disponivel": False, "motivo": motivo, "itens": [],
+                "abaixo_do_publico": 0}
+
+    return {
+        "disponivel": True,
+        "itens": comparacao[:20],
+        "abaixo_do_publico": sum(1 for c in comparacao if c["diferenca_pct"] < -5),
+    }
+
+
+# ── Perdas no funil (CRM) ───────────────────────────────────────────────────────
 
 def _analise_perdas(db) -> dict:
-    """Por que a gente perde — agrupado por motivo codificado.
-
-    Só existe porque o motivo da perda passou a ser código (antes era texto livre,
-    e não havia como agrupar nada). Com concorrente e preço do vencedor, vira
-    referência de mercado: dá para ver se perdemos por preço e de quem.
-    """
+    """Por que a gente perde — por motivo codificado, com concorrente e gap."""
     from app.services.crm_service import MOTIVOS_PERDA
-
     try:
         rows = db.table("crm_oportunidades").select(
             "motivo_perda_codigo, concorrente, preco_vencedor, valor_estimado, canal"
-        ).eq("estagio", "PERDIDO").eq("ativo", True).limit(_LIMITE_LINHAS).execute().data
+        ).eq("estagio", "PERDIDO").eq("ativo", True).limit(_LIMITE).execute().data
     except Exception:
-        # Migration v21 ainda não rodou — a aba segue funcionando sem esta seção.
-        return {"total": 0, "por_motivo": [], "concorrentes": [], "disponivel": False}
+        return {"disponivel": False, "motivo": "Tabela do CRM indisponível.",
+                "total": 0, "por_motivo": [], "concorrentes": []}
 
     if not rows:
-        return {"total": 0, "por_motivo": [], "concorrentes": [], "disponivel": True}
+        return {"disponivel": False,
+                "motivo": "Nenhuma oportunidade marcada como perdida ainda. Cada perda registrada com "
+                          "motivo, concorrente e preço do vencedor alimenta esta análise.",
+                "total": 0, "por_motivo": [], "concorrentes": []}
 
     por_motivo: dict = {}
     concorrentes: dict = {}
@@ -71,167 +460,83 @@ def _analise_perdas(db) -> dict:
                                         "qtd": 0, "valor": 0.0})
         m["qtd"] += 1
         m["valor"] += valor
-
         nome = (r.get("concorrente") or "").strip()
         if nome:
             c = concorrentes.setdefault(nome.upper(), {"nome": nome, "qtd": 0, "valor": 0.0,
-                                                       "diferencas": []})
+                                                       "difs": []})
             c["qtd"] += 1
             c["valor"] += valor
             pv = r.get("preco_vencedor")
             if pv is not None and valor > 0:
-                # Quanto o vencedor ficou abaixo da nossa proposta.
-                c["diferencas"].append((valor - float(pv)) / valor * 100)
+                c["difs"].append((valor - float(pv)) / valor * 100)
 
     for m in por_motivo.values():
         m["valor"] = round(m["valor"], 2)
     for c in concorrentes.values():
         c["valor"] = round(c["valor"], 2)
-        difs = c.pop("diferencas")
+        difs = c.pop("difs")
         c["gap_medio_pct"] = round(sum(difs) / len(difs), 1) if difs else None
 
     return {
-        "total": len(rows),
         "disponivel": True,
+        "total": len(rows),
         "por_motivo": sorted(por_motivo.values(), key=lambda x: -x["qtd"]),
         "concorrentes": sorted(concorrentes.values(), key=lambda x: -x["qtd"])[:10],
     }
 
 
-def dashboard_inteligencia(dias_inatividade: int = 90) -> dict:
-    db, pedidos, cli_nome = _carregar()
-    agora = datetime.now(timezone.utc)
+# ── Dashboard ───────────────────────────────────────────────────────────────────
 
-    # Agrega por cliente
-    por_cliente: dict = {}
-    for p in pedidos:
-        cid = p.get("cliente_id")
-        if not cid:
-            continue
-        d = _parse(p.get("criado_em"))
-        val = _valor(p)
-        c = por_cliente.setdefault(cid, {"total": 0.0, "count": 0, "ultima": None, "ultima_ts": None, "canais": {}})
-        c["total"] += val
-        c["count"] += 1
-        if d and (c["ultima_ts"] is None or d > c["ultima_ts"]):
-            c["ultima_ts"] = d
-            c["ultima"] = p.get("criado_em")
-        canal = p.get("canal")
-        if canal:
-            c["canais"][canal] = c["canais"].get(canal, 0) + 1
+def dashboard_inteligencia(janela_dias: int = _JANELA_PADRAO) -> dict:
+    db = get_service_db()
+    hoje = _hoje_brt()
 
-    # Win-back: inativos há mais de N dias, que já geraram valor
-    win_back = []
-    for cid, c in por_cliente.items():
-        if c["total"] <= 0 or not c["ultima_ts"]:
-            continue
-        dias = (agora - c["ultima_ts"]).days
-        if dias >= dias_inatividade:
-            win_back.append({
-                "cliente_id": cid, "cliente": cli_nome.get(cid, "—"),
-                "dias_inativo": dias, "valor_historico": round(c["total"], 2),
-                "pedidos": c["count"], "ultima_compra": (c["ultima"] or "")[:10],
-                "canal": max(c["canais"], key=c["canais"].get) if c["canais"] else None,
-            })
-    win_back.sort(key=lambda x: (-x["valor_historico"], -x["dias_inativo"]))
+    # Período total analisado: dois janelas iguais, para comparar movimento.
+    fim_atual = hoje
+    ini_atual = hoje - timedelta(days=janela_dias)
+    fim_ant = ini_atual
+    ini_ant = ini_atual - timedelta(days=janela_dias)
 
-    # Top clientes (últimos 365 dias)
-    top = []
-    for cid, c in por_cliente.items():
-        top.append({
-            "cliente_id": cid, "cliente": cli_nome.get(cid, "—"),
-            "valor": round(c["total"], 2), "pedidos": c["count"],
-            "canal": max(c["canais"], key=c["canais"].get) if c["canais"] else None,
-        })
-    top.sort(key=lambda x: -x["valor"])
+    vendas_atual = _base_vendas(db, ini_atual, fim_atual)
+    vendas_ant = _base_vendas(db, ini_ant, fim_ant)
+    todas = vendas_atual + vendas_ant
 
-    # Produtos por canal (usa itens_pedido)
-    ped_ids = [p["id"] for p in pedidos]
-    ped_canal = {p["id"]: p.get("canal") for p in pedidos}
-    ped_cliente = {p["id"]: p.get("cliente_id") for p in pedidos}
-    itens = []
-    for i in range(0, len(ped_ids), 80):
-        lote = ped_ids[i:i + 80]
-        if not lote:
-            continue
-        itens += db.table("itens_pedido").select("pedido_id, produto_id, qtd_solicitada").in_("pedido_id", lote).execute().data
+    cli_atual = _por_cliente(vendas_atual)
+    cli_ant = _por_cliente(vendas_ant)
 
-    prod_ids = list({it["produto_id"] for it in itens if it.get("produto_id")})
-    prod_info = {}
-    for i in range(0, len(prod_ids), 80):
-        lote = prod_ids[i:i + 80]
-        if not lote:
-            continue
-        for pr in db.table("produtos").select("id, codigo, descricao").in_("id", lote).execute().data:
-            prod_info[pr["id"]] = pr
+    faturamento_atual = round(sum(l["valor"] for l in vendas_atual), 2)
+    faturamento_ant = round(sum(l["valor"] for l in vendas_ant), 2)
+    variacao = (round((faturamento_atual - faturamento_ant) / faturamento_ant * 100, 1)
+                if faturamento_ant > 0 else None)
 
-    # canal -> produto -> qtd ; cliente -> set(produto)
-    canal_prod: dict = {}
-    cliente_prod: dict = {}
-    for it in itens:
-        pid = it.get("produto_id")
-        if not pid:
-            continue
-        ped = it.get("pedido_id")
-        canal = ped_canal.get(ped)
-        cid = ped_cliente.get(ped)
-        qtd = float(it.get("qtd_solicitada") or 0)
-        if canal:
-            canal_prod.setdefault(canal, {}).setdefault(pid, 0.0)
-            canal_prod[canal][pid] += qtd
-        if cid:
-            cliente_prod.setdefault(cid, set()).add(pid)
-
-    produtos_por_canal = []
-    canal_top_ordenado: dict = {}
-    for canal, prods in canal_prod.items():
-        ordenados = sorted(prods.items(), key=lambda x: -x[1])
-        canal_top_ordenado[canal] = [pid for pid, _ in ordenados]
-        produtos_por_canal.append({
-            "canal": canal,
-            "produtos": [{
-                "produto_id": pid,
-                "codigo": (prod_info.get(pid) or {}).get("codigo"),
-                "descricao": (prod_info.get(pid) or {}).get("descricao"),
-                "qtd": round(q),
-            } for pid, q in ordenados[:8]],
-        })
-
-    # Cross-sell: para clientes ativos, top produtos do canal que ele ainda não comprou
-    cross_sell = []
-    limite_ativo = agora
-    for cid, c in por_cliente.items():
-        if not c["ultima_ts"] or (limite_ativo - c["ultima_ts"]).days > 180:
-            continue
-        canal = max(c["canais"], key=c["canais"].get) if c["canais"] else None
-        if not canal or canal not in canal_top_ordenado:
-            continue
-        comprados = cliente_prod.get(cid, set())
-        sugeridos = [pid for pid in canal_top_ordenado[canal] if pid not in comprados][:3]
-        if not sugeridos:
-            continue
-        cross_sell.append({
-            "cliente_id": cid, "cliente": cli_nome.get(cid, "—"), "canal": canal,
-            "sugestoes": [{
-                "produto_id": pid,
-                "codigo": (prod_info.get(pid) or {}).get("codigo"),
-                "descricao": (prod_info.get(pid) or {}).get("descricao"),
-            } for pid in sugeridos],
-        })
-    cross_sell.sort(key=lambda x: -por_cliente[x["cliente_id"]]["total"])
+    por_canal: dict = {}
+    for l in todas:
+        c = por_canal.setdefault(l["canal"], {"canal": l["canal"], "valor": 0.0, "nfs": 0,
+                                              "licitacao": 0.0})
+        c["valor"] += l["valor"]
+        c["nfs"] += 1
+        if l["licitacao"]:
+            c["licitacao"] += l["valor"]
+    canais = sorted(({**c, "valor": round(c["valor"], 2), "licitacao": round(c["licitacao"], 2)}
+                     for c in por_canal.values()), key=lambda x: -x["valor"])
 
     return {
-        "base_pedidos": len(pedidos),
-        "amostra_limitada": len(pedidos) >= _LIMITE_LINHAS,
-        "dias_inatividade": dias_inatividade,
-        "win_back": win_back[:20],
-        "top_clientes": top[:15],
-        "produtos_por_canal": produtos_por_canal,
-        "cross_sell": cross_sell[:20],
-        "perdas": _analise_perdas(db),
-        "resumo": {
-            "clientes_ativos": sum(1 for c in por_cliente.values() if c["ultima_ts"] and (agora - c["ultima_ts"]).days <= 180),
-            "clientes_inativos": len(win_back),
-            "valor_em_risco": round(sum(w["valor_historico"] for w in win_back), 2),
+        "periodo": {
+            "atual": {"inicio": ini_atual.isoformat(), "fim": fim_atual.isoformat(),
+                      "faturamento": faturamento_atual, "nfs": len(vendas_atual),
+                      "clientes": len(cli_atual)},
+            "anterior": {"inicio": ini_ant.isoformat(), "fim": fim_ant.isoformat(),
+                         "faturamento": faturamento_ant, "nfs": len(vendas_ant),
+                         "clientes": len(cli_ant)},
+            "variacao_pct": variacao,
+            "janela_dias": janela_dias,
         },
+        "escopo": "NF faturada · sem frete · exclui transfer price (grupo), bonificação, amostra e consignado",
+        "ticket_medio": round(faturamento_atual / len(vendas_atual), 2) if vendas_atual else 0,
+        "canais": canais,
+        "abc": _curva_abc(_por_cliente(todas)),
+        "carteira": _movimento_carteira(cli_atual, cli_ant, janela_dias),
+        "produtos": _radar_produtos(),
+        "precos": _precos(db),
+        "perdas": _analise_perdas(db),
     }
