@@ -70,20 +70,22 @@ function cargo(perfil?: string): string {
   return PERFIL_LABELS[perfil as PerfilUsuario] || perfil || ''
 }
 
-// Paleta da sidebar (spec de design). Fica junta aqui em vez de espalhada em
+// Paleta da sidebar (modo escuro). Fica junta aqui em vez de espalhada em
 // classes arbitrárias do Tailwind, para um ajuste de tom ser um lugar só.
+// Só a sidebar é escura — o resto do app continua claro.
 const C = {
-  borda: '#dbe6ea',
-  ativoFundo: '#e3f0f4',
-  ativoTexto: '#2c6679',
-  icone: '#818286',
-  label: '#51606b',
-  grupo: '#a8b4ba',
-  hover: '#f2f8fa',
-  badge: '#c0584e',
+  fundo: '#161e2b',
+  borda: '#2a3546',
+  ativoFundo: '#20364199',
+  ativoTexto: '#5fd0da',
+  icone: '#8b96a5',
+  label: '#c3ccd6',
+  grupo: '#6b7788',
+  hover: '#1f2937',
+  badge: '#e0584e',
   avatar: '#56A4BB',
-  nome: '#2b3a42',
-  bordaRodape: '#eaf1f3',
+  nome: '#f1f5f9',
+  bordaRodape: '#232d3d',
 }
 
 export function Layout() {
@@ -141,7 +143,7 @@ export function Layout() {
           })}
           // O fundo do ativo vem por style (inline vence a classe), então o hover
           // só pinta os inativos — sem precisar de estado em JS.
-          className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm transition-colors hover:bg-[#f2f8fa]"
+          className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm transition-colors hover:bg-[#1f2937]"
         >
           {({ isActive }: any) => (
             <>
@@ -206,10 +208,10 @@ export function Layout() {
       {/* Sidebar */}
       <aside
         className={clsx(
-          'fixed lg:static inset-y-0 left-0 z-30 w-64 bg-white flex flex-col transition-transform duration-300',
+          'fixed lg:static inset-y-0 left-0 z-30 w-64 flex flex-col transition-transform duration-300',
           sidebarAberto ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         )}
-        style={{ borderRight: `1px solid ${C.borda}` }}
+        style={{ backgroundColor: C.fundo, borderRight: `1px solid ${C.borda}` }}
       >
         {/* Logo + botão fechar no mobile */}
         <div className="px-4 py-3 flex items-center justify-between"
@@ -218,7 +220,9 @@ export function Layout() {
             <img
               src="/msb-logo.png"
               alt="MSB — Medical System do Brasil"
-              className="h-8 w-auto object-contain"
+              // Logo original é escura, feita para fundo claro. Mesmo truque do
+              // topbar mobile (linha ~292): inverte para ficar legível no escuro.
+              className="h-8 w-auto object-contain brightness-0 invert"
             />
             <p className="text-[10px] uppercase" style={{ letterSpacing: '0.09em', color: C.grupo, fontWeight: 600 }}>
               Gestão Comercial &amp; Logística
@@ -264,7 +268,7 @@ export function Layout() {
               onClick={handleLogout}
               title="Sair"
               aria-label="Sair"
-              className="p-1.5 rounded-lg shrink-0 transition-colors hover:bg-[#f2f8fa]"
+              className="p-1.5 rounded-lg shrink-0 transition-colors hover:bg-[#1f2937]"
               style={{ color: C.grupo }}
             >
               <LogOut size={18} />
