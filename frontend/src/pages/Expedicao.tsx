@@ -13,16 +13,16 @@ import toast from 'react-hot-toast'
 
 type View = 'lista' | 'kanban'
 
-/** Card de ponte para o repasse do CRM: vendas ganhas que ainda não viraram OV.
+/** Card de ponte para o repasse do CRM, dentro da própria grade do kanban.
  *
- *  Não é uma coluna do kanban — as colunas aqui são status de OV existente
- *  (StatusPedido), e uma oportunidade ganha ainda não é uma OV, então não tem
- *  onde entrar naquela grade sem inventar um status falso. Fica como um card
- *  separado, no mesmo canal de linguagem visual, que é exatamente onde a
- *  Expedição termina de ganhar visibilidade sobre o que está vindo do
- *  comercial antes de existir aqui. Mesma fonte do resumo do Teams e da fila
- *  no CRM (crm_service.ganhas_sem_ov) — não uma contagem própria. */
-function CardRepasseCRM() {
+ *  Não é uma coluna de status de OV (StatusPedido) — é o passo ANTES da OV
+ *  existir, então não faz sentido fingir um status falso para ela entrar nas
+ *  colunas normais. Mas o pedido foi que ficasse sempre visível *no* kanban, não
+ *  acima dele: como o fluxo em 4 colunas fecha 4/4/3, sobra o 12º espaço vazio
+ *  ao lado de "Expedido" — é ali que este card mora, permanente, mesmo com a
+ *  fila vazia (estado neutro em vez de sumir). Mesma fonte do resumo do Teams e
+ *  da fila no CRM (crm_service.ganhas_sem_ov) — não uma contagem própria. */
+function CardRepasseKanban() {
   const navigate = useNavigate()
   const { data: fila = [] } = useQuery<any[]>({
     queryKey: ['crm-repasses'],
@@ -30,36 +30,52 @@ function CardRepasseCRM() {
     refetchInterval: 60000,
   })
 
-  if (fila.length === 0) return null
-
   const semDono = fila.filter(f => f.repasse_status === 'AGUARDANDO').length
   const valor = fila.reduce((a, f) => a + (f.valor_estimado || 0), 0)
   const valorFmt = valor >= 1000
-    ? `R$ ${(valor / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`
-    : `R$ ${valor.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`
+    ? `R$ ${(valor / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })} mil`
+    : `R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+  const vazia = fila.length === 0
 
   return (
-    <button onClick={() => navigate('/crm?aba=repasse')}
-      className="w-full text-left rounded-lg px-4 py-3 flex items-center justify-between gap-3 flex-wrap
-                 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors">
-      <div className="flex items-center gap-2.5">
-        <span className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center">
-          <Handshake size={16} />
-        </span>
-        <div>
-          <p className="text-sm font-semibold text-amber-900">
-            {fila.length} venda{fila.length > 1 ? 's' : ''} ganha{fila.length > 1 ? 's' : ''} do CRM aguardando OV
-          </p>
-          <p className="text-xs text-amber-700">
-            {semDono > 0 ? `${semDono} sem responsável ainda · ` : 'todas já assumidas por operações · '}
-            {valorFmt} parado{valor >= 1000 ? 's' : ''}
-          </p>
+    <div className="flex flex-col min-h-0 min-w-0">
+      <div
+        className="rounded-t-lg px-3 pt-2 pb-1.5 flex flex-col gap-0.5 cursor-pointer group flex-shrink-0"
+        style={vazia ? { backgroundColor: '#E5E7EB', color: '#374151' } : { backgroundColor: '#FEF3C7', color: '#92400E' }}
+        onClick={() => navigate('/crm?aba=repasse')}
+        title="Vendas ganhas no CRM que ainda não têm OV cadastrada — clique para ir ao repasse"
+      >
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold flex items-center gap-1 min-w-0">
+            <Handshake size={14} className="flex-shrink-0" />
+            <span className="truncate">Repasse CRM → OV</span>
+          </span>
+          <span className="text-xs font-bold bg-white bg-opacity-40 rounded-full px-2 py-0.5 flex-shrink-0 ml-1">
+            {fila.length}
+          </span>
         </div>
+        <span className="text-[11px] font-bold tabular-nums opacity-90">
+          {valor > 0 ? `💰 ${valorFmt}` : ' '}
+        </span>
       </div>
-      <span className="text-xs font-medium text-amber-800 flex items-center gap-1 flex-shrink-0">
-        Ver repasse <ArrowRight size={13} />
-      </span>
-    </button>
+      <div className="bg-gray-100 rounded-b-lg p-1.5 flex flex-col gap-1 overflow-y-auto flex-1">
+        {vazia ? (
+          <p className="text-xs text-gray-400 text-center py-3">Nenhuma venda esperando OV</p>
+        ) : (
+          <>
+            {semDono > 0 && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 rounded px-2 py-1">
+                {semDono} sem responsável ainda
+              </p>
+            )}
+            <button onClick={() => navigate('/crm?aba=repasse')}
+              className="text-xs text-blue-600 hover:underline flex items-center gap-1 justify-center py-1">
+              Ver repasse <ArrowRight size={12} />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -473,6 +489,9 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
               </div>
               )
             })}
+        {/* 12º espaço da grade (11 status flui 4/4/3, sobra 1 na última linha) —
+            é onde mora o repasse do CRM, permanente, não é status de OV. */}
+        <CardRepasseKanban />
       </div>
       {infoAberta && (
         <InfoEtapaModal
@@ -704,8 +723,6 @@ export function Expedicao() {
           </button>
         </div>
       </div>
-
-      <CardRepasseCRM />
 
       {/* Conteúdo */}
       {isLoading ? (
