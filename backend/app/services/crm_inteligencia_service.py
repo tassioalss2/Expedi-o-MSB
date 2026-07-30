@@ -48,9 +48,33 @@ _NOMES_GRUPO = ("BIOMEDICAL", "ESTERILIZE")
 _JANELA_PADRAO = 30
 _LIMITE = 5000
 
+# Teto de linhas por resposta do PostgREST (padrão do Supabase). Ler tabela
+# grande sem paginar trunca em silêncio: pedir 20000 devolve 1000 sem erro.
+_PAGINA = 1000
+
+# Receita mínima para um cliente/produto entrar nos rankings de margem. Sem isso
+# a lista enche de caso pontual de R$ 300 com margem estranha, escondendo o que
+# de fato move dinheiro.
+_MIN_RECEITA_RANKING = 50_000.0
+
 
 def _hoje_brt() -> date:
     return datetime.now(timezone(timedelta(hours=-3))).date()
+
+
+def _ler_tudo(db, tabela: str, cols: str, ordem: str) -> list:
+    """Lê a tabela inteira paginando pelo teto do PostgREST."""
+    out: list = []
+    off = 0
+    while True:
+        lote = db.table(tabela).select(cols).order(ordem).limit(_PAGINA).offset(off).execute().data
+        if not lote:
+            break
+        out += lote
+        if len(lote) < _PAGINA:
+            break
+        off += len(lote)
+    return out
 
 
 def _eh_grupo(nome: Optional[str]) -> bool:
@@ -432,6 +456,114 @@ def _precos(db) -> dict:
     }
 
 
+# ── Rentabilidade: 19 meses de faturamento item a item, com custo ───────────────
+#
+# Vem de `faturamento_itens` (export do D365, carregado por
+# faturamento_import_service). É a única fonte do app com CUSTO, então é a única
+# que responde margem — e traz de brinde o que a tabela `clientes` nunca teve:
+# tipo de cliente, UF e cidade.
+
+def _pct(receita: float, custo: float):
+    return round((receita - custo) / receita * 100, 1) if receita > 0 else None
+
+
+def _agrupar(linhas: list, campo: str) -> list:
+    agg: dict = {}
+    for l in linhas:
+        k = l.get(campo) or "—"
+        a = agg.setdefault(k, {"chave": k, "receita": 0.0, "custo": 0.0, "qtd": 0.0, "linhas": 0})
+        a["receita"] += float(l.get("receita") or 0)
+        a["custo"] += float(l.get("custo_total") or 0)
+        a["qtd"] += float(l.get("qtd") or 0)
+        a["linhas"] += 1
+    saida = []
+    for a in agg.values():
+        saida.append({**a, "receita": round(a["receita"], 2), "custo": round(a["custo"], 2),
+                      "qtd": round(a["qtd"]), "margem_pct": _pct(a["receita"], a["custo"])})
+    return sorted(saida, key=lambda x: -x["receita"])
+
+
+def _rentabilidade(db) -> dict:
+    """Margem por segmento, produto, cliente, região e mês.
+
+    A margem usa custo MÉDIO por produto (as duas planilhas de origem não
+    compartilham chave de transação — uma identifica pela fatura, a outra pela
+    OV). Serve para comparar segmentos e encontrar onde a margem vaza; não serve
+    para auditar uma NF específica.
+    """
+    try:
+        linhas = _ler_tudo(db, "faturamento_itens",
+                           "competencia, cliente_nome, cliente_tipo, uf, vertical, familia, "
+                           "produto_codigo, produto_descricao, qtd, receita, custo_total",
+                           "competencia")
+    except Exception:
+        return {"disponivel": False,
+                "motivo": "Base histórica não encontrada. Rode a migration v26 e importe as "
+                          "planilhas de faturamento do D365.",
+                "meses": []}
+
+    if not linhas:
+        return {"disponivel": False,
+                "motivo": "Base histórica vazia. Importe faturamento_2025_2026.xlsx e "
+                          "historico_faturamento.xlsx pelo faturamento_import_service.",
+                "meses": []}
+
+    receita = sum(float(l.get("receita") or 0) for l in linhas)
+    custo = sum(float(l.get("custo_total") or 0) for l in linhas)
+
+    meses = _agrupar(linhas, "competencia")
+    meses.sort(key=lambda x: x["chave"])
+
+    # Tendência da margem: média dos 3 meses mais recentes contra os 3 anteriores.
+    # É o que revela margem escorrendo aos poucos, que o número global esconde.
+    tend = None
+    validos = [m for m in meses if m["margem_pct"] is not None]
+    if len(validos) >= 6:
+        rec3 = sum(m["margem_pct"] for m in validos[-3:]) / 3
+        ant3 = sum(m["margem_pct"] for m in validos[-6:-3]) / 3
+        tend = {
+            "margem_3m": round(rec3, 1),
+            "margem_3m_anterior": round(ant3, 1),
+            "delta_pp": round(rec3 - ant3, 1),
+            # Cada ponto percentual sobre a receita média mensal recente.
+            "impacto_mes": round((rec3 - ant3) / 100 * (sum(m["receita"] for m in validos[-3:]) / 3), 2),
+        }
+
+    produtos = _agrupar(linhas, "produto_codigo")
+    desc_prod = {}
+    for l in linhas:
+        c = l.get("produto_codigo")
+        if c and c not in desc_prod:
+            desc_prod[c] = l.get("produto_descricao")
+    for p in produtos:
+        p["descricao"] = desc_prod.get(p["chave"])
+
+    relevantes = [p for p in produtos if p["receita"] >= _MIN_RECEITA_RANKING and p["margem_pct"] is not None]
+    clientes = [c for c in _agrupar(linhas, "cliente_nome")
+                if c["receita"] >= _MIN_RECEITA_RANKING and c["margem_pct"] is not None]
+
+    return {
+        "disponivel": True,
+        "periodo": {"de": meses[0]["chave"], "ate": meses[-1]["chave"], "meses": len(meses)},
+        "linhas": len(linhas),
+        "receita": round(receita, 2),
+        "custo": round(custo, 2),
+        "margem_pct": _pct(receita, custo),
+        "tendencia": tend,
+        "meses": meses,
+        "por_tipo_cliente": _agrupar(linhas, "cliente_tipo"),
+        # 1% de corte: o export tem um resíduo de vertical em branco (R$ 10 mil
+        # em 19 meses) que só polui a leitura do resumo.
+        "por_vertical": [v for v in _agrupar(linhas, "vertical")
+                         if receita <= 0 or v["receita"] / receita >= 0.01],
+        "por_uf": _agrupar(linhas, "uf")[:12],
+        "produtos_piores": sorted(relevantes, key=lambda x: x["margem_pct"])[:10],
+        "produtos_melhores": sorted(relevantes, key=lambda x: -x["margem_pct"])[:10],
+        "clientes_piores": sorted(clientes, key=lambda x: x["margem_pct"])[:10],
+        "min_receita_ranking": _MIN_RECEITA_RANKING,
+    }
+
+
 # ── Perdas no funil (CRM) ───────────────────────────────────────────────────────
 
 def _analise_perdas(db) -> dict:
@@ -537,6 +669,9 @@ def dashboard_inteligencia(janela_dias: int = _JANELA_PADRAO) -> dict:
         "abc": _curva_abc(_por_cliente(todas)),
         "carteira": _movimento_carteira(cli_atual, cli_ant, janela_dias),
         "produtos": _radar_produtos(),
+        # 19 meses com custo — a parte estratégica. As de cima são operacionais
+        # (o que fazer esta semana); esta responde onde a margem está vazando.
+        "rentabilidade": _rentabilidade(db),
         "precos": _precos(db),
         "perdas": _analise_perdas(db),
     }

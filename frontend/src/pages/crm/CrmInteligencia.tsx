@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Sparkles, TrendingUp, TrendingDown, AlertTriangle, PackageX, Package,
   UserMinus, UserPlus, DollarSign, Info, Trophy, Boxes, PlusCircle, RefreshCw,
+  Percent, MapPin, Users,
 } from 'lucide-react'
 import api from '../../lib/api'
 import { CANAL_LABEL } from '../../lib/statusConfig'
@@ -17,6 +18,19 @@ import { fmtBRL, fmtBRLcurto, fmtData, msgErro } from '../../lib/crm'
 import { ModalOportunidadeForm } from './CrmPipeline'
 
 const JANELAS = [30, 60, 90]
+
+/** Milhões: fmtBRLcurto só sabe abreviar em "k", e "R$ 31.727,1k" não se lê. */
+const fmtMi = (v: number) =>
+  Math.abs(v) >= 1_000_000
+    ? `R$ ${(v / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} mi`
+    : fmtBRLcurto(v)
+
+/** O D365 exporta o tipo em caixa alta com acento; aqui fica legível. */
+const TIPO_LABEL: Record<string, string> = {
+  DISTRIBUIDOR: 'Distribuidor',
+  ORGAO_PUBLICO: 'Órgão público',
+  VENDA_DIRETA: 'Venda direta',
+}
 
 /** Cor por tipo de prejuízo: vermelho = venda se perdendo agora,
  *  âmbar = capital parado, verde = oportunidade de crescer. */
@@ -80,6 +94,7 @@ export function CrmInteligencia() {
   const conc = abc.concentracao || {}
   const carteira = d.carteira || {}
   const produtos = d.produtos || {}
+  const rent = d.rentabilidade || {}
   const precos = d.precos || {}
   const perdas = d.perdas || {}
   const canais = d.canais || []
@@ -201,6 +216,148 @@ export function CrmInteligencia() {
           </div>
         )}
       </Card>
+
+      {/* ── RENTABILIDADE: 19 meses com custo ─────────────────────────────── */}
+      {rent.disponivel ? (
+        <>
+          <Card titulo="Rentabilidade" icone={Percent}
+            acao={`${rent.periodo.meses} meses (${rent.periodo.de} a ${rent.periodo.ate}) · ${rent.linhas} itens de fatura do D365`}>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* fmtBRLcurto só abrevia em "k" — em milhões viraria "31.727,1k". */}
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-400">Receita no período</p>
+                <p className="text-lg font-bold text-gray-800 tabular-nums">{fmtMi(rent.receita)}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-400">Custo</p>
+                <p className="text-lg font-bold text-gray-800 tabular-nums">{fmtMi(rent.custo)}</p>
+              </div>
+              <div className="bg-emerald-50 rounded-lg p-3">
+                <p className="text-[11px] text-gray-400">Margem bruta</p>
+                <p className="text-lg font-bold text-emerald-700 tabular-nums">{rent.margem_pct}%</p>
+              </div>
+              {rent.tendencia && (
+                <div className={`rounded-lg p-3 ${rent.tendencia.delta_pp < 0 ? 'bg-red-50' : 'bg-emerald-50'}`}>
+                  <p className="text-[11px] text-gray-400">Margem · 3 meses</p>
+                  <p className={`text-lg font-bold tabular-nums ${rent.tendencia.delta_pp < 0 ? 'text-red-700' : 'text-emerald-700'}`}>
+                    {rent.tendencia.margem_3m}%
+                  </p>
+                  <p className="text-[11px] text-gray-500">
+                    {rent.tendencia.delta_pp > 0 ? '+' : ''}{rent.tendencia.delta_pp} p.p. vs 3m antes
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Queda de margem em reais/mês: p.p. sozinho não comunica tamanho. */}
+            {rent.tendencia && rent.tendencia.delta_pp < 0 && (
+              <p className="mt-3 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-red-800">
+                A margem caiu <strong>{Math.abs(rent.tendencia.delta_pp)} pontos</strong> nos últimos 3 meses
+                ({rent.tendencia.margem_3m_anterior}% → {rent.tendencia.margem_3m}%). No faturamento médio do
+                período isso equivale a <strong>{fmtBRL(Math.abs(rent.tendencia.impacto_mes))} por mês</strong>.
+              </p>
+            )}
+
+            {/* Série mensal: receita em barra, margem em número. */}
+            <div className="mt-4">
+              <p className="text-xs font-medium text-gray-500 mb-2">Receita e margem por mês</p>
+              <div className="space-y-1">
+                {rent.meses.map((m: any) => {
+                  const maxRec = Math.max(...rent.meses.map((x: any) => x.receita))
+                  return (
+                    <div key={m.chave} className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400 font-mono w-16 shrink-0">{m.chave}</span>
+                      <div className="flex-1 h-4 bg-gray-100 rounded overflow-hidden">
+                        <div className="h-full bg-blue-500 rounded" style={{ width: `${(m.receita / maxRec) * 100}%` }} />
+                      </div>
+                      <span className="text-[11px] text-gray-500 tabular-nums w-20 text-right shrink-0">{fmtBRLcurto(m.receita)}</span>
+                      <span className={`text-[11px] font-semibold tabular-nums w-12 text-right shrink-0 ${
+                        (m.margem_pct ?? 0) < 62 ? 'text-red-600' : 'text-gray-600'
+                      }`}>{m.margem_pct}%</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </Card>
+
+          <div className="grid lg:grid-cols-3 gap-4">
+            <Card titulo="Margem por segmento" icone={Users}
+              acao="segmento que a tabela de clientes nunca teve">
+              <div className="space-y-2">
+                {rent.por_tipo_cliente.map((t: any) => (
+                  <div key={t.chave}>
+                    <div className="flex items-baseline justify-between gap-2 text-sm">
+                      <span className="text-gray-700">{TIPO_LABEL[t.chave] || t.chave}</span>
+                      <span className={`font-semibold tabular-nums ${(t.margem_pct ?? 0) < 60 ? 'text-red-600' : 'text-emerald-700'}`}>
+                        {t.margem_pct}%
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 tabular-nums">{fmtBRL(t.receita)}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-3 pt-2 border-t border-gray-100">
+                Vertical: {rent.por_vertical.map((v: any) => `${v.chave} ${v.margem_pct}%`).join(' · ')}
+              </p>
+            </Card>
+
+            <Card titulo="Produtos que sangram margem" icone={TrendingDown}
+              acao={`receita acima de ${fmtBRLcurto(rent.min_receita_ranking)}`}>
+              <div className="space-y-1.5">
+                {rent.produtos_piores.map((p: any) => (
+                  <div key={p.chave}>
+                    <div className="flex items-baseline justify-between gap-2 text-sm">
+                      <span className="font-mono text-xs text-gray-700 truncate" title={p.descricao}>{p.chave}</span>
+                      <span className="text-red-600 font-semibold tabular-nums text-xs shrink-0">{p.margem_pct}%</span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 tabular-nums">{fmtBRLcurto(p.receita)}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card titulo="Clientes de baixa margem" icone={UserMinus}
+              acao="faturam bem, entregam pouco resultado">
+              <div className="space-y-1.5">
+                {rent.clientes_piores.map((c: any) => (
+                  <div key={c.chave}>
+                    <div className="flex items-baseline justify-between gap-2 text-sm">
+                      <span className="text-gray-700 truncate" title={c.chave}>{c.chave}</span>
+                      <span className="text-red-600 font-semibold tabular-nums text-xs shrink-0">{c.margem_pct}%</span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 tabular-nums">{fmtBRLcurto(c.receita)}</p>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </div>
+
+          <Card titulo="Receita e margem por estado" icone={MapPin} acao="top 12 estados por receita">
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1.5">
+              {rent.por_uf.map((u: any) => {
+                const maxRec = Math.max(...rent.por_uf.map((x: any) => x.receita))
+                return (
+                  <div key={u.chave} className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-gray-600 w-7 shrink-0">{u.chave}</span>
+                    <div className="flex-1 h-3 bg-gray-100 rounded overflow-hidden">
+                      <div className="h-full bg-teal-500 rounded" style={{ width: `${(u.receita / maxRec) * 100}%` }} />
+                    </div>
+                    <span className="text-[11px] text-gray-500 tabular-nums w-20 text-right shrink-0">{fmtBRLcurto(u.receita)}</span>
+                    <span className={`text-[11px] tabular-nums w-11 text-right shrink-0 ${
+                      (u.margem_pct ?? 0) < 62 ? 'text-red-600 font-medium' : 'text-gray-500'
+                    }`}>{u.margem_pct}%</span>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
+        </>
+      ) : (
+        <Card titulo="Rentabilidade" icone={Percent}>
+          <Vazio motivo={rent.motivo} />
+        </Card>
+      )}
 
       {/* ── PREÇO: privado abaixo do que ganha licitação ──────────────────── */}
       <Card titulo="Preço praticado vs preço que ganha licitação" icone={DollarSign}

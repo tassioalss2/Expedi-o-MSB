@@ -20,6 +20,7 @@ class QueryBuilder:
         self._order_col: Optional[str] = None
         self._order_desc = False
         self._limit_val: Optional[int] = None
+        self._offset_val: Optional[int] = None
         self._single = False
 
     def select(self, cols: str = "*"):
@@ -63,6 +64,14 @@ class QueryBuilder:
         self._limit_val = n
         return self
 
+    def offset(self, n: int):
+        """Paginação. O PostgREST tem um teto de linhas por resposta (1000 por
+        padrão no Supabase) que o `limit` NÃO ultrapassa — pedir 20000 devolve
+        1000 sem erro nenhum. Ler tabela grande sem paginar trunca em silêncio,
+        então quem precisa do conjunto todo usa offset em laço."""
+        self._offset_val = n
+        return self
+
     def single(self):
         self._single = True
         return self
@@ -76,6 +85,8 @@ class QueryBuilder:
             url += f"&order={self._order_col}.{direction}"
         if self._limit_val:
             url += f"&limit={self._limit_val}"
+        if getattr(self, "_offset_val", None):
+            url += f"&offset={self._offset_val}"
         return url
 
     def execute(self):
