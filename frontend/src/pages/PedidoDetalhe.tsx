@@ -1843,6 +1843,75 @@ function ModalTratativaDivergencia({ pedido, onClose }: { pedido: Pedido; onClos
 }
 
 // ── Página Principal ──────────────────────────────────────────────────────────
+// ── OV vinda do CRM: completar número real e data ────────────────────────────
+/** Banner fixo (não modal) para o único passo que falta numa OV que nasceu de
+ *  oportunidade ganha no CRM: cliente e valor já vieram prontos, falta o
+ *  número real do D365 e a data prevista — quem tem essa informação é a
+ *  operadora, não o comercial. Fica sempre visível porque é a primeira coisa
+ *  que precisa acontecer nesta OV, não algo atrás de um clique a mais. */
+function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onCompletado: () => void }) {
+  const [numero, setNumero] = useState('')
+  const [data, setData] = useState('')
+  const [tipoFrete, setTipoFrete] = useState<'FOB' | 'CIF_COM_VALOR' | 'CIF_SEM_VALOR'>('FOB')
+  const [local, setLocal] = useState('')
+  const hoje = new Date().toISOString().slice(0, 10)
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/pedidos/${pedido.id}/completar-dados-crm`, {
+      numero_pedido: numero.trim().toUpperCase(),
+      data_prevista_entrega: data,
+      tipo_frete: tipoFrete,
+      local_entrega: local || null,
+    }),
+    onSuccess: () => {
+      toast.success(`OV ${numero.trim().toUpperCase()} liberada`)
+      onCompletado()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao completar a OV'),
+  })
+
+  const valido = numero.trim() && data
+
+  return (
+    <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5 mb-5">
+      <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">🆕 Venda ganha no CRM — complete a OV</p>
+      <p className="text-xs text-blue-700 mt-0.5">
+        Cliente e valor já vieram do CRM. Emita a OV no D365 e informe o número real e a data de entrega
+        para liberar esta venda no fluxo normal da Expedição.
+      </p>
+      <div className="grid grid-cols-2 gap-3 mt-3">
+        <div>
+          <label className="text-sm font-medium text-gray-700">Número da OV (D365) *</label>
+          <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} autoFocus
+            className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono" placeholder="Ex: OV015500" />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700">Data prevista de entrega *</label>
+          <input type="date" value={data} min={hoje} onChange={e => setData(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700">Tipo de frete</label>
+          <select value={tipoFrete} onChange={e => setTipoFrete(e.target.value as any)}
+            className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1">
+            <option value="FOB">FOB</option>
+            <option value="CIF_COM_VALOR">CIF com Valor NF</option>
+            <option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700">Local de entrega</label>
+          <LocalEntregaInput value={local} onChange={setLocal} />
+        </div>
+      </div>
+      <button onClick={() => mutation.mutate()} disabled={!valido || mutation.isPending}
+        className="mt-3 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg">
+        {mutation.isPending ? 'Liberando…' : 'Liberar OV'}
+      </button>
+    </div>
+  )
+}
+
 export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -2053,6 +2122,13 @@ export function PedidoDetalhe() {
           </div>
         </div>
       </div>
+
+      {/* OV vinda de oportunidade ganha no CRM: falta o número real (D365) e a
+          data — sem isso a OV não avança nenhuma etapa. Fica sempre visível, não
+          atrás de um clique, porque é o primeiro coisa que precisa acontecer. */}
+      {status === 'AGUARD_DADOS_OV' && (
+        <FormCompletarDadosOV pedido={pedido} onCompletado={() => qc.invalidateQueries({ queryKey: ['pedido', id] })} />
+      )}
 
       {/* Família de remessas */}
       {temFamilia && familia.length > 1 && (

@@ -320,6 +320,105 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     return pedido
 
 
+def criar_pedido_stub_crm(oportunidade: dict, itens: list, usuario_id: str) -> dict:
+    """OV-esqueleto criada no instante em que uma oportunidade é ganha no CRM.
+
+    Cliente e valor já são conhecidos — cai direto no kanban da Expedição, no
+    primeiro card (AGUARD_DADOS_OV), com um número PROVISÓRIO (a coluna é
+    UNIQUE NOT NULL, não dá para deixar em branco até o D365 gerar o real).
+    A operadora completa numero_pedido, data prevista e frete direto no card;
+    `completar_dados_ov` faz essa transição para LIBERADO.
+    """
+    db = get_service_db()
+    agora = _agora()
+    import uuid as _uuid
+    numero_provisorio = f"CRM-{str(_uuid.uuid4())[:8].upper()}"
+    data_provisoria = (date.today() + timedelta(days=7)).isoformat()
+
+    itens_validos = [i for i in itens if i.get("produto_id") and float(i.get("qtd") or 0) > 0]
+    valor_estimado = float(oportunidade.get("valor_estimado") or 0)
+
+    pedido_data = {
+        "numero_pedido": numero_provisorio,
+        "cliente_id": oportunidade.get("cliente_id"),
+        "tipo_operacao": "VENDA_NORMAL",
+        "canal": oportunidade.get("canal"),
+        "status": StatusPedido.AGUARD_DADOS_OV.value,
+        "prioridade": "NORMAL",
+        "data_prevista_entrega": data_provisoria,
+        # Sem itens com preço, ao menos o valor estimado aparece no card —
+        # senão o kanban mostraria R$ 0 numa oportunidade que valia a pena.
+        "valor_nf": valor_estimado if not itens_validos else None,
+        "observacoes": f"Criado automaticamente pelo CRM ao ganhar: {oportunidade.get('titulo') or ''}".strip(),
+        "criado_em": agora,
+        "atualizado_em": agora,
+    }
+    pedido = db.table("pedidos").insert(pedido_data).execute().data[0]
+
+    if itens_validos:
+        db.table("itens_pedido").insert([{
+            "pedido_id": pedido["id"],
+            "produto_id": i["produto_id"],
+            "qtd_solicitada": float(i["qtd"]),
+            "valor_unitario": float(i.get("valor_unitario") or 0) or None,
+            "status_item": "PENDENTE",
+        } for i in itens_validos]).execute()
+
+    _registrar_movimentacao(pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, usuario_id,
+                            f"OV criada a partir da oportunidade ganha no CRM: {oportunidade.get('titulo') or '—'}")
+    return pedido
+
+
+def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega: date,
+                       tipo_frete: str, local_entrega: Optional[str], usuario: UsuarioOut) -> dict:
+    """A operadora preenche o que faltava na OV vinda do CRM e ela entra no
+    fluxo normal — mesmo portão de duplicidade de numero_pedido da criação
+    manual, porque o número real do D365 pode colidir com outra OV."""
+    db = get_service_db()
+    ped = db.table("pedidos").select("*").eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    if ped.get("status") != StatusPedido.AGUARD_DADOS_OV.value:
+        raise HTTPException(status_code=400,
+                            detail="Esta OV já tem os dados completos — use as ações normais de edição.")
+
+    numero = numero_pedido.strip().upper()
+    if not numero:
+        raise HTTPException(status_code=422, detail="Informe o número real da OV.")
+    dup = db.table("pedidos").select("id").eq("numero_pedido", numero).neq("id", pedido_id).execute().data
+    if dup:
+        raise HTTPException(status_code=409, detail=f"Já existe uma OV com o número '{numero}'.")
+
+    agora = _agora()
+    update = {
+        "numero_pedido": numero,
+        "data_prevista_entrega": data_prevista_entrega.isoformat(),
+        "tipo_frete": tipo_frete,
+        "local_entrega": local_entrega,
+        "status": StatusPedido.LIBERADO.value,
+        "atualizado_em": agora,
+    }
+    try:
+        db.table("pedidos").update({"data_esperada_cliente": update["data_prevista_entrega"]}).eq("id", pedido_id).execute()
+    except Exception:
+        pass
+    db.table("pedidos").update(update).eq("id", pedido_id).execute()
+    _registrar_movimentacao(pedido_id, StatusPedido.AGUARD_DADOS_OV.value, StatusPedido.LIBERADO.value,
+                            str(usuario.id), f"Dados completados — OV {numero} liberada")
+
+    # A oportunidade do CRM guarda o número real, não o provisório.
+    try:
+        db.table("crm_oportunidades").update({"gerado_ov_ref": numero}).eq("gerado_ov_id", pedido_id).execute()
+    except Exception:
+        pass
+
+    pedido = db.table("pedidos").select("*").eq("id", pedido_id).single().execute().data
+    cliente_res = db.table("clientes").select("nome").eq("id", pedido["cliente_id"]).execute()
+    cliente_nome = cliente_res.data[0]["nome"] if cliente_res.data else ""
+    _notificar_teams_nova_ov(pedido, cliente_nome)
+    return pedido
+
+
 def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     """Lança um faturamento de comunicado de uso (consignado utilizado).
 

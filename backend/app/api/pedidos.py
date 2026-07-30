@@ -18,6 +18,7 @@ from app.models.schemas import (
     TransportadoraClienteRequest,
     FinalizarConferenciaRequest,
     FinalizarSeparacaoRequest,
+    GerarOVRequest,
     ImportacaoResultado,
     OcorrenciaCreate,
     OcorrenciaFechar,
@@ -98,6 +99,17 @@ def listar_movimentacoes(pedido_id: UUID, _: UsuarioOut = Depends(get_current_us
         "status_anterior, status_novo, criado_em"
     ).eq("pedido_id", str(pedido_id)).order("criado_em").execute().data
     return rows
+
+
+@router.patch("/{pedido_id}/completar-dados-crm")
+def completar_dados_ov(pedido_id: UUID, payload: GerarOVRequest,
+                       usuario: UsuarioOut = Depends(get_current_user)):
+    """Completa uma OV-esqueleto criada pelo ganho de uma oportunidade no CRM:
+    número real (D365), data prevista e frete. Sai de AGUARD_DADOS_OV direto
+    para LIBERADO."""
+    return pedido_service.completar_dados_ov(
+        str(pedido_id), payload.numero_pedido, payload.data_prevista_entrega,
+        payload.tipo_frete, payload.local_entrega, usuario)
 
 
 @router.patch("/{pedido_id}/status")

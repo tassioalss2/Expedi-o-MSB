@@ -959,30 +959,52 @@ def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
         "atualizado_em": agora,
     }
     nota = (repasse_nota or "").strip() or None
-    # Ganhar abre o repasse automaticamente: é o ponto onde o pedido deixa de ser
-    # do comercial e passa a ser trabalho de operações de vendas.
+
+    # A OV já nasce no kanban da Expedição: cliente e valor conhecidos, número
+    # real e data ficam para a operadora completar direto no card. Não depende
+    # mais de alguém abrir o CRM e clicar em "gerar OV" — some passo manual.
+    opp_atual = db.table("crm_oportunidades").select("*").eq("id", oportunidade_id).single().execute().data or {}
+    stub = None
+    if not opp_atual.get("gerado_ov_id"):
+        try:
+            from app.services import pedido_service
+            itens = db.table("crm_oportunidade_itens").select("*").eq("oportunidade_id", oportunidade_id).execute().data
+            stub = pedido_service.criar_pedido_stub_crm({**opp_atual, **update}, itens, str(usuario.id))
+        except Exception:
+            stub = None
+
+    if stub:
+        update["gerado_ov_id"] = stub["id"]
+        update["gerado_ov_ref"] = stub["numero_pedido"]
+
     try:
         db.table("crm_oportunidades").update(
-            {**update, "repasse_status": "AGUARDANDO", "repasse_em": agora, "repasse_nota": nota}
+            {**update,
+             "repasse_status": "CONCLUIDO" if stub else "AGUARDANDO",
+             "repasse_em": agora, "repasse_nota": nota}
         ).eq("id", oportunidade_id).execute()
     except Exception:
         # v25 pendente — ganha do mesmo jeito, só sem entrar na fila.
         db.table("crm_oportunidades").update(update).eq("id", oportunidade_id).execute()
 
     _log_evento(db, oportunidade_id, "🏆 Oportunidade marcada como GANHA", str(usuario.id))
-    _log_evento(db, oportunidade_id,
-                "➡️ Repasse aberto para operações de vendas emitir a OV no D365", str(usuario.id))
+    if stub:
+        _log_evento(db, oportunidade_id,
+                    f"📦 OV {stub['numero_pedido']} criada direto no kanban da Expedição "
+                    "(aguardando completar número real e data)", str(usuario.id))
 
     opp = obter_oportunidade(oportunidade_id)
     _notificar_comercial(
-        f"🏆 **Venda ganha — gerar OV no D365**\n\n"
+        f"🏆 **Venda ganha**\n\n"
         f"**{opp.get('titulo')}**\n"
         f"Cliente: {opp.get('cliente') or '—'}\n"
         f"Valor: R$ {float(opp.get('valor_estimado') or 0):,.2f}\n"
         f"Comercial: {usuario.nome}\n"
         + (f"Recado: {opp.get('repasse_nota')}\n" if opp.get("repasse_nota") else "")
-        + "\nOperações de vendas: emita a OV no D365 e cadastre no app pelo painel "
-          "Repasse do CRM."
+        + ("\nJá caiu no kanban da Expedição — operações de vendas completa o número "
+           "real da OV e a data de entrega direto no card."
+           if stub else
+           "\nOperações de vendas: cadastre a OV no app pelo painel Repasse do CRM.")
     )
     return opp
 

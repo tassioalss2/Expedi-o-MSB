@@ -2,6 +2,11 @@ from enum import Enum
 
 
 class StatusPedido(str, Enum):
+    # Ponto de entrada de uma OV que nasceu de oportunidade ganha no CRM: o
+    # cliente e o valor já são conhecidos, mas o número real da OV (do D365) e a
+    # data prevista de entrega ainda não — quem completa é a operadora de vendas,
+    # direto no card do kanban.
+    AGUARD_DADOS_OV = "AGUARD_DADOS_OV"
     AGUARD_CREDITO = "AGUARD_CREDITO"
     LIBERADO = "LIBERADO"
     EM_INVENTARIO = "EM_INVENTARIO"
@@ -21,6 +26,7 @@ class StatusPedido(str, Enum):
 
 
 TRANSICOES_PERMITIDAS: dict[StatusPedido, list[StatusPedido]] = {
+    StatusPedido.AGUARD_DADOS_OV:        [StatusPedido.LIBERADO, StatusPedido.AGUARD_CREDITO, StatusPedido.CANCELADO],
     StatusPedido.AGUARD_CREDITO:         [StatusPedido.LIBERADO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
     StatusPedido.LIBERADO:               [StatusPedido.EM_INVENTARIO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
     StatusPedido.EM_INVENTARIO:          [StatusPedido.AGUARD_VERIFICACAO, StatusPedido.BLOQUEADO],
