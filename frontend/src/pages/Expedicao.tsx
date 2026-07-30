@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, Upload, RefreshCw, Info, X, FileText, Handshake, ArrowRight } from 'lucide-react'
+import { Search, Plus, Upload, RefreshCw, Info, X, FileText } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -13,72 +13,14 @@ import toast from 'react-hot-toast'
 
 type View = 'lista' | 'kanban'
 
-/** Card de ponte para o repasse do CRM, dentro da própria grade do kanban.
- *
- *  Não é uma coluna de status de OV (StatusPedido) — é o passo ANTES da OV
- *  existir, então não faz sentido fingir um status falso para ela entrar nas
- *  colunas normais. Fica sempre visível *no* kanban (não acima dele) e é o
- *  PRIMEIRO card, canto superior esquerdo: é onde o trabalho de operações
- *  começa, antes até de "Ger. Crédito" — não um resto de grade no fim. Estado
- *  neutro quando a fila está vazia, em vez de sumir. Mesma fonte do resumo do
- *  Teams e da fila no CRM (crm_service.ganhas_sem_ov) — não uma contagem
- *  própria. */
-function CardRepasseKanban() {
-  const navigate = useNavigate()
-  const { data: fila = [] } = useQuery<any[]>({
-    queryKey: ['crm-repasses'],
-    queryFn: () => api.get('/crm/repasses').then(r => r.data),
-    refetchInterval: 60000,
-  })
-
-  const semDono = fila.filter(f => f.repasse_status === 'AGUARDANDO').length
-  const valor = fila.reduce((a, f) => a + (f.valor_estimado || 0), 0)
-  const valorFmt = valor >= 1000
-    ? `R$ ${(valor / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 1 })} mil`
-    : `R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-  const vazia = fila.length === 0
-
-  return (
-    <div className="flex flex-col min-h-0 min-w-0">
-      <div
-        className="rounded-t-lg px-3 pt-2 pb-1.5 flex flex-col gap-0.5 cursor-pointer group flex-shrink-0"
-        style={vazia ? { backgroundColor: '#E5E7EB', color: '#374151' } : { backgroundColor: '#FEF3C7', color: '#92400E' }}
-        onClick={() => navigate('/crm?aba=repasse')}
-        title="Vendas ganhas no CRM que ainda não têm OV cadastrada — clique para ir ao repasse"
-      >
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold flex items-center gap-1 min-w-0">
-            <Handshake size={14} className="flex-shrink-0" />
-            <span className="truncate">Repasse CRM → OV</span>
-          </span>
-          <span className="text-xs font-bold bg-white bg-opacity-40 rounded-full px-2 py-0.5 flex-shrink-0 ml-1">
-            {fila.length}
-          </span>
-        </div>
-        <span className="text-[11px] font-bold tabular-nums opacity-90">
-          {valor > 0 ? `💰 ${valorFmt}` : ' '}
-        </span>
-      </div>
-      <div className="bg-gray-100 rounded-b-lg p-1.5 flex flex-col gap-1 overflow-y-auto flex-1">
-        {vazia ? (
-          <p className="text-xs text-gray-400 text-center py-3">Nenhuma venda esperando OV</p>
-        ) : (
-          <>
-            {semDono > 0 && (
-              <p className="text-[11px] text-amber-700 bg-amber-50 rounded px-2 py-1">
-                {semDono} sem responsável ainda
-              </p>
-            )}
-            <button onClick={() => navigate('/crm?aba=repasse')}
-              className="text-xs text-blue-600 hover:underline flex items-center gap-1 justify-center py-1">
-              Ver repasse <ArrowRight size={12} />
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
+// O card de ponte "Repasse CRM → OV" que existia aqui foi removido: desde que
+// ganhar_oportunidade passou a criar a OV direto no kanban (coluna
+// "AGUARD_DADOS_OV"), esse card sempre aparecia vazio no caminho normal — só
+// acendia quando a criação automática falhava, o que é raro e confundia mais
+// do que ajudava (o usuário via dois cards de "OV vinda do CRM" ao mesmo
+// tempo). O mecanismo de repasse continua existindo nos bastidores como rede
+// de segurança para esse caso raro — só não tem mais vitrine na Expedição. A
+// aba "Repasse" no CRM segue disponível para quem precisar checar.
 
 // ── Busca com autocomplete ────────────────────────────────────────────────────
 function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
@@ -450,10 +392,6 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
         className="grid gap-2 h-full"
         style={{ gridTemplateColumns: `repeat(${KANBAN_COLS}, minmax(0, 1fr))`, gridAutoRows: 'minmax(0, 1fr)' }}
       >
-        {/* Primeiro card, canto superior esquerdo: é o ponto de ENTRADA do
-            trabalho de operações — antes mesmo de "Ger. Crédito" — não o
-            último passo, então vem antes de tudo, não depois. */}
-        <CardRepasseKanban />
         {ORDEM_KANBAN.map((status) => {
               const cfg = STATUS_CONFIG[status]
               const lista = agrupado[status] || []
