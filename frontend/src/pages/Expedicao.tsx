@@ -17,11 +17,12 @@ type View = 'lista' | 'kanban'
  *
  *  Não é uma coluna de status de OV (StatusPedido) — é o passo ANTES da OV
  *  existir, então não faz sentido fingir um status falso para ela entrar nas
- *  colunas normais. Mas o pedido foi que ficasse sempre visível *no* kanban, não
- *  acima dele: como o fluxo em 4 colunas fecha 4/4/3, sobra o 12º espaço vazio
- *  ao lado de "Expedido" — é ali que este card mora, permanente, mesmo com a
- *  fila vazia (estado neutro em vez de sumir). Mesma fonte do resumo do Teams e
- *  da fila no CRM (crm_service.ganhas_sem_ov) — não uma contagem própria. */
+ *  colunas normais. Fica sempre visível *no* kanban (não acima dele) e é o
+ *  PRIMEIRO card, canto superior esquerdo: é onde o trabalho de operações
+ *  começa, antes até de "Ger. Crédito" — não um resto de grade no fim. Estado
+ *  neutro quando a fila está vazia, em vez de sumir. Mesma fonte do resumo do
+ *  Teams e da fila no CRM (crm_service.ganhas_sem_ov) — não uma contagem
+ *  própria. */
 function CardRepasseKanban() {
   const navigate = useNavigate()
   const { data: fila = [] } = useQuery<any[]>({
@@ -449,6 +450,10 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
         className="grid gap-2 h-full"
         style={{ gridTemplateColumns: `repeat(${KANBAN_COLS}, minmax(0, 1fr))`, gridAutoRows: 'minmax(0, 1fr)' }}
       >
+        {/* Primeiro card, canto superior esquerdo: é o ponto de ENTRADA do
+            trabalho de operações — antes mesmo de "Ger. Crédito" — não o
+            último passo, então vem antes de tudo, não depois. */}
+        <CardRepasseKanban />
         {ORDEM_KANBAN.map((status) => {
               const cfg = STATUS_CONFIG[status]
               const lista = agrupado[status] || []
@@ -489,9 +494,6 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
               </div>
               )
             })}
-        {/* 12º espaço da grade (11 status flui 4/4/3, sobra 1 na última linha) —
-            é onde mora o repasse do CRM, permanente, não é status de OV. */}
-        <CardRepasseKanban />
       </div>
       {infoAberta && (
         <InfoEtapaModal
