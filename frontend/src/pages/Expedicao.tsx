@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, Upload, RefreshCw, Info, X, FileText } from 'lucide-react'
+import { Search, Plus, Upload, RefreshCw, Info, X, FileText, Handshake, ArrowRight } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -12,6 +12,56 @@ import { ORDEM_KANBAN, STATUS_CONFIG, resolveNomeTransportadora } from '../lib/s
 import toast from 'react-hot-toast'
 
 type View = 'lista' | 'kanban'
+
+/** Card de ponte para o repasse do CRM: vendas ganhas que ainda não viraram OV.
+ *
+ *  Não é uma coluna do kanban — as colunas aqui são status de OV existente
+ *  (StatusPedido), e uma oportunidade ganha ainda não é uma OV, então não tem
+ *  onde entrar naquela grade sem inventar um status falso. Fica como um card
+ *  separado, no mesmo canal de linguagem visual, que é exatamente onde a
+ *  Expedição termina de ganhar visibilidade sobre o que está vindo do
+ *  comercial antes de existir aqui. Mesma fonte do resumo do Teams e da fila
+ *  no CRM (crm_service.ganhas_sem_ov) — não uma contagem própria. */
+function CardRepasseCRM() {
+  const navigate = useNavigate()
+  const { data: fila = [] } = useQuery<any[]>({
+    queryKey: ['crm-repasses'],
+    queryFn: () => api.get('/crm/repasses').then(r => r.data),
+    refetchInterval: 60000,
+  })
+
+  if (fila.length === 0) return null
+
+  const semDono = fila.filter(f => f.repasse_status === 'AGUARDANDO').length
+  const valor = fila.reduce((a, f) => a + (f.valor_estimado || 0), 0)
+  const valorFmt = valor >= 1000
+    ? `R$ ${(valor / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`
+    : `R$ ${valor.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`
+
+  return (
+    <button onClick={() => navigate('/crm?aba=repasse')}
+      className="w-full text-left rounded-lg px-4 py-3 flex items-center justify-between gap-3 flex-wrap
+                 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors">
+      <div className="flex items-center gap-2.5">
+        <span className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center">
+          <Handshake size={16} />
+        </span>
+        <div>
+          <p className="text-sm font-semibold text-amber-900">
+            {fila.length} venda{fila.length > 1 ? 's' : ''} ganha{fila.length > 1 ? 's' : ''} do CRM aguardando OV
+          </p>
+          <p className="text-xs text-amber-700">
+            {semDono > 0 ? `${semDono} sem responsável ainda · ` : 'todas já assumidas por operações · '}
+            {valorFmt} parado{valor >= 1000 ? 's' : ''}
+          </p>
+        </div>
+      </div>
+      <span className="text-xs font-medium text-amber-800 flex items-center gap-1 flex-shrink-0">
+        Ver repasse <ArrowRight size={13} />
+      </span>
+    </button>
+  )
+}
 
 // ── Busca com autocomplete ────────────────────────────────────────────────────
 function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
@@ -654,6 +704,8 @@ export function Expedicao() {
           </button>
         </div>
       </div>
+
+      <CardRepasseCRM />
 
       {/* Conteúdo */}
       {isLoading ? (

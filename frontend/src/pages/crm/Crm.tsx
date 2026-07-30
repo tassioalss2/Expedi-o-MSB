@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Sparkles, Building2, FileText } from 'lucide-react'
 import api from '../../lib/api'
@@ -26,7 +27,11 @@ const ABAS: { key: Aba; label: string; icone: any }[] = [
 ]
 
 export function Crm() {
-  const [aba, setAba] = useState<Aba>('funil')
+  // `?aba=repasse` deep-linka aqui direto na fila — usado pelo card de ponte na
+  // Expedição, para o clique não largar o usuário no Funil e obrigar a navegar.
+  const [params] = useSearchParams()
+  const abaInicial = params.get('aba') as Aba | null
+  const [aba, setAba] = useState<Aba>(abaInicial && ABAS.some(a => a.key === abaInicial) ? abaInicial : 'funil')
 
   // Contador na aba: sem isso a fila de repasse fica escondida atrás de um
   // clique e volta a depender de alguém avisar por mensagem.
