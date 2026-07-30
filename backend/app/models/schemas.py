@@ -147,6 +147,10 @@ class ItemPedidoCreate(BaseModel):
         return v
 
 
+class EditarItensRequest(BaseModel):
+    itens: list[ItemPedidoCreate]
+
+
 class ItemPedidoOut(BaseModel):
     id: UUID
     produto_id: UUID

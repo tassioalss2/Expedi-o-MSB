@@ -13,6 +13,7 @@ from app.models.schemas import (
     ComunicadoUsoCreate,
     ConfirmarColetaRequest,
     CotacaoFreteRequest,
+    EditarItensRequest,
     FaturamentoRequest,
     MetaFaturamentoRequest,
     TransportadoraClienteRequest,
@@ -110,6 +111,14 @@ def completar_dados_ov(pedido_id: UUID, payload: GerarOVRequest,
     return pedido_service.completar_dados_ov(
         str(pedido_id), payload.numero_pedido, payload.data_prevista_entrega,
         payload.tipo_frete, payload.local_entrega, usuario)
+
+
+@router.patch("/{pedido_id}/itens")
+def editar_itens(pedido_id: UUID, payload: EditarItensRequest,
+                 usuario: UsuarioOut = Depends(get_current_user)):
+    """Substitui os itens da OV — ex.: item sem estoque trocado por outro.
+    Bloqueado depois de FATURADO (o item vira o que está na NF)."""
+    return pedido_service.editar_itens(str(pedido_id), payload.itens, usuario)
 
 
 @router.patch("/{pedido_id}/status")

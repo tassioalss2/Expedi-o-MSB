@@ -7,6 +7,7 @@ import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
 import type { InventarioItem, Pedido, Cubagem, Transportadora } from '../types'
 import { ClienteAutocomplete } from './NovoPedido'
+import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
@@ -1843,6 +1844,96 @@ function ModalTratativaDivergencia({ pedido, onClose }: { pedido: Pedido; onClos
 }
 
 // ── Página Principal ──────────────────────────────────────────────────────────
+// ── Editar itens da OV ────────────────────────────────────────────────────────
+/** Substitui os itens da OV inteira — o caso concreto que motivou isto: um item
+ *  sem estoque que o comercial trocou por outro. Mostra o estoque disponível
+ *  de cada linha (mesma fonte do Radar de produtos da Inteligência) para o
+ *  operador ver ANTES de fechar se o item novo também não vai faltar. */
+function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const itensIniciais: ItemLinha[] = ((pedido as any).itens || [])
+    .filter((it: any) => it.produto_id)
+    .map((it: any) => ({
+      produto_id: it.produto_id,
+      codigo: it.produtos?.codigo || it.produto?.codigo || '',
+      descricao: it.produtos?.descricao || it.produto?.descricao || '',
+      qtd: Number(it.qtd_solicitada) || 0,
+      valor: Number(it.valor_unitario) || 0,
+    }))
+  const [itens, setItens] = useState<ItemLinha[]>(itensIniciais)
+
+  // Estoque disponível por código — mesma fonte do Radar de produtos (Inteligência).
+  const { data: estoque } = useQuery<any>({
+    queryKey: ['estoque-listar'],
+    queryFn: () => api.get('/estoque').then(r => r.data),
+    staleTime: 60000,
+  })
+  const estoquePorCodigo: Record<string, any> = {}
+  for (const i of (estoque?.itens || [])) estoquePorCodigo[i.codigo] = i
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/pedidos/${pedido.id}/itens`, {
+      itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor || null })),
+    }),
+    onSuccess: () => {
+      toast.success('Itens atualizados')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao editar itens'),
+  })
+
+  const semEstoque = itens.filter(i => {
+    const e = estoquePorCodigo[i.codigo]
+    return e && Number(e.disponivel) < i.qtd
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="p-5 border-b flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-800">Editar itens — {pedido.numero_pedido}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><XCircle size={20} /></button>
+        </div>
+        <div className="p-5 space-y-3 overflow-y-auto">
+          <ItensPedido value={itens} onChange={setItens} comValor />
+
+          {itens.length > 0 && (
+            <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+              {itens.map(i => {
+                const e = estoquePorCodigo[i.codigo]
+                const falta = e && Number(e.disponivel) < i.qtd
+                if (!e) return null
+                return (
+                  <div key={i.produto_id} className={`px-3 py-1.5 text-xs flex items-center justify-between gap-2 ${falta ? 'bg-red-50' : ''}`}>
+                    <span className="font-mono text-gray-600">{i.codigo}</span>
+                    <span className={falta ? 'text-red-700 font-medium' : 'text-gray-500'}>
+                      {falta ? `⚠ estoque insuficiente — ` : ''}disponível {e.disponivel} · pedido {i.qtd}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {semEstoque.length > 0 && (
+            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {semEstoque.length} item(ns) com estoque insuficiente para a quantidade pedida.
+              Dá para salvar assim mesmo (o estoque pode chegar), mas confira antes.
+            </p>
+          )}
+        </div>
+        <div className="p-4 border-t flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+          <button onClick={() => mutation.mutate()} disabled={itens.length === 0 || mutation.isPending}
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+            {mutation.isPending ? 'Salvando…' : 'Salvar itens'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── OV vinda do CRM: completar número real e data ────────────────────────────
 /** Banner fixo (não modal) para o único passo que falta numa OV que nasceu de
  *  oportunidade ganha no CRM: cliente e valor já vieram prontos, falta o
@@ -1916,7 +2007,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -2300,49 +2391,68 @@ export function PedidoDetalhe() {
             })()}
           </div>
 
-          {/* Itens da OV (cadastrados na criação) */}
+          {/* Itens da OV — editável até faturar (depois disso o item é o que
+              está na NF). Caso concreto que motivou isto: item sem estoque
+              trocado por outro antes de faturar. */}
           {(() => {
             const itensOV = ((pedido.itens || []) as any[]).filter(it => (it.produtos?.codigo || it.produto?.codigo))
-            if (itensOV.length === 0) return null
             const totalUn = itensOV.reduce((a, it) => a + (Number(it.qtd_solicitada) || 0), 0)
             const comValor = itensOV.some(it => Number(it.valor_unitario) > 0)
             const totalValor = itensOV.reduce((a, it) => a + (Number(it.qtd_solicitada) || 0) * (Number(it.valor_unitario) || 0), 0)
             const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+            const STATUS_ITENS_TRAVADOS = ['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO']
+            const editavel = !STATUS_ITENS_TRAVADOS.includes(status)
             return (
               <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-                <h2 className="font-semibold text-gray-800 mb-3">Itens da OV</h2>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-gray-500 border-b">
-                        <th className="pb-2 pr-3">Código</th>
-                        <th className="pb-2 pr-3">Descrição</th>
-                        <th className="pb-2 text-right">Qtd</th>
-                        {comValor && <th className="pb-2 pl-3 text-right">Valor un.</th>}
-                        {comValor && <th className="pb-2 pl-3 text-right">Total</th>}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {itensOV.map((it, i) => (
-                        <tr key={i}>
-                          <td className="py-2 pr-3 font-mono font-medium text-gray-800">{it.produtos?.codigo || it.produto?.codigo}</td>
-                          <td className="py-2 pr-3 text-gray-600">{it.produtos?.descricao || it.produto?.descricao || '—'}</td>
-                          <td className="py-2 text-right tabular-nums text-gray-800">{Number(it.qtd_solicitada) || 0}</td>
-                          {comValor && <td className="py-2 pl-3 text-right tabular-nums text-gray-600">{Number(it.valor_unitario) > 0 ? brl(Number(it.valor_unitario)) : '—'}</td>}
-                          {comValor && <td className="py-2 pl-3 text-right tabular-nums text-gray-800 font-medium">{Number(it.valor_unitario) > 0 ? brl((Number(it.qtd_solicitada) || 0) * Number(it.valor_unitario)) : '—'}</td>}
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t">
-                        <td className="pt-2 text-xs text-gray-400" colSpan={2}>{itensOV.length} item(ns)</td>
-                        <td className="pt-2 text-right text-xs text-gray-500">Total: <strong className="text-gray-700">{totalUn}</strong> un</td>
-                        {comValor && <td className="pt-2" />}
-                        {comValor && <td className="pt-2 text-right text-xs text-gray-500">Total: <strong className="text-gray-700">{brl(totalValor)}</strong></td>}
-                      </tr>
-                    </tfoot>
-                  </table>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="font-semibold text-gray-800">Itens da OV</h2>
+                  {editavel ? (
+                    <button onClick={() => setModal('editar_itens')}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                      <Pencil size={12} /> Editar itens
+                    </button>
+                  ) : (
+                    <span className="text-[11px] text-gray-400" title="Depois de faturada, o item é o que está na NF">
+                      🔒 travado (faturada)
+                    </span>
+                  )}
                 </div>
+                {itensOV.length === 0 ? (
+                  <p className="text-sm text-gray-400">Nenhum item cadastrado ainda.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-gray-500 border-b">
+                          <th className="pb-2 pr-3">Código</th>
+                          <th className="pb-2 pr-3">Descrição</th>
+                          <th className="pb-2 text-right">Qtd</th>
+                          {comValor && <th className="pb-2 pl-3 text-right">Valor un.</th>}
+                          {comValor && <th className="pb-2 pl-3 text-right">Total</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {itensOV.map((it, i) => (
+                          <tr key={i}>
+                            <td className="py-2 pr-3 font-mono font-medium text-gray-800">{it.produtos?.codigo || it.produto?.codigo}</td>
+                            <td className="py-2 pr-3 text-gray-600">{it.produtos?.descricao || it.produto?.descricao || '—'}</td>
+                            <td className="py-2 text-right tabular-nums text-gray-800">{Number(it.qtd_solicitada) || 0}</td>
+                            {comValor && <td className="py-2 pl-3 text-right tabular-nums text-gray-600">{Number(it.valor_unitario) > 0 ? brl(Number(it.valor_unitario)) : '—'}</td>}
+                            {comValor && <td className="py-2 pl-3 text-right tabular-nums text-gray-800 font-medium">{Number(it.valor_unitario) > 0 ? brl((Number(it.qtd_solicitada) || 0) * Number(it.valor_unitario)) : '—'}</td>}
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t">
+                          <td className="pt-2 text-xs text-gray-400" colSpan={2}>{itensOV.length} item(ns)</td>
+                          <td className="pt-2 text-right text-xs text-gray-500">Total: <strong className="text-gray-700">{totalUn}</strong> un</td>
+                          {comValor && <td className="pt-2" />}
+                          {comValor && <td className="pt-2 text-right text-xs text-gray-500">Total: <strong className="text-gray-700">{brl(totalValor)}</strong></td>}
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
               </div>
             )
           })()}
@@ -2668,6 +2778,7 @@ export function PedidoDetalhe() {
       {modal === 'reativar' && <ModalReativarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'editar_itens' && <ModalEditarItens pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (

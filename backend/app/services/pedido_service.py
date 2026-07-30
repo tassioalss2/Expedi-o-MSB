@@ -419,6 +419,52 @@ def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega
     return pedido
 
 
+# Depois de faturado, os itens são o que está na NF — trocar aqui divergiria do
+# documento fiscal. Antes disso (mesmo em separação/conferência), a correção é
+# legítima: o caso concreto foi um item sem estoque trocado por outro, e quem
+# decide a troca é o comercial, não o sistema.
+_STATUS_ITENS_TRAVADOS = {"FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO", "CANCELADO"}
+
+
+def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut) -> dict:
+    """Substitui os itens de uma OV inteira — ex.: item sem estoque trocado por
+    outro antes de faturar. Depois de FATURADO os itens são o que está na NF."""
+    db = get_service_db()
+    ped = db.table("pedidos").select("id, status, numero_pedido").eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    if ped["status"] in _STATUS_ITENS_TRAVADOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OV em '{ped['status']}' não tem mais os itens editáveis — depois de faturada, "
+                   "o item é o que está na NF.")
+    if not itens:
+        raise HTTPException(status_code=422, detail="A OV precisa ter ao menos um item.")
+
+    antigos = db.table("itens_pedido").select("produto_id, qtd_solicitada, qtd_separada")\
+        .eq("pedido_id", pedido_id).execute().data
+    ja_separado = any(float(i.get("qtd_separada") or 0) > 0 for i in antigos)
+
+    db.table("itens_pedido").delete().eq("pedido_id", pedido_id).execute()
+    db.table("itens_pedido").insert([{
+        "pedido_id": pedido_id,
+        "produto_id": str(it.produto_id),
+        "lote_id": str(it.lote_id) if it.lote_id else None,
+        "qtd_solicitada": it.qtd_solicitada,
+        "valor_unitario": it.valor_unitario,
+        "status_item": "PENDENTE",
+    } for it in itens]).execute()
+
+    obs = f"Itens da OV editados por {usuario.nome}"
+    if ja_separado:
+        # A separação física que já existia ficou obsoleta — quem editou
+        # precisa saber que tem que refazer, não é só trocar no sistema.
+        obs += " — havia separação física em andamento; ela precisa ser refeita para os novos itens."
+    _registrar_movimentacao(pedido_id, ped["status"], ped["status"], str(usuario.id), obs)
+
+    return obter_pedido(pedido_id)
+
+
 def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     """Lança um faturamento de comunicado de uso (consignado utilizado).
 
