@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { DollarSign, Truck, FileText, X, Pencil, CalendarDays } from 'lucide-react'
+import { DollarSign, Truck, FileText, X, Pencil, CalendarDays, ChevronDown, ChevronUp } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -169,6 +169,7 @@ export function PainelComercial() {
 
   // Drill-down do card financeiro: qual grupo de NFs está sendo detalhado
   const [detalheFin, setDetalheFin] = useState<{ categoria: string; titulo: string } | null>(null)
+  const [expandirClientes, setExpandirClientes] = useState(false)
   const { data: detalheFinLista = [], isFetching: carregandoDetalheFin } = useQuery<any[]>({
     queryKey: ['financeiro-detalhe', inicioFinanceiro, fimFinanceiro],
     queryFn: () => api.get('/pedidos/dashboard/financeiro/detalhe', {
@@ -727,10 +728,36 @@ export function PainelComercial() {
                 </div>
               ))}
               {resto.length > 0 && (
-                <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-100 text-gray-400">
-                  <span className="text-xs flex-1">+ {resto.length} outros clientes</span>
-                  <span className="text-xs tabular-nums">{restoQtd} NF</span>
-                  <span className="text-sm font-medium tabular-nums w-32 text-right">{fmtR$(restoValor)}</span>
+                <div className="pt-2 mt-1 border-t border-gray-100">
+                  <button onClick={() => setExpandirClientes(v => !v)}
+                    className="w-full flex items-baseline justify-between gap-3 text-gray-400 hover:text-gray-600">
+                    <span className="text-xs flex-1 flex items-center gap-1">
+                      {expandirClientes ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      + {resto.length} outros clientes
+                    </span>
+                    <span className="text-xs tabular-nums">{restoQtd} NF</span>
+                    <span className="text-sm font-medium tabular-nums w-32 text-right">{fmtR$(restoValor)}</span>
+                  </button>
+                  {expandirClientes && (
+                    <div className="space-y-2.5 mt-2.5">
+                      {resto.map((c) => (
+                        <div key={c.cliente}
+                          onClick={() => setDetalheFin({ categoria: `cliente:${c.cliente}`, titulo: c.cliente })}
+                          className="cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors"
+                          title="Ver as NFs deste cliente"
+                        >
+                          <div className="flex items-baseline justify-between gap-3 mb-1">
+                            <span className="text-sm text-gray-700 truncate flex-1">{c.cliente}</span>
+                            <span className="text-xs text-gray-400 tabular-nums">{c.qtd} NF · {((c.valor / total) * 100).toFixed(1)}%</span>
+                            <span className="text-sm font-semibold text-green-700 tabular-nums w-32 text-right">{fmtR$(c.valor)}</span>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-green-500 rounded-full" style={{ width: `${(c.valor / maxV) * 100}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-200">
