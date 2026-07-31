@@ -1941,10 +1941,16 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
  *  operadora, não o comercial. Fica sempre visível porque é a primeira coisa
  *  que precisa acontecer nesta OV, não algo atrás de um clique a mais. */
 function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onCompletado: () => void }) {
+  // Venda outbound (lançada direto pelo comercial) já vem com frete, data e
+  // local preenchidos — só falta o número real da OV. Vinda do CRM não tem
+  // nada disso ainda. Pré-carrega o que já existe em vez de pedir de novo.
+  const ehOutbound = pedido.numero_pedido?.startsWith('OUT-')
   const [numero, setNumero] = useState('')
-  const [data, setData] = useState('')
-  const [tipoFrete, setTipoFrete] = useState<'FOB' | 'CIF_COM_VALOR' | 'CIF_SEM_VALOR'>('FOB')
-  const [local, setLocal] = useState('')
+  const [data, setData] = useState(pedido.data_prevista_entrega || '')
+  const [tipoFrete, setTipoFrete] = useState<'FOB' | 'CIF_COM_VALOR' | 'CIF_SEM_VALOR'>(
+    (pedido.tipo_frete as any) || 'FOB'
+  )
+  const [local, setLocal] = useState(pedido.local_entrega || '')
   const hoje = new Date().toISOString().slice(0, 10)
 
   const mutation = useMutation({
@@ -1965,10 +1971,13 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
 
   return (
     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5 mb-5">
-      <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">🆕 Venda ganha no CRM — complete a OV</p>
+      <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
+        🆕 {ehOutbound ? 'Venda outbound lançada pelo comercial — complete a OV' : 'Venda ganha no CRM — complete a OV'}
+      </p>
       <p className="text-xs text-blue-700 mt-0.5">
-        Cliente e valor já vieram do CRM. Emita a OV no D365 e informe o número real e a data de entrega
-        para liberar esta venda no fluxo normal da Expedição.
+        {ehOutbound
+          ? 'Cliente, frete, data e local já vieram preenchidos pelo comercial (confira e ajuste se precisar). Só falta emitir a OV no D365 e informar o número real para liberar esta venda no fluxo normal da Expedição.'
+          : 'Cliente e valor já vieram do CRM. Emita a OV no D365 e informe o número real e a data de entrega para liberar esta venda no fluxo normal da Expedição.'}
       </p>
       <div className="grid grid-cols-2 gap-3 mt-3">
         <div>
@@ -2000,6 +2009,38 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
         {mutation.isPending ? 'Liberando…' : 'Liberar OV'}
       </button>
     </div>
+  )
+}
+
+function BotaoGerarOrcamento({ pedido }: { pedido: Pedido }) {
+  const itensOV = ((pedido.itens || []) as any[]).filter(it => (it.produtos?.codigo || it.produto?.codigo))
+
+  const mutation = useMutation({
+    mutationFn: () => api.post('/crm/cotacoes', {
+      cliente_id: pedido.cliente_id,
+      cliente_cnpj: pedido.cliente?.cnpj || null,
+      canal: pedido.canal || null,
+      itens: itensOV.map((it: any) => ({
+        produto_id: it.produto_id,
+        codigo: it.produtos?.codigo || it.produto?.codigo,
+        descricao: it.produtos?.descricao || it.produto?.descricao,
+        qtd: Number(it.qtd_solicitada) || 0,
+        valor_unitario: Number(it.valor_unitario) || 0,
+      })),
+    }),
+    onSuccess: (res) => {
+      toast.success(`Orçamento ${res.data?.numero} gerado`)
+      if (res.data?.id) window.open(`/crm/cotacao/${res.data.id}/imprimir`, '_blank')
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao gerar orçamento'),
+  })
+
+  return (
+    <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !pedido.cliente_id || itensOV.length === 0}
+      className="flex items-center gap-1 text-xs text-blue-600 hover:underline disabled:opacity-50 disabled:no-underline"
+      title="Gera um orçamento imprimível com o cliente e os itens desta OV">
+      <FileText size={12} /> {mutation.isPending ? 'Gerando…' : 'Gerar orçamento'}
+    </button>
   )
 }
 
@@ -2406,16 +2447,19 @@ export function PedidoDetalhe() {
               <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="font-semibold text-gray-800">Itens da OV</h2>
-                  {editavel ? (
-                    <button onClick={() => setModal('editar_itens')}
-                      className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                      <Pencil size={12} /> Editar itens
-                    </button>
-                  ) : (
-                    <span className="text-[11px] text-gray-400" title="Depois de faturada, o item é o que está na NF">
-                      🔒 travado (faturada)
-                    </span>
-                  )}
+                  <div className="flex items-center gap-3">
+                    <BotaoGerarOrcamento pedido={pedido} />
+                    {editavel ? (
+                      <button onClick={() => setModal('editar_itens')}
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                        <Pencil size={12} /> Editar itens
+                      </button>
+                    ) : (
+                      <span className="text-[11px] text-gray-400" title="Depois de faturada, o item é o que está na NF">
+                        🔒 travado (faturada)
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {itensOV.length === 0 ? (
                   <p className="text-sm text-gray-400">Nenhum item cadastrado ainda.</p>
