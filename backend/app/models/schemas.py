@@ -198,6 +198,33 @@ class PedidoCreate(BaseModel):
         return v.strip() if v else v
 
 
+class PedidoOutboundCreate(BaseModel):
+    """Venda outbound fechada direto pelo comercial, sem passar pelo funil do
+    CRM. Mesmos dados da 'Nova OV' manual, exceto número da OV (operações
+    de vendas emite no D365 depois) e gerenciamento de crédito (não se aplica
+    aqui). O CNPJ é obrigatório porque essas vendas frequentemente envolvem
+    cliente novo/prospect ainda sem o cadastro completo."""
+    cliente_id: UUID
+    cliente_cnpj: str
+    transportadora_id: Optional[UUID] = None
+    tipo_frete: TipoFrete = TipoFrete.FOB
+    tipo_operacao: TipoOperacao = TipoOperacao.VENDA_NORMAL
+    canal: Optional[CanalVenda] = None
+    local_entrega: Optional[str] = None
+    data_prevista_entrega: date
+    prioridade: Prioridade = Prioridade.NORMAL
+    observacoes: Optional[str] = None
+    itens: list[ItemPedidoCreate] = []
+
+    @field_validator("cliente_cnpj")
+    @classmethod
+    def _valida_cnpj(cls, v: str) -> str:
+        limpo = "".join(ch for ch in (v or "") if ch.isdigit())
+        if len(limpo) != 14:
+            raise ValueError("Informe um CNPJ válido (14 dígitos).")
+        return limpo
+
+
 class ComunicadoUsoCreate(BaseModel):
     """Faturamento de estoque consignado já utilizado pelo cliente.
 

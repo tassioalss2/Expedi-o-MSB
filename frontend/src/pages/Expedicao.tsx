@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Search, Plus, Upload, RefreshCw, Info, X, FileText } from 'lucide-react'
+import { Search, Plus, Upload, RefreshCw, Info, X, FileText, Send } from 'lucide-react'
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -617,6 +617,13 @@ export function Expedicao() {
           >
             <FileText size={16} />
             Comunicado de Uso
+          </button>
+          <button
+            onClick={() => navigate('/expedicao/outbound')}
+            className="flex items-center gap-2 px-3 py-2 border border-blue-300 text-blue-700 rounded-lg text-sm hover:bg-blue-50"
+          >
+            <Send size={16} />
+            Venda Outbound
           </button>
           <button
             onClick={() => navigate('/expedicao/novo')}

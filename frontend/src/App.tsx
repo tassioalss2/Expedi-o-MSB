@@ -10,6 +10,7 @@ import { Ocorrencias } from './pages/Ocorrencias'
 import { Indicadores } from './pages/Indicadores'
 import { Cadastros } from './pages/Cadastros'
 import { NovoPedido } from './pages/NovoPedido'
+import { VendaOutbound } from './pages/VendaOutbound'
 import { PainelComercial } from './pages/PainelComercial'
 import { PrevisaoFaturamento } from './pages/PrevisaoFaturamento'
 import { Inicio } from './pages/Inicio'
@@ -71,6 +72,7 @@ export default function App() {
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="expedicao" element={<Expedicao />} />
             <Route path="expedicao/novo" element={<NovoPedido />} />
+            <Route path="expedicao/outbound" element={<VendaOutbound />} />
             <Route path="expedicao/:id" element={<PedidoDetalhe />} />
             <Route path="pallets" element={<Pallets />} />
             <Route path="ocorrencias" element={<Ocorrencias />} />

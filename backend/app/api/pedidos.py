@@ -24,6 +24,7 @@ from app.models.schemas import (
     OcorrenciaCreate,
     OcorrenciaFechar,
     PedidoCreate,
+    PedidoOutboundCreate,
     TratativaRequest,
     UsuarioOut,
 )
@@ -37,6 +38,13 @@ router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 @router.post("", status_code=201)
 def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut = Depends(get_current_user)):
     return pedido_service.criar_pedido(payload, usuario)
+
+
+@router.post("/outbound", status_code=201)
+def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut = Depends(get_current_user)):
+    """Venda outbound fechada direto pelo comercial (sem passar pelo CRM).
+    Cai no kanban em AGUARD_DADOS_OV — operações completa o número da OV depois."""
+    return pedido_service.criar_pedido_outbound(payload, usuario)
 
 
 @router.post("/comunicado-uso", status_code=201)

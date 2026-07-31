@@ -21,6 +21,7 @@ from app.models.schemas import (
     FinalizarSeparacaoRequest,
     OcorrenciaCreate,
     PedidoCreate,
+    PedidoOutboundCreate,
     TratativaRequest,
     UsuarioOut,
 )
@@ -366,6 +367,67 @@ def criar_pedido_stub_crm(oportunidade: dict, itens: list, usuario_id: str) -> d
 
     _registrar_movimentacao(pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, usuario_id,
                             f"OV criada a partir da oportunidade ganha no CRM: {oportunidade.get('titulo') or '—'}")
+    return pedido
+
+
+def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) -> dict:
+    """Venda outbound fechada direto pelo comercial, sem passar pelo CRM.
+
+    Cai no mesmo primeiro card do kanban (AGUARD_DADOS_OV) que a venda ganha
+    no CRM: o comercial já informa cliente, itens, frete e entrega — só falta
+    o número real da OV, que operações de vendas emite no D365 e completa
+    depois via `completar_dados_ov`. Sem gerenciamento de crédito aqui.
+    """
+    db = get_service_db()
+    agora = _agora()
+    import uuid as _uuid
+    numero_provisorio = f"OUT-{str(_uuid.uuid4())[:8].upper()}"
+
+    # CNPJ é obrigatório neste fluxo — grava/atualiza no cadastro do cliente
+    # para manter a base íntegra (venda outbound costuma envolver cliente
+    # novo ou com cadastro incompleto).
+    db.table("clientes").update({"cnpj": payload.cliente_cnpj}).eq("id", str(payload.cliente_id)).execute()
+
+    pedido_data = {
+        "numero_pedido": numero_provisorio,
+        "cliente_id": str(payload.cliente_id),
+        "transportadora_id": str(payload.transportadora_id) if payload.transportadora_id else None,
+        "tipo_frete": payload.tipo_frete.value if payload.tipo_frete else "FOB",
+        "tipo_operacao": payload.tipo_operacao.value if payload.tipo_operacao else "VENDA_NORMAL",
+        "canal": payload.canal.value if payload.canal else None,
+        "local_entrega": payload.local_entrega,
+        "status": StatusPedido.AGUARD_DADOS_OV.value,
+        "prioridade": payload.prioridade.value,
+        "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
+        "observacoes": payload.observacoes,
+        "criado_por": None,
+        "criado_em": agora,
+        "atualizado_em": agora,
+    }
+    resultado = db.table("pedidos").insert(pedido_data).execute()
+    pedido = resultado.data[0]
+
+    itens = [
+        {
+            "pedido_id": pedido["id"],
+            "produto_id": str(item.produto_id),
+            "lote_id": str(item.lote_id) if item.lote_id else None,
+            "qtd_solicitada": item.qtd_solicitada,
+            "valor_unitario": item.valor_unitario,
+            "status_item": "PENDENTE",
+        }
+        for item in payload.itens
+    ]
+    if itens:
+        db.table("itens_pedido").insert(itens).execute()
+
+    try:
+        db.table("pedidos").update({"data_esperada_cliente": pedido_data["data_prevista_entrega"]}).eq("id", pedido["id"]).execute()
+    except Exception:
+        pass
+
+    _registrar_movimentacao(pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, str(usuario.id),
+                            "Venda outbound lançada diretamente pelo comercial")
     return pedido
 
 
