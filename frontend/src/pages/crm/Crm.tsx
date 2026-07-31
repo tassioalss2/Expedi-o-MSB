@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Building2, FileText } from 'lucide-react'
+import { LayoutDashboard, Target, Users, CalendarClock, Handshake, Building2, FileText, Send } from 'lucide-react'
 import api from '../../lib/api'
 import { CrmDashboard } from './CrmDashboard'
 import { CrmPipeline } from './CrmPipeline'
@@ -25,6 +25,7 @@ const ABAS: { key: Aba; label: string; icone: any }[] = [
 ]
 
 export function Crm() {
+  const navigate = useNavigate()
   // `?aba=repasse` deep-linka aqui direto na fila — usado pelo card de ponte na
   // Expedição, para o clique não largar o usuário no Funil e obrigar a navegar.
   const [params] = useSearchParams()
@@ -42,9 +43,18 @@ export function Crm() {
 
   return (
     <div className="p-4 lg:p-6 max-w-[1500px] mx-auto space-y-4">
-      <div>
-        <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><Handshake size={20} /> CRM</h1>
-        <p className="text-sm text-gray-400">Gestão comercial de ponta a ponta — funil de oportunidades, contatos, atividades e previsão.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><Handshake size={20} /> CRM</h1>
+          <p className="text-sm text-gray-400">Gestão comercial de ponta a ponta — funil de oportunidades, contatos, atividades e previsão.</p>
+        </div>
+        <button
+          onClick={() => navigate('/expedicao/outbound')}
+          className="flex items-center gap-2 px-3 py-2 border border-blue-300 text-blue-700 rounded-lg text-sm hover:bg-blue-50 whitespace-nowrap"
+        >
+          <Send size={16} />
+          Venda Outbound
+        </button>
       </div>
 
       <div className="flex gap-1 border-b overflow-x-auto">
