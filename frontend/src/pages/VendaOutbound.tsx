@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, FileText } from 'lucide-react'
 import api from '../lib/api'
 import type { Transportadora } from '../types'
 import toast from 'react-hot-toast'
@@ -41,6 +41,23 @@ export function VendaOutbound() {
   const { data: transportadoras = [] } = useQuery<Transportadora[]>({
     queryKey: ['transportadoras'],
     queryFn: () => api.get('/transportadoras').then(r => r.data),
+  })
+
+  const mutationOrcamento = useMutation({
+    mutationFn: () => api.post('/crm/cotacoes', {
+      cliente_id: form.cliente_id,
+      cliente_cnpj: form.cliente_cnpj || null,
+      canal: form.canal || null,
+      itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor_unitario: i.valor || 0 })),
+    }),
+    onSuccess: (res) => {
+      toast.success(`Orçamento ${res.data?.numero} gerado`)
+      if (res.data?.id) window.open(`/crm/cotacao/${res.data.id}/imprimir`, '_blank')
+    },
+    onError: (e: any) => {
+      const detail = e.response?.data?.detail
+      toast.error(typeof detail === 'string' ? detail : 'Erro ao gerar orçamento')
+    },
   })
 
   const mutation = useMutation({
@@ -187,7 +204,15 @@ export function VendaOutbound() {
           </div>
 
           <div className="col-span-2">
-            <label className="text-sm font-medium text-gray-700">Itens *</label>
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700">Itens *</label>
+              <button type="button" onClick={() => mutationOrcamento.mutate()}
+                disabled={mutationOrcamento.isPending || !form.cliente_id || itens.length === 0}
+                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                title={!form.cliente_id || itens.length === 0 ? 'Selecione o cliente e adicione os itens' : 'Gera um orçamento imprimível com o cliente e os itens preenchidos'}>
+                <FileText size={13} /> {mutationOrcamento.isPending ? 'Gerando…' : 'Gerar Orçamento'}
+              </button>
+            </div>
             <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade. Adicione ao menos um item.</p>
             <ItensPedido value={itens} onChange={setItens} comValor />
             {itens.length === 0 && (
