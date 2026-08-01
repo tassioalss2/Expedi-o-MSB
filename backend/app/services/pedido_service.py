@@ -427,8 +427,45 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
         pass
 
     _registrar_movimentacao(pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, str(usuario.id),
-                            "Venda outbound lançada diretamente pelo comercial")
+                            _detalhes_venda_outbound(db, payload, usuario))
     return pedido
+
+
+def _detalhes_venda_outbound(db, payload: "PedidoOutboundCreate", usuario: UsuarioOut) -> str:
+    """Registro auditável de tudo que o comercial preencheu ao lançar a venda —
+    para ficar visível no histórico da OV, não só nos campos atuais (que podem
+    ser editados depois)."""
+    FRETE_LABEL = {"FOB": "FOB", "CIF_COM_VALOR": "CIF com Valor NF", "CIF_SEM_VALOR": "CIF sem Valor NF"}
+
+    cliente_res = db.table("clientes").select("nome").eq("id", str(payload.cliente_id)).execute().data
+    cliente_nome = cliente_res[0]["nome"] if cliente_res else "—"
+
+    transportadora_nome = "a definir"
+    if payload.transportadora_id:
+        t = db.table("transportadoras").select("nome").eq("id", str(payload.transportadora_id)).execute().data
+        transportadora_nome = t[0]["nome"] if t else "a definir"
+
+    produtos_ids = [str(i.produto_id) for i in payload.itens]
+    codigos = {}
+    if produtos_ids:
+        prods = db.table("produtos").select("id, codigo").in_("id", produtos_ids).execute().data
+        codigos = {p["id"]: p["codigo"] for p in prods}
+    itens_desc = "; ".join(
+        f"{codigos.get(str(i.produto_id), '?')} x{i.qtd_solicitada:g}" for i in payload.itens
+    ) or "—"
+
+    linhas = [
+        f"Venda outbound lançada por {usuario.nome}.",
+        f"Cliente: {cliente_nome} (CNPJ {payload.cliente_cnpj})",
+        f"Operação: {payload.tipo_operacao.value} · Canal: {payload.canal.value if payload.canal else '—'} · "
+        f"Frete: {FRETE_LABEL.get(payload.tipo_frete.value, payload.tipo_frete.value)} · Prioridade: {payload.prioridade.value}",
+        f"Transportadora: {transportadora_nome} · Entrega prevista: {payload.data_prevista_entrega.strftime('%d/%m/%Y')} · "
+        f"Local: {payload.local_entrega or '—'}",
+        f"Itens: {itens_desc}",
+    ]
+    if payload.observacoes:
+        linhas.append(f"Obs. do comercial: {payload.observacoes}")
+    return "\n".join(linhas)
 
 
 def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega: date,

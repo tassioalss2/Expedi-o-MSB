@@ -11,11 +11,17 @@ import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
-import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL } from '../lib/statusConfig'
+import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
 import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
+
+function formatarCnpjExibicao(v: string) {
+  const d = (v || '').replace(/\D/g, '')
+  if (d.length !== 14) return v
+  return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+}
 
 // ── Linha de info ─────────────────────────────────────────────────────────────
 function Linha({ label, valor }: { label: string; valor?: string | number | null }) {
@@ -2075,7 +2081,7 @@ export function PedidoDetalhe() {
     enabled: !!id && !!pedido && ['EM_PROCESSO_SISTEMICO', 'EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA', 'AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'].includes(pedido?.status || ''),
   })
 
-  const { data: movimentacoes = [] } = useQuery<Array<{ status_novo: string; criado_em: string }>>({
+  const { data: movimentacoes = [] } = useQuery<Array<{ status_anterior: string | null; status_novo: string; observacao: string | null; criado_em: string }>>({
     queryKey: ['movimentacoes', id],
     queryFn: () => api.get(`/pedidos/${id}/movimentacoes`).then(r => r.data),
     enabled: !!id && !!pedido,
@@ -2367,6 +2373,7 @@ export function PedidoDetalhe() {
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <h2 className="font-semibold text-gray-800 mb-3">Dados da OV</h2>
             <Linha label="Cliente" valor={pedido.cliente?.nome || pedido.cliente_nome} />
+            {pedido.cliente?.cnpj && <Linha label="CNPJ" valor={formatarCnpjExibicao(pedido.cliente.cnpj)} />}
             <Linha label="Tipo de Operação" valor={pedido.tipo_operacao ? (OPERACAO_LABEL[pedido.tipo_operacao] || pedido.tipo_operacao) : null} />
             <Linha label="Canal de Venda" valor={pedido.canal ? (CANAL_LABEL[pedido.canal] || pedido.canal) : null} />
             <div className="flex justify-between items-center py-2 border-b border-gray-50">
@@ -2601,6 +2608,33 @@ export function PedidoDetalhe() {
                 {cubagem.altura_cm && <div><span className="text-gray-500">Altura:</span> <strong>{cubagem.altura_cm} cm</strong></div>}
                 {cubagem.largura_cm && <div><span className="text-gray-500">Largura:</span> <strong>{cubagem.largura_cm} cm</strong></div>}
                 {cubagem.comprimento_cm && <div><span className="text-gray-500">Comprimento:</span> <strong>{cubagem.comprimento_cm} cm</strong></div>}
+              </div>
+            </div>
+          )}
+
+          {/* Histórico da OV — cada mudança de status com a observação registrada
+              no momento (ex.: tudo que o comercial preencheu ao lançar a venda),
+              não só os campos atuais (que podem ter sido editados depois). */}
+          {movimentacoes.length > 0 && (
+            <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+              <h2 className="font-semibold text-gray-800 mb-3">Histórico da OV</h2>
+              <div className="space-y-3">
+                {movimentacoes.map((m, i) => (
+                  <div key={i} className="pb-3 border-b border-gray-50 last:border-0 last:pb-0">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-gray-800">
+                        {m.status_anterior ? `${STATUS_CONFIG[m.status_anterior as keyof typeof STATUS_CONFIG]?.label || m.status_anterior} → ` : ''}
+                        {STATUS_CONFIG[m.status_novo as keyof typeof STATUS_CONFIG]?.label || m.status_novo}
+                      </p>
+                      <span className="text-xs text-gray-400 whitespace-nowrap ml-3">
+                        {format(new Date(m.criado_em), 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                      </span>
+                    </div>
+                    {m.observacao && (
+                      <p className="text-xs text-gray-500 mt-1 whitespace-pre-line">{m.observacao}</p>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
