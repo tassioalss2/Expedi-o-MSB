@@ -223,7 +223,7 @@ export function PainelComercial() {
   // drill-down — some da lista assim que reclassificada (canal deixa de bater
   // com o filtro 'LICITACAO' puro).
   const reclassificarCanal = useMutation({
-    mutationFn: ({ id, canal }: { id: string; canal: 'LICITACAO_URO' | 'LICITACAO_VASCULAR' }) =>
+    mutationFn: ({ id, canal }: { id: string; canal: string }) =>
       api.patch(`/pedidos/${id}/canal-licitacao`, { canal }),
     onSuccess: () => {
       toast.success('OV reclassificada')
@@ -845,6 +845,14 @@ export function PainelComercial() {
         const linhas = filtrarDetalheFin(detalheFinLista, detalheFin.categoria)
         const ehFrete = detalheFin.categoria.startsWith('frete')
         const ehLegado = detalheFin.categoria === 'canal:LICITACAO_LEGADO'
+        const ehSemCanal = detalheFin.categoria === 'canal:SEM_CANAL'
+        const podeReclassificar = ehLegado || ehSemCanal
+        const opcoesCanal = ehLegado
+          ? [{ value: 'LICITACAO_URO', label: 'Licit. Uro' }, { value: 'LICITACAO_VASCULAR', label: 'Licit. Vascular' }]
+          : [
+              { value: 'URO', label: 'Uro' }, { value: 'VASCULAR', label: 'Vascular' }, { value: 'REALCLOSURE', label: 'Realclosure' },
+              { value: 'LICITACAO_URO', label: 'Licit. Uro' }, { value: 'LICITACAO_VASCULAR', label: 'Licit. Vascular' },
+            ]
         const somaNf = linhas.reduce((a, r) => a + (r.valor_nf || 0), 0)
         const somaSemFrete = linhas.reduce((a, r) => a + (r.valor_sem_frete || 0), 0)
         const somaFrete = linhas.reduce((a, r) => a + (r.valor_frete || 0), 0)
@@ -880,7 +888,7 @@ export function PainelComercial() {
                         <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">
                           {ehFrete ? 'Frete R$' : 'Sem frete'}
                         </th>
-                        {ehLegado && <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Reclassificar</th>}
+                        {podeReclassificar && <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Reclassificar</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -902,24 +910,20 @@ export function PainelComercial() {
                           <td className="px-4 py-2.5 text-right text-gray-600">
                             {fmtMoeda(ehFrete ? r.valor_frete : r.valor_sem_frete)}
                           </td>
-                          {ehLegado && (
+                          {podeReclassificar && (
                             <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
-                              <div className="flex gap-1.5 justify-end">
-                                <button
-                                  onClick={() => reclassificarCanal.mutate({ id: r.id, canal: 'LICITACAO_URO' })}
-                                  disabled={reclassificarCanal.isPending}
-                                  className="px-2 py-1 text-xs rounded-lg border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                                >
-                                  Uro
-                                </button>
-                                <button
-                                  onClick={() => reclassificarCanal.mutate({ id: r.id, canal: 'LICITACAO_VASCULAR' })}
-                                  disabled={reclassificarCanal.isPending}
-                                  className="px-2 py-1 text-xs rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                                >
-                                  Vascular
-                                </button>
-                              </div>
+                              <select
+                                defaultValue=""
+                                disabled={reclassificarCanal.isPending}
+                                onChange={(e) => {
+                                  const canal = e.target.value
+                                  if (canal) reclassificarCanal.mutate({ id: r.id, canal: canal as any })
+                                }}
+                                className="text-xs border border-gray-300 rounded-lg px-2 py-1 disabled:opacity-50"
+                              >
+                                <option value="" disabled>Definir canal…</option>
+                                {opcoesCanal.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                              </select>
                             </td>
                           )}
                         </tr>
