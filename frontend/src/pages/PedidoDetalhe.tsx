@@ -17,6 +17,8 @@ import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
 import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
 
+const PRIORIDADE_LABEL: Record<string, string> = { NORMAL: 'Normal', ALTA: 'Alta', CRITICA: '🔴 Crítica' }
+
 function formatarCnpjExibicao(v: string) {
   const d = (v || '').replace(/\D/g, '')
   if (d.length !== 14) return v
@@ -2375,6 +2377,7 @@ export function PedidoDetalhe() {
             <Linha label="Cliente" valor={pedido.cliente?.nome || pedido.cliente_nome} />
             {pedido.cliente?.cnpj && <Linha label="CNPJ" valor={formatarCnpjExibicao(pedido.cliente.cnpj)} />}
             <Linha label="Tipo de Operação" valor={pedido.tipo_operacao ? (OPERACAO_LABEL[pedido.tipo_operacao] || pedido.tipo_operacao) : null} />
+            <Linha label="Prioridade" valor={PRIORIDADE_LABEL[pedido.prioridade] || pedido.prioridade} />
             <Linha label="Canal de Venda" valor={pedido.canal ? (CANAL_LABEL[pedido.canal] || pedido.canal) : null} />
             <div className="flex justify-between items-center py-2 border-b border-gray-50">
               <span className="text-sm text-gray-500">Tipo de Frete</span>
@@ -2391,7 +2394,7 @@ export function PedidoDetalhe() {
                 ? new Date(pedido.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')
                 : null
             } />
-            <Linha label="Transportadora" valor={pedido.transportadora?.nome || pedido.transportadora_nome} />
+            <Linha label="Transportadora" valor={pedido.transportadora?.nome || pedido.transportadora_nome || null} />
             <Linha label="NF" valor={pedido.numero_nf} />
             {pedido.codigo_rastreio && (
               <Linha label="📮 Rastreio" valor={pedido.codigo_rastreio} />

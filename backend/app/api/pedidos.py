@@ -25,6 +25,7 @@ from app.models.schemas import (
     OcorrenciaFechar,
     PedidoCreate,
     PedidoOutboundCreate,
+    ReclassificarCanalRequest,
     TratativaRequest,
     UsuarioOut,
 )
@@ -119,6 +120,13 @@ def completar_dados_ov(pedido_id: UUID, payload: GerarOVRequest,
     return pedido_service.completar_dados_ov(
         str(pedido_id), payload.numero_pedido, payload.data_prevista_entrega,
         payload.tipo_frete, payload.local_entrega, usuario)
+
+
+@router.patch("/{pedido_id}/canal-licitacao")
+def reclassificar_canal_licitacao(pedido_id: UUID, payload: ReclassificarCanalRequest,
+                                  usuario: UsuarioOut = Depends(get_current_user)):
+    """Reclassifica uma OV de licitação legado para Uro/Vascular (drill-down do Painel Comercial)."""
+    return pedido_service.reclassificar_canal_licitacao(str(pedido_id), payload.canal.value, usuario)
 
 
 @router.patch("/{pedido_id}/itens")

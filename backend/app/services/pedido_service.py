@@ -525,6 +525,23 @@ def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega
 _STATUS_ITENS_TRAVADOS = {"FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO", "CANCELADO"}
 
 
+def reclassificar_canal_licitacao(pedido_id: str, canal: str, usuario: UsuarioOut) -> dict:
+    """Reclassifica uma OV de licitação legado ('LICITACAO' puro, sem base
+    Uro/Vascular) para LICITACAO_URO ou LICITACAO_VASCULAR — usado no drill-down
+    do Painel Comercial para zerar a fila de pendências de reclassificação."""
+    db = get_service_db()
+    ped = db.table("pedidos").select("id, canal, numero_pedido, status").eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    if ped.get("canal") != "LICITACAO":
+        raise HTTPException(status_code=400, detail="Esta OV não está pendente de reclassificação de licitação.")
+
+    db.table("pedidos").update({"canal": canal, "atualizado_em": _agora()}).eq("id", pedido_id).execute()
+    _registrar_movimentacao(pedido_id, ped["status"], ped["status"], str(usuario.id),
+                            f"Canal reclassificado: licitação (legado) → {canal}")
+    return obter_pedido(pedido_id)
+
+
 def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut) -> dict:
     """Substitui os itens de uma OV inteira — ex.: item sem estoque trocado por
     outro antes de faturar. Depois de FATURADO os itens são o que está na NF."""

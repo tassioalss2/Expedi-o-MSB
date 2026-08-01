@@ -181,6 +181,12 @@ export function PainelComercial() {
   const filtrarDetalheFin = (rows: any[], categoria: string) => {
     if (categoria === 'sem_faturamento') return rows.filter(r => !r.eh_faturamento)
     // Vendas por canal / cliente (escopo Vendas: faturamento, sem Biomedical/Esterilize)
+    // Só as OVs de licitação que ainda não foram reclassificadas em Uro/Vascular
+    // (canal 'LICITACAO' puro — legado). Diferente de canal:LICITACAO, que é
+    // informativo e inclui também as já reclassificadas.
+    if (categoria === 'canal:LICITACAO_LEGADO') {
+      return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '') && r.canal === 'LICITACAO')
+    }
     if (categoria.startsWith('canal:')) {
       const k = categoria.slice(6)
       // Licitação é dobrada no canal base: canal:URO inclui LICITACAO_URO, etc.
@@ -212,6 +218,21 @@ export function PainelComercial() {
     FOB: 'FOB', CIF_COM_VALOR: 'CIF c/ valor', CIF_SEM_VALOR: 'CIF s/ valor',
   }
   const fmtMoeda = (v: number) => `R$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  // Reclassifica uma OV de licitação legado (sem base Uro/Vascular) direto no
+  // drill-down — some da lista assim que reclassificada (canal deixa de bater
+  // com o filtro 'LICITACAO' puro).
+  const reclassificarCanal = useMutation({
+    mutationFn: ({ id, canal }: { id: string; canal: 'LICITACAO_URO' | 'LICITACAO_VASCULAR' }) =>
+      api.patch(`/pedidos/${id}/canal-licitacao`, { canal }),
+    onSuccess: () => {
+      toast.success('OV reclassificada')
+      qc.invalidateQueries({ queryKey: ['financeiro-detalhe'] })
+      qc.invalidateQueries({ queryKey: ['financeiro'] })
+      qc.invalidateQueries({ queryKey: ['vendas-por-canal'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao reclassificar'),
+  })
 
   return (
     <div className="p-6 space-y-6">
@@ -652,9 +673,9 @@ export function PainelComercial() {
               })}
               {licitLegado && licitLegado.valor > 0 && (
                 <div
-                  onClick={() => setDetalheFin({ categoria: 'canal:LICITACAO', titulo: 'Vendas · Licitação (legado)' })}
+                  onClick={() => setDetalheFin({ categoria: 'canal:LICITACAO_LEGADO', titulo: 'Licitação (legado) — reclassificar em Uro/Vascular' })}
                   className="pt-3 border-t border-dashed border-gray-200 flex items-baseline justify-between gap-2 text-gray-500 cursor-pointer hover:bg-gray-50 rounded-lg -mx-1 px-1 transition-colors"
-                  title="Ver as NFs de licitação sem base Uro/Vascular"
+                  title="Ver e reclassificar as NFs de licitação sem base Uro/Vascular"
                 >
                   <span className="text-sm flex-1">Licitação <span className="text-xs text-amber-500">(legado — reclassificar em Uro/Vascular)</span></span>
                   <span className="text-xs text-gray-400 tabular-nums">{licitLegado.qtd} NF</span>
@@ -823,6 +844,7 @@ export function PainelComercial() {
       {detalheFin !== null && (() => {
         const linhas = filtrarDetalheFin(detalheFinLista, detalheFin.categoria)
         const ehFrete = detalheFin.categoria.startsWith('frete')
+        const ehLegado = detalheFin.categoria === 'canal:LICITACAO_LEGADO'
         const somaNf = linhas.reduce((a, r) => a + (r.valor_nf || 0), 0)
         const somaSemFrete = linhas.reduce((a, r) => a + (r.valor_sem_frete || 0), 0)
         const somaFrete = linhas.reduce((a, r) => a + (r.valor_frete || 0), 0)
@@ -858,6 +880,7 @@ export function PainelComercial() {
                         <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">
                           {ehFrete ? 'Frete R$' : 'Sem frete'}
                         </th>
+                        {ehLegado && <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500">Reclassificar</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -879,6 +902,26 @@ export function PainelComercial() {
                           <td className="px-4 py-2.5 text-right text-gray-600">
                             {fmtMoeda(ehFrete ? r.valor_frete : r.valor_sem_frete)}
                           </td>
+                          {ehLegado && (
+                            <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex gap-1.5 justify-end">
+                                <button
+                                  onClick={() => reclassificarCanal.mutate({ id: r.id, canal: 'LICITACAO_URO' })}
+                                  disabled={reclassificarCanal.isPending}
+                                  className="px-2 py-1 text-xs rounded-lg border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                                >
+                                  Uro
+                                </button>
+                                <button
+                                  onClick={() => reclassificarCanal.mutate({ id: r.id, canal: 'LICITACAO_VASCULAR' })}
+                                  disabled={reclassificarCanal.isPending}
+                                  className="px-2 py-1 text-xs rounded-lg border border-rose-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                                >
+                                  Vascular
+                                </button>
+                              </div>
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -887,6 +930,7 @@ export function PainelComercial() {
                         <td className="px-4 py-3" colSpan={5}>{linhas.length} NF(s)</td>
                         <td className="px-4 py-3 text-right">{fmtMoeda(somaNf)}</td>
                         <td className="px-4 py-3 text-right">{fmtMoeda(ehFrete ? somaFrete : somaSemFrete)}</td>
+                        {ehLegado && <td className="px-4 py-3" />}
                       </tr>
                     </tfoot>
                   </table>

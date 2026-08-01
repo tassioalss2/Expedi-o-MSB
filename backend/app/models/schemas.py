@@ -151,6 +151,19 @@ class EditarItensRequest(BaseModel):
     itens: list[ItemPedidoCreate]
 
 
+class ReclassificarCanalRequest(BaseModel):
+    """Reclassifica uma OV de licitação legado (canal 'LICITACAO' puro, sem
+    base Uro/Vascular) para o canal correto."""
+    canal: CanalVenda
+
+    @field_validator("canal")
+    @classmethod
+    def _so_licitacao(cls, v: CanalVenda) -> CanalVenda:
+        if v not in (CanalVenda.LICITACAO_URO, CanalVenda.LICITACAO_VASCULAR):
+            raise ValueError("Reclassifique para Licitação - Uro ou Licitação - Vascular.")
+        return v
+
+
 class ItemPedidoOut(BaseModel):
     id: UUID
     produto_id: UUID
