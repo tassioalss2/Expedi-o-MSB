@@ -526,19 +526,21 @@ _STATUS_ITENS_TRAVADOS = {"FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO", "
 
 
 def reclassificar_canal_licitacao(pedido_id: str, canal: str, usuario: UsuarioOut) -> dict:
-    """Reclassifica uma OV de licitação legado ('LICITACAO' puro, sem base
-    Uro/Vascular) para LICITACAO_URO ou LICITACAO_VASCULAR — usado no drill-down
-    do Painel Comercial para zerar a fila de pendências de reclassificação."""
+    """Reclassifica para LICITACAO_URO/LICITACAO_VASCULAR uma OV que ainda não
+    tem essa base definida — canal legado ('LICITACAO' puro) ou sem canal
+    nenhum. Usada no drill-down do Painel Comercial (filas "Licitação legado"
+    e "Sem canal") para zerar as pendências de classificação."""
     db = get_service_db()
     ped = db.table("pedidos").select("id, canal, numero_pedido, status").eq("id", pedido_id).single().execute().data
     if not ped:
         raise HTTPException(status_code=404, detail="OV não encontrada")
-    if ped.get("canal") != "LICITACAO":
-        raise HTTPException(status_code=400, detail="Esta OV não está pendente de reclassificação de licitação.")
+    canal_atual = ped.get("canal")
+    if canal_atual not in ("LICITACAO", None):
+        raise HTTPException(status_code=400, detail="Esta OV já tem canal definido — não está pendente de reclassificação.")
 
     db.table("pedidos").update({"canal": canal, "atualizado_em": _agora()}).eq("id", pedido_id).execute()
     _registrar_movimentacao(pedido_id, ped["status"], ped["status"], str(usuario.id),
-                            f"Canal reclassificado: licitação (legado) → {canal}")
+                            f"Canal reclassificado: {canal_atual or 'sem canal'} → {canal}")
     return obter_pedido(pedido_id)
 
 
