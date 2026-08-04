@@ -393,18 +393,22 @@ export function PainelComercial() {
                 </span>
                 <span className="text-right">
                   <span className="block text-sm font-semibold text-purple-700">
-                    R$ {Number(financeiro.transfer_price?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {Number(financeiro.transfer_price_liquido?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
-                  <span className="block text-[11px] text-gray-400">não entra na meta</span>
+                  <span className="block text-[11px] text-gray-400">
+                    {(financeiro.devolucoes_transfer?.qtd_nfs || 0) > 0
+                      ? `líquido de devolução · não entra na meta`
+                      : 'não entra na meta'}
+                  </span>
                 </span>
               </div>
               <div
                 onClick={() => setDetalheFin({ categoria: 'todos', titulo: 'Faturamento — todas as NFs' })}
                 className="flex items-center justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
               >
-                <span className="text-xs text-gray-400">Total faturado (Vendas + Transfer)</span>
+                <span className="text-xs text-gray-400">Total líquido (Vendas + Transfer)</span>
                 <span className="text-sm font-medium text-gray-500">
-                  R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {Number(financeiro.faturamento_liquido?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
               <button

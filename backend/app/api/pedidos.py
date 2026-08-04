@@ -500,7 +500,21 @@ def _faturados_no_periodo(inicio: date, fim: date) -> dict:
             continue
         if inicio <= data_brt <= fim:
             faturados[pid] = data_brt.isoformat()
-    return faturados
+    if not faturados:
+        return faturados
+
+    # Faturamento é nota fiscal: sem número de NF, o pedido não conta. A
+    # movimentação de FATURADO fica no histórico mesmo quando a OV volta atrás
+    # no fluxo e a NF é removida (caso real: NF digitada por engano, OV
+    # devolvida para Liberado) — sem este corte, o frete dela continuava sendo
+    # descontado do faturamento e derrubava o total.
+    ids = list(faturados.keys())
+    com_nf: set = set()
+    for i in range(0, len(ids), 40):
+        rows = db.table("pedidos").select("id, numero_nf")\
+            .in_("id", ids[i:i + 40]).execute().data
+        com_nf.update(r["id"] for r in rows if (r.get("numero_nf") or "").strip())
+    return {pid: dia for pid, dia in faturados.items() if pid in com_nf}
 
 
 @router.get("/dashboard/financeiro")
@@ -572,13 +586,16 @@ def dashboard_financeiro(
             "transfer_price": vazio,
             "outras_vendas": vazio,
             "devolucoes": vazio,
+            "devolucoes_transfer": vazio,
             "outras_vendas_liquido": vazio,
+            "transfer_price_liquido": vazio,
+            "faturamento_liquido": vazio,
             "sem_faturamento": [],
         }
 
     ids = list(faturados.keys())
     pedidos = db.table("pedidos").select(
-        "id, valor_nf, valor_produtos, valor_frete, tipo_frete, tipo_operacao, status, clientes(nome)"
+        "id, numero_nf, valor_nf, valor_produtos, valor_frete, tipo_frete, tipo_operacao, status, clientes(nome)"
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
     # Só entram no faturamento bruto venda normal e comunicado de uso.
@@ -589,22 +606,33 @@ def dashboard_financeiro(
     # Devolução: nota de entrada estornando uma venda anterior. Não soma no
     # bruto, mas precisa subtrair do líquido — é o "Valor correto" do D365.
     devolucoes = [p for p in pedidos if _eh_devolucao(p) and not _eh_biomedical(p)]
-    resumo_devolucoes = _resumo(devolucoes)
-    resumo_outras = _resumo(outras)
-    outras_liquido = {
-        **resumo_outras,
-        "total_nf": round(resumo_outras["total_nf"] + resumo_devolucoes["total_nf"], 2),
-        "faturamento_sem_frete": round(resumo_outras["faturamento_sem_frete"] + resumo_devolucoes["faturamento_sem_frete"], 2),
-    }
+    devolucoes_transfer = [p for p in pedidos if _eh_devolucao(p) and _eh_biomedical(p)]
 
+    def _liquido(bruto: dict, devolucao: dict) -> dict:
+        return {
+            **bruto,
+            "total_nf": round(bruto["total_nf"] + devolucao["total_nf"], 2),
+            "faturamento_sem_frete": round(
+                bruto["faturamento_sem_frete"] + devolucao["faturamento_sem_frete"], 2),
+        }
+
+    resumo_outras = _resumo(outras)
+    resumo_devolucoes = _resumo(devolucoes)
+    resumo_transfer = _resumo(transfer)
+    resumo_dev_transfer = _resumo(devolucoes_transfer)
     total = _resumo(faturaveis)
+    total_devolucoes = _resumo(devolucoes + devolucoes_transfer)
+
     return {
         "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
         **total,
-        "transfer_price": _resumo(transfer),
+        "transfer_price": resumo_transfer,
         "outras_vendas": resumo_outras,
         "devolucoes": resumo_devolucoes,
-        "outras_vendas_liquido": outras_liquido,
+        "devolucoes_transfer": resumo_dev_transfer,
+        "outras_vendas_liquido": _liquido(resumo_outras, resumo_devolucoes),
+        "transfer_price_liquido": _liquido(resumo_transfer, resumo_dev_transfer),
+        "faturamento_liquido": _liquido(total, total_devolucoes),
         "sem_faturamento": _sem_faturamento(pedidos),
     }
 
