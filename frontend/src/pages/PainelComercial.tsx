@@ -182,7 +182,9 @@ export function PainelComercial() {
   })
 
   const filtrarDetalheFin = (rows: any[], categoria: string) => {
-    if (categoria === 'sem_faturamento') return rows.filter(r => !r.eh_faturamento)
+    // Devolução não é faturamento, mas também não é "operação sem faturamento"
+    // (bonificação/amostra/consignado) — tem card próprio.
+    if (categoria === 'sem_faturamento') return rows.filter(r => !r.eh_faturamento && !r.eh_devolucao)
     if (categoria === 'devolucoes') return rows.filter(r => r.eh_devolucao && !r.eh_biomedical)
     // Vendas por canal / cliente (escopo Vendas: faturamento, sem Biomedical/Esterilize)
     // Só as OVs de licitação que ainda não foram reclassificadas em Uro/Vascular
@@ -207,14 +209,18 @@ export function PainelComercial() {
       const d = categoria.slice(4)
       return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '') && r.data === d)
     }
-    // Demais categorias refletem só o que é faturamento (bate com os totais do card)
+    // Demais categorias refletem só o que é faturamento (bate com os totais do card).
+    // Transfer/outras incluem as devoluções do grupo, porque os números
+    // mostrados no card são líquidos — sem isso a lista não fecha com o total.
     const fat = rows.filter(r => r.eh_faturamento)
+    const fatComDev = rows.filter(r => r.eh_faturamento || r.eh_devolucao)
     switch (categoria) {
-      case 'transfer': return fat.filter(r => r.eh_biomedical)
-      case 'outras': return fat.filter(r => !r.eh_biomedical)
+      case 'transfer': return fatComDev.filter(r => r.eh_biomedical)
+      case 'outras': return fatComDev.filter(r => !r.eh_biomedical)
       case 'frete_todos': return fat.filter(r => r.valor_frete > 0)
       case 'frete_ressarcido': return fat.filter(r => r.tipo_frete === 'CIF_COM_VALOR' && r.valor_frete > 0)
       case 'frete_proprio': return fat.filter(r => r.tipo_frete === 'CIF_SEM_VALOR' && r.valor_frete > 0)
+      case 'todos': return fatComDev
       default: return fat
     }
   }
