@@ -795,43 +795,51 @@ def vendas_por_produto(
     data_fim: date = Query(...),
     _: UsuarioOut = Depends(get_current_user),
 ):
-    """Quantidade vendida por produto, a partir da coluna "Venda" do inventário
-    contínuo (inventario_contagens.qtd_venda), agrupada por código de produto.
+    """Quantidade vendida por produto, a partir dos itens das OVs faturadas no
+    período — mesmo escopo de "Vendas" dos demais cards (venda normal e
+    comunicado de uso, sem Transfer Price nem Esterilize).
 
-    Atenção: o período é pela DATA DA CONTAGEM (contado_em), não pela data de
-    faturamento da NF — é uma medida de unidades vendidas, não de R$.
+    Antes usava a coluna "Venda" do inventário contínuo (por data da
+    contagem física, não da NF) — trocado porque contagem é um passo
+    operacional, não a origem da venda; a OV é.
     """
     from app.core.database import get_service_db
     db = get_service_db()
 
-    ini = f"{data_inicio.isoformat()}T00:00:00"
-    fim = f"{data_fim.isoformat()}T23:59:59"
-    contagens = db.table("inventario_contagens").select(
-        "codigo_produto, descricao_produto, qtd_venda, contado_em"
-    ).gte("contado_em", ini).lte("contado_em", fim).execute().data
+    faturados = _faturados_no_periodo(data_inicio, data_fim)
+    if not faturados:
+        return []
 
-    # Descrição pelo cadastro de produtos (a contagem nem sempre traz).
-    produtos = db.table("produtos").select("codigo, descricao").execute().data
-    desc_por_codigo = {p["codigo"]: p.get("descricao") for p in produtos if p.get("codigo")}
+    ids = list(faturados.keys())
+    pedidos: list = []
+    for i in range(0, len(ids), 40):
+        pedidos += db.table("pedidos").select(
+            "id, tipo_operacao, status, clientes(nome)"
+        ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
+
+    ids_vendas = [
+        p["id"] for p in pedidos
+        if _conta_faturamento(p) and not _eh_biomedical(p)
+        and "ESTERILIZE" not in ((p.get("clientes") or {}).get("nome") or "").upper()
+    ]
+    if not ids_vendas:
+        return []
+
+    itens: list = []
+    for i in range(0, len(ids_vendas), 40):
+        itens += db.table("itens_pedido").select(
+            "pedido_id, qtd_solicitada, produtos(codigo, descricao)"
+        ).in_("pedido_id", ids_vendas[i:i + 40]).execute().data
 
     agg: dict = {}
-    for c in contagens:
-        qtd = float(c.get("qtd_venda") or 0)
-        if qtd <= 0:
+    for it in itens:
+        qtd = float(it.get("qtd_solicitada") or 0)
+        produto = it.get("produtos") or {}
+        cod = (produto.get("codigo") or "").strip()
+        if qtd <= 0 or not cod:
             continue
-        cod = (c.get("codigo_produto") or "").strip()
-        if not cod:
-            continue
-        g = agg.setdefault(cod, {
-            "codigo": cod,
-            "descricao": c.get("descricao_produto") or desc_por_codigo.get(cod) or None,
-            "qtd": 0.0,
-            "contagens": 0,
-        })
+        g = agg.setdefault(cod, {"codigo": cod, "descricao": produto.get("descricao"), "qtd": 0.0})
         g["qtd"] += qtd
-        g["contagens"] += 1
-        if not g["descricao"]:
-            g["descricao"] = c.get("descricao_produto") or desc_por_codigo.get(cod)
 
     for g in agg.values():
         g["qtd"] = round(g["qtd"], 2)

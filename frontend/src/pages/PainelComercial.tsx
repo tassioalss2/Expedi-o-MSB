@@ -118,8 +118,8 @@ export function PainelComercial() {
     refetchInterval: 60000,
   })
 
-  // Vendas por produto (quantidade) — vem da coluna "Venda" do inventário contínuo
-  const { data: vendasProduto = [] } = useQuery<Array<{ codigo: string; descricao: string | null; qtd: number; contagens: number }>>({
+  // Vendas por produto (quantidade) — itens das OVs faturadas no período
+  const { data: vendasProduto = [] } = useQuery<Array<{ codigo: string; descricao: string | null; qtd: number }>>({
     queryKey: ['vendas-por-produto', inicioFinanceiro, fimFinanceiro],
     queryFn: () => api.get('/pedidos/dashboard/vendas-por-produto', {
       params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
@@ -790,14 +790,14 @@ export function PainelComercial() {
         })()}
       </div>
 
-      {/* Vendas por Produto (quantidade) — do inventário contínuo */}
+      {/* Vendas por Produto (quantidade) — itens das OVs faturadas */}
       <div id="produtos" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-sm font-semibold text-gray-700">Vendas por Produto</h2>
           <span className="text-xs text-gray-400">{vendasProduto.length} produto(s)</span>
         </div>
         <p className="text-xs text-gray-400 mb-4">
-          Quantidade vendida (coluna “Venda” do inventário contínuo) · por data da contagem · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}
+          Quantidade vendida (itens das OVs) · por data de faturamento · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}
         </p>
         {vendasProduto.length === 0 ? (
           <p className="text-center text-gray-400 py-6 text-sm">Nenhuma venda registrada no período</p>
