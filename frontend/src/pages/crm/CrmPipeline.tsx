@@ -17,6 +17,7 @@ import {
   fmtBRL, fmtBRLcurto, fmtData, fmtDataHora, prazoCor, msgErro, type EstagioKey,
 } from '../../lib/crm'
 import { ModalBase, Campo, inputCls, InputMoeda } from './CrmShared'
+import { hojeLocal } from '../../lib/dataLocal'
 
 // CRM é do comercial — licitação NÃO entra aqui (tem módulo próprio).
 const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE']
@@ -1215,7 +1216,7 @@ function ModalPerder({ id, onClose, onSaved }: { id: string; onClose: () => void
 
 function ModalGerarOV({ opp, onClose, onSaved }: { opp: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const [numero, setNumero] = useState('')
   const [tipoFrete, setTipoFrete] = useState('FOB')
   const [dataEntrega, setDataEntrega] = useState('')

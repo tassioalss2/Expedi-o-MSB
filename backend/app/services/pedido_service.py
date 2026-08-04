@@ -31,6 +31,14 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _hoje_brt() -> date:
+    """`date.today()` puro usa o fuso do servidor (Render = UTC) — entre 21h e
+    23h59 no horário de Brasília (UTC-3) isso já é 'amanhã' em UTC, adiantando
+    em até 3h qualquer comparação de 'hoje' (flag de atrasado, filtro de
+    período etc). Sempre usar esta função para a data de negócio do dia."""
+    return (datetime.now(timezone.utc) - timedelta(hours=3)).date()
+
+
 def _enviar_teams(texto: str) -> None:
     """Envia uma mensagem ao canal Teams da expedição (silencioso se não houver webhook)."""
     from app.core.config import settings
@@ -353,7 +361,7 @@ def criar_pedido_stub_crm(oportunidade: dict, itens: list, usuario_id: str) -> d
     agora = _agora()
     import uuid as _uuid
     numero_provisorio = f"CRM-{str(_uuid.uuid4())[:8].upper()}"
-    data_provisoria = (date.today() + timedelta(days=7)).isoformat()
+    data_provisoria = (_hoje_brt() + timedelta(days=7)).isoformat()
 
     itens_validos = [i for i in itens if i.get("produto_id") and float(i.get("qtd") or 0) > 0]
     valor_estimado = float(oportunidade.get("valor_estimado") or 0)
@@ -619,7 +627,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
         )
     _validar_nf_unica(db, payload.numero_nf)
 
-    data_fat = payload.data_faturamento or date.today()
+    data_fat = payload.data_faturamento or _hoje_brt()
     # Meio-dia UTC = 09h BRT — garante que a data BRT do faturamento seja a escolhida.
     ts_fat = f"{data_fat.isoformat()}T12:00:00+00:00"
     data_proc = getattr(payload, "data_procedimento", None)
@@ -841,7 +849,7 @@ def listar_familia(numero_pedido: str) -> list[dict]:
         .order("remessa_numero")
         .execute()
     )
-    hoje = date.today().isoformat()
+    hoje = _hoje_brt().isoformat()
     for p in resultado.data:
         p["atrasado"] = False
     return resultado.data
@@ -876,7 +884,7 @@ def listar_pedidos(
     resultado = query.order("prioridade", desc=True).order("data_prevista_entrega").execute()
     pedidos = resultado.data
 
-    hoje = date.today().isoformat()
+    hoje = _hoje_brt().isoformat()
     for p in pedidos:
         p["atrasado"] = (
             p["data_prevista_entrega"] < hoje
@@ -946,7 +954,7 @@ def obter_pedido(pedido_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
     p = resultado.data
-    hoje = date.today().isoformat()
+    hoje = _hoje_brt().isoformat()
     p["atrasado"] = (
         p["data_prevista_entrega"] < hoje
         and p["status"] not in (StatusPedido.EXPEDIDO.value, StatusPedido.CANCELADO.value)
@@ -1314,7 +1322,7 @@ def fechar_ocorrencia(ocorrencia_id: str, resolucao: str, usuario: UsuarioOut) -
 
 def obter_dashboard_operacional() -> dict:
     db = get_service_db()
-    hoje = date.today().isoformat()
+    hoje = _hoje_brt().isoformat()
 
     # Comunicado de uso não é logística — fora das contagens operacionais.
     todos = db.table("pedidos").select("status, data_prevista_entrega")\
@@ -1652,7 +1660,7 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
 def obter_horario_criacao(data_inicio: Optional[date] = None, data_fim: Optional[date] = None) -> list:
     from datetime import timedelta
     db = get_service_db()
-    hoje = date.today()
+    hoje = _hoje_brt()
     inicio = data_inicio or (hoje - timedelta(days=29))
     fim = data_fim or hoje
 
@@ -1679,7 +1687,7 @@ def obter_horario_criacao(data_inicio: Optional[date] = None, data_fim: Optional
 def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None, data_fim: Optional[date] = None) -> list:
     from datetime import timedelta
     db = get_service_db()
-    hoje = date.today()
+    hoje = _hoje_brt()
     inicio = data_inicio or (hoje - timedelta(days=29))
     fim = data_fim or hoje
 
@@ -1717,7 +1725,7 @@ def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None,
 def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[date] = None) -> dict:
     from datetime import timedelta
     db = get_service_db()
-    hoje = date.today()
+    hoje = _hoje_brt()
     # Default: mês corrente (não os últimos 30 dias).
     inicio = data_inicio or date(hoje.year, hoje.month, 1)
     fim = data_fim or hoje
@@ -1814,7 +1822,7 @@ def obter_gargalo_etapas(data_inicio: Optional[date] = None, data_fim: Optional[
     etapa e a seguinte, e tira a média por etapa sobre as OVs do período.
     """
     db = get_service_db()
-    hoje = date.today()
+    hoje = _hoje_brt()
     inicio = data_inicio or date(hoje.year, hoje.month, 1)
     fim = data_fim or hoje
 

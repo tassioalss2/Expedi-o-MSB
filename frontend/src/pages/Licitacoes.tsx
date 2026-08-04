@@ -12,6 +12,7 @@ import { ClienteAutocomplete } from './NovoPedido'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
+import { hojeLocal } from '../lib/dataLocal'
 
 const CANAIS = ['LICITACAO_URO', 'LICITACAO_VASCULAR', 'URO', 'VASCULAR', 'REALCLOSURE']
 
@@ -137,7 +138,7 @@ const podeMarcarSemEstoque = (d: any) =>
 function riscoMulta(d: any): boolean {
   if (!semEstoque(d) || !d.prazo) return false
   const prev = d.estoque?.previsao_pcp
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   return (!!prev && prev > d.prazo) || d.prazo < hoje
 }
 const diasParado = (iso?: string) => iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : 0
@@ -264,10 +265,7 @@ function PainelDemandas() {
   })
 
   // Data de hoje no fuso local (para comparar prazos)
-  const hojeISO = useMemo(() => {
-    const d = new Date()
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
-  }, [])
+  const hojeISO = useMemo(() => hojeLocal(), [])
 
   // KPIs de controle — calculados sobre TODAS as demandas do painel.
   // "Parado" = sem movimento (mede pelo último update, não pela criação).
@@ -1285,7 +1283,7 @@ function ModalConcluirManual({ demanda, onClose, onSaved }: { demanda: any; onCl
 // ── Modal: Processar (gera contrato ou comunicado) ───────────────────────────────
 function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
   const cfg = TIPO_MAP[demanda.tipo_operacao] || TIPOS[0]
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const tipo: TipoKey = demanda.tipo_operacao
 
   const ehComunicadoTipo = demanda.tipo_operacao === 'COMUNICADO_USO'
@@ -1296,7 +1294,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const [numeroPregao, setNumeroPregao] = useState(demanda.numero_pregao || '')
   const [gerarOvJunto, setGerarOvJunto] = useState(false)
   const [ovNumero, setOvNumero] = useState('')
-  const [dataEntregaOv, setDataEntregaOv] = useState(new Date().toISOString().slice(0, 10))
+  const [dataEntregaOv, setDataEntregaOv] = useState(hojeLocal())
   const [clienteId, setClienteId] = useState(demanda.cliente_id || '')
   const [clienteNome, setClienteNome] = useState(demanda.cliente || '')
   const [canal, setCanal] = useState(demanda.canal || '')
@@ -1596,7 +1594,7 @@ function AbaRelatorio() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `relatorio-licitacoes-${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `relatorio-licitacoes-${hojeLocal()}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -1861,7 +1859,7 @@ function AbaContratos() {
 
 // ── Novo / Editar Pregão (mestre, com o total ganho) ─────────────────────────────
 function ModalNovoPregao({ onClose, onSaved, pregao }: { onClose: () => void; onSaved: () => void; pregao?: any }) {
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const edicao = !!pregao?.id
   const [tipo, setTipo] = useState<'VENDA_DIRETA' | 'CONSIGNACAO'>(pregao?.tipo === 'CONSIGNACAO' ? 'CONSIGNACAO' : 'VENDA_DIRETA')
   const [numero, setNumero] = useState(pregao?.numero || '')
@@ -2050,7 +2048,7 @@ function ModalPregaoMestre({ pregao, onClose, onAbrirNE, onChanged }: {
 // ── Nova NE dentro do pregão (consome o saldo por item) ──────────────────────────
 function ModalNovaNE({ pregao, onClose, onSaved }: { pregao: any; onClose: () => void; onSaved: () => void }) {
   const [numero, setNumero] = useState('')
-  const [data, setData] = useState(new Date().toISOString().slice(0, 10))
+  const [data, setData] = useState(hojeLocal())
   const [vigencia, setVigencia] = useState('')
   // Mostra TODOS os itens do pregão, não só os com saldo: em pregões
   // convertidos de contratos antigos o total é presumido (= o já empenhado),
@@ -2239,7 +2237,7 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
 // ── Gerar OV de uma venda direta / consignação (a partir da demanda) ─────────────
 function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const semItens = (demanda.itens || []).length === 0
   // Demanda sem itens na triagem: o saldo vem do PREGÃO (o backend aceita e grava
   // esses itens na demanda), senão a tela travaria em "sem saldo a faturar".
@@ -2628,7 +2626,7 @@ function ModalFrete({ demanda, onClose, onSaved }: { demanda: any; onClose: () =
 
 // ── Enviar NF ao cliente (fechamento) ────────────────────────────────────────────
 function ModalEnviarNF({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   // NF já registrada no faturamento da OV vinculada → pré-preenche (sem redigitar)
   const nfDaOv = (demanda.ovs_detalhe || []).map((o: any) => o.nf).find(Boolean) || ''
   const [numero, setNumero] = useState(demanda.nf?.numero || nfDaOv)
@@ -2671,7 +2669,7 @@ function ModalEnviarNF({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 // ── Entrega parcial de venda direta (gera OV) ────────────────────────────────────
 function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const comSaldo = emp.itens.filter((i: any) => i.qtd_saldo > 0)
   const [numero, setNumero] = useState('')
   const [tipoFrete, setTipoFrete] = useState('FOB')
@@ -2759,7 +2757,7 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
 }
 
 function ModalConsumo({ emp, onClose, onSaved }: { emp: any; onClose: () => void; onSaved: () => void }) {
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const comSaldo = emp.itens.filter((i: any) => i.qtd_saldo > 0)
   const [numero, setNumero] = useState('')
   const [nf, setNf] = useState('')

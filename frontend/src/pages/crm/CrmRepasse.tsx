@@ -12,6 +12,7 @@ import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { CANAL_LABEL } from '../../lib/statusConfig'
 import { fmtBRL, fmtData, fmtDataHora, msgErro } from '../../lib/crm'
+import { hojeLocal } from '../../lib/dataLocal'
 import { ModalBase, Campo, inputCls } from './CrmShared'
 import { LocalEntregaInput } from '../../components/LocalEntregaInput'
 
@@ -91,7 +92,7 @@ export function CrmRepasse() {
                       {f.canal && <span>{CANAL_LABEL[f.canal] || f.canal}</span>}
                       <span className={atrasada ? 'text-amber-700 font-medium flex items-center gap-1' : 'flex items-center gap-1'}>
                         <Clock size={11} />
-                        ganha {fmtData(f.ganho_em?.slice(0, 10))}
+                        ganha {fmtData(f.ganho_em)}
                         {f.dias_esperando > 0 && ` · ${f.dias_esperando}d esperando`}
                       </span>
                     </div>
@@ -141,7 +142,7 @@ export function CrmRepasse() {
  *  o número que operações acabou de gerar, herdando cliente, canal e itens. */
 function ModalCadastrarOV({ repasse, onClose, onSaved }: { repasse: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const [numero, setNumero] = useState('')
   const [tipoFrete, setTipoFrete] = useState('FOB')
   const [dataEntrega, setDataEntrega] = useState('')

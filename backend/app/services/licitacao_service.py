@@ -12,12 +12,13 @@ from app.models.schemas import (
     EntregaVendaDiretaCreate,
     UsuarioOut,
 )
+from app.services import pedido_service
 
 
 def _status(vigencia: Optional[str], saldo_un: float, empenhado_un: float) -> str:
     if empenhado_un > 0 and saldo_un <= 0.001:
         return "CONCLUIDO"
-    vencido = bool(vigencia and vigencia < date.today().isoformat())
+    vencido = bool(vigencia and vigencia < pedido_service._hoje_brt().isoformat())
     if vencido:
         return "VENCIDO"
     if saldo_un < empenhado_un:

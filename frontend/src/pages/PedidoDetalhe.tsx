@@ -14,6 +14,7 @@ import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
+import { hojeLocal } from '../lib/dataLocal'
 import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
 
@@ -1959,7 +1960,7 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
     (pedido.tipo_frete as any) || 'FOB'
   )
   const [local, setLocal] = useState(pedido.local_entrega || '')
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
 
   const mutation = useMutation({
     mutationFn: () => api.patch(`/pedidos/${pedido.id}/completar-dados-crm`, {

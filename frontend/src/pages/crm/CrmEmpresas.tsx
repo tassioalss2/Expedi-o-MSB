@@ -8,7 +8,7 @@ import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { ClienteAutocomplete } from '../NovoPedido'
 import { CANAL_LABEL } from '../../lib/statusConfig'
-import { msgErro } from '../../lib/crm'
+import { msgErro, fmtData } from '../../lib/crm'
 import { ModalBase, Campo, inputCls } from './CrmShared'
 
 // Licitação não entra: nasce e vive no módulo de Licitações.
@@ -491,7 +491,7 @@ function ModalEmpresa({ empresa, opcoes, onClose, onSaved }: {
                   <History size={13} /> Qualificação anterior
                 </p>
                 <p className="text-[11px] text-orange-700 mt-0.5">
-                  Encerrada em {String(anterior.encerrada_em || '').slice(0, 10)}
+                  Encerrada em {fmtData(anterior.encerrada_em)}
                   {anterior.motivo_encerramento === 'RETORNO_1_ANO' && ' — 1 ano sem movimentação'}
                   {anterior.score != null && ` · score ${anterior.score}`}
                 </p>

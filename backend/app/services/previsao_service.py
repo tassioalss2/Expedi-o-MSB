@@ -534,7 +534,7 @@ def _previsao_estatistica(db, hoje: date, inicio: date, fim: date, realizado: fl
 
 def resumo() -> dict:
     db = get_service_db()
-    hoje = date.today()
+    hoje = pedido_service._hoje_brt()
     inicio = date(hoje.year, hoje.month, 1)
     fim = date(hoje.year + (hoje.month // 12), (hoje.month % 12) + 1, 1) - timedelta(days=1)
     comp = f"{hoje.year:04d}-{hoje.month:02d}"

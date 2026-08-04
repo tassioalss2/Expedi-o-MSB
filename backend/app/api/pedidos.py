@@ -501,7 +501,7 @@ def dashboard_financeiro(
     from app.core.database import get_service_db
     db = get_service_db()
 
-    hoje = date.today()
+    hoje = pedido_service._hoje_brt()
     inicio = data_inicio or date(hoje.year, hoje.month, 1)
     fim = data_fim or hoje
 
@@ -596,7 +596,7 @@ def dashboard_financeiro_detalhe(
     from app.core.database import get_service_db
     db = get_service_db()
 
-    hoje = date.today()
+    hoje = pedido_service._hoje_brt()
     inicio = data_inicio or date(hoje.year, hoje.month, 1)
     fim = data_fim or hoje
 
@@ -904,7 +904,7 @@ def tempo_separacao(_: UsuarioOut = Depends(get_current_user)):
     db = get_service_db()
 
     # OVs que chegaram a AGUARD_FATURAMENTO hoje
-    hoje = date.today().isoformat()
+    hoje = pedido_service._hoje_brt().isoformat()
     concluidas = db.table("movimentacoes").select("pedido_id, criado_em").eq(
         "status_novo", "AGUARD_FATURAMENTO"
     ).gte("criado_em", f"{hoje}T00:00:00").execute().data

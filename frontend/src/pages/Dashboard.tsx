@@ -9,6 +9,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pi
 import api from '../lib/api'
 import type { DashboardOperacional, Indicadores } from '../types'
 import { STATUS_CONFIG } from '../lib/statusConfig'
+import { dataLocal } from '../lib/dataLocal'
 
 function KpiCard({ titulo, valor, sub, cor, icone: Icone, onClick }: {
   titulo: string; valor: string | number; sub?: string; cor: string; icone: any; onClick?: () => void
@@ -252,7 +253,7 @@ export function Dashboard() {
   })
   const kpiLista = (kpiPedidos as any[]).filter((p) => {
     if (kpiAberto?.tipo === 'ativos') return !['EXPEDIDO', 'CANCELADO'].includes(p.status)
-    if (kpiAberto?.tipo === 'expedidos_hoje') return (p.atualizado_em || '').slice(0, 10) === hojeStr
+    if (kpiAberto?.tipo === 'expedidos_hoje') return (p.atualizado_em ? dataLocal(new Date(p.atualizado_em)) : '') === hojeStr
     return true // atrasados já vem filtrado do backend
   })
 

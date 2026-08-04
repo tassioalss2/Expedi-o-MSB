@@ -7,6 +7,7 @@ import { Plus, ClipboardCheck, AlertTriangle, CheckCircle, Clock, History, X, Ch
 import api from '../lib/api'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
+import { hojeLocal } from '../lib/dataLocal'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ const META_DIARIA_PADRAO = 10   // meta fixa: 10 lotes/dia útil
 
 function ModalAbrirCiclo({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const [nome, setNome] = useState(`Inventário ${format(new Date(), "dd/MM/yyyy", { locale: ptBR })}`)
   const [meta, setMeta] = useState(String(META_DIARIA_PADRAO))
 
@@ -225,7 +226,7 @@ function CardContagem({ c, onRevisar, podeRevisar }: { c: any; onRevisar: () => 
           {c.inventario_motivos && <p><span className="text-gray-400">Motivo:</span> {c.inventario_motivos.descricao}</p>}
           {c.observacao && <p><span className="text-gray-400">Obs:</span> {c.observacao}</p>}
           {c.instrucao_recontagem && <p className="text-purple-700"><span className="text-gray-400">Instrução:</span> {c.instrucao_recontagem}</p>}
-          <p><span className="text-gray-400">Contado em:</span> {c.contado_em ? format(parseISO(c.contado_em.slice(0,10)), "dd/MM/yyyy", { locale: ptBR }) : '—'}</p>
+          <p><span className="text-gray-400">Contado em:</span> {c.contado_em ? format(parseISO(c.contado_em), "dd/MM/yyyy", { locale: ptBR }) : '—'}</p>
         </div>
       )}
     </div>
@@ -604,7 +605,7 @@ export function InventarioContinuo() {
                         <span>👤 {c.operador_nome}</span>
                         <span className="text-gray-300">|</span>
                         <span className="text-gray-400 italic">{c.inventario_ciclos?.nome}</span>
-                        <span>{c.contado_em ? format(parseISO(c.contado_em.slice(0,10)), "dd/MM/yy", { locale: ptBR }) : '—'}</span>
+                        <span>{c.contado_em ? format(parseISO(c.contado_em), "dd/MM/yy", { locale: ptBR }) : '—'}</span>
                       </div>
                       {c.inventario_motivos && (
                         <p className="text-xs text-orange-600 mt-1">⚠ {c.inventario_motivos.descricao}</p>

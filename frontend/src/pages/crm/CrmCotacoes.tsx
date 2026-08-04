@@ -8,6 +8,7 @@ import { ClienteAutocomplete } from '../NovoPedido'
 import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
 import { LocalEntregaInput } from '../../components/LocalEntregaInput'
 import { CANAL_LABEL } from '../../lib/statusConfig'
+import { hojeLocal } from '../../lib/dataLocal'
 import { fmtBRL, fmtData, msgErro } from '../../lib/crm'
 import { ModalBase, Campo, inputCls } from './CrmShared'
 
@@ -299,7 +300,7 @@ function FormCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
 // ── Gerar OV a partir da cotação aceita (herda cliente, itens e preços) ──────────
 function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const [numero, setNumero] = useState('')
   const [tipoFrete, setTipoFrete] = useState('FOB')
   const [dataEntrega, setDataEntrega] = useState('')

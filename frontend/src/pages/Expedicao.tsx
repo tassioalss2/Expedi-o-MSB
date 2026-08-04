@@ -9,6 +9,7 @@ import type { Pedido, StatusPedido } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { ORDEM_KANBAN, STATUS_CONFIG, resolveNomeTransportadora } from '../lib/statusConfig'
+import { hojeLocal, dataLocal } from '../lib/dataLocal'
 import toast from 'react-hot-toast'
 
 type View = 'lista' | 'kanban'
@@ -376,11 +377,11 @@ const KANBAN_COLS = 4
 
 function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedido: (p: Pedido) => void }) {
   const [infoAberta, setInfoAberta] = useState<string | null>(null)
-  const hoje = new Date().toISOString().slice(0, 10)
+  const hoje = hojeLocal()
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
     let lista = pedidos.filter((p) => p.status === status)
     if (status === 'EXPEDIDO') {
-      lista = lista.filter((p) => p.atualizado_em?.slice(0, 10) === hoje)
+      lista = lista.filter((p) => p.atualizado_em && dataLocal(new Date(p.atualizado_em)) === hoje)
     }
     acc[status] = lista
     return acc

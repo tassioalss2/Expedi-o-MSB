@@ -97,7 +97,7 @@ export function CotacaoImprimir() {
               <p className="text-[11px] text-gray-500 mt-1 tracking-widest uppercase">Medical System do Brasil</p>
             </div>
             <div className="text-right text-xs text-gray-500 space-y-0.5">
-              <p><span className="text-gray-400">Data de criação </span>{fmtData(c.criado_em?.slice(0, 10))}</p>
+              <p><span className="text-gray-400">Data de criação </span>{fmtData(c.criado_em)}</p>
               <p><span className="text-gray-400">Número de Proposta </span>{c.numero}</p>
               <p><span className="text-gray-400">Data de Validade </span>{c.validade ? fmtData(c.validade) : '—'}</p>
             </div>
