@@ -700,6 +700,66 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     return pedido
 
 
+def criar_devolucao(payload, usuario: UsuarioOut) -> dict:
+    """Registra a devolução de uma venda (nota de entrada estornando uma NF
+    anterior no D365). Não conta no faturamento bruto — só no líquido, onde
+    entra como valor negativo, igual ao "Valor correto" que o D365 calcula
+    pra essas notas (achado real: NF de devolução do Instituto de Assistência
+    Médica, R$29.260, nunca tinha contrapartida no app)."""
+    db = get_service_db()
+
+    existe = db.table("pedidos").select("id").eq("numero_pedido", payload.numero_pedido).execute()
+    if existe.data:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Já existe uma OV/lançamento com o número '{payload.numero_pedido}'.",
+        )
+    if not (payload.numero_nf or "").strip():
+        raise HTTPException(status_code=422, detail="Informe o número da nota de devolução.")
+    _validar_nf_unica(db, payload.numero_nf)
+
+    data_dev = payload.data_devolucao or _hoje_brt()
+    ts_dev = f"{data_dev.isoformat()}T12:00:00+00:00"
+    valor_negativo = -abs(payload.valor)
+
+    pedido_data = {
+        "numero_pedido": payload.numero_pedido,
+        "cliente_id": str(payload.cliente_id),
+        "tipo_frete": "FOB",
+        "tipo_operacao": "DEVOLUCAO",
+        "status": StatusPedido.FATURADO.value,
+        "prioridade": "NORMAL",
+        "canal": payload.canal or None,
+        "data_prevista_entrega": data_dev.isoformat(),
+        "numero_nf": payload.numero_nf,
+        "valor_nf": valor_negativo,
+        "valor_produtos": valor_negativo,
+        "observacoes": payload.motivo or "Devolução de venda",
+        "criado_por": None,
+        "criado_em": ts_dev,
+        "atualizado_em": _agora(),
+    }
+    resultado = db.table("pedidos").insert(pedido_data).execute()
+    pedido = resultado.data[0]
+
+    usuarios = db.table("usuarios").select("id").limit(1).execute()
+    uid = usuarios.data[0]["id"] if usuarios.data else None
+    try:
+        db.table("movimentacoes").insert({
+            "pedido_id": pedido["id"],
+            "status_anterior": None,
+            "status_novo": StatusPedido.FATURADO.value,
+            "usuario_id": uid,
+            "observacao": f"Devolução registrada — NF {payload.numero_nf}, R$ {abs(payload.valor):.2f}",
+            "criado_em": ts_dev,
+        }).execute()
+    except Exception:
+        db.table("pedidos").delete().eq("id", pedido["id"]).execute()
+        raise
+
+    return pedido
+
+
 # Campos da OV que podem ser editados no momento da reativação
 _CAMPOS_EDITAVEIS_REATIVAR = {
     "numero_pedido", "cliente_id", "transportadora_id", "tipo_frete", "valor_frete",

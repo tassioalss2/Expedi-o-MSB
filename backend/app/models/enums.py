@@ -55,14 +55,18 @@ class TipoFrete(str, Enum):
 class TipoOperacao(str, Enum):
     """Natureza da operação da OV.
 
-    Só VENDA_NORMAL e COMUNICADO_USO contam como faturamento. As demais
-    geram NF e passam pelo fluxo, mas não são faturamento (movimentam estoque).
+    Só VENDA_NORMAL e COMUNICADO_USO contam como faturamento bruto. As demais
+    (exceto DEVOLUCAO) geram NF e passam pelo fluxo, mas não são faturamento
+    (movimentam estoque). DEVOLUCAO tem tratamento à parte: não soma no bruto,
+    mas subtrai do faturamento líquido — é o valor "correto" que o D365 usa
+    quando uma venda é estornada (nota de devolução, direção Entrada).
     """
     VENDA_NORMAL = "VENDA_NORMAL"
     COMUNICADO_USO = "COMUNICADO_USO"
     BONIFICACAO_DOACAO = "BONIFICACAO_DOACAO"
     AMOSTRA = "AMOSTRA"
     CONSIGNADO = "CONSIGNADO"
+    DEVOLUCAO = "DEVOLUCAO"
 
 
 # Operações que entram no faturamento

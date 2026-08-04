@@ -13,6 +13,7 @@ from app.models.schemas import (
     ComunicadoUsoCreate,
     ConfirmarColetaRequest,
     CotacaoFreteRequest,
+    DevolucaoCreate,
     EditarItensRequest,
     FaturamentoRequest,
     MetaFaturamentoRequest,
@@ -51,6 +52,13 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut = D
 @router.post("/comunicado-uso", status_code=201)
 def criar_comunicado_uso(payload: ComunicadoUsoCreate, usuario: UsuarioOut = Depends(get_current_user)):
     return pedido_service.criar_comunicado_uso(payload, usuario)
+
+
+@router.post("/devolucao", status_code=201)
+def criar_devolucao(payload: DevolucaoCreate, usuario: UsuarioOut = Depends(get_current_user)):
+    """Registra a devolução de uma venda — não soma no faturamento bruto,
+    subtrai do líquido (mesma lógica do "Valor correto" do D365)."""
+    return pedido_service.criar_devolucao(payload, usuario)
 
 
 @router.post("/resumo-diario")
@@ -440,6 +448,10 @@ def _conta_faturamento(pedido: dict) -> bool:
     return (pedido.get("tipo_operacao") or "VENDA_NORMAL") in _OPERACOES_FATURAMENTO
 
 
+def _eh_devolucao(pedido: dict) -> bool:
+    return pedido.get("tipo_operacao") == "DEVOLUCAO"
+
+
 def _canal_base(canal: Optional[str]) -> str:
     """Canal onde o faturamento é contabilizado. Licitação sempre cai no
     canal base (Uro ou Vascular); LICITACAO puro é legado sem base definida."""
@@ -543,7 +555,7 @@ def dashboard_financeiro(
         agg: dict = {}
         for p in lista:
             op = p.get("tipo_operacao") or ""
-            if op in _OPERACOES_FATURAMENTO:
+            if op in _OPERACOES_FATURAMENTO or op == "DEVOLUCAO":
                 continue
             g = agg.setdefault(op, {"tipo": op, "label": LABELS.get(op, op or "—"), "qtd": 0, "valor_nf": 0.0})
             g["qtd"] += 1
@@ -559,6 +571,8 @@ def dashboard_financeiro(
             **vazio,
             "transfer_price": vazio,
             "outras_vendas": vazio,
+            "devolucoes": vazio,
+            "outras_vendas_liquido": vazio,
             "sem_faturamento": [],
         }
 
@@ -567,17 +581,30 @@ def dashboard_financeiro(
         "id, valor_nf, valor_produtos, valor_frete, tipo_frete, tipo_operacao, status, clientes(nome)"
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
 
-    # Só entram no faturamento venda normal e comunicado de uso.
+    # Só entram no faturamento bruto venda normal e comunicado de uso.
     faturaveis = [p for p in pedidos if _conta_faturamento(p)]
     transfer = [p for p in faturaveis if _eh_biomedical(p)]
     outras = [p for p in faturaveis if not _eh_biomedical(p)]
+
+    # Devolução: nota de entrada estornando uma venda anterior. Não soma no
+    # bruto, mas precisa subtrair do líquido — é o "Valor correto" do D365.
+    devolucoes = [p for p in pedidos if _eh_devolucao(p) and not _eh_biomedical(p)]
+    resumo_devolucoes = _resumo(devolucoes)
+    resumo_outras = _resumo(outras)
+    outras_liquido = {
+        **resumo_outras,
+        "total_nf": round(resumo_outras["total_nf"] + resumo_devolucoes["total_nf"], 2),
+        "faturamento_sem_frete": round(resumo_outras["faturamento_sem_frete"] + resumo_devolucoes["faturamento_sem_frete"], 2),
+    }
 
     total = _resumo(faturaveis)
     return {
         "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
         **total,
         "transfer_price": _resumo(transfer),
-        "outras_vendas": _resumo(outras),
+        "outras_vendas": resumo_outras,
+        "devolucoes": resumo_devolucoes,
+        "outras_vendas_liquido": outras_liquido,
         "sem_faturamento": _sem_faturamento(pedidos),
     }
 
@@ -629,6 +656,7 @@ def dashboard_financeiro_detalhe(
             "tipo_operacao": p.get("tipo_operacao") or "VENDA_NORMAL",
             "canal": p.get("canal"),
             "eh_faturamento": _conta_faturamento(p),
+            "eh_devolucao": _eh_devolucao(p),
             "valor_nf": round(bruto, 2),
             "valor_frete": round(valor_frete, 2),
             "valor_sem_frete": round(bruto - frete_na_nf, 2),

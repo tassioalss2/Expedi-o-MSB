@@ -253,6 +253,26 @@ class ComunicadoUsoCreate(BaseModel):
     data_procedimento: Optional[date] = None
 
 
+class DevolucaoCreate(BaseModel):
+    """Registro de devolução de venda (nota de entrada estornando uma NF
+    anterior). Não soma no faturamento bruto — subtrai do faturamento
+    líquido, igual ao "Valor correto" que o D365 já calcula pra essas notas."""
+    numero_pedido: str
+    cliente_id: UUID
+    numero_nf: str
+    valor: float  # informado positivo (valor devolvido); gravado como negativo
+    canal: Optional[str] = None
+    data_devolucao: Optional[date] = None
+    motivo: Optional[str] = None
+
+    @field_validator("valor")
+    @classmethod
+    def _valor_positivo(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Informe o valor devolvido como um número positivo.")
+        return v
+
+
 # ── Licitações / Empenhos ──────────────────────────────────────────────────────
 
 class EmpenhoItemCreate(BaseModel):

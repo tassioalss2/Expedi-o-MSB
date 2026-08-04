@@ -3,10 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { DollarSign, Truck, FileText, X, Pencil, CalendarDays, ChevronDown, ChevronUp } from 'lucide-react'
+import { DollarSign, Truck, FileText, X, Pencil, CalendarDays, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
+import { ClienteAutocomplete } from './NovoPedido'
+import { hojeLocal } from '../lib/dataLocal'
 
 export function PainelComercial() {
   const navigate = useNavigate()
@@ -169,6 +171,7 @@ export function PainelComercial() {
 
   // Drill-down do card financeiro: qual grupo de NFs está sendo detalhado
   const [detalheFin, setDetalheFin] = useState<{ categoria: string; titulo: string } | null>(null)
+  const [modalDevolucao, setModalDevolucao] = useState(false)
   const [expandirClientes, setExpandirClientes] = useState(false)
   const { data: detalheFinLista = [], isFetching: carregandoDetalheFin } = useQuery<any[]>({
     queryKey: ['financeiro-detalhe', inicioFinanceiro, fimFinanceiro],
@@ -180,6 +183,7 @@ export function PainelComercial() {
 
   const filtrarDetalheFin = (rows: any[], categoria: string) => {
     if (categoria === 'sem_faturamento') return rows.filter(r => !r.eh_faturamento)
+    if (categoria === 'devolucoes') return rows.filter(r => r.eh_devolucao && !r.eh_biomedical)
     // Vendas por canal / cliente (escopo Vendas: faturamento, sem Biomedical/Esterilize)
     // Só as OVs de licitação que ainda não foram reclassificadas em Uro/Vascular
     // (canal 'LICITACAO' puro — legado). Diferente de canal:LICITACAO, que é
@@ -347,19 +351,37 @@ export function PainelComercial() {
           <div
             onClick={() => setDetalheFin({ categoria: 'outras', titulo: 'Vendas' })}
             className="cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors"
-            title="Ver as NFs de vendas"
+            title="Ver as NFs de vendas (líquido de devolução)"
           >
-            <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Vendas · sem frete</p>
+            <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Vendas · sem frete · líquido</p>
             <p className="text-3xl font-bold text-green-600 leading-tight">
-              R$ {Number(financeiro?.outras_vendas?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              R$ {Number(financeiro?.outras_vendas_liquido?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </p>
             <p className="text-xs text-gray-400 mt-0.5">
-              c/ frete: R$ {Number(financeiro?.outras_vendas?.total_nf || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              bruto: R$ {Number(financeiro?.outras_vendas?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               <span className="text-gray-300"> · {financeiro?.outras_vendas?.qtd_nfs || 0} NF</span>
             </p>
           </div>
           {financeiro && (
             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+              {(financeiro.devolucoes?.qtd_nfs || 0) > 0 && (
+                <div
+                  onClick={() => setDetalheFin({ categoria: 'devolucoes', titulo: 'Devoluções' })}
+                  className="flex items-start justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
+                >
+                  <span className="flex items-center gap-1.5 text-xs text-gray-500 pt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                    Devoluções
+                    <span className="text-gray-300">· {financeiro.devolucoes?.qtd_nfs || 0} NF</span>
+                  </span>
+                  <span className="text-right">
+                    <span className="block text-sm font-semibold text-red-600">
+                      R$ {Number(financeiro.devolucoes?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                    <span className="block text-[11px] text-gray-400">já descontado do líquido</span>
+                  </span>
+                </div>
+              )}
               <div
                 onClick={() => setDetalheFin({ categoria: 'transfer', titulo: 'Transfer Price (Biomedical)' })}
                 className="flex items-start justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
@@ -385,6 +407,13 @@ export function PainelComercial() {
                   R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={() => setModalDevolucao(true)}
+                className="w-full flex items-center justify-center gap-1.5 text-xs text-red-600 border border-red-200 rounded-lg py-1.5 hover:bg-red-50 transition-colors"
+              >
+                <Undo2 size={13} /> Registrar devolução
+              </button>
             </div>
           )}
           {financeiro?.sem_faturamento?.length > 0 && (
@@ -944,6 +973,113 @@ export function PainelComercial() {
           </div>
         )
       })()}
+
+      {modalDevolucao && (
+        <ModalDevolucao onClose={() => setModalDevolucao(false)} onSaved={() => {
+          setModalDevolucao(false)
+          qc.invalidateQueries({ queryKey: ['financeiro'] })
+          qc.invalidateQueries({ queryKey: ['financeiro-detalhe'] })
+        }} />
+      )}
+    </div>
+  )
+}
+
+function ModalDevolucao({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [clienteId, setClienteId] = useState('')
+  const [clienteNome, setClienteNome] = useState('')
+  const [numeroPedido, setNumeroPedido] = useState('')
+  const [numeroNf, setNumeroNf] = useState('')
+  const [valor, setValor] = useState('')
+  const [canal, setCanal] = useState('')
+  const [dataDevolucao, setDataDevolucao] = useState(hojeLocal())
+  const [motivo, setMotivo] = useState('')
+
+  const mutation = useMutation({
+    mutationFn: () => api.post('/pedidos/devolucao', {
+      numero_pedido: numeroPedido.trim().toUpperCase(),
+      cliente_id: clienteId,
+      numero_nf: numeroNf.trim(),
+      valor: Number(valor),
+      canal: canal || null,
+      data_devolucao: dataDevolucao,
+      motivo: motivo || null,
+    }),
+    onSuccess: () => {
+      toast.success('Devolução registrada')
+      onSaved()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao registrar devolução'),
+  })
+
+  const podeSalvar = clienteId && numeroPedido.trim() && numeroNf.trim() && Number(valor) > 0
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
+        <div className="p-5 border-b flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold flex items-center gap-2"><Undo2 size={18} className="text-red-600" /> Registrar Devolução</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Não soma no faturamento bruto — desconta do líquido, igual ao D365.</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="text-sm font-medium text-gray-700">Cliente *</label>
+            <ClienteAutocomplete value={clienteId} onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
+            {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium text-gray-700">Identificador (interno) *</label>
+              <input value={numeroPedido} onChange={e => setNumeroPedido(e.target.value)}
+                placeholder="Ex: DEV20249" className="w-full border rounded-lg px-3 py-2 text-sm mt-1 font-mono" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Nº da nota de devolução *</label>
+              <input value={numeroNf} onChange={e => setNumeroNf(e.target.value)}
+                placeholder="Ex: 20249" className="w-full border rounded-lg px-3 py-2 text-sm mt-1 font-mono" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium text-gray-700">Valor devolvido (R$) *</label>
+              <input type="number" step="0.01" min="0" value={valor} onChange={e => setValor(e.target.value)}
+                placeholder="0,00" className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700">Data da devolução</label>
+              <input type="date" value={dataDevolucao} onChange={e => setDataDevolucao(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">Canal</label>
+            <select value={canal} onChange={e => setCanal(e.target.value)} className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
+              <option value="">— nenhum —</option>
+              <option value="URO">Uro</option>
+              <option value="VASCULAR">Vascular</option>
+              <option value="REALCLOSURE">Realclosure</option>
+              <option value="LICITACAO_URO">Licitação - Uro</option>
+              <option value="LICITACAO_VASCULAR">Licitação - Vascular</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">Motivo</label>
+            <textarea rows={2} value={motivo} onChange={e => setMotivo(e.target.value)}
+              placeholder="Ex: mercadoria retornou ao estoque, será vendida a outro cliente"
+              className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
+          <button onClick={() => mutation.mutate()} disabled={!podeSalvar || mutation.isPending}
+            className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-semibold disabled:opacity-50">
+            {mutation.isPending ? 'Salvando...' : 'Registrar Devolução'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
