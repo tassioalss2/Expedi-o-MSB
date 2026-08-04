@@ -101,6 +101,25 @@ def _registrar_movimentacao(pedido_id: str, status_anterior: str, status_novo: s
     }).execute()
 
 
+def _validar_nf_unica(db, numero_nf: Optional[str], pedido_id_atual: Optional[str] = None) -> None:
+    """Uma NF do D365 pertence a uma única venda — duas OVs com o mesmo número
+    de NF é sempre erro de digitação (comprovado na conciliação de julho/2026:
+    3 casos reais, um deles causou double counting de receita). Bloqueia na
+    origem em vez de só descobrir no fechamento do mês."""
+    numero_nf = (numero_nf or "").strip()
+    if not numero_nf:
+        return
+    query = db.table("pedidos").select("id,numero_pedido").eq("numero_nf", numero_nf).neq("status", "CANCELADO")
+    if pedido_id_atual:
+        query = query.neq("id", pedido_id_atual)
+    conflito = query.execute().data
+    if conflito:
+        raise HTTPException(
+            status_code=409,
+            detail=f"NF '{numero_nf}' já está registrada na OV '{conflito[0]['numero_pedido']}'. Confira o número antes de salvar — cada NF pertence a uma única venda.",
+        )
+
+
 _STATUSES_PERMITE_DERIVAR = {"FATURADO", "AGUARD_COLETA", "EXPEDIDO"}
 
 
@@ -598,6 +617,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
             status_code=409,
             detail=f"Já existe uma OV/lançamento com o número '{payload.numero_pedido}'.",
         )
+    _validar_nf_unica(db, payload.numero_nf)
 
     data_fat = payload.data_faturamento or date.today()
     # Meio-dia UTC = 09h BRT — garante que a data BRT do faturamento seja a escolhida.
@@ -1156,6 +1176,7 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
     pedido = obter_pedido(pedido_id)
     if pedido["status"] != StatusPedido.AGUARD_FATURAMENTO.value:
         raise HTTPException(status_code=422, detail="Pedido não está aguardando faturamento")
+    _validar_nf_unica(db, payload.numero_nf, pedido_id_atual=pedido_id)
 
     update_data: dict = {
         "numero_nf": payload.numero_nf,
