@@ -625,6 +625,8 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
             status_code=409,
             detail=f"Já existe uma OV/lançamento com o número '{payload.numero_pedido}'.",
         )
+    if not (payload.numero_nf or "").strip():
+        raise HTTPException(status_code=422, detail="Informe o número da NF para lançar o comunicado de uso.")
     _validar_nf_unica(db, payload.numero_nf)
 
     data_fat = payload.data_faturamento or _hoje_brt()
@@ -1184,6 +1186,11 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
     pedido = obter_pedido(pedido_id)
     if pedido["status"] != StatusPedido.AGUARD_FATURAMENTO.value:
         raise HTTPException(status_code=422, detail="Pedido não está aguardando faturamento")
+    if not (payload.numero_nf or "").strip():
+        # O botão do front já trava com o campo vazio, mas a API tem que travar
+        # também — senão qualquer chamada direta (import, script, bug de UI)
+        # deixa a OV avançar para FATURADO sem nota nenhuma.
+        raise HTTPException(status_code=422, detail="Informe o número da NF para faturar a OV.")
     _validar_nf_unica(db, payload.numero_nf, pedido_id_atual=pedido_id)
 
     update_data: dict = {
