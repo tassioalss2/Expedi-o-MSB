@@ -2114,6 +2114,19 @@ export function PedidoDetalhe() {
 
   const isCorreios = pedido?.transportadora?.nome === 'CORREIOS'
 
+  // Faturar sem valor deixava a OV em FATURADO valendo R$ 0 — some do radar e
+  // só reaparece na conciliação com o D365 no fim do mês. Mesma exigência do
+  // backend, para o botão já dizer o que falta.
+  const faltaParaFaturar: string[] = []
+  if (!nf.trim()) faltaParaFaturar.push('número da NF')
+  if (isCIF) {
+    if (!(Number(valorProdutos) > 0)) faltaParaFaturar.push('valor dos produtos')
+    if (!(Number(valorFrete) > 0)) faltaParaFaturar.push('custo do frete')
+  } else if (!(Number(valorNf) > 0)) {
+    faltaParaFaturar.push('valor da NF')
+  }
+  const podeFaturar = faltaParaFaturar.length === 0
+
   // Alerta anti-erro: valor da NF muito acima do padrão do cliente (>=5x a mediana)
   const alertaValorNf = (valorNfCalculado && refNf && refNf.qtd >= 3 && refNf.mediana
     && valorNfCalculado >= refNf.mediana * 5) ? refNf : null
@@ -2903,7 +2916,7 @@ export function PedidoDetalhe() {
               {/* FOB — campo único */}
               {!isCIF && (
                 <div>
-                  <label className="text-sm text-gray-600">Valor da NF (R$)</label>
+                  <label className="text-sm font-medium text-gray-700">Valor da NF (R$) *</label>
                   <input type="number" step="0.01" value={valorNf} onChange={e => setValorNf(e.target.value)}
                     className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
                   {sugestaoProdutos != null && (
@@ -2920,7 +2933,7 @@ export function PedidoDetalhe() {
                     {pedido.tipo_frete === 'CIF_SEM_VALOR' && <span className="block mt-1">⚠ CIF sem valor NF: o valor do frete <strong>não entra</strong> na NF.</span>}
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-gray-700">💰 Valor dos Produtos (R$)</label>
+                    <label className="text-sm font-medium text-gray-700">💰 Valor dos Produtos (R$) *</label>
                     <input type="number" step="0.01" value={valorProdutos} onChange={e => setValorProdutos(e.target.value)}
                       className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
                     {sugestaoProdutos != null && (
@@ -2928,7 +2941,7 @@ export function PedidoDetalhe() {
                     )}
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-gray-700">🚛 Custo do Frete (R$)</label>
+                    <label className="text-sm font-medium text-gray-700">🚛 Custo do Frete (R$) *</label>
                     <input type="number" step="0.01" value={valorFrete} onChange={e => setValorFrete(e.target.value)}
                       className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
                     {(pedido as any).valor_frete != null && (
@@ -3011,9 +3024,17 @@ export function PedidoDetalhe() {
                 )}
               </div>
             </div>
+            {!podeFaturar && (
+              <div className="px-5 pb-1">
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Falta informar: <strong>{faltaParaFaturar.join(', ')}</strong>
+                </p>
+              </div>
+            )}
             <div className="p-5 border-t flex gap-2 justify-end">
               <button onClick={() => setModal(null)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
-              <button onClick={() => faturarMutation.mutate()} disabled={faturarMutation.isPending || !nf}
+              <button onClick={() => faturarMutation.mutate()} disabled={faturarMutation.isPending || !podeFaturar}
+                title={podeFaturar ? undefined : `Falta informar: ${faltaParaFaturar.join(', ')}`}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
                 {faturarMutation.isPending ? 'Salvando...' : 'Confirmar NF'}
               </button>

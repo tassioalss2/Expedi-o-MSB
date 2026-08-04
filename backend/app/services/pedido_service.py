@@ -1253,6 +1253,23 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
         raise HTTPException(status_code=422, detail="Informe o número da NF para faturar a OV.")
     _validar_nf_unica(db, payload.numero_nf, pedido_id_atual=pedido_id)
 
+    # Faturar sem valor deixava a OV em FATURADO valendo R$ 0 — ela contava
+    # como nota emitida no painel e sumia do radar, só aparecendo na
+    # conciliação com o D365 no fim do mês.
+    faltando: list[str] = []
+    if not (payload.valor_nf or 0) > 0:
+        faltando.append("valor da NF")
+    if pedido.get("tipo_frete") in ("CIF_COM_VALOR", "CIF_SEM_VALOR"):
+        if not (payload.valor_produtos or 0) > 0:
+            faltando.append("valor dos produtos")
+        if not (payload.valor_frete or 0) > 0:
+            faltando.append("custo do frete")
+    if faltando:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Para faturar a OV, informe: {', '.join(faltando)}.",
+        )
+
     update_data: dict = {
         "numero_nf": payload.numero_nf,
         "valor_nf": payload.valor_nf,
