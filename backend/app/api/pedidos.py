@@ -472,10 +472,26 @@ def _faturados_no_periodo(inicio: date, fim: date) -> dict:
     Atribui cada NF ao dia em que foi de fato faturada (movimentação para o
     status FATURADO), e não pela última atualização do pedido — que muda a
     cada mudança de status (coleta, expedição, etc.).
+
+    Uma NF é emitida UMA vez, então o que vale é a PRIMEIRA movimentação de
+    FATURADO. Isso importa porque qualquer ação de auditoria sobre uma OV já
+    faturada (trocar transportadora, corrigir valor, corrigir o número da NF)
+    grava uma movimentação repetindo o status atual — e, se ela for FATURADO,
+    a venda passava a contar também no mês da correção. Caso real: 3 OVs de
+    julho reapareceram em agosto somando R$ 4.939,84 depois de correções.
     """
     from datetime import datetime, timedelta, timezone
     from app.core.database import get_service_db
     db = get_service_db()
+
+    def _data_brt(ts_str: Optional[str]):
+        if not ts_str:
+            return None
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return (ts.astimezone(timezone.utc) - timedelta(hours=3)).date()
+        except Exception:
+            return None
 
     # Janela alargada em 1 dia para cobrir a conversão UTC->BRT nas bordas do mês.
     janela_ini = (inicio - timedelta(days=1)).isoformat()
@@ -487,19 +503,29 @@ def _faturados_no_periodo(inicio: date, fim: date) -> dict:
         .gte("criado_em", f"{janela_ini}T00:00:00")\
         .lte("criado_em", f"{janela_fim}T23:59:59").execute().data
 
+    candidatos = {m["pedido_id"] for m in movs if m.get("pedido_id")}
+    if not candidatos:
+        return {}
+
+    # Para os candidatos, busca TODAS as movimentações de FATURADO e fica com a
+    # primeira — a data real da emissão da nota.
+    ids_cand = list(candidatos)
+    primeira: dict[str, str] = {}
+    for i in range(0, len(ids_cand), 40):
+        todas = db.table("movimentacoes").select("pedido_id, criado_em")\
+            .eq("status_novo", "FATURADO").in_("pedido_id", ids_cand[i:i + 40]).execute().data
+        for m in todas:
+            pid, ts = m.get("pedido_id"), m.get("criado_em")
+            if not pid or not ts:
+                continue
+            if pid not in primeira or ts < primeira[pid]:
+                primeira[pid] = ts
+
     faturados: dict[str, str] = {}
-    for m in movs:
-        ts_str = m.get("criado_em")
-        pid = m.get("pedido_id")
-        if not ts_str or not pid:
-            continue
-        try:
-            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            data_brt = (ts.astimezone(timezone.utc) - timedelta(hours=3)).date()
-        except Exception:
-            continue
-        if inicio <= data_brt <= fim:
-            faturados[pid] = data_brt.isoformat()
+    for pid, ts in primeira.items():
+        d = _data_brt(ts)
+        if d and inicio <= d <= fim:
+            faturados[pid] = d.isoformat()
     if not faturados:
         return faturados
 

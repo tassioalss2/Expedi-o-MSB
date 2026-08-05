@@ -70,8 +70,17 @@ def linha_da_familia(familia: Optional[str]) -> Optional[str]:
 
 
 def mapa_por_codigo(db) -> dict:
-    """codigo -> linha, a partir do cadastro de produtos (fonte da verdade)."""
-    rows = db.table("produtos").select("codigo, linha").execute().data
+    """codigo -> linha, a partir do cadastro de produtos (fonte da verdade).
+
+    Tolera a coluna não existir: o deploy do código sobe antes da migration
+    v28 rodar, e sem isso Estoque e Inteligência quebrariam nesse intervalo.
+    Vazio = todo mundo cai no fallback por família, que é o comportamento
+    anterior.
+    """
+    try:
+        rows = db.table("produtos").select("codigo, linha").execute().data
+    except Exception:
+        return {}
     return {
         (r.get("codigo") or "").strip(): r["linha"]
         for r in rows
