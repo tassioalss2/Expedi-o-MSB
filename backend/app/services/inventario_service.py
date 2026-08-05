@@ -569,14 +569,21 @@ def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletReques
         if target_id:
             pallet_id = target_id
 
-    # Verifica se já está em algum pallet ATIVO (ignora pallets já coletados/cancelados)
-    existente = db.table("pallet_pedidos").select("id, pallet_id").eq("pedido_id", pedido["id"]).execute()
-    if existente.data:
-        pallet_id_atual = existente.data[0]["pallet_id"]
-        pallet_atual = db.table("pallets").select("status").eq("id", pallet_id_atual).execute()
-        status_pallet = pallet_atual.data[0]["status"] if pallet_atual.data else None
-        if status_pallet not in ("realizado", "cancelado", None):
-            raise HTTPException(status_code=400, detail="Pedido já está em um pallet")
+    # "Já está em um pallet" = tem vínculo AGUARDANDO, o mesmo critério que a
+    # listagem de pallets usa. Vínculo COLETADO é histórico de um embarque
+    # anterior e CANCELADO foi desfeito — nenhum dos dois ocupa lugar.
+    #
+    # Antes a checagem olhava o status do PALLET comparando com "realizado" e
+    # "cancelado" em minúsculas — valores que não existem (o banco usa ABERTO e
+    # COLETADO). A comparação nunca casava, então qualquer vínculo antigo
+    # travava a alocação para sempre. Apareceu numa OV que foi faturada por
+    # engano, coletada, e depois refaturada com a nota real: não dava mais para
+    # colocá-la no pallet.
+    existente = db.table("pallet_pedidos").select("id, pallet_id")\
+        .eq("pedido_id", pedido["id"]).eq("status", "AGUARDANDO").execute().data
+    if existente:
+        raise HTTPException(status_code=400,
+                            detail="Pedido já está em um pallet aguardando coleta.")
 
     # Auto-preenche num_caixas da cubagem se não informado
     num_caixas = payload.num_caixas
