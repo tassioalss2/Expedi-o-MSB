@@ -330,13 +330,19 @@ def _tendencia_do_historico(historico: dict, ultimo_mes: str) -> tuple:
 
 
 def _ultimo_mes_fechado(historicos: list) -> str:
-    """O mês mais recente presente no histórico do PCP. Vem do dado em vez de ser
-    calculado do calendário: se eles atrasarem a importação, a tendência
-    acompanha o que existe em vez de comparar contra meses vazios."""
-    chaves = {k for h in historicos if h for k in h}
+    """O mês FECHADO mais recente do histórico do PCP.
+
+    Vem do dado em vez de ser calculado do calendário: se eles atrasarem a
+    importação, a tendência acompanha o que existe em vez de comparar contra
+    meses vazios. Mas nunca passa do mês anterior — o PCP manda o mês corrente
+    parcial no sales_history, e incluir 5 dias de agosto como se fossem um mês
+    inteiro derrubava a média recente e chegava a inverter o sinal da
+    tendência (item estável aparecendo com -30%)."""
+    limite = _mes_anterior(_hoje_brt().strftime("%Y-%m"))
+    chaves = {k for h in historicos if h for k in h if k <= limite}
     if chaves:
         return max(chaves)
-    return _mes_anterior(_hoje_brt().strftime("%Y-%m"))
+    return limite
 
 
 def _vendido_no_mes_por_codigo(db, mes_ref: str) -> dict:
