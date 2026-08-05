@@ -768,7 +768,7 @@ function ModalConfirmarColeta({ pedido, onClose }: { pedido: Pedido; onClose: ()
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b bg-green-50 rounded-t-2xl">
           <h2 className="text-lg font-bold text-green-800">✅ Registrar Coleta — {pedido.numero_pedido}</h2>
           <p className="text-sm text-green-600 mt-0.5">Confirme os dados da coleta</p>
@@ -868,7 +868,7 @@ function ModalRetornarEtapa({ pedido, onClose }: { pedido: Pedido; onClose: () =
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b bg-amber-50 rounded-t-2xl">
           <h2 className="text-lg font-bold text-amber-800">↩ Retornar Etapa — {pedido.numero_pedido}</h2>
           <p className="text-sm text-amber-600 mt-0.5">
@@ -975,7 +975,7 @@ function ModalCancelarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b bg-red-50 rounded-t-2xl">
           <h2 className="text-lg font-bold text-red-700">❌ Cancelar OV — {pedido.numero_pedido}</h2>
           <p className="text-sm text-red-500 mt-0.5">Esta ação não pode ser desfeita. Uma ocorrência será registrada.</p>
@@ -1263,7 +1263,7 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b bg-amber-50 rounded-t-2xl flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-amber-800">🚚 Cotação de Frete — {pedido.numero_pedido}</h2>
@@ -1347,7 +1347,7 @@ function ModalTransportadoraCliente({ pedido, onClose }: { pedido: Pedido; onClo
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b bg-orange-50 rounded-t-2xl flex items-center justify-between">
           <div>
             <h2 className="text-lg font-bold text-orange-800">📥 Transportadora do Cliente — {pedido.numero_pedido}</h2>
@@ -1437,7 +1437,7 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b bg-blue-50 rounded-t-2xl">
           <h2 className="text-lg font-bold text-blue-800">Alterar Tipo de Frete</h2>
           <p className="text-sm text-blue-600 mt-0.5">A alteração será registrada como ocorrência.</p>
@@ -1547,7 +1547,7 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b">
           <h2 className="text-lg font-bold text-orange-700">🔄 Corrigir Transportadora</h2>
         </div>
@@ -1689,7 +1689,7 @@ function ModalEscolherPallet({ pedido, onClose }: { pedido: Pedido; onClose: () 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b">
           <h2 className="text-lg font-bold">📦 Alocar no Pallet — {pedido.numero_pedido}</h2>
           <p className="text-sm text-gray-500 mt-0.5">Escolha o pallet da transportadora</p>
@@ -1795,7 +1795,7 @@ function ModalTratativaDivergencia({ pedido, onClose }: { pedido: Pedido; onClos
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b">
           <h2 className="text-lg font-bold text-red-700">🔧 Tratar Divergência — {pedido.numero_pedido}</h2>
           <p className="text-sm text-gray-500 mt-0.5">Escolha como resolver a divergência identificada</p>
@@ -2878,8 +2878,10 @@ export function PedidoDetalhe() {
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md">
-            <div className="p-5 border-b">
+          {/* Cabeçalho e botões fixos, só o meio rola: com CIF são muitos
+              campos e, sem isso, "Confirmar NF" caía fora da tela. */}
+          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col">
+            <div className="p-5 border-b shrink-0">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-bold">🧾 Registrar NF — {pedido.numero_pedido}</h2>
                 <span className={`text-xs font-bold px-2 py-1 rounded-full ${
@@ -2889,7 +2891,7 @@ export function PedidoDetalhe() {
                 </span>
               </div>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
               <div>
                 <label className="text-sm font-medium text-gray-700">Número da NF *</label>
                 <input type="text" value={nf} onChange={e => setNf(e.target.value)}
@@ -3025,13 +3027,13 @@ export function PedidoDetalhe() {
               </div>
             </div>
             {!podeFaturar && (
-              <div className="px-5 pb-1">
+              <div className="px-5 pb-1 shrink-0">
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                   Falta informar: <strong>{faltaParaFaturar.join(', ')}</strong>
                 </p>
               </div>
             )}
-            <div className="p-5 border-t flex gap-2 justify-end">
+            <div className="p-5 border-t flex gap-2 justify-end shrink-0">
               <button onClick={() => setModal(null)} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
               <button onClick={() => faturarMutation.mutate()} disabled={faturarMutation.isPending || !podeFaturar}
                 title={podeFaturar ? undefined : `Falta informar: ${faltaParaFaturar.join(', ')}`}
