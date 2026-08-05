@@ -32,6 +32,27 @@ export function Cadastros() {
     queryKey: ['produtos'], queryFn: () => api.get('/produtos').then((r) => r.data), enabled: tab === 'produtos',
   })
 
+  // A linha comercial manda nos agrupamentos por linha do Estoque e da
+  // Inteligência. Edição direta na linha da tabela: são ~180 SKUs, abrir um
+  // modal por produto para trocar um campo seria pior.
+  const salvarLinha = useMutation({
+    mutationFn: ({ id, linha }: { id: string; linha: string }) =>
+      api.patch(`/produtos/${id}`, { linha: linha || null }),
+    onSuccess: () => {
+      toast.success('Linha atualizada')
+      qc.invalidateQueries({ queryKey: ['produtos'] })
+      // O agrupamento por linha do estoque/inteligência vem do backend.
+      qc.invalidateQueries({ queryKey: ['estoque-listar'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao salvar a linha'),
+  })
+
+  const LINHAS: { value: string; label: string }[] = [
+    { value: 'URO', label: 'Urologia' },
+    { value: 'VASCULAR', label: 'Vascular' },
+    { value: 'REALCLOSURE', label: 'Realclosure' },
+  ]
+
   // Setores do motivo: os 4 padrões + os que já foram cadastrados via "Outro".
   const SETOR_LABELS: Record<string, string> = {
     TRANSPORTADORA: 'Correção de Transportadora',
@@ -63,6 +84,7 @@ export function Cadastros() {
       { key: 'codigo', label: 'Código', required: true },
       { key: 'descricao', label: 'Descrição', required: true },
       { key: 'familia', label: 'Família' },
+      { key: 'linha', label: 'Linha', type: 'linha' },
       { key: 'unidade', label: 'Unidade' },
     ],
   }
@@ -191,7 +213,24 @@ export function Cadastros() {
             {(tab === 'clientes' ? clientes : tab === 'transportadoras' ? transportadoras : produtos).map((item: any) => (
               <tr key={item.id} className="hover:bg-gray-50">
                 {CAMPOS[tab as Exclude<Tab, 'motivos'>].map((c) => (
-                  <td key={c.key} className="px-4 py-3 text-gray-700">{item[c.key] ?? '—'}</td>
+                  c.type === 'linha' ? (
+                    <td key={c.key} className="px-4 py-3">
+                      <select
+                        value={item.linha || ''}
+                        disabled={salvarLinha.isPending}
+                        onChange={(e) => salvarLinha.mutate({ id: item.id, linha: e.target.value })}
+                        className={`border rounded-lg px-2 py-1 text-xs disabled:opacity-50 ${
+                          item.linha ? 'border-gray-300 text-gray-800' : 'border-amber-300 text-amber-700 bg-amber-50'
+                        }`}
+                        title={item.linha ? undefined : 'Sem linha definida — hoje é deduzida pela família'}
+                      >
+                        <option value="">— definir —</option>
+                        {LINHAS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                      </select>
+                    </td>
+                  ) : (
+                    <td key={c.key} className="px-4 py-3 text-gray-700">{item[c.key] ?? '—'}</td>
+                  )
                 ))}
                 <td className="px-4 py-3">
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${item.ativo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
@@ -241,12 +280,28 @@ export function Cadastros() {
               ) : CAMPOS[tab as Exclude<Tab, 'motivos'>].map((c) => (
                 <div key={c.key}>
                   <label className="text-sm text-gray-600">{c.label}{c.required ? ' *' : ''}</label>
-                  <input
-                    type={c.type || 'text'}
-                    value={form[c.key] || ''}
-                    onChange={(e) => setForm({ ...form, [c.key]: e.target.value })}
-                    className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
-                  />
+                  {c.type === 'linha' ? (
+                    <>
+                      <select
+                        value={form[c.key] || ''}
+                        onChange={(e) => setForm({ ...form, [c.key]: e.target.value })}
+                        className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
+                      >
+                        <option value="">— deduzir pela família —</option>
+                        {LINHAS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Usada nos agrupamentos por linha do Estoque e da Inteligência.
+                      </p>
+                    </>
+                  ) : (
+                    <input
+                      type={c.type || 'text'}
+                      value={form[c.key] || ''}
+                      onChange={(e) => setForm({ ...form, [c.key]: e.target.value })}
+                      className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
+                    />
+                  )}
                 </div>
               ))}
             </div>

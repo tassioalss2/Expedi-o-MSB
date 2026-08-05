@@ -28,7 +28,7 @@ o PCP já descontou, contar de novo seria baixa dupla.
 from datetime import date, datetime, timedelta, timezone
 
 from app.core.database import get_service_db
-from app.services import pcp_estoque_service
+from app.services import linha_produto, pcp_estoque_service
 
 # Status em que o material ainda está fisicamente no estoque (o D365 só baixa no
 # faturamento). BLOQUEADO entra: o material continua lá e segue reservado.
@@ -43,46 +43,13 @@ _STATUS_FATURADOS = ["FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO"]
 
 _FAIXA_CRITICO, _FAIXA_ATENCAO, _FAIXA_ADEQUADO, _FAIXA_ALTO = 1.0, 2.0, 6.0, 12.0
 
-# A view do PCP (pa_coverage) não tem coluna "linha" — só família. O app deles
-# tem as duas (família = tipo específico do produto; linha = Urologia/Vascular/
-# Acessórios). Mapeamento conferido item a item contra a tela deles.
-_FAMILIA_LINHA = {
-    "BAINHA INTRODUTORA URETERAL": "Urologia",
-    "BAINHA SPEED CROSS": "Vascular",
-    "BAINHA SPEED CROSS TWIST": "Vascular",
-    "CAMERA DE DRENAGEM": "Vascular",
-    "CATETER ARTERIAL": "Vascular",
-    "CATETER BALAO PTA": "Vascular",
-    "CATETER DIAGNOSTICO": "Vascular",
-    "CATETER EMBOLECTOMIA": "Vascular",
-    "CATETER LACO SNARE": "Vascular",
-    "DILATADOR URETERAL": "Urologia",
-    "ELETRODO TEMPORARIO": "Vascular",
-    "FIBRA LASER UROLOGIA": "Urologia",
-    "FIO GUIA HIDROFILICO": "Vascular",
-    "FIO GUIA HIDROFILICO UROLOGICO": "Urologia",
-    "FIO GUIA TEFLONADO": "Vascular",
-    "INSUFLADOR": "Vascular",
-    "INTRODUTOR FEMORAL": "Vascular",
-    "IRRIGADOR URETERAL": "Urologia",
-    "KIT DUPLO J": "Urologia",
-    "PIGTAIL CENTIMETRADO": "Vascular",
-    "REALCLOSURE": "Vascular",
-    "SONDA BASKET": "Urologia",
-    "SONDA URETERAL DUPLO J": "Urologia",
-    "TUNELIZADOR": "Vascular",
-    "URETERESCOPIOS FLEXIVEIS": "Urologia",
-}
-
-
-def _norm_familia(familia) -> str:
-    return " ".join((familia or "").strip().upper().split())
-
-
-def _linha_da_familia(familia) -> str:
-    # Sem correspondência (família nova que o PCP ainda não tinha quando
-    # conferimos): cai em "Outros" em vez de sumir da lista.
-    return _FAMILIA_LINHA.get(_norm_familia(familia), "Outros")
+# A view do PCP (pa_coverage) não tem coluna "linha" — só família. A linha vem
+# do cadastro do produto (produtos.linha), com fallback por família; ver
+# app/services/linha_produto.py.
+def _linha_do_item(codigo, familia, por_codigo: dict) -> str:
+    # Sem correspondência nem no cadastro nem no mapa de família: cai em
+    # "Outros" em vez de sumir da lista.
+    return linha_produto.label(linha_produto.resolver(codigo, familia, por_codigo))
 
 
 def _hoje_brt() -> date:
@@ -497,6 +464,7 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
     mes_atual = _hoje_brt().strftime("%Y-%m")
     vendido_mes = _vendido_no_mes_por_codigo(db, mes_atual)
     ultimo_fechado = _ultimo_mes_fechado([row.get("sales_history") for row in snapshot])
+    linha_por_codigo = linha_produto.mapa_por_codigo(db)
 
     itens = []
     for row in snapshot:
@@ -519,7 +487,7 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
             "codigo": row.get("codigo"),
             "descricao": row.get("descricao"),
             "familia": row.get("familia"),
-            "linha": _linha_da_familia(row.get("familia")),
+            "linha": _linha_do_item(row.get("codigo"), row.get("familia"), linha_por_codigo),
             "estoque_pcp": round(pa),
             "estoque_sa": round(sa),
             "comprometido": round(comp),

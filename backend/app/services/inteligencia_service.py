@@ -46,6 +46,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.database import get_service_db
+from app.services import linha_produto
 
 # Mesma regra do Painel Comercial (app/api/pedidos.py): só estas naturezas são
 # faturamento; as outras geram NF mas não são venda.
@@ -576,44 +577,10 @@ def _rentabilidade(db) -> dict:
 
 # ── Estratégia por linha: como fechar o gap da meta ─────────────────────────────
 #
-# Família do D365 → linha comercial. Precisa existir separado do mapa de
-# `estoque_service._FAMILIA_LINHA` por dois motivos concretos:
-#   1. Lá REALCLOSURE é dobrado dentro de Vascular. Aqui não pode: Realclosure
-#      tem meta PRÓPRIA em metas_faturamento, então é linha à parte.
-#   2. Lá a chave é 'REALCLOSURE', mas a família no export do D365 se chama
-#      'CATETER REALCLOSURE' — nunca casava, e R$ 1,13 milhão (o produto de
-#      MAIOR margem da casa, 87%) ficava fora de qualquer análise por linha.
-# Também cobre 'FIO GUIA LUNDERQUIST' (R$ 381 mil), que faltava no outro mapa.
-FAMILIA_LINHA = {
-    # Urologia
-    "FIBRA LASER UROLOGIA": "URO",
-    "FIO GUIA HIDROFILICO UROLOGICO": "URO",
-    "BAINHA INTRODUTORA URETERAL": "URO",
-    "SONDA BASKET": "URO",
-    "SONDA URETERAL DUPLO J": "URO",
-    "URETERESCOPIOS FLEXIVEIS": "URO",
-    "DILATADOR URETERAL": "URO",
-    "KIT DUPLO J": "URO",
-    "IRRIGADOR URETERAL": "URO",
-    # Realclosure (linha própria)
-    "CATETER REALCLOSURE": "REALCLOSURE",
-    # Vascular
-    "ELETRODO TEMPORARIO": "VASCULAR",
-    "BAINHA SPEED CROSS TWIST": "VASCULAR",
-    "BAINHA SPEED CROSS": "VASCULAR",
-    "FIO GUIA HIDROFILICO": "VASCULAR",
-    "FIO GUIA TEFLONADO": "VASCULAR",
-    "FIO GUIA LUNDERQUIST": "VASCULAR",
-    "PIGTAIL CENTIMETRADO": "VASCULAR",
-    "INSUFLADOR": "VASCULAR",
-    "CATETER BALAO PTA": "VASCULAR",
-    "CATETER LACO SNARE": "VASCULAR",
-    "CATETER ARTERIAL": "VASCULAR",
-    "INTRODUTOR FEMORAL": "VASCULAR",
-    "DRENO DE TORAX": "VASCULAR",
-}
-
-LINHA_LABEL = {"URO": "Urologia", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure"}
+# A linha do produto vem de `linha_produto`: cadastro (produtos.linha) primeiro,
+# família como fallback — necessário aqui porque o histórico do D365 tem itens
+# que nunca entraram na tabela produtos.
+LINHA_LABEL = linha_produto.LINHA_LABEL
 
 # Recompra: só entra cliente com pelo menos 3 compras na linha (sem isso não há
 # padrão, é evento isolado) e atraso de 30% acima do próprio intervalo médio.
@@ -628,8 +595,9 @@ def _dias_uteis_restantes(hoje: date) -> int:
                if date(hoje.year, hoje.month, d).weekday() < 5)
 
 
-def _linha_de(familia: Optional[str]) -> Optional[str]:
-    return FAMILIA_LINHA.get((familia or "").strip().upper())
+def _linha_de(codigo: Optional[str], familia: Optional[str],
+              por_codigo: Optional[dict] = None) -> Optional[str]:
+    return linha_produto.resolver(codigo, familia, por_codigo)
 
 
 def estrategias(db) -> dict:
@@ -654,8 +622,9 @@ def estrategias(db) -> dict:
                           "calcular ciclo de recompra nem margem por linha.",
                 "linhas": []}
 
+    linha_por_codigo = linha_produto.mapa_por_codigo(db)
     for l in linhas_fat:
-        l["_linha"] = _linha_de(l.get("familia"))
+        l["_linha"] = _linha_de(l.get("produto_codigo"), l.get("familia"), linha_por_codigo)
 
     meses = sorted({l["competencia"] for l in linhas_fat})
     ultimo = meses[-1]

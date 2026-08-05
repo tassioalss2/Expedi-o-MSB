@@ -49,11 +49,15 @@ export interface Transportadora {
   ativo: boolean
 }
 
+export type LinhaComercial = 'URO' | 'VASCULAR' | 'REALCLOSURE'
+
 export interface Produto {
   id: string
   codigo: string
   descricao: string
   familia?: string
+  /** Linha comercial. Vazio = deduzida pela família (fallback do backend). */
+  linha?: LinhaComercial | null
   unidade: string
   ativo: boolean
 }

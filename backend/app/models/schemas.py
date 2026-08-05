@@ -102,7 +102,29 @@ class ProdutoCreate(BaseModel):
     codigo: str
     descricao: str
     familia: Optional[str] = None
+    # Linha comercial (URO / VASCULAR / REALCLOSURE). Em branco cai no fallback
+    # por família — ver app/services/linha_produto.py.
+    linha: Optional[str] = None
     unidade: str = "UN"
+
+    @field_validator("linha")
+    @classmethod
+    def _valida_linha(cls, v: Optional[str]) -> Optional[str]:
+        if v in (None, ""):
+            return None
+        v = v.strip().upper()
+        if v not in ("URO", "VASCULAR", "REALCLOSURE"):
+            raise ValueError("Linha deve ser URO, VASCULAR ou REALCLOSURE.")
+        return v
+
+
+class ProdutoUpdate(BaseModel):
+    descricao: Optional[str] = None
+    familia: Optional[str] = None
+    linha: Optional[str] = None
+    unidade: Optional[str] = None
+
+    _valida_linha = field_validator("linha")(ProdutoCreate._valida_linha.__func__)
 
 
 class ProdutoOut(BaseModel):
@@ -110,6 +132,7 @@ class ProdutoOut(BaseModel):
     codigo: str
     descricao: str
     familia: Optional[str]
+    linha: Optional[str] = None
     unidade: str
     ativo: bool
 

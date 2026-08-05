@@ -6,7 +6,7 @@ from app.core.deps import get_current_user, lider_ou_superior
 from app.models.schemas import (
     ClienteCreate, ClienteOut,
     LoteCreate, LoteOut,
-    ProdutoCreate, ProdutoOut,
+    ProdutoCreate, ProdutoOut, ProdutoUpdate,
     TransportadoraCreate, TransportadoraOut,
     UsuarioOut,
 )
@@ -161,14 +161,16 @@ def criar_transportadora(payload: TransportadoraCreate, _: UsuarioOut = Depends(
 @router.get("/produtos", response_model=list[ProdutoOut])
 def listar_produtos(
     search: Optional[str] = None,
+    limite: int = Query(500, ge=1, le=2000),
     _: UsuarioOut = Depends(get_current_user)
 ):
+    """Lista os produtos ativos. O limite era 20 fixo, o que escondia a maior
+    parte do catálogo na tela de Cadastros (são ~180 SKUs)."""
     db = get_service_db()
     query = db.table("produtos").select("*").eq("ativo", True)
     if search:
-        # Busca por código OU descrição
         query = query.ilike("codigo", f"%{search}%")
-    return query.order("codigo").limit(20).execute().data
+    return query.order("codigo").limit(limite).execute().data
 
 
 @router.get("/produtos/busca")
@@ -199,6 +201,21 @@ def criar_produto(payload: ProdutoCreate, _: UsuarioOut = Depends(lider_ou_super
         estado = "" if e.get("ativo") else " (inativo)"
         raise HTTPException(status_code=409, detail=f"Já existe um produto com o código {payload.codigo}: {e.get('descricao')}{estado}.")
     return db.table("produtos").insert({**payload.model_dump(), "ativo": True}).execute().data[0]
+
+
+@router.patch("/produtos/{produto_id}", response_model=ProdutoOut)
+def atualizar_produto(produto_id: str, payload: ProdutoUpdate,
+                      _: UsuarioOut = Depends(lider_ou_superior)):
+    """Edita o produto — principal uso é definir a linha comercial, que manda
+    nos agrupamentos por linha do estoque e da inteligência."""
+    db = get_service_db()
+    campos = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not campos:
+        raise HTTPException(status_code=422, detail="Nada para atualizar.")
+    atual = db.table("produtos").select("id").eq("id", produto_id).limit(1).execute().data
+    if not atual:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+    return db.table("produtos").update(campos).eq("id", produto_id).execute().data[0]
 
 
 # ── Lotes ──────────────────────────────────────────────────────────────────────
