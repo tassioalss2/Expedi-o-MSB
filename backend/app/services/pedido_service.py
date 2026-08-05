@@ -130,6 +130,23 @@ def _validar_nf_unica(db, numero_nf: Optional[str], pedido_id_atual: Optional[st
 
 _STATUSES_PERMITE_DERIVAR = {"FATURADO", "AGUARD_COLETA", "EXPEDIDO"}
 
+# Operações que não passam pela logística: nascem FATURADO, sem separação,
+# conferência ou coleta. Ficam fora de todo painel operacional (kanban, SLA,
+# alertas, dashboard) — no financeiro elas contam normalmente.
+_OPERACOES_SEM_LOGISTICA = ("COMUNICADO_USO", "DEVOLUCAO")
+
+
+def _so_logistica(query):
+    """Tira do resultado as operações sem processo logístico.
+
+    Centralizado porque a exclusão é repetida em 7 consultas — quando só o
+    comunicado de uso era excluído, as devoluções lançadas depois passaram a
+    aparecer no kanban como cartões de FATURADO.
+    """
+    for op in _OPERACOES_SEM_LOGISTICA:
+        query = query.neq("tipo_operacao", op)
+    return query
+
 
 def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     db = get_service_db()
@@ -929,8 +946,7 @@ def listar_pedidos(
     query = db.table("pedidos").select(
         "*, clientes(id, nome), transportadoras(id, nome)"
     )
-    # Comunicado de uso não passa pela logística — não aparece no quadro operacional.
-    query = query.neq("tipo_operacao", "COMUNICADO_USO")
+    query = _so_logistica(query)
 
     if status_filter:
         query = query.eq("status", status_filter)
@@ -1408,12 +1424,12 @@ def obter_dashboard_operacional() -> dict:
     db = get_service_db()
     hoje = _hoje_brt().isoformat()
 
-    # Comunicado de uso não é logística — fora das contagens operacionais.
-    todos = db.table("pedidos").select("status, data_prevista_entrega")\
-        .neq("tipo_operacao", "COMUNICADO_USO").execute().data
-    expedidos_hoje = db.table("pedidos").select("id").eq("status", StatusPedido.EXPEDIDO.value)\
-        .neq("tipo_operacao", "COMUNICADO_USO")\
-        .gte("atualizado_em", f"{hoje}T00:00:00").execute().data
+    todos = _so_logistica(
+        db.table("pedidos").select("status, data_prevista_entrega")
+    ).execute().data
+    expedidos_hoje = _so_logistica(
+        db.table("pedidos").select("id").eq("status", StatusPedido.EXPEDIDO.value)
+    ).gte("atualizado_em", f"{hoje}T00:00:00").execute().data
     ocorrencias = db.table("ocorrencias").select("id").eq("status", "ABERTA").execute().data
 
     por_status: dict[str, dict] = {}
@@ -1748,9 +1764,9 @@ def obter_horario_criacao(data_inicio: Optional[date] = None, data_fim: Optional
     inicio = data_inicio or (hoje - timedelta(days=29))
     fim = data_fim or hoje
 
-    resultado = db.table("pedidos").select("criado_em").neq("status", "CANCELADO")\
-        .neq("tipo_operacao", "COMUNICADO_USO")\
-        .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
+    resultado = _so_logistica(
+        db.table("pedidos").select("criado_em").neq("status", "CANCELADO")
+    ).gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
 
     contagem = [0] * 24
@@ -1775,11 +1791,11 @@ def obter_horario_criacao_detalhe(hora: int, data_inicio: Optional[date] = None,
     inicio = data_inicio or (hoje - timedelta(days=29))
     fim = data_fim or hoje
 
-    resultado = db.table("pedidos").select(
-        "id, numero_pedido, status, criado_em, clientes(nome)"
-    ).neq("status", "CANCELADO")\
-        .neq("tipo_operacao", "COMUNICADO_USO")\
-        .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
+    resultado = _so_logistica(
+        db.table("pedidos").select(
+            "id, numero_pedido, status, criado_em, clientes(nome)"
+        ).neq("status", "CANCELADO")
+    ).gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
 
     ovs = []
@@ -1816,11 +1832,11 @@ def obter_esforco_time(data_inicio: Optional[date] = None, data_fim: Optional[da
 
     # Unidades por OV = soma de qtd_venda dos itens do inventário (itens_pedido
     # não é populado). É a quantidade efetivamente separada/vendida da OV.
-    resultado = db.table("pedidos").select(
-        "id, numero_pedido, criado_em, clientes(nome), inventario_itens(qtd_venda)"
-    ).neq("status", "CANCELADO")\
-        .neq("tipo_operacao", "COMUNICADO_USO")\
-        .gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
+    resultado = _so_logistica(
+        db.table("pedidos").select(
+            "id, numero_pedido, criado_em, clientes(nome), inventario_itens(qtd_venda)"
+        ).neq("status", "CANCELADO")
+    ).gte("criado_em", f"{inicio.isoformat()}T00:00:00")\
         .lte("criado_em", f"{fim.isoformat()}T23:59:59").execute()
 
     simples: list = []
@@ -1986,9 +2002,10 @@ def varredura_alertas(horas_parada: int = 24, enviar: bool = True) -> dict:
     ]
     limite = datetime.now(timezone.utc) - timedelta(hours=horas_parada)
     limite_str = limite.strftime("%Y-%m-%dT%H:%M:%S")
-    rows = db.table("pedidos").select("numero_pedido, status, atualizado_em, clientes(nome)")\
-        .in_("status", statuses_ativos).neq("tipo_operacao", "COMUNICADO_USO")\
-        .lte("atualizado_em", limite_str)\
+    rows = _so_logistica(
+        db.table("pedidos").select("numero_pedido, status, atualizado_em, clientes(nome)")
+        .in_("status", statuses_ativos)
+    ).lte("atualizado_em", limite_str)\
         .order("atualizado_em").execute().data
 
     def _horas(ts):
