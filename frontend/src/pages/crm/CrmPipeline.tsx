@@ -354,6 +354,22 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
 
   const [novoContato, setNovoContato] = useState(false)
 
+  // Disponibilidade enquanto o comercial monta os itens. Consulta por POST porque
+  // a oportunidade ainda não existe no banco — os itens só existem na tela.
+  const itensValidos = itens.filter(i => i.produto_id && Number(i.qtd) > 0)
+  const chaveItens = JSON.stringify(itensValidos.map(i => [i.produto_id, i.qtd]))
+  const { data: analise, isLoading: analisando } = useQuery<Disponibilidade>({
+    queryKey: ['crm-disp-form', chaveItens],
+    queryFn: () => api.post('/crm/disponibilidade', {
+      itens: itensValidos.map(i => ({
+        produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao,
+        qtd: i.qtd, valor_unitario: i.valor || 0,
+      })),
+    }).then(r => r.data),
+    enabled: itensValidos.length > 0,
+    staleTime: 30_000,
+  })
+
   const { data: contatos = [], refetch: refetchContatos } = useQuery<any[]>({
     queryKey: ['crm-contatos', clienteId],
     queryFn: () => api.get('/crm/contatos', { params: { cliente_id: clienteId } }).then(r => r.data),
@@ -460,6 +476,13 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
           <label className="text-sm text-gray-600">Itens / produtos (opcional)</label>
           <p className="text-xs text-gray-400 mb-1.5">Se preencher com valor, o valor estimado é calculado automaticamente.</p>
           <ItensPedido value={itens} onChange={setItens} comValor />
+          {/* Estoque já aqui, na criação: o comercial precisa saber se há material
+              ANTES de prometer prazo ao cliente, não só ao fechar a venda. */}
+          {itensValidos.length > 0 && (
+            <div className="mt-2">
+              <BlocoDisponibilidade analise={analise} carregando={analisando} />
+            </div>
+          )}
         </div>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
