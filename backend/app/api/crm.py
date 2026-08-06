@@ -19,6 +19,8 @@ from app.models.schemas import (
     EmpresaContatoRequest,
     EmpresaCreate,
     EmpresaUpdate,
+    DisponibilidadeRequest,
+    LiberarPendenciaRequest,
     NotaCreate,
     OportunidadeCreate,
     OportunidadeUpdate,
@@ -29,6 +31,8 @@ from app.services import (
     crm_cotacao_service,
     crm_empresas_service,
     crm_service,
+    disponibilidade_service,
+    pendencia_service,
 )
 
 router = APIRouter(prefix="/crm", tags=["crm"])
@@ -104,8 +108,66 @@ def atualizar_oportunidade(
 @router.post("/oportunidades/{oportunidade_id}/ganhar")
 def ganhar_oportunidade(oportunidade_id: UUID, payload: Optional[GanharRequest] = None,
                         usuario: UsuarioOut = Depends(get_current_user)):
+    """Responde 409 com `tipo: ESTOQUE_INSUFICIENTE` e a análise item a item
+    quando falta material. O front abre o modal de decisão e reenvia com
+    `decisao_estoque`."""
     return crm_service.ganhar_oportunidade(
-        str(oportunidade_id), usuario, payload.repasse_nota if payload else None)
+        str(oportunidade_id), usuario,
+        payload.repasse_nota if payload else None,
+        decisao_estoque=payload.decisao_estoque if payload else None,
+        observacao_estoque=payload.observacao_estoque if payload else None,
+        previsao_pcp=payload.previsao_pcp_iso() if payload else None)
+
+
+# ── Estoque da venda: disponibilidade e pendência ────────────────────────────────
+@router.get("/oportunidades/{oportunidade_id}/disponibilidade")
+def disponibilidade_oportunidade(oportunidade_id: UUID,
+                                 sincronizar: bool = Query(False),
+                                 _: UsuarioOut = Depends(get_current_user)):
+    """Quanto dos itens desta oportunidade existe em estoque. Só informa — não
+    grava nem decide nada. Por padrão usa a última foto do PCP sem ir buscar
+    outra, para a tela abrir na hora."""
+    return crm_service.disponibilidade(str(oportunidade_id), sincronizar=sincronizar)
+
+
+@router.post("/disponibilidade")
+def disponibilidade_de_itens(payload: DisponibilidadeRequest,
+                             _: UsuarioOut = Depends(get_current_user)):
+    """A mesma consulta para itens que ainda não foram gravados — o formulário
+    de nova oportunidade e o de venda outbound perguntam enquanto o comercial
+    digita."""
+    return disponibilidade_service.analisar([{
+        "ref": idx,
+        "produto_id": str(i.produto_id) if i.produto_id else None,
+        "codigo": i.codigo,
+        "descricao": i.descricao,
+        "qtd": i.qtd,
+        "valor_unitario": i.valor_unitario,
+    } for idx, i in enumerate(payload.itens)])
+
+
+@router.get("/pendencias")
+def listar_pendencias(incluir_resolvidas: bool = Query(False),
+                      _: UsuarioOut = Depends(get_current_user)):
+    """Pendências de estoque dos dois fluxos (CRM e outbound) num formato só —
+    alimenta a coluna do kanban e a aba do Painel Comercial."""
+    return pendencia_service.listar(incluir_resolvidas=incluir_resolvidas)
+
+
+@router.post("/pendencias/{fonte}/{registro_id}/liberar")
+def liberar_pendencia(fonte: str, registro_id: UUID,
+                      payload: Optional[LiberarPendenciaRequest] = None,
+                      usuario: UsuarioOut = Depends(get_current_user)):
+    """Manda o saldo para a expedição agora que há material. `fonte` é
+    'oportunidade' (venda do CRM) ou 'pedido' (venda outbound) — o mesmo valor
+    que vem no campo `fonte` de cada item de /crm/pendencias.
+
+    Reconfere o estoque: responde 409 com a análise se o material ainda não
+    chegou por completo, e aí o front pode reenviar com `parcial: true`."""
+    return pendencia_service.liberar(
+        fonte, str(registro_id), usuario,
+        parcial=payload.parcial if payload else False,
+        observacao=payload.observacao if payload else None)
 
 
 # ── Repasse: ganho do comercial → OV emitida por operações de vendas ─────────────

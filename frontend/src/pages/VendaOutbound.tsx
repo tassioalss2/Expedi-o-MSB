@@ -8,6 +8,8 @@ import toast from 'react-hot-toast'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { ClienteAutocomplete } from './NovoPedido'
+import { BlocoDisponibilidade, ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
+import type { Disponibilidade } from '../lib/crm'
 
 function formatarCnpj(v: string) {
   const d = v.replace(/\D/g, '').slice(0, 14)
@@ -60,20 +62,55 @@ export function VendaOutbound() {
     },
   })
 
+  // Disponibilidade em tempo real enquanto o comercial monta os itens. Mesmo
+  // serviço e mesmo número da tela Estoque e do ganho no CRM.
+  const itensValidos = itens.filter(i => i.produto_id && Number(i.qtd) > 0)
+  const chaveItens = JSON.stringify(itensValidos.map(i => [i.produto_id, i.qtd]))
+  const { data: analise, isLoading: analisando } = useQuery<Disponibilidade>({
+    queryKey: ['outbound-disp', chaveItens],
+    queryFn: () => api.post('/crm/disponibilidade', {
+      itens: itensValidos.map(i => ({
+        produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao,
+        qtd: i.qtd, valor_unitario: i.valor || 0,
+      })),
+    }).then(r => r.data),
+    enabled: itensValidos.length > 0,
+    staleTime: 30_000,
+  })
+
+  const [faltaEstoque, setFaltaEstoque] = useState<Disponibilidade | null>(null)
+
   const mutation = useMutation({
-    mutationFn: () => api.post('/pedidos/outbound', {
+    mutationFn: (decisao?: DecisaoEstoque) => api.post('/pedidos/outbound', {
       ...form,
       transportadora_id: form.transportadora_id || null,
       canal: form.canal || null,
       itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
+      decisao_estoque: decisao?.decisao || null,
+      observacao_estoque: decisao?.observacao || null,
+      previsao_pcp: decisao?.previsao_pcp || null,
     }),
-    onSuccess: (res) => {
-      toast.success('Venda outbound lançada! Aguardando operações completar o número da OV.')
+    onSuccess: (res, decisao) => {
+      toast.success(decisao?.decisao === 'PARCIAL'
+        ? 'Venda lançada só com o material disponível — o saldo ficou como pendência.'
+        : 'Venda outbound lançada! Aguardando operações completar o número da OV.',
+        { duration: 7000 })
       qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
       navigate(`/expedicao/${res.data.id}`)
     },
     onError: (e: any) => {
       const detail = e.response?.data?.detail
+      // Falta material: abre a decisão em vez de mostrar erro.
+      if (detail?.tipo === 'ESTOQUE_INSUFICIENTE' && detail.analise) {
+        setFaltaEstoque(detail.analise)
+        return
+      }
+      if (detail?.tipo === 'AGUARDANDO_PRODUCAO') {
+        setFaltaEstoque(null)
+        toast.error(detail.msg, { duration: 9000 })
+        return
+      }
       const msg = typeof detail === 'string' ? detail
         : Array.isArray(detail) ? (detail[0]?.msg || JSON.stringify(detail[0]))
         : detail?.msg || 'Erro ao lançar a venda'
@@ -218,6 +255,11 @@ export function VendaOutbound() {
             {itens.length === 0 && (
               <p className="text-xs text-amber-600 mt-1">Adicione pelo menos um item para lançar a venda.</p>
             )}
+            {itensValidos.length > 0 && (
+              <div className="mt-2">
+                <BlocoDisponibilidade analise={analise} carregando={analisando} />
+              </div>
+            )}
           </div>
 
           <div className="col-span-2">
@@ -232,12 +274,22 @@ export function VendaOutbound() {
           <button onClick={() => navigate(-1)} className="flex-1 py-3 border rounded-lg text-sm text-gray-600 hover:bg-gray-50">
             Cancelar
           </button>
-          <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !podeEnviar}
+          <button onClick={() => mutation.mutate(undefined)} disabled={mutation.isPending || !podeEnviar}
             className="flex-1 py-3 text-white rounded-lg text-sm font-semibold disabled:opacity-50 transition-colors bg-blue-600 hover:bg-blue-500">
             {mutation.isPending ? 'Lançando...' : '✅ Lançar Venda Outbound'}
           </button>
         </div>
       </div>
+
+      {faltaEstoque && (
+        // Aqui "aguardar produção" não é oferecido: sem OV não há onde pendurar a
+        // pendência na venda outbound, então o caminho é registrar pelo CRM. O
+        // modal explica isso em vez de oferecer um botão que falharia.
+        <ModalDecisaoEstoque analise={faltaEstoque} pendente={mutation.isPending}
+          permiteAguardar={false}
+          onClose={() => setFaltaEstoque(null)}
+          onDecidir={(d) => mutation.mutate(d)} />
+      )}
     </div>
   )
 }

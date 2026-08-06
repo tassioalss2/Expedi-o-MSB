@@ -32,7 +32,13 @@ from app.services import linha_produto, pcp_estoque_service
 
 # Status em que o material ainda está fisicamente no estoque (o D365 só baixa no
 # faturamento). BLOQUEADO entra: o material continua lá e segue reservado.
+# AGUARD_DADOS_OV entra: é a OV que nasce da venda ganha no CRM ou da venda
+# outbound, esperando só o número real do D365. O material já tem dono desde o
+# instante do ganho. Estava de fora — 128 unidades vendidas apareciam como
+# disponíveis para vender de novo, e a conferência de estoque da venda ficaria
+# prometendo material já comprometido.
 _STATUS_ABERTOS = [
+    "AGUARD_DADOS_OV",
     "AGUARD_CREDITO", "LIBERADO", "EM_INVENTARIO", "AGUARD_VERIFICACAO",
     "DIVERGENCIA", "AGUARD_TRATATIVA", "EM_PROCESSO_SISTEMICO",
     "EM_COTACAO_FRETE", "AGUARD_TRANSPORTADORA", "AGUARD_FATURAMENTO",

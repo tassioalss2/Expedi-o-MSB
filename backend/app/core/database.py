@@ -50,6 +50,23 @@ class QueryBuilder:
     def not_(self):
         return self
 
+    def is_(self, col: str, val: Any):
+        """`col is <val>` — para null e booleano, onde o PostgREST exige `is.`
+        em vez de `eq.` (`eq.null` compara com a string "null").
+
+        Faltava, e a chamada em `crm_service.ganhas_sem_ov` estourava
+        AttributeError dentro de um `except Exception` que devolvia lista vazia:
+        a fila do repasse ficava permanentemente vazia sem erro na tela.
+        """
+        self._filters.append(f"{col}=is.{val}")
+        return self
+
+    def not_is(self, col: str, val: Any):
+        """`col is not <val>`. Nome separado porque `not_()` aqui é no-op e
+        encadear `.not_.is_(...)` não funciona neste builder."""
+        self._filters.append(f"{col}=not.is.{val}")
+        return self
+
     def in_(self, col: str, vals: list):
         joined = ",".join(str(v) for v in vals)
         self._filters.append(f"{col}=in.({joined})")

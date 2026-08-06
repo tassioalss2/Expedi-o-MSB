@@ -9,6 +9,8 @@ import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
 import { hojeLocal } from '../lib/dataLocal'
+import { ModalLiberarPendencia } from '../components/EstoqueVenda'
+import type { Pendencia, PendenciasResp } from '../lib/crm'
 
 export function PainelComercial() {
   const navigate = useNavigate()
@@ -622,6 +624,8 @@ export function PainelComercial() {
       </div>
 
       {/* Vendas por Canal (realizado × meta) */}
+      <SecaoPendencias />
+
       <div id="canais" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
         <div className="mb-4">
           <h2 className="text-sm font-semibold text-gray-700">Vendas por Canal</h2>
@@ -990,6 +994,113 @@ export function PainelComercial() {
           qc.invalidateQueries({ queryKey: ['financeiro'] })
           qc.invalidateQueries({ queryKey: ['financeiro-detalhe'] })
         }} />
+      )}
+    </div>
+  )
+}
+
+/** Pendências de estoque — venda fechada esperando material.
+ *
+ *  A mesma fonte da coluna do kanban do CRM (/crm/pendencias), para as duas telas
+ *  nunca discordarem. Aqui a leitura é de conjunto: quanto de dinheiro está
+ *  parado, com quem, e há quantos dias. Some da tela quando não há pendência —
+ *  seção vazia todo mês treina o olho a ignorá-la.
+ */
+function SecaoPendencias() {
+  const qc = useQueryClient()
+  const [liberando, setLiberando] = useState<Pendencia | null>(null)
+
+  const { data } = useQuery<PendenciasResp>({
+    queryKey: ['crm-pendencias'],
+    queryFn: () => api.get('/crm/pendencias').then(r => r.data),
+    refetchInterval: 60000,
+  })
+
+  const lista = data?.pendencias || []
+  if (lista.length === 0) return null
+
+  const fmt = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+  return (
+    <div id="pendencias" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="text-sm font-semibold text-gray-700">Pendências de estoque</h2>
+        <span className="text-sm font-semibold text-red-700">{fmt(data?.total || 0)}</span>
+      </div>
+      <p className="text-xs text-gray-400 mb-4">
+        Venda fechada esperando material · {data?.quantidade} pendência(s)
+        {(data?.aguardando || 0) > 0 && ` · ${data?.aguardando} sem OV aberta`}
+        {(data?.parciais || 0) > 0 && ` · ${data?.parciais} com OV parcial`}
+      </p>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase text-gray-400 text-left border-b">
+              <th className="py-2 pr-3 font-medium">Cliente</th>
+              <th className="py-2 px-3 font-medium">OV</th>
+              <th className="py-2 px-3 font-medium">Itens pendentes</th>
+              <th className="py-2 px-3 font-medium text-right">Qtd</th>
+              <th className="py-2 px-3 font-medium text-right">Valor</th>
+              <th className="py-2 px-3 font-medium">Previsão</th>
+              <th className="py-2 px-3 font-medium text-right">Parada</th>
+              <th className="py-2 pl-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {lista.map(p => (
+              <tr key={`${p.fonte}-${p.id}`} className="hover:bg-gray-50">
+                <td className="py-2 pr-3">
+                  <span className="font-medium text-gray-800">{p.cliente || '—'}</span>
+                  <span className="block text-[11px] text-gray-400 truncate max-w-[200px]">{p.titulo}</span>
+                </td>
+                <td className="py-2 px-3">
+                  {p.decisao === 'AGUARDAR' ? (
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">sem OV</span>
+                  ) : p.ov_provisoria ? (
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">sem nº D365</span>
+                  ) : (
+                    <span className="text-xs text-gray-700">{p.ov_ref || '—'}</span>
+                  )}
+                </td>
+                <td className="py-2 px-3">
+                  {p.itens.map((i, idx) => (
+                    <span key={idx} className="block text-[11px] text-gray-600">
+                      {i.codigo || '—'} · {Number(i.qtd_pendente) || 0} un
+                    </span>
+                  ))}
+                </td>
+                <td className="py-2 px-3 text-right tabular-nums text-gray-700">{Number(p.qtd_total) || 0}</td>
+                <td className="py-2 px-3 text-right tabular-nums font-medium text-red-700">{fmt(p.valor)}</td>
+                <td className="py-2 px-3 text-[11px] text-gray-500">
+                  {p.previsao_pcp
+                    ? `PCP ${format(new Date(p.previsao_pcp + 'T12:00:00'), 'dd/MM')}`
+                    : p.cobre_com_sa && p.previsao_sa
+                      ? `SA ~${format(new Date(p.previsao_sa + 'T12:00:00'), 'dd/MM')}`
+                      : '—'}
+                </td>
+                <td className={`py-2 px-3 text-right tabular-nums text-xs ${(p.dias_parada || 0) >= 15 ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+                  {p.dias_parada != null ? `${p.dias_parada}d` : '—'}
+                </td>
+                <td className="py-2 pl-3 text-right">
+                  <button onClick={() => setLiberando(p)} disabled={!p.pode_liberar}
+                    title={p.motivo_bloqueio || undefined}
+                    className="text-[11px] font-medium px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-100 disabled:text-gray-400 text-white whitespace-nowrap">
+                    {p.pode_liberar ? 'Liberar' : 'Bloqueada'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {liberando && (
+        <ModalLiberarPendencia pendencia={liberando} onClose={() => setLiberando(null)}
+          onLiberado={() => {
+            qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
+            qc.invalidateQueries({ queryKey: ['pedidos'] })
+          }} />
       )}
     </div>
   )

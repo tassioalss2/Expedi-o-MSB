@@ -26,6 +26,7 @@ from app.models.schemas import (
     PerderRequest,
     UsuarioOut,
 )
+from app.services import disponibilidade_service, pendencia_service
 
 # Estágios do funil e probabilidade BASE de cada um (%).
 #
@@ -251,6 +252,10 @@ def _serializar_opp(o: dict, itens: Optional[list] = None) -> dict:
     margem_pct = round((valor - custo) / valor * 100, 1) if (custo is not None and valor > 0) else None
     hoje = (datetime.now(timezone.utc) - timedelta(hours=3)).date().isoformat()
     aberta = o.get("estagio") in _ESTAGIOS_ABERTOS
+    # Pendência de estoque. `.get` devolve None quando a migration v29 ainda não
+    # rodou, e aí o card simplesmente não tem pendência — nada quebra.
+    pend = o.get("pendencia") or None
+    pend_aberta = bool(pend and not pend.get("resolvido_em"))
     return {
         "id": o["id"],
         "titulo": o.get("titulo"),
@@ -297,6 +302,15 @@ def _serializar_opp(o: dict, itens: Optional[list] = None) -> dict:
         "repasse_assumido_por_nome": o.get("_assumido_nome"),
         "criado_em": o.get("criado_em"),
         "itens": itens if itens is not None else None,
+        # ── Pendência de estoque ───────────────────────────────────────────────
+        # `pendencia_aberta` é o que joga o card na coluna "Pendência de estoque"
+        # do kanban. É coluna VIRTUAL de propósito: a oportunidade não perde o
+        # lugar dela no funil por estar esperando material.
+        "pendencia": pend,
+        "pendencia_aberta": pend_aberta,
+        "pendencia_valor": round(float((pend or {}).get("valor") or 0), 2) if pend_aberta else 0.0,
+        "pendencia_decisao": (pend or {}).get("decisao") if pend_aberta else None,
+        "pendencia_itens": (pend or {}).get("itens") or [] if pend_aberta else [],
     }
 
 
@@ -944,13 +958,74 @@ def assumir_repasse(oportunidade_id: str, usuario: UsuarioOut) -> dict:
     return obter_oportunidade(oportunidade_id)
 
 
+def _itens_ov_parcial(itens_rows: list, analise: dict) -> list:
+    """Os itens da OV com a quantidade que a MSB tem para entregar AGORA.
+
+    O saldo não entra: se entrasse, o "comprometido" do estoque passaria a
+    reservar material que não existe, e a tela Estoque começaria a mostrar
+    disponível negativo por uma promessa que ninguém pode cumprir.
+    """
+    por_ref = {i.get("ref"): i for i in (analise.get("itens") or []) if i.get("ref") is not None}
+    saida = []
+    for idx, row in enumerate(itens_rows):
+        a = por_ref.get(idx)
+        # Item fora da análise (qtd zero) mantém o que estava — não é falta.
+        qtd = float(row.get("qtd") or 0) if a is None else float(a.get("qtd_atendida") or 0)
+        if qtd <= 0:
+            continue
+        saida.append({**row, "qtd": qtd})
+    return saida
+
+
+def disponibilidade(oportunidade_id: str, sincronizar: bool = False) -> dict:
+    """Quanto do que esta oportunidade pede existe em estoque. Só informa."""
+    return disponibilidade_service.analisar_oportunidade(oportunidade_id, sincronizar=sincronizar)
+
+
 def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
-                        repasse_nota: Optional[str] = None) -> dict:
+                        repasse_nota: Optional[str] = None,
+                        decisao_estoque: Optional[str] = None,
+                        observacao_estoque: Optional[str] = None,
+                        previsao_pcp: Optional[str] = None) -> dict:
     db = get_service_db()
     falta = requisitos_ganho(db, oportunidade_id)
     if falta:
         raise HTTPException(status_code=422,
                             detail="Para marcar como ganha, falta: " + "; ".join(falta) + ".")
+
+    opp_atual = db.table("crm_oportunidades").select("*").eq("id", oportunidade_id).single().execute().data or {}
+    itens_rows = db.table("crm_oportunidade_itens").select("*")\
+        .eq("oportunidade_id", oportunidade_id).order("id").execute().data
+
+    # ── Estoque: a OV só desce para a expedição com o que existe de fato ──────
+    # A conferência é AQUI, no ganho, e não na criação da oportunidade: é este o
+    # instante em que a quantidade vira compromisso com o cliente e reserva de
+    # material. Sincroniza com o PCP porque decidir com a foto de ontem é a mesma
+    # falha de não olhar o estoque.
+    analise = disponibilidade_service.analisar(
+        disponibilidade_service.entrada_de_itens_crm(itens_rows), sincronizar=True)
+    pend_existente = opp_atual.get("pendencia") or {}
+    decisao = (decisao_estoque or "").strip().upper() or pend_existente.get("decisao")
+
+    if analise.get("tem_falta") and decisao not in ("PARCIAL", "AGUARDAR"):
+        # 409 com a análise inteira: o front abre o modal de decisão mostrando
+        # item a item o que tem, o que falta e quando o semiacabado vira PA.
+        raise HTTPException(status_code=409, detail={
+            "tipo": "ESTOQUE_INSUFICIENTE",
+            "msg": "Não há material para toda a quantidade desta venda. Escolha seguir "
+                   "com o que temos ou aguardar a produção.",
+            "analise": analise,
+        })
+
+    atendidos = disponibilidade_service.itens_atendidos(analise)
+    pendentes = disponibilidade_service.itens_pendentes(analise)
+    # Sem nada disponível não há OV para abrir, qualquer que tenha sido a escolha:
+    # "seguir com o disponível" quando o disponível é zero é aguardar.
+    aguardar = bool(pendentes) and (decisao == "AGUARDAR" or not atendidos)
+    pendencia = pendencia_service.montar(
+        analise, decisao or "AGUARDAR", str(usuario.id), origem="GANHO",
+        observacao=observacao_estoque, previsao_pcp=previsao_pcp) if pendentes else None
+
     agora = _agora()
     update = {
         "estagio": "GANHO", "probabilidade": 100, "ganho_em": agora,
@@ -963,12 +1038,13 @@ def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
     # A OV já nasce no kanban da Expedição: cliente e valor conhecidos, número
     # real e data ficam para a operadora completar direto no card. Não depende
     # mais de alguém abrir o CRM e clicar em "gerar OV" — some passo manual.
-    opp_atual = db.table("crm_oportunidades").select("*").eq("id", oportunidade_id).single().execute().data or {}
     stub = None
-    if not opp_atual.get("gerado_ov_id"):
+    if not opp_atual.get("gerado_ov_id") and not aguardar:
         try:
             from app.services import pedido_service
-            itens = db.table("crm_oportunidade_itens").select("*").eq("oportunidade_id", oportunidade_id).execute().data
+            # Com pendência, a OV nasce só com o que dá para entregar. Sem
+            # pendência, com tudo — é o caminho normal e não muda nada.
+            itens = _itens_ov_parcial(itens_rows, analise) if pendentes else itens_rows
             stub = pedido_service.criar_pedido_stub_crm({**opp_atual, **update}, itens, str(usuario.id))
         except Exception:
             stub = None
@@ -977,14 +1053,16 @@ def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
         update["gerado_ov_id"] = stub["id"]
         update["gerado_ov_ref"] = stub["numero_pedido"]
 
+    base = {**update,
+            "repasse_status": "CONCLUIDO" if stub else "AGUARDANDO",
+            "repasse_em": agora, "repasse_nota": nota}
+    if pendencia is not None:
+        base["pendencia"] = pendencia
     try:
-        db.table("crm_oportunidades").update(
-            {**update,
-             "repasse_status": "CONCLUIDO" if stub else "AGUARDANDO",
-             "repasse_em": agora, "repasse_nota": nota}
-        ).eq("id", oportunidade_id).execute()
+        db.table("crm_oportunidades").update(base).eq("id", oportunidade_id).execute()
     except Exception:
-        # v25 pendente — ganha do mesmo jeito, só sem entrar na fila.
+        # v25/v29 pendentes — ganha do mesmo jeito, só sem entrar na fila nem
+        # registrar a pendência. Melhor perder o registro do que travar a venda.
         db.table("crm_oportunidades").update(update).eq("id", oportunidade_id).execute()
 
     _log_evento(db, oportunidade_id, "🏆 Oportunidade marcada como GANHA", str(usuario.id))
@@ -992,8 +1070,38 @@ def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
         _log_evento(db, oportunidade_id,
                     f"📦 OV {stub['numero_pedido']} criada direto no kanban da Expedição "
                     "(aguardando completar número real e data)", str(usuario.id))
+    if pendencia:
+        faltas = ", ".join(
+            f"{i.get('codigo') or '—'} {float(i.get('qtd_pendente') or 0):g} un"
+            for i in pendencia.get("itens") or [])
+        _log_evento(
+            db, oportunidade_id,
+            ("⏳ Aguardando produção — nenhuma OV foi aberta. " if aguardar
+             else "📦 Seguiu com o material disponível. ")
+            + f"Pendência de estoque: {faltas} (R$ {float(pendencia.get('valor') or 0):,.2f})",
+            str(usuario.id))
 
     opp = obter_oportunidade(oportunidade_id)
+    if pendencia:
+        pend_txt = (
+            f"\n\n⚠️ **Pendência de estoque: R$ {float(pendencia.get('valor') or 0):,.2f}**\n"
+            + "\n".join(f"· {i.get('codigo') or '—'} — faltam {float(i.get('qtd_pendente') or 0):g} un"
+                        for i in pendencia.get("itens") or [])
+            + (f"\nSemiacabado vira PA por volta de {pendencia.get('previsao_sa')}."
+               if pendencia.get("cobre_com_sa") else ""))
+    else:
+        pend_txt = ""
+    if aguardar:
+        destino = ("\n\nNENHUMA OV foi aberta — a venda está aguardando produção. "
+                   "Quando o material chegar, libere a pendência no CRM para a OV nascer.")
+    elif stub and pendencia:
+        destino = ("\n\nA OV caiu no kanban da Expedição SÓ com o que temos em estoque. "
+                   "O saldo entra depois como 2ª remessa, na mesma OV.")
+    elif stub:
+        destino = ("\n\nJá caiu no kanban da Expedição — operações de vendas completa o número "
+                   "real da OV e a data de entrega direto no card.")
+    else:
+        destino = "\n\nOperações de vendas: cadastre a OV no app pelo painel Repasse do CRM."
     _notificar_comercial(
         f"🏆 **Venda ganha**\n\n"
         f"**{opp.get('titulo')}**\n"
@@ -1001,10 +1109,7 @@ def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
         f"Valor: R$ {float(opp.get('valor_estimado') or 0):,.2f}\n"
         f"Comercial: {usuario.nome}\n"
         + (f"Recado: {opp.get('repasse_nota')}\n" if opp.get("repasse_nota") else "")
-        + ("\nJá caiu no kanban da Expedição — operações de vendas completa o número "
-           "real da OV e a data de entrega direto no card."
-           if stub else
-           "\nOperações de vendas: cadastre a OV no app pelo painel Repasse do CRM.")
+        + pend_txt + destino
     )
     return opp
 
@@ -1076,6 +1181,31 @@ def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut)
     itens_validos = [i for i in itens if i.get("produto_id") and float(i.get("qtd") or 0) > 0]
     if not itens_validos:
         raise HTTPException(status_code=422, detail="A oportunidade precisa ter itens (produto e quantidade) para gerar a OV.")
+
+    # Cadastro manual da OV precisa obedecer à MESMA decisão de estoque do ganho.
+    # Sem isto, quem passasse por aqui em vez do fluxo automático emitiria a OV com
+    # a quantidade cheia e a pendência viraria promessa duplicada.
+    pend = o.get("pendencia") or {}
+    if pend and not pend.get("resolvido_em"):
+        atendida_por_produto: dict = {}
+        for ip in pend.get("itens") or []:
+            if ip.get("produto_id"):
+                atendida_por_produto[ip["produto_id"]] = float(ip.get("qtd_atendida") or 0)
+        ajustados = []
+        for i in itens_validos:
+            if i["produto_id"] in atendida_por_produto:
+                q = atendida_por_produto[i["produto_id"]]
+                if q <= 0:
+                    continue
+                ajustados.append({**i, "qtd": q})
+            else:
+                ajustados.append(i)
+        if not ajustados:
+            raise HTTPException(
+                status_code=409,
+                detail="Toda a quantidade desta venda está pendente de estoque — não há o que "
+                       "faturar ainda. Libere a pendência quando o material chegar.")
+        itens_validos = ajustados
 
     ov = pedido_service.criar_pedido(
         PedidoCreate(

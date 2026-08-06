@@ -15,7 +15,12 @@ import { CANAL_LABEL } from '../../lib/statusConfig'
 import {
   ESTAGIOS, ESTAGIOS_PIPELINE, ESTAGIO_MAP, ORIGENS, TIPOS_ATIVIDADE, TIPO_ATIV_MAP,
   fmtBRL, fmtBRLcurto, fmtData, fmtDataHora, prazoCor, msgErro, type EstagioKey,
+  type Disponibilidade, type Pendencia, type PendenciasResp,
 } from '../../lib/crm'
+import {
+  BlocoDisponibilidade, CardPendencia, ModalDecisaoEstoque, ModalLiberarPendencia,
+  type DecisaoEstoque,
+} from '../../components/EstoqueVenda'
 import { ModalBase, Campo, inputCls, InputMoeda } from './CrmShared'
 import { hojeLocal } from '../../lib/dataLocal'
 
@@ -49,6 +54,7 @@ export function CrmPipeline() {
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [canal, setCanal] = useState('')
+  const [liberando, setLiberando] = useState<Pendencia | null>(null)
 
   const { data: opps = [], isLoading } = useQuery<any[]>({
     queryKey: ['crm-opps'],
@@ -59,6 +65,8 @@ export function CrmPipeline() {
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ['crm-opps'] })
     qc.invalidateQueries({ queryKey: ['crm-dashboard'] })
+    qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
+    qc.invalidateQueries({ queryKey: ['crm-disp'] })
   }
 
   const filtradas = useMemo(() => {
@@ -70,10 +78,31 @@ export function CrmPipeline() {
     })
   }, [opps, busca, canal])
 
-  const porEstagio = (e: string) => filtradas.filter(o => o.estagio === e)
+  // Pendência de estoque é coluna VIRTUAL: o card sai da coluna do estágio dele e
+  // aparece aqui enquanto o material não chega. Sem isso, uma venda travada por
+  // falta de material ficava indistinguível de uma venda andando normalmente.
+  const { data: pend } = useQuery<PendenciasResp>({
+    queryKey: ['crm-pendencias'],
+    queryFn: () => api.get('/crm/pendencias').then(r => r.data),
+    refetchInterval: 30000,
+  })
+  const pendencias = useMemo(() => {
+    const b = busca.trim().toLowerCase()
+    return (pend?.pendencias || []).filter(p => {
+      if (canal && p.canal !== canal) return false
+      if (b && !`${p.titulo || ''} ${p.cliente || ''}`.toLowerCase().includes(b)) return false
+      return true
+    })
+  }, [pend, busca, canal])
+  const idsPendentes = useMemo(
+    () => new Set(pendencias.filter(p => p.fonte === 'oportunidade').map(p => p.id)),
+    [pendencias])
+
+  const porEstagio = (e: string) => filtradas.filter(o => o.estagio === e && !idsPendentes.has(o.id))
 
   const totalPonderado = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_ponderado || 0), 0)
   const totalPipe = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_estimado || 0), 0)
+  const totalPendente = pendencias.reduce((a, p) => a + (p.valor || 0), 0)
 
   return (
     <div className="space-y-4">
@@ -105,7 +134,7 @@ export function CrmPipeline() {
         <p className="text-center text-gray-400 py-10 text-sm">Carregando funil…</p>
       ) : (
         <div className="overflow-x-auto pb-2">
-          <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${ESTAGIOS_PIPELINE.length}, minmax(230px, 1fr))` }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${ESTAGIOS_PIPELINE.length + 1}, minmax(230px, 1fr))` }}>
             {ESTAGIOS_PIPELINE.map(ek => {
               const cfg = ESTAGIO_MAP[ek]
               const cards = porEstagio(ek)
@@ -133,10 +162,40 @@ export function CrmPipeline() {
                 </div>
               )
             })}
+
+            {/* Pendência de estoque — última coluna, depois de Ganho: é onde a
+                venda fechada espera material. */}
+            <div className="bg-red-50/40 rounded-xl border border-red-100 flex flex-col min-h-[400px]">
+              <div className="h-1 rounded-t-xl bg-red-500" />
+              <div className="px-3 py-2 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-red-500" /> Pendência de estoque
+                </span>
+                <span className="text-[11px] text-gray-400">
+                  {pendencias.length} · {fmtBRLcurto(totalPendente)}
+                </span>
+              </div>
+              <div className="px-2 pb-2 space-y-2 flex-1 overflow-y-auto">
+                {pendencias.map(p => (
+                  <CardPendencia key={`${p.fonte}-${p.id}`} p={p}
+                    onAbrir={() => { if (p.fonte === 'oportunidade') setDetalheId(p.id) }}
+                    onLiberar={() => setLiberando(p)} />
+                ))}
+                {pendencias.length === 0 && (
+                  <div className="text-[11px] text-gray-300 text-center py-6 rounded-lg">
+                    nenhuma — tudo com material
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
+      {liberando && (
+        <ModalLiberarPendencia pendencia={liberando} onClose={() => setLiberando(null)}
+          onLiberado={invalidar} />
+      )}
       {novo && <ModalOportunidadeForm onClose={() => setNovo(false)} onSaved={invalidar} />}
       {detalheId && <ModalDetalheOportunidade id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar} />}
     </div>
@@ -590,14 +649,38 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
 
   const refresh = () => { qc.invalidateQueries({ queryKey: ['crm-opp', id] }); onChanged() }
 
+  // Guarda o recado enquanto o comercial decide o estoque, para não redigitar.
+  const [notaGanho, setNotaGanho] = useState('')
+  const [faltaEstoque, setFaltaEstoque] = useState<Disponibilidade | null>(null)
+
   const ganhar = useMutation({
-    mutationFn: (nota?: string) => api.post(`/crm/oportunidades/${id}/ganhar`,
-      { repasse_nota: nota?.trim() || null }),
-    onSuccess: () => {
-      toast.success('🏆 Ganha! Repasse aberto para operações de vendas', { duration: 5000 })
-      setGanhando(false); refresh()
+    mutationFn: (v: { nota?: string; decisao?: DecisaoEstoque }) =>
+      api.post(`/crm/oportunidades/${id}/ganhar`, {
+        repasse_nota: v.nota?.trim() || null,
+        decisao_estoque: v.decisao?.decisao || null,
+        observacao_estoque: v.decisao?.observacao || null,
+        previsao_pcp: v.decisao?.previsao_pcp || null,
+      }),
+    onSuccess: (_r, v) => {
+      if (v.decisao?.decisao === 'AGUARDAR') {
+        toast.success('Ganha e aguardando produção — nenhuma OV foi aberta ainda.', { duration: 7000 })
+      } else if (v.decisao?.decisao === 'PARCIAL') {
+        toast.success('Ganha! A OV saiu só com o que temos; o saldo ficou como pendência.', { duration: 7000 })
+      } else {
+        toast.success('🏆 Ganha! Repasse aberto para operações de vendas', { duration: 5000 })
+      }
+      setGanhando(false); setFaltaEstoque(null); refresh()
     },
-    onError: (e: any) => toast.error(msgErro(e, 'Não foi possível marcar como ganha'), { duration: 6000 }),
+    onError: (e: any) => {
+      // 409 com a análise = falta material. Em vez de erro, abre a decisão.
+      const d = e?.response?.data?.detail
+      if (d?.tipo === 'ESTOQUE_INSUFICIENTE' && d.analise) {
+        setGanhando(false)
+        setFaltaEstoque(d.analise)
+        return
+      }
+      toast.error(msgErro(e, 'Não foi possível marcar como ganha'), { duration: 6000 })
+    },
   })
   const addNota = useMutation({
     mutationFn: () => api.post(`/crm/oportunidades/${id}/notas`, { texto: nota.trim() }),
@@ -679,6 +762,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
           )}
         </div>
 
+        <PainelEstoqueDaVenda oportunidade={o} onChanged={refresh} />
         <PainelDesafios oportunidadeId={id} onChanged={refresh} />
         <PainelPropostas oportunidadeId={id} onChanged={refresh} />
 
@@ -766,12 +850,107 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
       {moverPara && <ModalMover oportunidade={o} destino={moverPara}
         onClose={() => setMoverPara(null)} onSaved={refresh} />}
       {ganhando && <ModalGanhar oportunidade={o} pendente={ganhar.isPending}
-        onClose={() => setGanhando(false)} onConfirmar={(nota) => ganhar.mutate(nota)} />}
+        onClose={() => setGanhando(false)}
+        onConfirmar={(nota) => { setNotaGanho(nota); ganhar.mutate({ nota }) }} />}
+      {faltaEstoque && (
+        <ModalDecisaoEstoque analise={faltaEstoque} pendente={ganhar.isPending}
+          onClose={() => setFaltaEstoque(null)}
+          onDecidir={(d) => ganhar.mutate({ nota: notaGanho, decisao: d })} />
+      )}
       {editar && <ModalOportunidadeForm oportunidade={o} onClose={() => setEditar(false)} onSaved={refresh} />}
       {perder && <ModalPerder id={id} onClose={() => setPerder(false)} onSaved={refresh} />}
       {gerarOV && <ModalGerarOV opp={o} onClose={() => setGerarOV(false)} onSaved={refresh} />}
       {novaAtiv && <ModalNovaAtividade oportunidadeId={id} clienteId={o.cliente_id} onClose={() => setNovaAtiv(false)} onSaved={refresh} />}
     </ModalBase>
+  )
+}
+
+/** Estoque da venda, dentro do detalhe da oportunidade.
+ *
+ *  Fica visível desde a criação, antes de qualquer decisão: o comercial não
+ *  deveria descobrir que falta material só na hora de fechar. Quando já existe
+ *  pendência registrada, mostra a pendência (o que foi prometido) em vez da
+ *  disponibilidade de agora — são coisas diferentes e confundi-las apagaria o
+ *  histórico da decisão. */
+function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
+  oportunidade: any; onChanged: () => void
+}) {
+  const [liberando, setLiberando] = useState(false)
+  const temItens = (o.itens || []).some((i: any) => i.produto_id && Number(i.qtd) > 0)
+  const pend = o.pendencia_aberta ? o.pendencia : null
+
+  const { data: analise, isLoading } = useQuery<Disponibilidade>({
+    queryKey: ['crm-disp', o.id],
+    queryFn: () => api.get(`/crm/oportunidades/${o.id}/disponibilidade`).then(r => r.data),
+    // Sem pendência já registrada e com itens: vale consultar. Com pendência, o
+    // que importa é o saldo prometido, que já vem no próprio card.
+    enabled: temItens && !pend,
+    staleTime: 60_000,
+  })
+
+  const { data: pendencias } = useQuery<PendenciasResp>({
+    queryKey: ['crm-pendencias'],
+    queryFn: () => api.get('/crm/pendencias').then(r => r.data),
+    enabled: !!pend,
+  })
+  const registro = pendencias?.pendencias?.find(p => p.fonte === 'oportunidade' && p.id === o.id)
+
+  if (!temItens) return null
+
+  return (
+    <div className="border-t pt-4 mt-4">
+      <p className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+        <Package size={15} /> Estoque da venda
+      </p>
+
+      {pend ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-red-800">
+                Pendência de estoque · {fmtBRL(pend.valor)}
+              </p>
+              <p className="text-xs text-red-700 mt-0.5">
+                {pend.decisao === 'AGUARDAR'
+                  ? 'Aguardando produção — nenhuma OV foi aberta para esta venda ainda.'
+                  : 'A OV saiu só com o material disponível; o saldo entra como 2ª remessa.'}
+              </p>
+            </div>
+            {registro?.pode_liberar && (
+              <button onClick={() => setLiberando(true)}
+                className="text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 whitespace-nowrap">
+                Material chegou
+              </button>
+            )}
+          </div>
+          <div className="bg-white rounded-lg border border-red-100 px-2.5 py-1.5">
+            {(pend.itens || []).map((i: any, idx: number) => (
+              <div key={idx} className="flex items-center justify-between text-xs py-0.5">
+                <span className="text-gray-700">{i.codigo || '—'}</span>
+                <span className="text-gray-500">
+                  entregue {Number(i.qtd_atendida) || 0} de {Number(i.qtd_pedida) || 0} ·{' '}
+                  <strong className="text-red-600">faltam {Number(i.qtd_pendente) || 0}</strong>
+                </span>
+              </div>
+            ))}
+          </div>
+          {pend.previsao_pcp && (
+            <p className="text-[11px] text-red-700">Previsão do PCP: {fmtData(pend.previsao_pcp)}</p>
+          )}
+          {pend.observacao && <p className="text-[11px] text-gray-600">Obs.: {pend.observacao}</p>}
+          {registro && !registro.pode_liberar && registro.motivo_bloqueio && (
+            <p className="text-[11px] text-amber-800">{registro.motivo_bloqueio}</p>
+          )}
+        </div>
+      ) : (
+        <BlocoDisponibilidade analise={analise} carregando={isLoading} />
+      )}
+
+      {liberando && registro && (
+        <ModalLiberarPendencia pendencia={registro} onClose={() => setLiberando(false)}
+          onLiberado={onChanged} />
+      )}
+    </div>
   )
 }
 

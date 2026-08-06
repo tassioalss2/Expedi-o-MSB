@@ -421,11 +421,50 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
     no CRM: o comercial já informa cliente, itens, frete e entrega — só falta
     o número real da OV, que operações de vendas emite no D365 e completa
     depois via `completar_dados_ov`. Sem gerenciamento de crédito aqui.
+
+    Conferência de estoque igual à do ganho no CRM: a OV nasce só com o que a
+    MSB tem, e o saldo fica registrado como pendência na própria OV (o outbound
+    não tem oportunidade no CRM para guardá-la).
     """
+    from app.services import disponibilidade_service, pendencia_service
+
     db = get_service_db()
     agora = _agora()
     import uuid as _uuid
     numero_provisorio = f"OUT-{str(_uuid.uuid4())[:8].upper()}"
+
+    analise = disponibilidade_service.analisar([{
+        "ref": idx,
+        "produto_id": str(item.produto_id),
+        "qtd": float(item.qtd_solicitada),
+        "valor_unitario": float(item.valor_unitario or 0),
+    } for idx, item in enumerate(payload.itens)], sincronizar=True)
+
+    decisao = (payload.decisao_estoque or "").strip().upper() or None
+    if analise.get("tem_falta") and decisao not in ("PARCIAL", "AGUARDAR"):
+        raise HTTPException(status_code=409, detail={
+            "tipo": "ESTOQUE_INSUFICIENTE",
+            "msg": "Não há material para toda a quantidade desta venda. Escolha seguir "
+                   "com o que temos ou aguardar a produção.",
+            "analise": analise,
+        })
+
+    atendidos = disponibilidade_service.itens_atendidos(analise)
+    pendentes = disponibilidade_service.itens_pendentes(analise)
+    if pendentes and (decisao == "AGUARDAR" or not atendidos):
+        # Aguardar produção: não abre OV nenhuma. Abrir uma OV vazia só para
+        # carregar a pendência colocaria um card sem material no kanban da
+        # expedição — exatamente o que este processo existe para evitar.
+        raise HTTPException(status_code=409, detail={
+            "tipo": "AGUARDANDO_PRODUCAO",
+            "msg": "Sem material suficiente para abrir a OV agora. Registre a venda pelo CRM "
+                   "para ela ficar na coluna de pendência até a produção chegar.",
+            "analise": analise,
+        })
+
+    # Quantidade que efetivamente vai para a OV, item a item.
+    qtd_por_ref = {i.get("ref"): float(i.get("qtd_atendida") or 0)
+                   for i in (analise.get("itens") or []) if i.get("ref") is not None}
 
     # CNPJ é obrigatório neste fluxo — grava/atualiza no cadastro do cliente
     # para manter a base íntegra (venda outbound costuma envolver cliente
@@ -451,17 +490,19 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
 
-    itens = [
-        {
+    itens = []
+    for idx, item in enumerate(payload.itens):
+        qtd = qtd_por_ref.get(idx, float(item.qtd_solicitada))
+        if qtd <= 0:
+            continue
+        itens.append({
             "pedido_id": pedido["id"],
             "produto_id": str(item.produto_id),
             "lote_id": str(item.lote_id) if item.lote_id else None,
-            "qtd_solicitada": item.qtd_solicitada,
+            "qtd_solicitada": qtd,
             "valor_unitario": item.valor_unitario,
             "status_item": "PENDENTE",
-        }
-        for item in payload.itens
-    ]
+        })
     if itens:
         db.table("itens_pedido").insert(itens).execute()
 
@@ -470,8 +511,28 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
     except Exception:
         pass
 
+    pendencia = pendencia_service.montar(
+        analise, decisao or "PARCIAL", str(usuario.id), origem="OUTBOUND",
+        observacao=payload.observacao_estoque,
+        previsao_pcp=payload.previsao_pcp_iso()) if pendentes else None
+    if pendencia:
+        try:
+            db.table("pedidos").update({"pendencia": pendencia}).eq("id", pedido["id"]).execute()
+        except Exception:
+            # Migration v29 pendente: a OV é criada com o disponível de todo jeito;
+            # só o registro do saldo se perde. Fica no histórico abaixo.
+            pass
+
+    detalhes = _detalhes_venda_outbound(db, payload, usuario)
+    if pendencia:
+        faltas = "; ".join(
+            f"{i.get('codigo') or '—'} faltam {float(i.get('qtd_pendente') or 0):g}"
+            for i in pendencia.get("itens") or [])
+        detalhes += (f"\nEstoque insuficiente — OV aberta só com o disponível. "
+                     f"Pendência: {faltas} (R$ {float(pendencia.get('valor') or 0):,.2f}). "
+                     f"O saldo entra depois como 2ª remessa nesta mesma OV.")
     _registrar_movimentacao(pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, str(usuario.id),
-                            _detalhes_venda_outbound(db, payload, usuario))
+                            detalhes)
     return pedido
 
 

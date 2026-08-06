@@ -35,6 +35,98 @@ export const ESTAGIOS_PIPELINE: EstagioKey[] = ['QUALIFICACAO', 'DESAFIOS', 'NEG
 
 export const ESTAGIO_MAP: Record<string, EstagioCfg> = Object.fromEntries(ESTAGIOS.map(e => [e.key, e])) as any
 
+// ── Pendência de estoque ──────────────────────────────────────────────────────
+// Coluna VIRTUAL do funil: não é um estágio, é um recorte de "tem pendência de
+// material em aberto". A oportunidade continua no estágio dela — só aparece aqui
+// em vez de na coluna de origem, para o comercial ver o que está travado.
+export const COLUNA_PENDENCIA = 'PENDENCIA_ESTOQUE'
+
+export interface ItemDisponibilidade {
+  ref?: number
+  produto_id?: string | null
+  codigo?: string | null
+  descricao?: string | null
+  qtd_pedida: number
+  disponivel: number | null
+  estoque_sa: number | null
+  qtd_atendida: number
+  qtd_pendente: number
+  valor_unitario: number
+  valor_pendente: number
+  sem_dado: boolean
+  cobre_com_sa: boolean | null
+  status: 'OK' | 'SA' | 'FALTA' | 'SEM_DADO'
+}
+
+export interface Disponibilidade {
+  itens: ItemDisponibilidade[]
+  tem_falta: boolean
+  tudo_disponivel: boolean
+  valor_pendente: number
+  qtd_pendente_total: number
+  cobre_com_sa: boolean
+  previsao_sa: string | null
+  data_ref: string | null
+  desatualizado: boolean
+  sem_dado: string[]
+}
+
+export type FontePendencia = 'oportunidade' | 'pedido'
+
+export interface Pendencia {
+  fonte: FontePendencia
+  id: string
+  titulo: string | null
+  cliente: string | null
+  cliente_id: string | null
+  canal: string | null
+  ov_id: string | null
+  ov_ref: string | null
+  ov_status: string | null
+  ov_provisoria: boolean
+  decisao: 'PARCIAL' | 'AGUARDAR' | null
+  origem: string | null
+  valor: number
+  qtd_total: number
+  itens: ItemDisponibilidade[]
+  previsao_sa: string | null
+  previsao_pcp: string | null
+  cobre_com_sa: boolean | null
+  observacao: string | null
+  decidido_em: string | null
+  dias_parada: number | null
+  resolvido_em: string | null
+  resolucao: string | null
+  acao_liberar: 'GERAR_OV' | 'SOMAR_R1' | 'REMESSA_2' | null
+  pode_liberar: boolean
+  motivo_bloqueio: string | null
+  estagio?: string | null
+  oportunidade_id?: string | null
+}
+
+export interface PendenciasResp {
+  pendencias: Pendencia[]
+  total: number
+  quantidade: number
+  aguardando: number
+  parciais: number
+}
+
+// O que acontece ao liberar, em português — o comercial precisa saber se vai sair
+// uma nota nova ou se entra na mesma.
+export const ACAO_LIBERAR_LABEL: Record<string, string> = {
+  GERAR_OV: 'Abre a OV agora',
+  SOMAR_R1: 'Soma na OV atual (nota única)',
+  REMESSA_2: '2ª remessa — mesma OV, NF nova',
+}
+
+export const STATUS_ITEM_COR: Record<string, string> = {
+  OK: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+  SA: 'text-amber-700 bg-amber-50 border-amber-200',
+  FALTA: 'text-red-700 bg-red-50 border-red-200',
+  SEM_DADO: 'text-slate-600 bg-slate-50 border-slate-200',
+}
+
 // "Licitação" saiu: licitação vive no módulo próprio, não no CRM.
 export const ORIGENS = ['Indicação', 'Prospecção ativa', 'Cliente recorrente', 'Evento/Congresso', 'Inbound', 'Outro']
 

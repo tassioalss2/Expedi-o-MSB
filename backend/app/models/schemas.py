@@ -227,7 +227,38 @@ class PedidoCreate(BaseModel):
         return v.strip() if v else v
 
 
-class PedidoOutboundCreate(BaseModel):
+# ── Pendência de estoque ──────────────────────────────────────────────────────
+# Decisão do comercial quando não há material para toda a venda. O mesmo par de
+# opções serve ao ganho no CRM e à venda outbound, então mora num mixin em vez de
+# ser redigitado nos dois schemas.
+_DECISOES_ESTOQUE = ("PARCIAL", "AGUARDAR")
+
+
+class DecisaoEstoqueMixin(BaseModel):
+    """`decisao_estoque` só é exigida depois de o app responder 409 dizendo que
+    falta material. Fora disso fica None e nada muda no fluxo."""
+    decisao_estoque: Optional[str] = None
+    observacao_estoque: Optional[str] = None
+    # Data em que o PCP prevê ter o saldo. Preenchida à mão por quem acompanha a
+    # produção — o app ainda não recebe plano de produção do PCP.
+    previsao_pcp: Optional[date] = None
+
+    @field_validator("decisao_estoque")
+    @classmethod
+    def _valida_decisao(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        d = str(v).strip().upper()
+        if d not in _DECISOES_ESTOQUE:
+            raise ValueError("Decisão deve ser PARCIAL (seguir com o disponível) ou AGUARDAR.")
+        return d
+
+    def previsao_pcp_iso(self) -> Optional[str]:
+        """A pendência é gravada em jsonb, e `date` não serializa em JSON."""
+        return self.previsao_pcp.isoformat() if self.previsao_pcp else None
+
+
+class PedidoOutboundCreate(DecisaoEstoqueMixin):
     """Venda outbound fechada direto pelo comercial, sem passar pelo funil do
     CRM. Mesmos dados da 'Nova OV' manual, exceto número da OV (operações
     de vendas emite no D365 depois) e gerenciamento de crédito (não se aplica
@@ -613,10 +644,13 @@ class PerderRequest(BaseModel):
     preco_vencedor: Optional[float] = None
 
 
-class GanharRequest(BaseModel):
+class GanharRequest(DecisaoEstoqueMixin):
     """Ganhar abre o repasse para operações de vendas. `repasse_nota` é o recado
     que hoje vai por mensagem de Teams — opcional, mas é onde cabe o que foi
-    combinado com o cliente e não tem campo próprio."""
+    combinado com o cliente e não tem campo próprio.
+
+    Herda a decisão de estoque: quando falta material o app responde 409 e o
+    comercial reenvia o ganho já com `decisao_estoque` preenchida."""
     repasse_nota: Optional[str] = None
 
 
@@ -647,6 +681,27 @@ class GerarOVRequest(BaseModel):
     tipo_frete: str = "FOB"
     data_prevista_entrega: date
     local_entrega: Optional[str] = None
+
+
+class DisponibilidadeItem(BaseModel):
+    produto_id: Optional[UUID] = None
+    codigo: Optional[str] = None
+    descricao: Optional[str] = None
+    qtd: float = 0
+    valor_unitario: float = 0
+
+
+class DisponibilidadeRequest(BaseModel):
+    """Consulta de estoque para itens que ainda não foram gravados em lugar
+    nenhum — o formulário pergunta enquanto o comercial digita."""
+    itens: list[DisponibilidadeItem] = []
+
+
+class LiberarPendenciaRequest(BaseModel):
+    # Libera só o que já chegou e mantém o resto pendente. Sem isso, uma
+    # pendência de 8 unidades com 5 prontas ficaria travada esperando as 3.
+    parcial: bool = False
+    observacao: Optional[str] = None
 
 
 # ── CRM · Empresas (prospecção e qualificação) ─────────────────────────────────
