@@ -539,6 +539,17 @@ def criar_oportunidade(payload: OportunidadeCreate, usuario: UsuarioOut,
     é o contexto que justifica o card existir.
     """
     db = get_service_db()
+    # GANHO e PERDIDO são DESFECHOS, não pontos de partida — e cada um tem um
+    # portão próprio (`ganhar_oportunidade` exige proposta enviada, confere estoque,
+    # abre a OV e o repasse; `perder_oportunidade` exige motivo codificado).
+    # Nascer já em GANHO furava os dois: dava oportunidade ganha sem proposta, sem
+    # OV, sem repasse e — depois desta feature — sem a conferência de estoque.
+    if payload.estagio in ("GANHO", "PERDIDO"):
+        raise HTTPException(
+            status_code=422,
+            detail="Oportunidade não nasce ganha nem perdida. Crie no funil e use o botão "
+                   "Ganhar/Perder, que é o que confere proposta, estoque e abre a OV. "
+                   "Se a venda já está fechada e não passou pelo funil, use Venda Outbound.")
     estagio = payload.estagio if payload.estagio in _PROB_POR_ESTAGIO else "QUALIFICACAO"
     prob = payload.probabilidade if payload.probabilidade is not None else _PROB_POR_ESTAGIO[estagio]
     valor = payload.valor_estimado

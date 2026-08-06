@@ -447,9 +447,19 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
             </select>
           </Campo>
           <Campo label="Estágio">
+            {/* Ganho e Perdido ficam fora: são desfechos, e cada um tem portão
+                próprio (Ganhar confere proposta e estoque e abre a OV; Perder
+                exige motivo). Escolher "Ganho" aqui pulava os dois. */}
             <select value={estagio} onChange={e => setEstagio(e.target.value)} className={inputCls}>
-              {ESTAGIOS.filter(e => e.key !== 'PERDIDO').map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
+              {ESTAGIOS.filter(e => e.key !== 'PERDIDO' && (edicao || e.key !== 'GANHO'))
+                .map(e => <option key={e.key} value={e.key}>{e.label}</option>)}
             </select>
+            {!edicao && (
+              <p className="text-[11px] text-gray-400 mt-1">
+                Para marcar ganho, crie a oportunidade e use o botão <strong>Ganhar</strong> —
+                é ele que confere o estoque e abre a OV.
+              </p>
+            )}
           </Campo>
           <Campo label="Origem">
             <select value={origem} onChange={e => setOrigem(e.target.value)} className={inputCls}>
