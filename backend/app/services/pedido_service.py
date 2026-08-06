@@ -301,6 +301,54 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         return db.table("pedidos").select("*").eq("id", pid).execute().data[0]
 
     # ── Criação normal ─────────────────────────────────────────────────────────
+    # Conferência de estoque, igual à do CRM e do outbound: a OV só entra na
+    # expedição com o que existe. Aqui NÃO se oferece "aguardar produção" — a OV
+    # já foi emitida no D365, o compromisso existe; o que o app resolve é não
+    # mandar a expedição separar material que não está lá.
+    #
+    # Fora do escopo de propósito:
+    #   criar_derivada     a liberação da pendência já reconferiu o estoque, e
+    #                      checar de novo bloquearia a própria 2ª remessa;
+    #   forcar_duplicata   recriação de OV cancelada, tratada acima e já retornada.
+    analise = None
+    pendencia = None
+    qtd_por_ref: dict = {}
+    if not payload.criar_derivada and payload.itens:
+        from app.services import disponibilidade_service, pendencia_service
+
+        analise = disponibilidade_service.analisar([{
+            "ref": idx,
+            "produto_id": str(item.produto_id),
+            "qtd": float(item.qtd_solicitada),
+            "valor_unitario": float(item.valor_unitario or 0),
+        } for idx, item in enumerate(payload.itens)], sincronizar=True)
+
+        decisao = (payload.decisao_estoque or "").strip().upper() or None
+        if analise.get("tem_falta") and decisao != "PARCIAL":
+            raise HTTPException(status_code=409, detail={
+                "tipo": "ESTOQUE_INSUFICIENTE",
+                "msg": "Não há material para toda a quantidade desta OV. A OV pode entrar "
+                       "só com o disponível — o saldo fica como pendência e vira 2ª remessa.",
+                "analise": analise,
+            })
+
+        atendidos = disponibilidade_service.itens_atendidos(analise)
+        pendentes = disponibilidade_service.itens_pendentes(analise)
+        if pendentes and not atendidos:
+            raise HTTPException(status_code=409, detail={
+                "tipo": "SEM_ESTOQUE",
+                "msg": "Nenhuma unidade disponível para os itens desta OV — não há o que "
+                       "mandar para a expedição ainda.",
+                "analise": analise,
+            })
+        if pendentes:
+            qtd_por_ref = {i.get("ref"): float(i.get("qtd_atendida") or 0)
+                           for i in (analise.get("itens") or []) if i.get("ref") is not None}
+            pendencia = pendencia_service.montar(
+                analise, "PARCIAL", str(usuario.id), origem="NOVA_OV",
+                observacao=payload.observacao_estoque,
+                previsao_pcp=payload.previsao_pcp_iso())
+
     status_inicial = (
         StatusPedido.AGUARD_CREDITO.value
         if payload.em_gerenciamento_credito
@@ -331,20 +379,30 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
 
-    # Insere itens
-    itens = [
-        {
+    # Insere itens — na quantidade que existe em estoque quando houve pendência.
+    itens = []
+    for idx, item in enumerate(payload.itens):
+        qtd = qtd_por_ref.get(idx, float(item.qtd_solicitada))
+        if qtd <= 0:
+            continue
+        itens.append({
             "pedido_id": pedido["id"],
             "produto_id": str(item.produto_id),
             "lote_id": str(item.lote_id) if item.lote_id else None,
-            "qtd_solicitada": item.qtd_solicitada,
+            "qtd_solicitada": qtd,
             "valor_unitario": item.valor_unitario,
             "status_item": "PENDENTE",
-        }
-        for item in payload.itens
-    ]
+        })
     if itens:
         db.table("itens_pedido").insert(itens).execute()
+
+    if pendencia:
+        try:
+            db.table("pedidos").update({"pendencia": pendencia}).eq("id", pedido["id"]).execute()
+        except Exception:
+            # Migration v29 pendente: a OV entra com o disponível de todo jeito; só
+            # o registro do saldo se perde, e ele fica no histórico logo abaixo.
+            pass
 
     # Data esperada pelo cliente (informada na criação). Best-effort: a coluna
     # pode não existir ainda (migration v14) — se falhar, a OV segue normal.
@@ -354,6 +412,13 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         pass
 
     obs_criacao = "Pedido criado — em gerenciamento de crédito" if payload.em_gerenciamento_credito else "Pedido criado"
+    if pendencia:
+        faltas = "; ".join(
+            f"{i.get('codigo') or '—'} faltam {float(i.get('qtd_pendente') or 0):g}"
+            for i in pendencia.get("itens") or [])
+        obs_criacao += (f". Estoque insuficiente — entrou só com o disponível. "
+                        f"Pendência: {faltas} (R$ {float(pendencia.get('valor') or 0):,.2f}). "
+                        f"O saldo entra depois como 2ª remessa nesta mesma OV.")
     _registrar_movimentacao(pedido["id"], None, status_inicial, str(usuario.id), obs_criacao)
 
     # Notifica canal Teams da expedição (só quando já liberado)

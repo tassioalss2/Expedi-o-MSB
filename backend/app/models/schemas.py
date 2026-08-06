@@ -195,7 +195,44 @@ class ItemPedidoOut(BaseModel):
 
 # ── Pedido ────────────────────────────────────────────────────────────────────
 
-class PedidoCreate(BaseModel):
+# ── Pendência de estoque ──────────────────────────────────────────────────────
+# Decisão do comercial quando não há material para toda a venda. O mesmo par de
+# opções serve à OV manual, ao ganho no CRM e à venda outbound, então mora num
+# mixin em vez de ser redigitado em cada schema.
+_DECISOES_ESTOQUE = ("PARCIAL", "AGUARDAR")
+
+
+class DecisaoEstoqueMixin(BaseModel):
+    """`decisao_estoque` só é exigida depois de o app responder 409 dizendo que
+    falta material. Fora disso fica None e nada muda no fluxo."""
+    decisao_estoque: Optional[str] = None
+    observacao_estoque: Optional[str] = None
+    # Data em que o PCP prevê ter o saldo. Preenchida à mão por quem acompanha a
+    # produção — o app ainda não recebe plano de produção do PCP.
+    previsao_pcp: Optional[date] = None
+
+    @field_validator("decisao_estoque")
+    @classmethod
+    def _valida_decisao(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not str(v).strip():
+            return None
+        d = str(v).strip().upper()
+        if d not in _DECISOES_ESTOQUE:
+            raise ValueError("Decisão deve ser PARCIAL (seguir com o disponível) ou AGUARDAR.")
+        return d
+
+    def previsao_pcp_iso(self) -> Optional[str]:
+        """A pendência é gravada em jsonb, e `date` não serializa em JSON."""
+        return self.previsao_pcp.isoformat() if self.previsao_pcp else None
+
+
+class PedidoCreate(DecisaoEstoqueMixin):
+    """OV manual cadastrada por operações de vendas (número já emitido no D365).
+
+    Herda a decisão de estoque, mas aqui a única escolha válida é PARCIAL: a OV já
+    existe no D365, então "aguardar produção" não se aplica — o que o app decide é
+    se a expedição recebe a OV inteira ou só a parte que há em estoque.
+    """
     numero_pedido: str
     cliente_id: UUID
     transportadora_id: Optional[UUID] = None
@@ -225,37 +262,6 @@ class PedidoCreate(BaseModel):
     def _strip_numero_pedido(cls, v: str) -> str:
         # Evita espaços sobrando que criam "OVs fantasma" (ex.: 'OV015619 ').
         return v.strip() if v else v
-
-
-# ── Pendência de estoque ──────────────────────────────────────────────────────
-# Decisão do comercial quando não há material para toda a venda. O mesmo par de
-# opções serve ao ganho no CRM e à venda outbound, então mora num mixin em vez de
-# ser redigitado nos dois schemas.
-_DECISOES_ESTOQUE = ("PARCIAL", "AGUARDAR")
-
-
-class DecisaoEstoqueMixin(BaseModel):
-    """`decisao_estoque` só é exigida depois de o app responder 409 dizendo que
-    falta material. Fora disso fica None e nada muda no fluxo."""
-    decisao_estoque: Optional[str] = None
-    observacao_estoque: Optional[str] = None
-    # Data em que o PCP prevê ter o saldo. Preenchida à mão por quem acompanha a
-    # produção — o app ainda não recebe plano de produção do PCP.
-    previsao_pcp: Optional[date] = None
-
-    @field_validator("decisao_estoque")
-    @classmethod
-    def _valida_decisao(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        d = str(v).strip().upper()
-        if d not in _DECISOES_ESTOQUE:
-            raise ValueError("Decisão deve ser PARCIAL (seguir com o disponível) ou AGUARDAR.")
-        return d
-
-    def previsao_pcp_iso(self) -> Optional[str]:
-        """A pendência é gravada em jsonb, e `date` não serializa em JSON."""
-        return self.previsao_pcp.isoformat() if self.previsao_pcp else None
 
 
 class PedidoOutboundCreate(DecisaoEstoqueMixin):

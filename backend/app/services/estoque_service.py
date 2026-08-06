@@ -437,6 +437,29 @@ def historico_vendas(codigo: str) -> dict:
 
 # ── Consulta ────────────────────────────────────────────────────────────────────
 
+def disponivel_por_codigo() -> dict:
+    """{codigo: {disponivel, estoque_sa, descricao}} para o seletor de itens.
+
+    Não sincroniza com o PCP: quem escolhe um produto numa lista não pode esperar
+    um round trip. A foto da manhã com o comprometido descontado em tempo real já
+    responde "tem ou não tem", e a decisão que VINCULA (o ganho da venda) refaz a
+    conta com sincronização.
+    """
+    dados = listar(sincronizar_se_preciso=False)
+    return {
+        "itens": {
+            (i.get("codigo") or "").strip().upper(): {
+                "disponivel": i.get("disponivel"),
+                "estoque_sa": i.get("estoque_sa"),
+                "descricao": i.get("descricao"),
+            }
+            for i in (dados.get("itens") or []) if i.get("codigo")
+        },
+        "data_ref": dados.get("data_ref"),
+        "desatualizado": dados.get("desatualizado"),
+    }
+
+
 def listar(sincronizar_se_preciso: bool = True) -> dict:
     """Estoque disponível por item: foto do PCP menos o comprometido pelas OVs."""
     db = get_service_db()

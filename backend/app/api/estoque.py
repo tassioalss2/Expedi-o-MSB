@@ -23,6 +23,19 @@ def sincronizar(_: UsuarioOut = Depends(get_current_user)):
     return estoque_service.sincronizar(forcar=True)
 
 
+@router.get("/disponivel")
+def disponivel_por_codigo(_: UsuarioOut = Depends(get_current_user)):
+    """Só o disponível por código, enxuto — para o seletor de itens mostrar o
+    estoque na hora em que o vendedor escolhe o produto.
+
+    Uma chamada devolve TODOS os SKUs (algumas centenas de linhas curtas), em vez
+    de uma consulta por item escolhido. O seletor guarda em cache e responde na
+    hora. Fica ANTES de /{codigo}/... na ordem das rotas de propósito: "disponivel"
+    casaria com o parâmetro `codigo` se viesse depois.
+    """
+    return estoque_service.disponivel_por_codigo()
+
+
 @router.get("/{codigo}/comprometido")
 def comprometido_detalhe(codigo: str, _: UsuarioOut = Depends(get_current_user)):
     """As OVs por trás do número de 'comprometido' de um item — clicar na coluna

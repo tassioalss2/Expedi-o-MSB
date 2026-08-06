@@ -7,6 +7,54 @@ import type { Produto } from '../types'
 
 export type ItemLinha = { produto_id: string; codigo: string; descricao: string; qtd: number; valor?: number }
 
+type EstoqueItem = { disponivel: number | null; estoque_sa: number | null; descricao: string | null }
+type EstoqueMapa = { itens: Record<string, EstoqueItem>; data_ref: string | null; desatualizado: boolean }
+
+/** Disponível de um código, já descontando o que as OUTRAS linhas desta mesma
+ *  venda pediram. Sem isso o seletor diria "temos 12" em duas linhas do mesmo
+ *  item e prometeria as mesmas 12 unidades duas vezes. */
+function livreParaLinha(mapa: EstoqueMapa | undefined, codigo: string,
+                        outras: ItemLinha[]): EstoqueItem | null {
+  const cod = (codigo || '').trim().toUpperCase()
+  const e = mapa?.itens?.[cod]
+  if (!e) return null
+  if (e.disponivel == null) return e
+  const jaPedido = outras
+    .filter(i => (i.codigo || '').trim().toUpperCase() === cod)
+    .reduce((a, i) => a + (Number(i.qtd) || 0), 0)
+  return { ...e, disponivel: e.disponivel - jaPedido }
+}
+
+/** Selo de estoque: verde tem, âmbar só em semiacabado, vermelho não tem. */
+function SeloEstoque({ e, pedido }: { e: EstoqueItem | null; pedido?: number }) {
+  if (!e) {
+    return <span className="text-[11px] text-gray-400" title="O PCP não acompanha este código">
+      sem info
+    </span>
+  }
+  const disp = Math.max(0, Number(e.disponivel) || 0)
+  const sa = Number(e.estoque_sa) || 0
+  const q = Number(pedido) || 0
+  const falta = q > 0 ? Math.max(0, q - disp) : 0
+
+  if (q > 0 && falta > 0) {
+    const cobreSa = falta <= sa
+    return (
+      <span className={`text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${cobreSa
+        ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>
+        temos {disp} · faltam {falta}{cobreSa ? ' (semiacabado)' : ''}
+      </span>
+    )
+  }
+  return (
+    <span className={`text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${disp > 0
+      ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-700'}`}>
+      {disp > 0 ? `${disp} em estoque` : 'sem estoque'}
+      {disp <= 0 && sa > 0 ? ` · ${sa} em SA` : ''}
+    </span>
+  )
+}
+
 export function ItensPedido({ value, onChange, comValor = false }: {
   value: ItemLinha[]; onChange: (itens: ItemLinha[]) => void; comValor?: boolean
 }) {
@@ -23,6 +71,18 @@ export function ItensPedido({ value, onChange, comValor = false }: {
     queryFn: () => api.get('/produtos/busca', { params: { q: busca } }).then(r => r.data),
     enabled: busca.length >= 2 && !selecionado,
   })
+
+  // Estoque de todos os SKUs numa chamada, cacheada: o vendedor vê o disponível
+  // no instante em que escolhe o item, sem esperar consulta por produto.
+  const { data: estoque } = useQuery<EstoqueMapa>({
+    queryKey: ['estoque-disponivel'],
+    queryFn: () => api.get('/estoque/disponivel').then(r => r.data),
+    staleTime: 120_000,
+  })
+
+  const estoqueSelecionado = selecionado
+    ? livreParaLinha(estoque, selecionado.codigo, value)
+    : null
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -92,8 +152,15 @@ export function ItensPedido({ value, onChange, comValor = false }: {
               ) : produtos.map(p => (
                 <button key={p.id} type="button" onClick={() => escolher(p)}
                   className="w-full text-left px-4 py-2.5 hover:bg-blue-50 text-sm border-b border-gray-50 last:border-0">
-                  <span className="font-mono font-medium text-gray-800">{p.codigo}</span>
-                  <span className="text-gray-500 ml-2">{p.descricao}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="font-mono font-medium text-gray-800">{p.codigo}</span>
+                      <span className="text-gray-500 ml-2">{p.descricao}</span>
+                    </span>
+                    {/* Estoque já na lista de escolha: evita escolher o item,
+                        digitar a quantidade e só então descobrir que não tem. */}
+                    <SeloEstoque e={livreParaLinha(estoque, p.codigo, value)} />
+                  </div>
                 </button>
               ))}
             </div>
@@ -125,6 +192,21 @@ export function ItensPedido({ value, onChange, comValor = false }: {
         </button>
       </div>
 
+      {/* Item escolhido, antes de clicar em Add: mostra o estoque e, conforme a
+          quantidade digitada, já avisa o quanto vai faltar. */}
+      {selecionado && (
+        <div className="flex items-center gap-2 px-1 text-xs">
+          <span className="text-gray-400">{selecionado.codigo}:</span>
+          <SeloEstoque e={estoqueSelecionado} pedido={Number(qtd) || 0} />
+          {estoque?.data_ref && (
+            <span className="text-gray-400 ml-auto">
+              estoque de {new Date(estoque.data_ref + 'T12:00:00').toLocaleDateString('pt-BR')}
+              {estoque.desatualizado && ' ⚠'}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Lista de itens adicionados */}
       {value.length === 0 ? (
         <div className="flex items-center gap-2 text-xs text-gray-400 px-1 py-2">
@@ -137,6 +219,14 @@ export function ItensPedido({ value, onChange, comValor = false }: {
               <div className="flex-1 min-w-0">
                 <span className="font-mono font-medium text-gray-800">{i.codigo}</span>
                 <span className="text-gray-500 ml-2">{i.descricao}</span>
+                {/* Continua visível depois de adicionado: mudar a quantidade aqui
+                    reavalia a falta na hora. Desconta as outras linhas, não a
+                    própria — senão o item competiria consigo mesmo. */}
+                <span className="block mt-0.5">
+                  <SeloEstoque
+                    e={livreParaLinha(estoque, i.codigo, value.filter(o => o.produto_id !== i.produto_id))}
+                    pedido={i.qtd} />
+                </span>
               </div>
               <input
                 type="number"

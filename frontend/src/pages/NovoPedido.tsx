@@ -6,6 +6,8 @@ import api from '../lib/api'
 import type { Cliente, Transportadora } from '../types'
 import toast from 'react-hot-toast'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
+import { BlocoDisponibilidade, ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
+import type { Disponibilidade } from '../lib/crm'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 
 export function ClienteAutocomplete({ value, onChange, initialNome, onCriarNovo }: {
@@ -137,12 +139,35 @@ export function NovoPedido() {
     queryFn: () => api.get('/transportadoras').then(r => r.data),
   })
 
+  // Decisão de estoque: guardada aqui para o reenvio depois do 409.
+  const [faltaEstoque, setFaltaEstoque] = useState<Disponibilidade | null>(null)
+  const [decisao, setDecisao] = useState<DecisaoEstoque | null>(null)
+
+  // Disponibilidade enquanto operações monta os itens — informativo, atualiza a
+  // cada mudança de item ou quantidade.
+  const itensValidos = itens.filter(i => i.produto_id && Number(i.qtd) > 0)
+  const chaveItens = JSON.stringify(itensValidos.map(i => [i.produto_id, i.qtd]))
+  const { data: analise, isLoading: analisando } = useQuery<Disponibilidade>({
+    queryKey: ['disp-nova-ov', chaveItens],
+    queryFn: () => api.post('/crm/disponibilidade', {
+      itens: itensValidos.map(i => ({
+        produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao,
+        qtd: i.qtd, valor_unitario: i.valor || 0,
+      })),
+    }).then(r => r.data),
+    enabled: itensValidos.length > 0,
+    staleTime: 30_000,
+  })
+
   /** Monta o body base da requisição */
   const buildBody = (extra?: Record<string, unknown>) => ({
     ...form,
     transportadora_id: form.transportadora_id || null,
     canal: form.canal || null,
     itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
+    decisao_estoque: decisao?.decisao || null,
+    observacao_estoque: decisao?.observacao || null,
+    previsao_pcp: decisao?.previsao_pcp || null,
     ...extra,
   })
 
@@ -150,13 +175,28 @@ export function NovoPedido() {
   const mutation = useMutation({
     mutationFn: () => api.post('/pedidos', buildBody()),
     onSuccess: (res) => {
-      toast.success('OV cadastrada!')
+      toast.success(decisao
+        ? 'OV cadastrada só com o material disponível — o saldo ficou como pendência.'
+        : 'OV cadastrada!', { duration: decisao ? 7000 : 4000 })
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       navigate(`/expedicao/${res.data.id}`)
     },
     onError: (e: any) => {
       const status = e.response?.status
       const detail = e.response?.data?.detail
+
+      // 409 + análise → falta material. Abre a decisão em vez de dar erro.
+      if (status === 409 && detail?.tipo === 'ESTOQUE_INSUFICIENTE' && detail.analise) {
+        setFaltaEstoque(detail.analise)
+        return
+      }
+      // Nada disponível: não há OV para mandar à expedição, e não há decisão que
+      // resolva — só avisa, com o detalhe de quanto falta.
+      if (status === 409 && detail?.tipo === 'SEM_ESTOQUE') {
+        toast.error(detail.msg, { duration: 8000 })
+        setFaltaEstoque(detail.analise || null)
+        return
+      }
 
       // 409 + pode_recriar → OV foi cancelada; mostrar modal de confirmação
       if (status === 409 && detail?.pode_recriar) {
@@ -346,6 +386,20 @@ export function NovoPedido() {
             {itens.length === 0 && (
               <p className="text-xs text-amber-600 mt-1">Adicione pelo menos um item para cadastrar a OV.</p>
             )}
+            {itensValidos.length > 0 && (
+              <div className="mt-2">
+                <BlocoDisponibilidade analise={analise} carregando={analisando} />
+              </div>
+            )}
+            {decisao && (
+              <p className="text-xs text-blue-700 mt-1.5">
+                Decisão registrada: a OV entra só com o material disponível e o saldo fica
+                como pendência.{' '}
+                <button type="button" onClick={() => setDecisao(null)} className="underline">
+                  desfazer
+                </button>
+              </p>
+            )}
           </div>
 
           <div className="col-span-2">
@@ -390,6 +444,38 @@ export function NovoPedido() {
           </button>
         </div>
       </div>
+
+      {/* ── Modal: falta material para a OV ──
+          Só a opção de seguir com o disponível: a OV já foi emitida no D365, então
+          "aguardar produção" não se aplica aqui. */}
+      {faltaEstoque && (
+        <ModalDecisaoEstoque
+          analise={faltaEstoque}
+          titulo="Não temos todo o material desta OV"
+          pendente={mutation.isPending}
+          permiteAguardar={false}
+          onClose={() => setFaltaEstoque(null)}
+          onDecidir={(d) => {
+            setDecisao(d)
+            setFaltaEstoque(null)
+            // Reenvia já com a decisão; `decisao` no estado ainda não chegou ao
+            // buildBody neste tick, então manda explicitamente.
+            api.post('/pedidos', {
+              ...buildBody(),
+              decisao_estoque: d.decisao,
+              observacao_estoque: d.observacao || null,
+              previsao_pcp: d.previsao_pcp || null,
+            }).then(res => {
+              toast.success('OV cadastrada só com o material disponível — o saldo ficou como pendência.',
+                { duration: 7000 })
+              qc.invalidateQueries({ queryKey: ['pedidos'] })
+              navigate(`/expedicao/${res.data.id}`)
+            }).catch((e: any) => {
+              const d2 = e.response?.data?.detail
+              toast.error(typeof d2 === 'string' ? d2 : d2?.msg || 'Erro ao cadastrar OV')
+            })
+          }} />
+      )}
 
       {/* ── Modal: Faturamento parcial — criar remessa derivada ── */}
       {modalDerivar.visivel && (
