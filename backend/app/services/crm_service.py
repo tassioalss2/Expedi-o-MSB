@@ -52,7 +52,15 @@ _ESTAGIO_LABEL = {e["key"]: e["label"] for e in ESTAGIOS}
 # Ordem para não deixar pular etapa. DESAFIOS compartilha posição com
 # QUALIFICACAO porque é um desvio, não um degrau: sair dela para NEGOCIACAO é o
 # mesmo avanço que sair de QUALIFICACAO.
-_ORDEM_ESTAGIO = {"QUALIFICACAO": 1, "DESAFIOS": 1, "NEGOCIACAO": 2, "PROPOSTA": 3}
+#
+# GANHO e PERDIDO entram como 4 (acima de tudo) para que SAIR deles conte como
+# volta, não como avanço. Sem eles no mapa, `_ORDEM_ESTAGIO.get("GANHO", 0)` dava
+# 0 e reabrir uma oportunidade ganha era tratado como avanço para Qualificada —
+# o app cobrava "próximo passo definido" para desfazer um ganho.
+# Como destino, os dois são desviados antes do validador (ganhar/perder têm portão
+# próprio), então o número só pesa como origem.
+_ORDEM_ESTAGIO = {"QUALIFICACAO": 1, "DESAFIOS": 1, "NEGOCIACAO": 2, "PROPOSTA": 3,
+                  "GANHO": 4, "PERDIDO": 4}
 
 MOTIVOS_PERDA = {
     "PRECO": "Preço acima do concorrente",
@@ -452,23 +460,15 @@ def requisitos_avanco(db, oportunidade_id: str, atual: dict, destino: str) -> li
 def requisitos_ganho(db, oportunidade_id: str) -> list:
     """O que falta para marcar como ganha.
 
-    A proposta é o último passo do processo e é ela que decide o fechamento —
-    então não se declara ganho sem proposta emitida."""
-    try:
-        cots = db.table("crm_cotacoes").select("id, status, enviada_em")\
-            .eq("oportunidade_id", oportunidade_id).eq("ativo", True).execute().data
-    except Exception:
-        # Sem a tabela de cotações (migration pendente) não dá para exigir a
-        # proposta — melhor liberar do que travar o fluxo com erro opaco.
-        return []
-    emitida = [c for c in cots if c.get("enviada_em") or c.get("status") in ("ENVIADA", "ACEITA")]
-    if not emitida:
-        if cots:
-            # A proposta existe, só não foi marcada como enviada. Dizer ONDE
-            # resolver — a mensagem antiga deixava o usuário sem saída.
-            return ["marcar a proposta como enviada — use \"Marcar enviada\" no painel "
-                    "Propostas, aqui mesmo na oportunidade"]
-        return ["gerar e enviar a proposta ao cliente — é ela que fecha o negócio"]
+    Hoje: nada. A proposta enviada era exigida aqui, e o time pediu para tirar —
+    boa parte das vendas fecha por telefone ou WhatsApp e a proposta formal sai
+    depois (ou nunca), então a exigência travava ganho legítimo.
+
+    A função continua existindo, e sendo chamada por `ganhar_oportunidade`, porque
+    é o ponto único onde entram requisitos de ganho. A conferência de ESTOQUE não
+    mora aqui: ela não é "requisito", é uma decisão que o comercial toma — está em
+    `ganhar_oportunidade` e continua valendo.
+    """
     return []
 
 
@@ -540,15 +540,15 @@ def criar_oportunidade(payload: OportunidadeCreate, usuario: UsuarioOut,
     """
     db = get_service_db()
     # GANHO e PERDIDO são DESFECHOS, não pontos de partida — e cada um tem um
-    # portão próprio (`ganhar_oportunidade` exige proposta enviada, confere estoque,
-    # abre a OV e o repasse; `perder_oportunidade` exige motivo codificado).
-    # Nascer já em GANHO furava os dois: dava oportunidade ganha sem proposta, sem
-    # OV, sem repasse e — depois desta feature — sem a conferência de estoque.
+    # portão próprio (`ganhar_oportunidade` confere estoque, abre a OV no kanban da
+    # expedição e o repasse; `perder_oportunidade` exige motivo codificado).
+    # Nascer já em GANHO furava os dois: dava oportunidade ganha sem OV, sem repasse
+    # e — depois desta feature — sem a conferência de estoque.
     if payload.estagio in ("GANHO", "PERDIDO"):
         raise HTTPException(
             status_code=422,
             detail="Oportunidade não nasce ganha nem perdida. Crie no funil e use o botão "
-                   "Ganhar/Perder, que é o que confere proposta, estoque e abre a OV. "
+                   "Ganhar/Perder, que é o que confere o estoque e abre a OV. "
                    "Se a venda já está fechada e não passou pelo funil, use Venda Outbound.")
     estagio = payload.estagio if payload.estagio in _PROB_POR_ESTAGIO else "QUALIFICACAO"
     prob = payload.probabilidade if payload.probabilidade is not None else _PROB_POR_ESTAGIO[estagio]
@@ -1184,7 +1184,7 @@ def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut)
     if o.get("estagio") != "GANHO":
         raise HTTPException(
             status_code=422,
-            detail="Só oportunidade GANHA gera OV — marque como ganha antes (exige proposta enviada).")
+            detail="Só oportunidade GANHA gera OV — marque como ganha antes.")
     if not o.get("cliente_id"):
         raise HTTPException(status_code=400, detail="Defina o cliente da oportunidade antes de gerar a OV.")
 

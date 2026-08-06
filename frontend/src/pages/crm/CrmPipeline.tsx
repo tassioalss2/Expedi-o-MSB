@@ -587,12 +587,13 @@ function PainelPropostas({ oportunidadeId, onChanged }: { oportunidadeId: string
       <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
         <FileText size={15} /> Propostas ({propostas.length})
       </h3>
-      {/* Sem proposta enviada, Ganhar é recusado pelo servidor. O caminho para
-          destravar precisa estar aqui, não escondido dentro do modal da cotação. */}
-      {!alguremEnviada && (
-        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 mb-2">
-          Nenhuma proposta enviada ainda — por isso <strong>Ganhar</strong> fica travado. Depois de
-          mandar ao cliente, clique em <strong>Marcar enviada</strong> abaixo.
+      {/* Proposta enviada NÃO é mais exigida para ganhar (muita venda fecha por
+          telefone e a proposta formal sai depois, ou nunca). O aviso continua como
+          lembrete de registro, sem falar de travamento — que não existe mais. */}
+      {!alguremEnviada && propostas.length > 0 && (
+        <p className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-2 mb-2">
+          Nenhuma proposta marcada como enviada. Se já mandou ao cliente, clique em{' '}
+          <strong>Marcar enviada</strong> abaixo para o histórico ficar correto.
         </p>
       )}
       <div className="space-y-1.5">
