@@ -223,8 +223,14 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
  *  expedição — a pendência pode ter ficado dias parada e outra OV pode ter
  *  consumido a produção nesse meio tempo. Quando o material chegou só em parte,
  *  o servidor devolve 409 com a análise e a tela oferece liberar o que já tem. */
-export function ModalLiberarPendencia({ pendencia: p, onClose, onLiberado }: {
-  pendencia: Pendencia; onClose: () => void; onLiberado: () => void
+export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLiberado }: {
+  pendencia: Pendencia
+  /** Situação de agora, quando quem abriu o modal já a tem em mão. Com ela o modal
+   *  mostra o que vai sair e oferece a liberação parcial de UMA vez, em vez de
+   *  exigir uma tentativa recusada primeiro. */
+  analise?: Disponibilidade | null
+  onClose: () => void
+  onLiberado: () => void
 }) {
   const [observacao, setObservacao] = useState('')
   const [faltaAinda, setFaltaAinda] = useState<Disponibilidade | null>(null)
@@ -250,6 +256,11 @@ export function ModalLiberarPendencia({ pendencia: p, onClose, onLiberado }: {
   })
 
   const podeParcial = !!faltaAinda?.itens?.some(i => (i.qtd_atendida || 0) > 0)
+  // Situação já conhecida: parte em estoque, parte faltando. Vai direto ao parcial.
+  const situacao = faltaAinda || analise || null
+  const parcialDireto = !faltaAinda && !!analise?.tem_falta
+    && analise.itens.some(i => (i.qtd_atendida || 0) > 0)
+  const prontos = (situacao?.itens || []).filter(i => (i.qtd_atendida || 0) > 0)
 
   return (
     <ModalBase titulo="Liberar pendência de estoque" onClose={onClose} max="max-w-2xl">
@@ -269,6 +280,23 @@ export function ModalLiberarPendencia({ pendencia: p, onClose, onLiberado }: {
               </p>
             </div>
             <TabelaDisponibilidade analise={faltaAinda} />
+          </>
+        ) : parcialDireto && analise ? (
+          <>
+            <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+              <Check size={16} className="text-emerald-600 mt-0.5 shrink-0" />
+              <p className="text-sm text-emerald-900">
+                Dá para liberar <strong>
+                  {prontos.map(i => `${n(i.qtd_atendida)} un de ${i.codigo}`).join(', ')}
+                </strong> agora. O que falta continua pendente e entra depois como 2ª remessa,
+                na mesma OV.
+              </p>
+            </div>
+            <TabelaDisponibilidade analise={analise} />
+            <div>
+              <label className="text-sm text-gray-600">Observação (opcional)</label>
+              <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />
+            </div>
           </>
         ) : (
           <>
@@ -315,6 +343,11 @@ export function ModalLiberarPendencia({ pendencia: p, onClose, onLiberado }: {
           <button disabled={!podeParcial || liberar.isPending} onClick={() => liberar.mutate(true)}
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl py-2.5 text-sm font-medium">
             {podeParcial ? 'Liberar o que já tem' : 'Nada disponível ainda'}
+          </button>
+        ) : parcialDireto ? (
+          <button disabled={liberar.isPending} onClick={() => liberar.mutate(true)}
+            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl py-2.5 text-sm font-medium">
+            {liberar.isPending ? 'Liberando…' : 'Liberar o que tem em estoque'}
           </button>
         ) : (
           <button disabled={liberar.isPending} onClick={() => liberar.mutate(false)}

@@ -302,21 +302,39 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
     if acao == "GERAR_OV" and fonte == "oportunidade" and ov and ov.get("status") == "CANCELADO":
         ov = None
 
+    # ── O que ainda falta ENTREGAR ────────────────────────────────────────────
+    # Não é sempre o saldo. Depende de já ter saído OV ou não:
+    #
+    #   "aguardar produção" e sem OV  →  nada foi entregue, então falta entregar a
+    #                                    VENDA INTEIRA, não só o item que faltava.
+    #   qualquer outro caso           →  a OV já levou o que havia; falta o saldo.
+    #
+    # Usar sempre o saldo (era o que fazia) tornava invisível qualquer item
+    # acrescentado depois do ganho: a venda tinha 100 un de um item COM estoque
+    # esperando junto, e liberar não entregava nada além do item em falta.
+    nada_entregue = pend.get("decisao") == "AGUARDAR" and not ov
+    if nada_entregue and fonte == "oportunidade":
+        itens_entrada = disponibilidade_service.entrada_de_itens_crm(
+            db.table("crm_oportunidade_itens").select("*")
+            .eq("oportunidade_id", registro_id).order("id").execute().data)
+    else:
+        itens_entrada = [{
+            "ref": idx,
+            "produto_id": i.get("produto_id"),
+            "codigo": i.get("codigo"),
+            "descricao": i.get("descricao"),
+            "qtd": float(i.get("qtd_pendente") or 0),
+            "valor_unitario": float(i.get("valor_unitario") or 0),
+        } for idx, i in enumerate(itens_pend)]
+
     # ── Reconfere o estoque ───────────────────────────────────────────────────
-    analise = disponibilidade_service.analisar([{
-        "ref": idx,
-        "produto_id": i.get("produto_id"),
-        "codigo": i.get("codigo"),
-        "descricao": i.get("descricao"),
-        "qtd": float(i.get("qtd_pendente") or 0),
-        "valor_unitario": float(i.get("valor_unitario") or 0),
-    } for idx, i in enumerate(itens_pend)], sincronizar=True)
+    analise = disponibilidade_service.analisar(itens_entrada, sincronizar=True)
 
     if analise.get("tem_falta") and not parcial:
         raise HTTPException(status_code=409, detail={
             "tipo": "ESTOQUE_INSUFICIENTE",
-            "msg": "O material ainda não chegou por completo. Libere só o que já tem, "
-                   "ou espere o restante.",
+            "msg": "Ainda não há material para tudo. Libere para operações de vendas o que "
+                   "já tem em estoque — o resto continua pendente.",
             "analise": analise,
         })
 

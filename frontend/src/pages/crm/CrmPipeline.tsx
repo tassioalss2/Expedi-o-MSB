@@ -781,9 +781,14 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
                 <span>🏆 Ganha em {fmtData(o.ganho_em)}</span>
                 {o.gerado_ov_ref
                   ? <button onClick={() => o.gerado_ov_id && navigate(`/expedicao/${o.gerado_ov_id}`)} className="underline flex items-center gap-1"><ExternalLink size={12} /> OV {o.gerado_ov_ref}</button>
-                  : <button onClick={() => setGerarOV(true)} className="flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded"><Package size={12} /> Cadastrar OV do D365</button>}
+                  : o.pendencia_aberta
+                    // Com pendência aberta a OV NÃO nasce por aqui — nasce ao liberar
+                    // o estoque, com a quantidade que existe. Deixar o botão aqui era
+                    // oferecer um caminho que o servidor recusa.
+                    ? <span className="text-emerald-800">OV sai ao liberar o estoque, abaixo</span>
+                    : <button onClick={() => setGerarOV(true)} className="flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded"><Package size={12} /> Cadastrar OV do D365</button>}
               </div>
-              {!o.gerado_ov_ref && (
+              {!o.gerado_ov_ref && !o.pendencia_aberta && (
                 <div className={`text-xs rounded-lg p-2 border ${
                   o.repasse_status === 'ASSUMIDO'
                     ? 'bg-blue-50 border-blue-200 text-blue-800'
@@ -920,14 +925,21 @@ function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
   const temItens = (o.itens || []).some((i: any) => i.produto_id && Number(i.qtd) > 0)
   const pend = o.pendencia_aberta ? o.pendencia : null
 
+  // Consulta sempre que houver itens. Com pendência aberta ela é o que responde
+  // "o que já dá para mandar para a expedição agora" — sem isso o comercial via
+  // apenas o item em falta e não sabia que o resto da venda estava pronto.
   const { data: analise, isLoading } = useQuery<Disponibilidade>({
     queryKey: ['crm-disp', o.id],
     queryFn: () => api.get(`/crm/oportunidades/${o.id}/disponibilidade`).then(r => r.data),
-    // Sem pendência já registrada e com itens: vale consultar. Com pendência, o
-    // que importa é o saldo prometido, que já vem no próprio card.
-    enabled: temItens && !pend,
+    enabled: temItens,
     staleTime: 60_000,
   })
+  const prontos = (analise?.itens || []).filter(i => (i.qtd_atendida || 0) > 0)
+  const valorPronto = prontos.reduce(
+    (a, i) => a + (i.qtd_atendida || 0) * (i.valor_unitario || 0), 0)
+  // Só faz sentido oferecer liberação parcial quando NADA saiu ainda (decisão
+  // "aguardar"); com a OV já aberta, o que sobrou é saldo e vira 2ª remessa.
+  const podeLiberarParcial = !!pend && pend.decisao === 'AGUARDAR' && prontos.length > 0
 
   const { data: pendencias } = useQuery<PendenciasResp>({
     queryKey: ['crm-pendencias'],
@@ -960,10 +972,29 @@ function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
             {registro?.pode_liberar && (
               <button onClick={() => setLiberando(true)}
                 className="text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-3 py-1.5 whitespace-nowrap">
-                Material chegou
+                {/* O rótulo diz o que o clique faz AGORA: com parte em estoque a
+                    ação é liberar essa parte, não anunciar que o material chegou. */}
+                {podeLiberarParcial ? 'Liberar o que tem em estoque' : 'Material chegou'}
               </button>
             )}
           </div>
+
+          {/* O que já pode ir para operações de vendas. Antes o bloco listava só o
+              item em falta, então um item COM estoque esperando junto ficava
+              invisível — era o caso que expôs o problema. */}
+          {prontos.length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2">
+              <p className="text-xs font-semibold text-emerald-800">
+                Pronto para liberar agora · {fmtBRL(valorPronto)}
+              </p>
+              {prontos.map((i, idx) => (
+                <div key={idx} className="flex items-center justify-between text-xs text-emerald-900 py-0.5">
+                  <span>{i.codigo || '—'}</span>
+                  <span>{i.qtd_atendida} de {i.qtd_pedida} un em estoque</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="bg-white rounded-lg border border-red-100 px-2.5 py-1.5">
             {(pend.itens || []).map((i: any, idx: number) => (
               <div key={idx} className="flex items-center justify-between text-xs py-0.5">
@@ -988,7 +1019,9 @@ function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
       )}
 
       {liberando && registro && (
-        <ModalLiberarPendencia pendencia={registro} onClose={() => setLiberando(false)}
+        <ModalLiberarPendencia pendencia={registro}
+          analise={podeLiberarParcial ? analise : null}
+          onClose={() => setLiberando(false)}
           onLiberado={onChanged} />
       )}
     </div>
