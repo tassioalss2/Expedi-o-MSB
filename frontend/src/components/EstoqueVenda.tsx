@@ -332,12 +332,12 @@ export function CardPendencia({ p, onAbrir, onLiberar }: {
   p: Pendencia; onAbrir: () => void; onLiberar: () => void
 }) {
   return (
-    <div className="bg-white rounded-lg border border-red-200 shadow-sm p-2.5">
+    <div className="bg-white rounded-lg border border-red-200 shadow-sm p-2">
       <div onClick={onAbrir} className="cursor-pointer">
-        <p className="text-sm font-medium text-gray-800 leading-tight line-clamp-2">{p.titulo}</p>
-        {p.cliente && <p className="text-xs text-gray-500 mt-0.5 truncate">{p.cliente}</p>}
-        <div className="flex items-center justify-between mt-1.5">
-          <span className="text-sm font-semibold text-red-700">{fmtBRL(p.valor)}</span>
+        <p className="text-[13px] font-medium text-gray-800 leading-tight line-clamp-2 break-words">{p.titulo}</p>
+        {p.cliente && <p className="text-[11px] text-gray-500 mt-0.5 leading-tight line-clamp-2">{p.cliente}</p>}
+        <div className="flex items-center justify-between gap-1 flex-wrap mt-1.5">
+          <span className="text-[13px] font-semibold text-red-700">{fmtBRL(p.valor)}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
             {n(p.qtd_total)} un
           </span>

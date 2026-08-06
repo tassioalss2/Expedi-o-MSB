@@ -11,6 +11,27 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Funil do CRM: todas as colunas na tela, sem rolar para o lado.
+
+   As colunas usam minmax(0, 1fr) — o zero é o que permite encolher abaixo do
+   conteúdo. Com um piso em px (era minmax(230px, 1fr)) seis colunas somavam mais
+   que a largura útil e o kanban virava rolagem horizontal, escondendo justamente
+   a coluna do fim.
+
+   Abaixo de 1024px seis colunas ficariam ilegíveis, então aí volta a rolagem com
+   largura mínima por coluna. É a única situação em que rolar para o lado é melhor
+   do que ver tudo. */
+.kanban-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--kanban-cols, 6), minmax(0, 1fr));
+}
+
+@media (max-width: 1023px) {
+  .kanban-grid {
+    grid-template-columns: repeat(var(--kanban-cols, 6), minmax(210px, 1fr));
+  }
+}
+
 /* Scrollbar customizada */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #f1f5f9; }

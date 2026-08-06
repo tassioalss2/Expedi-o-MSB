@@ -133,22 +133,25 @@ export function CrmPipeline() {
       {isLoading ? (
         <p className="text-center text-gray-400 py-10 text-sm">Carregando funil…</p>
       ) : (
-        <div className="overflow-x-auto pb-2">
-          <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${ESTAGIOS_PIPELINE.length + 1}, minmax(230px, 1fr))` }}>
+        <div className="overflow-x-auto lg:overflow-x-visible pb-2">
+          <div className="kanban-grid gap-2"
+            style={{ ['--kanban-cols' as any]: ESTAGIOS_PIPELINE.length + 1 }}>
             {/* Pendência de estoque vem PRIMEIRO: é venda fechada esperando
                 material, o que trava dinheiro. Ficava no fim, fora da tela sem
                 rolar — e o que não se vê não é cobrado. */}
             <div className="bg-red-50/40 rounded-xl border border-red-100 flex flex-col min-h-[400px]">
               <div className="h-1 rounded-t-xl bg-red-500" />
-              <div className="px-3 py-2 flex items-center justify-between">
-                <span className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-red-500" /> Pendência de estoque
+              {/* Cabeçalho empilhado: com 6 colunas na tela não há largura para
+                  título e total na mesma linha sem cortar um dos dois. */}
+              <div className="px-2.5 py-2">
+                <span className="text-[13px] font-semibold text-gray-700 flex items-start gap-1.5 leading-tight">
+                  <span className="w-2 h-2 rounded-full bg-red-500 mt-1 shrink-0" /> Pendência de estoque
                 </span>
-                <span className="text-[11px] text-gray-400">
+                <span className="text-[11px] text-gray-400 block mt-0.5">
                   {pendencias.length} · {fmtBRLcurto(totalPendente)}
                 </span>
               </div>
-              <div className="px-2 pb-2 space-y-2 flex-1 overflow-y-auto">
+              <div className="px-1.5 pb-2 space-y-2 flex-1 overflow-y-auto">
                 {pendencias.map(p => (
                   <CardPendencia key={`${p.fonte}-${p.id}`} p={p}
                     onAbrir={() => { if (p.fonte === 'oportunidade') setDetalheId(p.id) }}
@@ -170,13 +173,13 @@ export function CrmPipeline() {
                 <div key={ek}
                   className="bg-gray-50 rounded-xl border border-gray-100 flex flex-col min-h-[400px]">
                   <div className={`h-1 rounded-t-xl ${cfg.coluna}`} />
-                  <div className="px-3 py-2 flex items-center justify-between">
-                    <span className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${cfg.ponto}`} /> {cfg.label}
+                  <div className="px-2.5 py-2">
+                    <span className="text-[13px] font-semibold text-gray-700 flex items-start gap-1.5 leading-tight">
+                      <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${cfg.ponto}`} /> {cfg.label}
                     </span>
-                    <span className="text-[11px] text-gray-400">{cards.length} · {fmtBRLcurto(soma)}</span>
+                    <span className="text-[11px] text-gray-400 block mt-0.5">{cards.length} · {fmtBRLcurto(soma)}</span>
                   </div>
-                  <div className="px-2 pb-2 space-y-2 flex-1 overflow-y-auto">
+                  <div className="px-1.5 pb-2 space-y-2 flex-1 overflow-y-auto">
                     {cards.map(o => (
                       <CardOpp key={o.id} o={o} onClick={() => setDetalheId(o.id)} />
                     ))}
@@ -208,11 +211,13 @@ function CardOpp({ o, onClick }: { o: any; onClick: () => void }) {
   const cfg = ESTAGIO_MAP[o.estagio]
   return (
     <div onClick={onClick}
-      className="bg-white rounded-lg border border-gray-200 shadow-sm p-2.5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">
-      <p className="text-sm font-medium text-gray-800 leading-tight line-clamp-2">{o.titulo}</p>
-      {o.cliente && <p className="text-xs text-gray-500 mt-0.5 truncate">{o.cliente}</p>}
-      <div className="flex items-center justify-between mt-1.5">
-        <span className="text-sm font-semibold text-gray-700">{fmtBRL(o.valor_estimado)}</span>
+      className="bg-white rounded-lg border border-gray-200 shadow-sm p-2 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all">
+      <p className="text-[13px] font-medium text-gray-800 leading-tight line-clamp-2 break-words">{o.titulo}</p>
+      {/* Nome de cliente é longo (razão social inteira) e a coluna é estreita:
+          duas linhas com reticências em vez de uma linha cortada no meio. */}
+      {o.cliente && <p className="text-[11px] text-gray-500 mt-0.5 leading-tight line-clamp-2">{o.cliente}</p>}
+      <div className="flex items-center justify-between gap-1 flex-wrap mt-1.5">
+        <span className="text-[13px] font-semibold text-gray-700">{fmtBRL(o.valor_estimado)}</span>
         {/* A probabilidade vem ajustada pelo servidor; quando difere da base do
             estágio, o título explica por quê. */}
         <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${cfg?.chip || ''}`}
