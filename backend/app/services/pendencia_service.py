@@ -101,13 +101,21 @@ def _dias(iso: Optional[str]) -> Optional[int]:
     return max(0, (datetime.now(timezone.utc) - d).days)
 
 
-def _acao(ov: Optional[dict]) -> tuple:
+def _acao(ov: Optional[dict], fonte: str = "oportunidade") -> tuple:
     """(acao, motivo_bloqueio) para a pendência cuja OV é `ov` (None = sem OV)."""
     if not ov:
         return "GERAR_OV", None
     status = ov.get("status")
     if status == "CANCELADO":
-        return None, f"A OV {ov.get('numero_pedido')} está cancelada — resolva a OV antes de liberar o saldo."
+        if fonte == "pedido":
+            # Venda outbound: a pendência mora na própria OV, então OV cancelada
+            # é venda cancelada — não há saldo a entregar.
+            return None, (f"A OV {ov.get('numero_pedido')} foi cancelada — a venda não existe "
+                          "mais, então não há saldo para liberar.")
+        # Venda do CRM: a OV cancelada é história. A venda segue de pé e o saldo
+        # merece uma OV nova. Bloquear aqui deixava a pendência presa para sempre
+        # a uma OV que ninguém vai mais usar.
+        return "GERAR_OV", None
     if _provisorio(ov.get("numero_pedido")):
         # Operações de vendas ainda não completou o número real. Somar na mesma
         # OV é melhor do que criar remessa: o D365 não emitiu nada ainda.
@@ -178,7 +186,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         if not incluir_resolvidas and pend.get("resolvido_em"):
             continue
         ov = ovs.get(o.get("gerado_ov_id"))
-        acao, bloqueio = _acao(ov)
+        acao, bloqueio = _acao(ov, "oportunidade")
         saida.append(_serializar(
             fonte="oportunidade", registro_id=o["id"], titulo=o.get("titulo"),
             cliente=clientes.get(o.get("cliente_id")), cliente_id=o.get("cliente_id"),
@@ -189,7 +197,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         pend = p.get("pendencia") or {}
         if not incluir_resolvidas and pend.get("resolvido_em"):
             continue
-        acao, bloqueio = _acao(p)
+        acao, bloqueio = _acao(p, "pedido")
         saida.append(_serializar(
             fonte="pedido", registro_id=p["id"],
             titulo=f"Venda outbound {p.get('numero_pedido')}",
@@ -287,9 +295,12 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             ov = (_ov_por_ids(db, [reg["gerado_ov_id"]]) or {}).get(reg["gerado_ov_id"])
     else:
         ov = reg
-    acao, bloqueio = _acao(ov)
+    acao, bloqueio = _acao(ov, fonte)
     if not acao:
         raise HTTPException(status_code=409, detail=bloqueio)
+    # OV cancelada numa venda do CRM: abre uma nova em vez de tentar derivar dela.
+    if acao == "GERAR_OV" and fonte == "oportunidade" and ov and ov.get("status") == "CANCELADO":
+        ov = None
 
     # ── Reconfere o estoque ───────────────────────────────────────────────────
     analise = disponibilidade_service.analisar([{

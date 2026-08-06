@@ -298,6 +298,28 @@ def cancelar_pedido(
         "criado_em": agora,
     }).execute()
 
+    # Desfaz o vínculo com a oportunidade do CRM, se houver.
+    #
+    # Sem isto a oportunidade continuava exibindo um link para uma OV cancelada e
+    # se declarando com repasse CONCLUIDO — e, pior, a liberação da pendência de
+    # estoque ficava travada, porque uma OV cancelada não aceita remessa derivada.
+    # Soltando o vínculo, a venda volta para a fila de Repasse p/ OV e a pendência
+    # volta a poder abrir uma OV nova.
+    try:
+        vinculadas = db.table("crm_oportunidades").select("id, titulo")\
+            .eq("gerado_ov_id", str(pedido_id)).execute().data
+        for opp in vinculadas:
+            db.table("crm_oportunidades").update({
+                "gerado_ov_id": None,
+                "gerado_ov_ref": None,
+                "repasse_status": "AGUARDANDO",
+                "atualizado_em": agora,
+            }).eq("id", opp["id"]).execute()
+    except Exception:
+        # Cancelar a OV é a operação principal e já foi feita; se a limpeza do
+        # vínculo falhar (coluna ausente, CRM indisponível), não desfaz o resto.
+        pass
+
     return {"ok": True, "numero_pedido": pedido["numero_pedido"], "motivo": payload.motivo}
 
 

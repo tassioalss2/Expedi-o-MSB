@@ -648,6 +648,7 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
             novo_valor = _valor_itens(payload.itens)
             if novo_valor > 0:
                 db.table("crm_oportunidades").update({"valor_estimado": novo_valor}).eq("id", oportunidade_id).execute()
+        _reavaliar_pendencia(db, oportunidade_id, usuario)
 
     out = obter_oportunidade(oportunidade_id)
     if entrando_em_proposta:
@@ -661,6 +662,63 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
             out["cotacao_gerada_id"] = cot["id"]
             out["cotacao_gerada_numero"] = cot["numero"]
     return out
+
+
+def _reavaliar_pendencia(db, oportunidade_id: str, usuario: UsuarioOut) -> None:
+    """Recalcula a pendência depois de mexer nos itens da venda.
+
+    A pendência é um retrato do momento da decisão, e retrato não se atualiza
+    sozinho. Sem isto, um item ACRESCENTADO depois do ganho ficava fora dela:
+    não aparecia na coluna de pendência, não entrava na liberação, e o valor da
+    oportunidade divergia do valor da pendência (R$ 55 mil contra R$ 50 mil no
+    caso real que expôs o problema). O item novo ficava num limbo — nem entregue
+    nem pendente.
+
+    A DECISÃO é preservada (aguardar x seguir com o disponível), junto com quem
+    decidiu e quando: mexer nos itens não desfaz a escolha do comercial. O que se
+    recalcula é o saldo.
+
+    Silencioso de propósito quando não há pendência aberta — que é o caso normal.
+    """
+    reg = db.table("crm_oportunidades").select("pendencia").eq("id", oportunidade_id)\
+        .execute().data
+    pend = (reg[0].get("pendencia") if reg else None) or None
+    if not pend or pend.get("resolvido_em"):
+        return
+
+    analise = disponibilidade_service.analisar_oportunidade(oportunidade_id)
+    nova = pendencia_service.montar(
+        analise, pend.get("decisao") or "AGUARDAR", str(usuario.id),
+        origem=pend.get("origem") or "GANHO",
+        observacao=pend.get("observacao"), previsao_pcp=pend.get("previsao_pcp"))
+
+    if nova is None:
+        # Nada mais em falta. A pendência se encerra; se a venda ficou sem OV
+        # (decisão "aguardar"), ela cai na fila de Repasse p/ OV, que existe para
+        # exatamente isso — ganha sem OV cadastrada.
+        db.table("crm_oportunidades").update({
+            "pendencia": {**pend, "resolvido_em": _agora(), "resolucao": "SEM_FALTA",
+                          "resolvido_por": str(usuario.id)},
+            "atualizado_em": _agora(),
+        }).eq("id", oportunidade_id).execute()
+        _log_evento(db, oportunidade_id,
+                    "📦 Pendência de estoque encerrada — os itens atuais têm material disponível",
+                    str(usuario.id))
+        return
+
+    # Preserva a autoria e a data da decisão original: o recálculo é do saldo, não
+    # uma nova decisão.
+    nova["decidido_em"] = pend.get("decidido_em") or nova["decidido_em"]
+    nova["decidido_por"] = pend.get("decidido_por") or nova["decidido_por"]
+    db.table("crm_oportunidades").update({"pendencia": nova, "atualizado_em": _agora()})\
+        .eq("id", oportunidade_id).execute()
+
+    if round(float(nova.get("valor") or 0), 2) != round(float(pend.get("valor") or 0), 2):
+        _log_evento(
+            db, oportunidade_id,
+            f"📦 Pendência de estoque recalculada após mudança de itens: "
+            f"R$ {float(pend.get('valor') or 0):,.2f} → R$ {float(nova.get('valor') or 0):,.2f}",
+            str(usuario.id))
 
 
 # ── Desafios: vocabulário que aprende ───────────────────────────────────────────
@@ -1197,6 +1255,15 @@ def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut)
     # Sem isto, quem passasse por aqui em vez do fluxo automático emitiria a OV com
     # a quantidade cheia e a pendência viraria promessa duplicada.
     pend = o.get("pendencia") or {}
+    if pend and not pend.get("resolvido_em") and pend.get("decisao") == "AGUARDAR":
+        # "Aguardar a produção" significa NENHUMA OV até o material chegar. Deixar
+        # gerar OV aqui furava a própria decisão que o comercial acabou de tomar —
+        # e criava uma OV com só os itens que sobraram, sem o item em falta.
+        raise HTTPException(
+            status_code=409,
+            detail="Esta venda está aguardando produção — foi a decisão registrada no ganho. "
+                   "Quando o material chegar, use \"Material chegou\" na pendência de estoque: "
+                   "é por lá que a OV é aberta, com o que houver disponível.")
     if pend and not pend.get("resolvido_em"):
         atendida_por_produto: dict = {}
         for ip in pend.get("itens") or []:
