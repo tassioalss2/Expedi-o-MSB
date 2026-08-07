@@ -148,6 +148,16 @@ def _so_logistica(query):
     return query
 
 
+def _gravar_data_faturamento(db, pedido_id: str, quando: str) -> None:
+    """Competência do faturamento (v31). Best-effort: se a coluna ainda não existe,
+    o faturamento acontece do mesmo jeito e a competência cai no fallback pela
+    movimentação de FATURADO."""
+    try:
+        db.table("pedidos").update({"data_faturamento": quando}).eq("id", pedido_id).execute()
+    except Exception:
+        pass
+
+
 def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     db = get_service_db()
 
@@ -803,6 +813,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
         pedido_data["empenho_id"] = str(_emp)
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
+    _gravar_data_faturamento(db, pedido["id"], ts_fat)
 
     # A movimentação de FATURADO é o que o faturamento usa para atribuir a
     # competência. Cria já — se falhar, desfaz o pedido para não deixar um
@@ -884,6 +895,7 @@ def criar_devolucao(payload, usuario: UsuarioOut) -> dict:
     }
     resultado = db.table("pedidos").insert(pedido_data).execute()
     pedido = resultado.data[0]
+    _gravar_data_faturamento(db, pedido["id"], ts_dev)
 
     usuarios = db.table("usuarios").select("id").limit(1).execute()
     uid = usuarios.data[0]["id"] if usuarios.data else None
@@ -1536,20 +1548,29 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
             detail=f"Para faturar a OV, informe: {', '.join(faltando)}.",
         )
 
+    agora_fat = _agora()
     update_data: dict = {
         "numero_nf": payload.numero_nf,
         "valor_nf": payload.valor_nf,
         "valor_produtos": payload.valor_produtos,
         "valor_frete": payload.valor_frete,
         "chave_nfe": payload.chave_nfe,
-        "atualizado_em": _agora(),
+        "atualizado_em": agora_fat,
     }
     if payload.data_prevista_entrega:
         update_data["data_prevista_entrega"] = payload.data_prevista_entrega.isoformat()
     if payload.codigo_rastreio:
         update_data["codigo_rastreio"] = payload.codigo_rastreio
 
-    db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
+    # Competência do faturamento gravada como fato, não deduzida do histórico.
+    # SOBRESCREVE de propósito: refaturar troca a nota, e a competência é da nota
+    # que vale agora — foi o que colocou os R$ 5.600 da OV016168 no mês errado.
+    try:
+        db.table("pedidos").update({**update_data, "data_faturamento": agora_fat})\
+            .eq("id", pedido_id).execute()
+    except Exception:
+        # Migration v31 pendente: fatura normalmente, competência cai no fallback.
+        db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
 
     alterar_status(pedido_id, StatusPedido.FATURADO.value, usuario, f"NF {payload.numero_nf} emitida")
     return obter_pedido(pedido_id)

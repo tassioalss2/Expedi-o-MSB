@@ -511,12 +511,20 @@ def _faturados_no_periodo(inicio: date, fim: date) -> dict:
     status FATURADO), e não pela última atualização do pedido — que muda a
     cada mudança de status (coleta, expedição, etc.).
 
-    Uma NF é emitida UMA vez, então o que vale é a PRIMEIRA movimentação de
-    FATURADO. Isso importa porque qualquer ação de auditoria sobre uma OV já
-    faturada (trocar transportadora, corrigir valor, corrigir o número da NF)
-    grava uma movimentação repetindo o status atual — e, se ela for FATURADO,
-    a venda passava a contar também no mês da correção. Caso real: 3 OVs de
-    julho reapareceram em agosto somando R$ 4.939,84 depois de correções.
+    A fonte da verdade é `pedidos.data_faturamento` (v31), gravada no instante do
+    faturamento. A dedução pelas movimentações só entra quando ela falta.
+
+    Nessa dedução vale a PRIMEIRA movimentação de FATURADO, porque correções em OV
+    já faturada (trocar transportadora, corrigir valor) gravam uma movimentação
+    repetindo o status — e a venda passava a contar também no mês da correção
+    (3 OVs de julho reapareceram em agosto, R$ 4.939,84).
+
+    Mas a dedução erra no caso oposto: OV REFATURADA. A OV016168 foi faturada em
+    31/07 com uma NF emprestada por engano, revertida em 04/08 e refaturada em
+    05/08 com a nota real — a primeira movimentação deixava R$ 5.600 em julho, mês
+    errado, sobrando em julho e faltando em agosto contra o D365. Nenhuma
+    heurística sobre o histórico acerta os dois casos; por isso a data gravada tem
+    precedência, e refaturar a sobrescreve.
     """
     from datetime import datetime, timedelta, timezone
     from app.core.database import get_service_db
@@ -535,14 +543,40 @@ def _faturados_no_periodo(inicio: date, fim: date) -> dict:
     janela_ini = (inicio - timedelta(days=1)).isoformat()
     janela_fim = (fim + timedelta(days=1)).isoformat()
 
+    # ── Fonte da verdade: a data gravada no faturamento ───────────────────────
+    gravada: dict[str, str] = {}
+    tem_coluna = True
+    try:
+        rows = db.table("pedidos").select("id, data_faturamento")\
+            .gte("data_faturamento", f"{janela_ini}T00:00:00")\
+            .lte("data_faturamento", f"{janela_fim}T23:59:59").execute().data
+        for r in rows:
+            if r.get("data_faturamento"):
+                gravada[r["id"]] = r["data_faturamento"]
+    except Exception:
+        # Migration v31 pendente: segue só com a dedução pelas movimentações.
+        tem_coluna = False
+
+    # Quem TEM data gravada não deve ser datado pela movimentação — senão a OV
+    # refaturada voltaria a contar no mês da primeira nota. Descobre esse conjunto
+    # à parte da janela, porque a data gravada pode cair fora dela.
+    com_data: set = set()
+    if tem_coluna:
+        try:
+            todas = db.table("pedidos").select("id").not_is("data_faturamento", "null").execute().data
+            com_data = {r["id"] for r in todas}
+        except Exception:
+            com_data = set(gravada)
+
     movs = db.table("movimentacoes").select(
         "pedido_id, criado_em"
     ).eq("status_novo", "FATURADO")\
         .gte("criado_em", f"{janela_ini}T00:00:00")\
         .lte("criado_em", f"{janela_fim}T23:59:59").execute().data
 
-    candidatos = {m["pedido_id"] for m in movs if m.get("pedido_id")}
-    if not candidatos:
+    candidatos = {m["pedido_id"] for m in movs
+                  if m.get("pedido_id") and m["pedido_id"] not in com_data}
+    if not candidatos and not gravada:
         return {}
 
     # Para os candidatos, busca TODAS as movimentações de FATURADO e fica com a
@@ -558,6 +592,9 @@ def _faturados_no_periodo(inicio: date, fim: date) -> dict:
                 continue
             if pid not in primeira or ts < primeira[pid]:
                 primeira[pid] = ts
+
+    # A data gravada vence a deduzida.
+    primeira.update(gravada)
 
     faturados: dict[str, str] = {}
     for pid, ts in primeira.items():
