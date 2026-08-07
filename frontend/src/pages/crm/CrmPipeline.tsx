@@ -652,8 +652,10 @@ function ModalGanhar({ oportunidade: o, pendente, onClose, onConfirmar }: {
           <p className="mt-0.5">{o.cliente || 'Sem cliente'} · {fmtBRL(o.valor_estimado)}</p>
         </div>
         <div className="bg-blue-50 border border-blue-100 rounded-lg p-2.5 text-xs text-blue-800">
-          Ao confirmar, o pedido entra na fila de <strong>Repasse p/ OV</strong> e operações de
-          vendas é avisada no Teams automaticamente — não precisa mandar mensagem.
+          Ao confirmar, o app confere o estoque. Tendo material, a OV já cai em{' '}
+          <strong>Dados da OV</strong> no kanban da Expedição e operações de vendas é avisada
+          no Teams. Faltando material, você escolhe entre seguir com o disponível ou aguardar
+          a produção.
         </div>
         <Campo label="Recado para operações de vendas (opcional)">
           <textarea value={nota} onChange={e => setNota(e.target.value)} rows={3} className={inputCls}
@@ -708,7 +710,8 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
       } else if (v.decisao?.decisao === 'PARCIAL') {
         toast.success('Ganha! A OV saiu só com o que temos; o saldo ficou como pendência.', { duration: 7000 })
       } else {
-        toast.success('🏆 Ganha! Repasse aberto para operações de vendas', { duration: 5000 })
+        toast.success('🏆 Ganha! A OV já caiu em "Dados da OV" no kanban da Expedição.',
+          { duration: 6000 })
       }
       setGanhando(false); setFaltaEstoque(null); refresh()
     },
@@ -788,20 +791,15 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
                     ? <span className="text-emerald-800">OV sai ao liberar o estoque, abaixo</span>
                     : <button onClick={() => setGerarOV(true)} className="flex items-center gap-1 bg-emerald-600 text-white px-2 py-1 rounded"><Package size={12} /> Cadastrar OV do D365</button>}
               </div>
+              {/* Ganha, sem pendência e SEM OV é anomalia — no fluxo normal a OV
+                  nasce junto com o ganho. Avisa em vez de deixar a venda parada
+                  em silêncio, que era o que a fila de repasse escondia. */}
               {!o.gerado_ov_ref && !o.pendencia_aberta && (
-                <div className={`text-xs rounded-lg p-2 border ${
-                  o.repasse_status === 'ASSUMIDO'
-                    ? 'bg-blue-50 border-blue-200 text-blue-800'
-                    : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-                  {o.repasse_status === 'ASSUMIDO' ? (
-                    <>
-                      <strong>{o.repasse_assumido_por_nome || 'Operações'}</strong> assumiu o repasse
-                      {o.repasse_assumido_em && ` em ${fmtDataHora(o.repasse_assumido_em)}`} — emitindo a OV no D365.
-                    </>
-                  ) : (
-                    <>Repasse aberto para operações de vendas · ninguém assumiu ainda. Acompanhe na aba <strong>Repasse p/ OV</strong>.</>
-                  )}
-                  {o.repasse_nota && <p className="mt-1 text-gray-600">Recado enviado: {o.repasse_nota}</p>}
+                <div className="text-xs rounded-lg p-2 border bg-amber-50 border-amber-200 text-amber-800">
+                  Esta venda ficou <strong>sem OV</strong>, e não há pendência de estoque —
+                  não é o esperado. Use <strong>Cadastrar OV do D365</strong> acima para
+                  destravar.
+                  {o.repasse_nota && <p className="mt-1 text-gray-600">Recado do comercial: {o.repasse_nota}</p>}
                 </div>
               )}
             </div>

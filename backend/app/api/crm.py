@@ -170,16 +170,14 @@ def liberar_pendencia(fonte: str, registro_id: UUID,
         observacao=payload.observacao if payload else None)
 
 
-# ── Repasse: ganho do comercial → OV emitida por operações de vendas ─────────────
-@router.get("/repasses")
-def listar_repasses(_: UsuarioOut = Depends(get_current_user)):
-    """Fila de vendas ganhas que ainda não têm OV cadastrada no app."""
-    return crm_service.listar_repasses()
-
-
-@router.post("/oportunidades/{oportunidade_id}/assumir")
-def assumir_repasse(oportunidade_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
-    return crm_service.assumir_repasse(str(oportunidade_id), usuario)
+# A fila "Repasse p/ OV" (GET /repasses e POST .../assumir) foi removida junto com
+# a aba do CRM: ganhar já abre a OV em "Dados da OV", e venda sem material fica na
+# coluna Pendência. A fila só existia para um passo manual que não existe mais — e
+# na prática mandava operações de vendas cadastrar OV de venda sem estoque.
+#
+# `crm_service.ganhas_sem_ov` continua, agora como DETECTOR de anomalia (ganha, sem
+# OV e sem pendência = a criação da OV falhou), alimentando a tela de Início e o
+# resumo do Teams.
 
 
 @router.get("/oportunidades/{oportunidade_id}/requisitos")

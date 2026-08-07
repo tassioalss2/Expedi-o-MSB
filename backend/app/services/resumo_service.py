@@ -128,23 +128,18 @@ def montar_resumo() -> str:
     except Exception:
         pass
 
-    # 7) Vendas ganhas esperando OV — repasse do comercial para operações de
-    #    vendas. Mesma fonte da tela de Início (crm_service.ganhas_sem_ov), para
-    #    o resumo e o app não contarem coisas diferentes.
+    # 7) Vendas ganhas que ficaram sem OV — anomalia. Ganhar abre a OV na hora;
+    #    quem espera material está na coluna Pendência e NÃO entra aqui (ver
+    #    crm_service.ganhas_sem_ov). Mesma fonte da tela de Início.
     try:
         from app.services import crm_service
         fila = crm_service.ganhas_sem_ov(db)
         if fila:
-            sem_dono = [f for f in fila if f["repasse_status"] == "AGUARDANDO"]
             rotulos = [f"{f['cliente'] or f['titulo']}"
                        + (f" ({f['dias_esperando']}d)" if f["dias_esperando"] > 0 else "")
-                       for f in (sem_dono or fila)[:5]]
-            if sem_dono:
-                linhas.append(f"🤝 **{len(sem_dono)} venda(s) ganha(s) esperando OV no D365** "
-                              f"(ninguém assumiu): {' · '.join(rotulos)}")
-            outras = len(fila) - len(sem_dono)
-            if outras > 0:
-                linhas.append(f"🤝 **{outras} venda(s) ganha(s) já assumida(s)**, aguardando cadastro da OV")
+                       for f in fila[:5]]
+            linhas.append(f"⚠️ **{len(fila)} venda(s) ganha(s) sem OV** — a OV deveria ter sido "
+                          f"aberta junto com o ganho: {' · '.join(rotulos)}")
     except Exception:
         pass
 

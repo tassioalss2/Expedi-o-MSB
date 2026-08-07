@@ -927,19 +927,26 @@ def _notificar_comercial(texto: str) -> None:
 
 
 def ganhas_sem_ov(db) -> list:
-    """Fila do repasse: ganhas que ainda não viraram OV no app.
+    """Vendas ganhas que ficaram SEM OV e sem explicação — ou seja, um problema.
 
-    Fonte ÚNICA da definição — a tela de Início, o resumo do Teams, o badge da
-    sidebar e o painel de repasse leem daqui. Mesmo motivo de
-    `risco_multa_estoque` na licitação: duas definições paralelas acabam
-    divergindo e um alerta passa a contradizer o outro.
+    Com o fluxo de três saídas do ganho, isto deveria ser sempre vazio: ou a OV
+    nasce em "Dados da OV", ou a venda está na coluna Pendência esperando material.
+    Quem tem pendência aberta NÃO entra aqui: essa venda não espera uma pessoa,
+    espera produção — listá-la mandava operações de vendas cadastrar OV de material
+    que não existe (3 das 4 da antiga fila de repasse estavam nesse caso).
+
+    Fonte ÚNICA da definição — tela de Início, resumo do Teams e badge da sidebar
+    leem daqui.
     """
     try:
         rows = db.table("crm_oportunidades")\
             .select("id, titulo, valor_estimado, canal, ganho_em, repasse_status, repasse_em, "
-                    "repasse_nota, repasse_assumido_em, repasse_assumido_por, clientes(nome)")\
+                    "repasse_nota, repasse_assumido_em, repasse_assumido_por, pendencia, "
+                    "clientes(nome)")\
             .eq("ativo", True).eq("estagio", "GANHO").is_("gerado_ov_id", "null")\
             .order("ganho_em", desc=False).execute().data
+        rows = [r for r in rows
+                if not ((r.get("pendencia") or {}) and not (r["pendencia"] or {}).get("resolvido_em"))]
     except Exception:
         # Migration v25 pendente: sem as colunas de repasse a fila fica vazia em
         # vez de derrubar a tela de Início inteira.
@@ -992,39 +999,11 @@ def _parse_dt(valor):
         return None
 
 
-def listar_repasses() -> list:
-    return ganhas_sem_ov(get_service_db())
-
-
-def assumir_repasse(oportunidade_id: str, usuario: UsuarioOut) -> dict:
-    """Operações de vendas declara que pegou o pedido.
-
-    É o "deixa comigo" da mensagem de Teams. Sem isso, comercial não distingue
-    "ninguém olhou" de "já está sendo emitido" — a dúvida que gerava a cobrança
-    por mensagem."""
-    db = get_service_db()
-    o = db.table("crm_oportunidades").select("id, titulo, estagio, gerado_ov_id, repasse_status")\
-        .eq("id", oportunidade_id).single().execute().data
-    if not o:
-        raise HTTPException(status_code=404, detail="Oportunidade não encontrada")
-    if o.get("estagio") != "GANHO":
-        raise HTTPException(status_code=422, detail="Só oportunidade ganha entra no repasse.")
-    if o.get("gerado_ov_id"):
-        raise HTTPException(status_code=400, detail="Esta oportunidade já tem OV cadastrada.")
-
-    agora = _agora()
-    db.table("crm_oportunidades").update({
-        "repasse_status": "ASSUMIDO",
-        "repasse_assumido_por": str(usuario.id),
-        "repasse_assumido_em": agora,
-        "atualizado_em": agora,
-    }).eq("id", oportunidade_id).execute()
-    _log_evento(db, oportunidade_id,
-                f"🙋 {usuario.nome} assumiu o repasse — emitindo a OV no D365", str(usuario.id))
-    _notificar_comercial(
-        f"🙋 **Repasse assumido** — {o.get('titulo')}\n\n"
-        f"{usuario.nome} está emitindo a OV no D365.")
-    return obter_oportunidade(oportunidade_id)
+# `listar_repasses` e `assumir_repasse` foram removidas com a aba "Repasse p/ OV".
+# A fila existia para um passo manual que não existe mais: ganhar já abre a OV em
+# "Dados da OV", e venda sem material fica na coluna Pendência de estoque. As
+# colunas repasse_* continuam no banco — guardam o recado do comercial e o
+# histórico de quem assumiu no tempo em que a fila existiu.
 
 
 def _itens_ov_parcial(itens_rows: list, analise: dict) -> list:
@@ -1104,19 +1083,32 @@ def ganhar_oportunidade(oportunidade_id: str, usuario: UsuarioOut,
     }
     nota = (repasse_nota or "").strip() or None
 
-    # A OV já nasce no kanban da Expedição: cliente e valor conhecidos, número
-    # real e data ficam para a operadora completar direto no card. Não depende
-    # mais de alguém abrir o CRM e clicar em "gerar OV" — some passo manual.
+    # Ganhar tem TRÊS saídas, e nenhuma delas é uma fila intermediária:
+    #
+    #   estoque completo  → OV em "Dados da OV" (AGUARD_DADOS_OV) na Expedição
+    #   falta + parcial   → OV em "Dados da OV" só com o disponível; saldo vira pendência
+    #   falta + aguardar  → NENHUMA OV; a venda fica na coluna Pendência de estoque
+    #
+    # Antes existia a aba "Repasse p/ OV" entre o ganho e a OV. Ela mandava
+    # operações de vendas cadastrar a OV de vendas que não tinham material —
+    # 3 das 4 da fila estavam esperando produção, não uma pessoa. Some.
     stub = None
     if not opp_atual.get("gerado_ov_id") and not aguardar:
+        from app.services import pedido_service
+        # Com pendência, a OV nasce só com o que dá para entregar. Sem pendência,
+        # com tudo — é o caminho normal e não muda nada.
+        itens = _itens_ov_parcial(itens_rows, analise) if pendentes else itens_rows
         try:
-            from app.services import pedido_service
-            # Com pendência, a OV nasce só com o que dá para entregar. Sem
-            # pendência, com tudo — é o caminho normal e não muda nada.
-            itens = _itens_ov_parcial(itens_rows, analise) if pendentes else itens_rows
             stub = pedido_service.criar_pedido_stub_crm({**opp_atual, **update}, itens, str(usuario.id))
-        except Exception:
-            stub = None
+        except Exception as exc:
+            # NÃO engolir: sem a OV a venda ficava ganha e invisível — era
+            # exatamente assim que uma oportunidade caía na fila de repasse sem
+            # ninguém entender por quê. Falhar aqui deixa a oportunidade como
+            # estava, e a pessoa pode tentar de novo.
+            raise HTTPException(
+                status_code=500,
+                detail=f"A venda NÃO foi marcada como ganha: falhou ao abrir a OV na "
+                       f"Expedição ({exc}). Tente de novo; se persistir, avise o suporte.")
 
     if stub:
         update["gerado_ov_id"] = stub["id"]

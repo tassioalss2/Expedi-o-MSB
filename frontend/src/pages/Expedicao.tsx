@@ -14,14 +14,13 @@ import toast from 'react-hot-toast'
 
 type View = 'lista' | 'kanban'
 
-// O card de ponte "Repasse CRM → OV" que existia aqui foi removido: desde que
-// ganhar_oportunidade passou a criar a OV direto no kanban (coluna
-// "AGUARD_DADOS_OV"), esse card sempre aparecia vazio no caminho normal — só
-// acendia quando a criação automática falhava, o que é raro e confundia mais
-// do que ajudava (o usuário via dois cards de "OV vinda do CRM" ao mesmo
-// tempo). O mecanismo de repasse continua existindo nos bastidores como rede
-// de segurança para esse caso raro — só não tem mais vitrine na Expedição. A
-// aba "Repasse" no CRM segue disponível para quem precisar checar.
+// A venda ganha no CRM chega aqui direto, na coluna "Dados da OV"
+// (AGUARD_DADOS_OV): operações de vendas completa o número real do D365 e a data
+// no próprio card. Não há fila intermediária — a aba "Repasse p/ OV" do CRM foi
+// removida porque mandava cadastrar OV de venda que nem material tinha.
+//
+// Venda ganha SEM estoque não aparece aqui: fica na coluna Pendência de estoque
+// do CRM até o material chegar, e só então abre a OV.
 
 // ── Busca com autocomplete ────────────────────────────────────────────────────
 function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {

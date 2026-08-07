@@ -245,28 +245,25 @@ def pendencias() -> dict:
     except Exception:
         pass
 
-    # 6) Vendas ganhas esperando OV — o repasse do comercial para operações de
-    #    vendas. Mesma definição usada pelo resumo do Teams e pelo painel de
-    #    Repasse (crm_service.ganhas_sem_ov), para os três não divergirem.
+    # 6) Vendas ganhas que ficaram sem OV — ANOMALIA, não fila de trabalho.
+    #    No fluxo de três saídas do ganho, ou a OV nasce em "Dados da OV", ou a
+    #    venda está na coluna Pendência esperando material (essas não entram aqui,
+    #    ver crm_service.ganhas_sem_ov). Sobrar algo significa que a criação da OV
+    #    falhou — merece alarme, não uma fila para alguém trabalhar.
     try:
         from app.services import crm_service
         fila = crm_service.ganhas_sem_ov(db)
         if fila:
             n = len(fila)
-            sem_dono = [f for f in fila if f["repasse_status"] == "AGUARDANDO"]
             mais_antiga = max((f["dias_esperando"] for f in fila), default=0)
-            if sem_dono:
-                detalhe = (f"{len(sem_dono)} sem ninguém responsável"
-                           + (f" · a mais antiga há {mais_antiga} dia{'s' if mais_antiga > 1 else ''}"
-                              if mais_antiga > 0 else ""))
-                grav = "ALTA" if mais_antiga >= 1 else "MEDIA"
-            else:
-                detalhe = "todas já assumidas, aguardando emissão no D365"
-                grav = "BAIXA"
+            detalhe = ("a OV deveria ter sido aberta junto com o ganho"
+                       + (f" · parada há {mais_antiga} dia{'s' if mais_antiga > 1 else ''}"
+                          if mais_antiga > 0 else ""))
             itens.append(_pendencia(
                 "ganhas_sem_ov",
-                f"{n} venda{'s' if n > 1 else ''} ganha{'s' if n > 1 else ''} sem OV cadastrada",
-                detalhe, n, "/crm", "Gerar OV", grav))
+                f"{n} venda{'s' if n > 1 else ''} ganha{'s' if n > 1 else ''} sem OV",
+                detalhe, n, "/crm", "Abrir o funil",
+                "ALTA" if mais_antiga >= 1 else "MEDIA"))
     except Exception:
         pass
 
