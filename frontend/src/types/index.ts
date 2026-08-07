@@ -119,6 +119,9 @@ export interface Pedido {
   atrasado: boolean
   criado_em: string
   atualizado_em: string
+  /** Quando a OV foi expedida de fato (movimentação para EXPEDIDO). Não confundir
+   *  com `atualizado_em`, que muda a cada toque na linha. */
+  expedido_em?: string | null
   cliente?: Cliente
   transportadora?: Transportadora
   itens?: ItemPedido[]

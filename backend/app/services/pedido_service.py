@@ -1109,6 +1109,24 @@ def listar_pedidos(
         p["cliente_nome"] = p.get("clientes", {}).get("nome", "") if p.get("clientes") else ""
         p["transportadora_nome"] = p.get("transportadoras", {}).get("nome") if p.get("transportadoras") else None
 
+    # Quando a OV foi de fato expedida — o kanban mostra na coluna Expedido apenas
+    # as do dia. Vem da movimentação para EXPEDIDO, e NÃO de `atualizado_em`:
+    # `atualizado_em` muda a cada toque na linha (correção de frete, troca de
+    # transportadora, qualquer script de manutenção), e aí OVs expedidas meses
+    # antes voltavam a aparecer como se fossem de hoje.
+    ids_exp = [p["id"] for p in pedidos if p.get("status") == StatusPedido.EXPEDIDO.value]
+    expedido_em: dict[str, str] = {}
+    for i in range(0, len(ids_exp), 40):
+        movs = db.table("movimentacoes").select("pedido_id, criado_em")\
+            .eq("status_novo", StatusPedido.EXPEDIDO.value)\
+            .in_("pedido_id", ids_exp[i:i + 40]).execute().data
+        for m in movs:
+            pid, ts = m.get("pedido_id"), m.get("criado_em")
+            if pid and ts and ts > expedido_em.get(pid, ""):
+                expedido_em[pid] = ts
+    for p in pedidos:
+        p["expedido_em"] = expedido_em.get(p["id"])
+
     # Valor "parado" por OV = Σ qtd × valor_unitário dos itens (cai para o valor
     # da NF quando os itens não têm preço). Alimenta o total por etapa no kanban.
     ids = [p["id"] for p in pedidos]

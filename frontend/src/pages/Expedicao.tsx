@@ -381,7 +381,11 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
     let lista = pedidos.filter((p) => p.status === status)
     if (status === 'EXPEDIDO') {
-      lista = lista.filter((p) => p.atualizado_em && dataLocal(new Date(p.atualizado_em)) === hoje)
+      // `expedido_em` vem da movimentação para EXPEDIDO. Antes usava
+      // `atualizado_em`, que muda a cada toque na linha — uma correção de frete ou
+      // um script de manutenção fazia 299 OVs expedidas em junho reaparecerem como
+      // se fossem do dia.
+      lista = lista.filter((p) => p.expedido_em && dataLocal(new Date(p.expedido_em)) === hoje)
     }
     acc[status] = lista
     return acc
