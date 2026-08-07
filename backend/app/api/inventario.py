@@ -275,11 +275,21 @@ def alterar_tipo_frete(
     def _brl(v: float) -> str:
         return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    db.table("pedidos").update({
+    update_frete: dict = {
         "tipo_frete": frete_novo,
         "valor_frete": valor_frete_novo,
         "atualizado_em": agora,
-    }).eq("id", str(pedido_id)).execute()
+    }
+    # Em OV já faturada, `valor_nf` é o total COM o frete embutido (convenção CIF do
+    # app), então mexer no frete sem recalcular o total deixa os dois brigando: o
+    # faturamento passa a sair de `valor_nf - frete` e o resultado não é mais a face
+    # da nota. Caso real: OV016168 teve o frete corrigido de R$ 340,20 para R$ 442,21
+    # e o valor_nf ficou no total antigo — R$ 102,01 a menos no faturamento de agosto
+    # contra o D365.
+    valor_produtos = float(pedido.get("valor_produtos") or 0)
+    if pedido.get("numero_nf") and valor_produtos > 0:
+        update_frete["valor_nf"] = round(valor_produtos + valor_frete_novo, 2)
+    db.table("pedidos").update(update_frete).eq("id", str(pedido_id)).execute()
 
     linha_valor = f"\n• Valor do frete: {_brl(valor_frete_novo)}" if eh_cif else ""
     if mesmo_tipo:
