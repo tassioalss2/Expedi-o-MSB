@@ -941,6 +941,98 @@ function ModalRetornarEtapa({ pedido, onClose }: { pedido: Pedido; onClose: () =
   )
 }
 
+// ── Modal Voltar para o CRM ──────────────────────────────────────────────────
+// A etapa é escolhida por quem devolve: só ele sabe em que ponto a venda voltou a
+// ser negociação — se o cliente quer mudar quantidade é Negociação, se quer outro
+// preço formalizado é Proposta.
+const ETAPAS_CRM = [
+  { key: 'QUALIFICACAO', label: 'Qualificada', hint: 'voltar ao começo do funil' },
+  { key: 'DESAFIOS', label: 'Desafios', hint: 'travada por algum problema a resolver' },
+  { key: 'NEGOCIACAO', label: 'Negociação', hint: 'renegociar volume, preço ou condições' },
+  { key: 'PROPOSTA', label: 'Proposta', hint: 'refazer/reenviar a proposta ao cliente' },
+]
+
+function ModalDevolverAoCrm({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const [estagio, setEstagio] = useState('NEGOCIACAO')
+  const [motivo, setMotivo] = useState('')
+  const crm = pedido.crm
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/devolver-crm`, { estagio, motivo }),
+    onSuccess: () => {
+      toast.success('Pedido devolvido ao CRM — a OV foi cancelada e a oportunidade voltou ao funil.',
+        { duration: 7000 })
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['crm-opps'] })
+      qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
+      onClose()
+      navigate('/crm')
+    },
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : 'Erro ao devolver ao CRM', { duration: 7000 })
+    },
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="p-5 border-b bg-blue-50 rounded-t-2xl shrink-0">
+          <h2 className="text-lg font-bold text-blue-800">↩ Voltar para o CRM — {pedido.numero_pedido}</h2>
+          <p className="text-sm text-blue-600 mt-0.5">{crm?.titulo}</p>
+        </div>
+
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-3">
+            A OV <strong>{pedido.numero_pedido}</strong> será cancelada e a oportunidade
+            volta para o funil, para o comercial ajustar o que precisa.
+            {crm?.tem_pendencia && (
+              <> A <strong>pendência de estoque</strong> desta venda é descartada — ao ganhar
+                de novo, o app pergunta outra vez o que fazer com o que faltar.</>
+            )}
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Voltar para qual etapa?</label>
+            <div className="mt-1.5 space-y-1.5">
+              {ETAPAS_CRM.map(e => (
+                <button key={e.key} type="button" onClick={() => setEstagio(e.key)}
+                  className={`w-full text-left px-3 py-2 rounded-xl border-2 transition-colors ${
+                    estagio === e.key
+                      ? 'border-blue-400 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300'}`}>
+                  <span className="block text-sm font-medium text-gray-800">{e.label}</span>
+                  <span className="block text-xs text-gray-500">{e.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">
+              Motivo <span className="text-gray-400">(vai para o histórico e para o Teams)</span>
+            </label>
+            <textarea rows={2} value={motivo} onChange={e => setMotivo(e.target.value)}
+              placeholder="Ex.: cliente quer trocar 10 un do 53053 por outro tamanho"
+              className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+          </div>
+        </div>
+
+        <div className="p-5 border-t flex gap-2 shrink-0">
+          <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Cancelar</button>
+          <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
+            className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-medium">
+            {mutation.isPending ? 'Devolvendo…' : 'Devolver ao CRM'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal Cancelar OV ────────────────────────────────────────────────────────
 const MOTIVOS_CANCELAMENTO = [
   'Cliente desistiu do pedido',
@@ -2057,7 +2149,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'devolver-crm' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -2835,6 +2927,22 @@ export function PedidoDetalhe() {
             <p>Atualizado: {pedido.atualizado_em ? format(parseISO(pedido.atualizado_em), "dd/MM/yyyy HH:mm", { locale: ptBR }) : '—'}</p>
           </div>
 
+          {/* Voltar para o CRM — só para OV que nasceu de oportunidade, e só antes
+              de faturar. O repasse era de mão única: qualquer ajuste do comercial
+              exigia cancelar a OV na mão e refazer a oportunidade. */}
+          {pedido.crm && (
+            pedido.crm.pode_voltar ? (
+              <button
+                onClick={() => setModal('devolver-crm')}
+                className="w-full py-2.5 border-2 border-blue-200 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-50 hover:border-blue-400 transition-colors"
+              >
+                ↩ Voltar para o CRM
+              </button>
+            ) : (
+              <p className="text-xs text-gray-400 text-center">{pedido.crm.motivo_bloqueio}</p>
+            )
+          )}
+
           {/* Cancelar OV — disponível em qualquer status antes de expedir */}
           {!['EXPEDIDO', 'CANCELADO'].includes(status) && (
             <button
@@ -2870,6 +2978,7 @@ export function PedidoDetalhe() {
       {modal === 'transportadora' && <ModalAlterarTransportadora pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'tipo_frete' && <ModalAlterarTipoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cancelar' && <ModalCancelarOV pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'devolver-crm' && <ModalDevolverAoCrm pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'reativar' && <ModalReativarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}

@@ -83,9 +83,21 @@ export interface ItemPedido {
   lote?: Lote
 }
 
+/** Oportunidade do CRM que gerou a OV. Presente só quando a OV nasceu do funil —
+ *  é o que habilita "Voltar para o CRM" na tela da OV. */
+export interface OrigemCrm {
+  oportunidade_id: string
+  titulo: string | null
+  estagio: string | null
+  tem_pendencia: boolean
+  pode_voltar: boolean
+  motivo_bloqueio: string | null
+}
+
 export interface Pedido {
   id: string
   numero_pedido: string
+  crm?: OrigemCrm | null
   cliente_id: string
   transportadora_id?: string
   status: StatusPedido

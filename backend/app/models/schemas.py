@@ -703,6 +703,13 @@ class DisponibilidadeRequest(BaseModel):
     itens: list[DisponibilidadeItem] = []
 
 
+class DevolverAoCrmRequest(BaseModel):
+    """Devolve a OV ao comercial na etapa escolhida do funil. A etapa é obrigatória
+    porque só quem devolve sabe em que ponto a venda voltou a ser negociação."""
+    estagio: str
+    motivo: Optional[str] = None
+
+
 class LiberarPendenciaRequest(BaseModel):
     # Libera só o que já chegou e mantém o resto pendente. Sem isso, uma
     # pendência de 8 unidades com 5 prontas ficaria travada esperando as 3.

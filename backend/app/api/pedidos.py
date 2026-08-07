@@ -14,6 +14,7 @@ from app.models.schemas import (
     ConfirmarColetaRequest,
     CotacaoFreteRequest,
     DevolucaoCreate,
+    DevolverAoCrmRequest,
     EditarItensRequest,
     FaturamentoRequest,
     MetaFaturamentoRequest,
@@ -237,6 +238,21 @@ def retornar_etapa(
 
 class CancelarRequest(BaseModel):
     motivo: str
+
+
+@router.post("/{pedido_id}/devolver-crm")
+def devolver_ao_crm(
+    pedido_id: UUID,
+    payload: DevolverAoCrmRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    """Devolve ao comercial uma OV que nasceu do CRM, na etapa que ele escolher.
+
+    A OV é cancelada e a oportunidade volta para o funil. Só vale antes de faturar —
+    depois disso a OV é documento fiscal.
+    """
+    return pedido_service.devolver_ao_crm(
+        str(pedido_id), payload.estagio, payload.motivo, usuario)
 
 
 @router.post("/{pedido_id}/cancelar")

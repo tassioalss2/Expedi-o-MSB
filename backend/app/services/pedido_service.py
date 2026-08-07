@@ -1176,7 +1176,131 @@ def obter_pedido(pedido_id: str) -> dict:
     p["itens"] = p.pop("itens_pedido", []) or []
     p["cliente_nome"] = p.get("cliente", {}).get("nome", "") if p.get("cliente") else ""
     p["transportadora_nome"] = p.get("transportadora", {}).get("nome", "") if p.get("transportadora") else ""
+    # Origem no CRM: é o que habilita "Voltar para o CRM" na tela da OV. Sem isto a
+    # tela não tinha como saber se a OV nasceu de uma oportunidade.
+    p["crm"] = _origem_crm(db, pedido_id, p["status"])
     return p
+
+
+# Depois de faturar, a OV é o documento fiscal — voltar para o CRM ali significaria
+# desfazer nota emitida, o que não se resolve no app.
+_STATUS_IMPEDE_VOLTAR_CRM = {"FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO", "CANCELADO"}
+
+
+def _origem_crm(db, pedido_id: str, status: str) -> Optional[dict]:
+    """A oportunidade que gerou esta OV, quando houver."""
+    try:
+        rows = db.table("crm_oportunidades")\
+            .select("id, titulo, estagio, pendencia")\
+            .eq("gerado_ov_id", pedido_id).eq("ativo", True).execute().data
+    except Exception:
+        return None
+    if not rows:
+        return None
+    o = rows[0]
+    pend = o.get("pendencia") or None
+    return {
+        "oportunidade_id": o["id"],
+        "titulo": o.get("titulo"),
+        "estagio": o.get("estagio"),
+        "tem_pendencia": bool(pend and not pend.get("resolvido_em")),
+        "pode_voltar": status not in _STATUS_IMPEDE_VOLTAR_CRM,
+        "motivo_bloqueio": (
+            "A OV já faturou — voltar para o CRM aqui significaria desfazer nota emitida."
+            if status in ("FATURADO", "AGUARD_COLETA", "COLETADO", "EXPEDIDO")
+            else "A OV está cancelada." if status == "CANCELADO" else None),
+    }
+
+
+def devolver_ao_crm(pedido_id: str, estagio: str, motivo: Optional[str],
+                    usuario: UsuarioOut) -> dict:
+    """Devolve a OV para o comercial, na etapa do funil que ele escolher.
+
+    Existe porque o repasse era de mão única: uma vez ganha, a venda descia para a
+    expedição e mudar qualquer coisa (quantidade, item, preço, condição) só dava
+    cancelando a OV na mão e refazendo a oportunidade — e o vínculo entre as duas
+    ficava mentindo, dizendo repasse concluído.
+
+    O que acontece:
+      · a OV é CANCELADA (não apagada — o histórico e as movimentações continuam);
+      · o vínculo é desfeito, e a oportunidade sai de GANHO para a etapa escolhida;
+      · a pendência de estoque é descartada, porque ela era consequência da decisão
+        tomada no ganho — o comercial vai decidir de novo quando ganhar outra vez.
+    """
+    from app.services import crm_service
+    from app.services.inventario_service import _get_usuario_real
+
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+    origem = pedido.get("crm")
+    if not origem:
+        raise HTTPException(
+            status_code=400,
+            detail="Esta OV não veio do CRM, então não há oportunidade para devolver. "
+                   "Para desfazê-la, use Cancelar OV.")
+    if not origem.get("pode_voltar"):
+        raise HTTPException(status_code=409, detail=origem.get("motivo_bloqueio")
+                            or "Esta OV não pode voltar para o CRM.")
+
+    destino = (estagio or "").strip().upper()
+    if destino not in crm_service._ESTAGIOS_ABERTOS:
+        raise HTTPException(
+            status_code=422,
+            detail="Escolha uma etapa aberta do funil: "
+                   + ", ".join(crm_service._ESTAGIO_LABEL[e] for e in crm_service._ESTAGIOS_ABERTOS))
+
+    agora = _agora()
+    uid = _get_usuario_real(str(usuario.id))
+    oid = origem["oportunidade_id"]
+    razao = (motivo or "").strip() or "o comercial vai ajustar o pedido"
+
+    # Solta de qualquer pallet em que esteja esperando coleta.
+    db.table("pallet_pedidos").update({"status": "CANCELADO"})\
+        .eq("pedido_id", pedido_id).eq("status", "AGUARDANDO").execute()
+
+    db.table("pedidos").update({"status": StatusPedido.CANCELADO.value,
+                                "atualizado_em": agora}).eq("id", pedido_id).execute()
+    _registrar_movimentacao(
+        pedido_id, pedido["status"], StatusPedido.CANCELADO.value, uid,
+        f"OV devolvida ao CRM ({crm_service._ESTAGIO_LABEL.get(destino, destino)}) "
+        f"por {usuario.nome}. Motivo: {razao}")
+
+    volta = {
+        "estagio": destino,
+        "estagio_em": agora,
+        "probabilidade": crm_service._PROB_POR_ESTAGIO.get(destino, 50),
+        "ganho_em": None,
+        "gerado_ov_id": None,
+        "gerado_ov_ref": None,
+        "pendencia": None,
+        "atualizado_em": agora,
+    }
+    try:
+        db.table("crm_oportunidades").update({**volta, "repasse_status": None,
+                                              "repasse_em": None,
+                                              "repasse_assumido_em": None,
+                                              "repasse_assumido_por": None})\
+            .eq("id", oid).execute()
+    except Exception:
+        db.table("crm_oportunidades").update(volta).eq("id", oid).execute()
+
+    crm_service._log_evento(
+        db, oid,
+        f"↩ Devolvida da expedição para {crm_service._ESTAGIO_LABEL.get(destino, destino)} — "
+        f"OV {pedido['numero_pedido']} cancelada. Motivo: {razao}",
+        str(usuario.id))
+    crm_service._notificar_comercial(
+        f"↩ **Pedido devolveu para o CRM**\n\n"
+        f"**{origem.get('titulo')}**\n"
+        f"OV {pedido['numero_pedido']} foi cancelada e a oportunidade voltou para "
+        f"**{crm_service._ESTAGIO_LABEL.get(destino, destino)}**.\n"
+        f"Devolvida por: {usuario.nome}\n"
+        f"Motivo: {razao}\n\n"
+        + ("A pendência de estoque foi descartada — ao ganhar de novo, o app pergunta "
+           "outra vez o que fazer com o que faltar." if origem.get("tem_pendencia") else ""))
+
+    return {"ok": True, "oportunidade_id": oid, "estagio": destino,
+            "numero_pedido": pedido["numero_pedido"]}
 
 
 def alterar_status(pedido_id: str, novo_status: str, usuario: UsuarioOut,
