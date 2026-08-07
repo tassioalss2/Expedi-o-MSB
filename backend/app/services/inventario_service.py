@@ -596,11 +596,28 @@ def adicionar_pedido_pallet(pallet_id: str, payload: AdicionarPedidoPalletReques
         "pallet_id": pallet_id,
         "pedido_id": pedido["id"],
         "num_caixas": num_caixas,
+        # Explícito: é este valor que o índice único parcial (v30) usa para
+        # garantir "uma OV em um pallet aguardando coleta por vez". Depender do
+        # default da coluna deixaria a garantia à mercê do schema.
+        "status": "AGUARDANDO",
         "adicionado_em": _agora(),
     }
     if payload.observacao:
         insert_data["observacao"] = payload.observacao
-    db.table("pallet_pedidos").insert(insert_data).execute()
+    try:
+        db.table("pallet_pedidos").insert(insert_data).execute()
+    except Exception as exc:
+        # 23505 aqui só acontece com a migration v30 pendente: o UNIQUE antigo em
+        # pedido_id impede realocar qualquer OV que já tenha sido coletada alguma
+        # vez. Dizer isso em vez de "Erro ao alocar no pallet", que não dá pista
+        # nenhuma de onde está o problema.
+        if "23505" in str(exc) or "duplicate key" in str(exc).lower():
+            raise HTTPException(
+                status_code=409,
+                detail=(f"A OV {pedido['numero_pedido']} já esteve em um pallet antes e o banco "
+                        "ainda não permite repetir. Rode a migration v30 "
+                        "(migracao_pallet_realocacao_v30.sql) para liberar a realocação."))
+        raise
 
     # Atualiza status do pedido para AGUARD_COLETA diretamente no banco
     db.table("pedidos").update({
