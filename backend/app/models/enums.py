@@ -28,7 +28,11 @@ class StatusPedido(str, Enum):
 TRANSICOES_PERMITIDAS: dict[StatusPedido, list[StatusPedido]] = {
     StatusPedido.AGUARD_DADOS_OV:        [StatusPedido.LIBERADO, StatusPedido.AGUARD_CREDITO, StatusPedido.CANCELADO],
     StatusPedido.AGUARD_CREDITO:         [StatusPedido.LIBERADO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
-    StatusPedido.LIBERADO:               [StatusPedido.EM_INVENTARIO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
+    # LIBERADO → AGUARD_CREDITO: o D365 joga a OV em gerenciamento de crédito
+    # DEPOIS de ela já ter sido liberada, e a expedição só descobria isso mais
+    # tarde — às vezes com o material já separado. Poder mandar a OV para crédito
+    # a qualquer momento tira o pedido da fila de separação na hora.
+    StatusPedido.LIBERADO:               [StatusPedido.AGUARD_CREDITO, StatusPedido.EM_INVENTARIO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
     StatusPedido.EM_INVENTARIO:          [StatusPedido.AGUARD_VERIFICACAO, StatusPedido.BLOQUEADO],
     StatusPedido.AGUARD_VERIFICACAO:     [StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.DIVERGENCIA],
     StatusPedido.DIVERGENCIA:            [StatusPedido.AGUARD_TRATATIVA],

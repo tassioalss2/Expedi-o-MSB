@@ -812,6 +812,85 @@ function ModalConfirmarColeta({ pedido, onClose }: { pedido: Pedido; onClose: ()
   )
 }
 
+// ── Modal Enviar para Gerenciamento de Crédito ────────────────────────────────
+// O D365 joga a OV em gerenciamento de crédito DEPOIS de ela já ter sido liberada,
+// e a expedição só descobria mais tarde — às vezes com o material já separado.
+// Marcar no app tira a OV da fila de separação na hora.
+const MOTIVOS_CREDITO = [
+  'D365 colocou a OV em gerenciamento de crédito',
+  'Cliente com título em atraso',
+  'Limite de crédito excedido',
+  'Cadastro do cliente pendente',
+  'Aguardando pagamento antecipado',
+  'Outro motivo',
+]
+
+function ModalEnviarCredito({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [motivo, setMotivo] = useState(MOTIVOS_CREDITO[0])
+  const [outro, setOutro] = useState('')
+  const motivoFinal = motivo === 'Outro motivo' ? outro.trim() : motivo
+
+  const m = useMutation({
+    mutationFn: () => api.patch(`/pedidos/${pedido.id}/status`, {
+      novo_status: 'AGUARD_CREDITO',
+      observacao: `Enviada para gerenciamento de crédito. Motivo: ${motivoFinal}`,
+    }),
+    onSuccess: () => {
+      toast.success('OV em gerenciamento de crédito — saiu da fila de separação.', { duration: 6000 })
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      onClose()
+    },
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : 'Erro ao enviar para crédito')
+    },
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] flex flex-col">
+        <div className="p-5 border-b bg-orange-50 rounded-t-2xl shrink-0">
+          <h2 className="text-lg font-bold text-orange-800">💳 Gerenciamento de crédito — {pedido.numero_pedido}</h2>
+          <p className="text-sm text-orange-600 mt-0.5">
+            A OV sai da fila de separação e fica aguardando a liberação do crédito.
+          </p>
+        </div>
+        <div className="p-5 space-y-3 overflow-y-auto flex-1">
+          <div>
+            <label className="text-sm font-medium text-gray-700">Motivo *</label>
+            <div className="space-y-1.5 mt-2">
+              {MOTIVOS_CREDITO.map(op => (
+                <button key={op} type="button" onClick={() => setMotivo(op)}
+                  className={`w-full text-left text-sm px-3 py-2 rounded-xl border-2 ${
+                    motivo === op ? 'border-orange-400 bg-orange-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                  {op}
+                </button>
+              ))}
+            </div>
+          </div>
+          {motivo === 'Outro motivo' && (
+            <input value={outro} onChange={e => setOutro(e.target.value)} autoFocus
+              placeholder="Descreva o motivo" className="w-full border rounded-lg px-3 py-2 text-sm" />
+          )}
+          <p className="text-xs text-gray-500">
+            Quando o crédito sair, o botão <strong>“Crédito Aprovado — Liberar para
+            Separação”</strong> aparece aqui na OV e ela volta para a fila.
+          </p>
+        </div>
+        <div className="p-5 border-t flex gap-2 shrink-0">
+          <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Cancelar</button>
+          <button onClick={() => m.mutate()} disabled={!motivoFinal || m.isPending}
+            className="flex-1 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-medium">
+            {m.isPending ? 'Enviando…' : 'Enviar para crédito'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal Retornar Etapa ──────────────────────────────────────────────────────
 const RETORNOS: Record<string, { label: string; destinos: { status: string; label: string }[] }> = {
   EM_INVENTARIO:         { label: 'Em Inventário',        destinos: [{ status: 'LIBERADO', label: 'OV Recebida (início)' }] },
@@ -2149,7 +2228,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'devolver-crm' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'devolver-crm' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -2927,6 +3006,17 @@ export function PedidoDetalhe() {
             <p>Atualizado: {pedido.atualizado_em ? format(parseISO(pedido.atualizado_em), "dd/MM/yyyy HH:mm", { locale: ptBR }) : '—'}</p>
           </div>
 
+          {/* Gerenciamento de crédito — o D365 pode segurar a OV depois de liberada,
+              e sem isto a expedição seguia separando material que não podia sair. */}
+          {status === 'LIBERADO' && (
+            <button
+              onClick={() => setModal('credito')}
+              className="w-full py-2.5 border-2 border-orange-200 text-orange-700 rounded-lg text-sm font-medium hover:bg-orange-50 hover:border-orange-400 transition-colors"
+            >
+              💳 Enviar para gerenciamento de crédito
+            </button>
+          )}
+
           {/* Voltar para o CRM — só para OV que nasceu de oportunidade, e só antes
               de faturar. O repasse era de mão única: qualquer ajuste do comercial
               exigia cancelar a OV na mão e refazer a oportunidade. */}
@@ -2979,6 +3069,7 @@ export function PedidoDetalhe() {
       {modal === 'tipo_frete' && <ModalAlterarTipoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cancelar' && <ModalCancelarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'devolver-crm' && <ModalDevolverAoCrm pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'credito' && <ModalEnviarCredito pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'reativar' && <ModalReativarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}
