@@ -377,6 +377,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
         "data_prevista_coleta": payload.data_prevista_coleta.isoformat() if payload.data_prevista_coleta else None,
         "observacoes": payload.observacoes,
+        "condicao_pagamento": payload.condicao_pagamento,
         "criado_por": None,
         "criado_em": _agora(),
         "atualizado_em": _agora(),
@@ -558,6 +559,7 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
         "prioridade": payload.prioridade.value,
         "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
         "observacoes": payload.observacoes,
+        "condicao_pagamento": payload.condicao_pagamento,
         "criado_por": None,
         "criado_em": agora,
         "atualizado_em": agora,
@@ -649,7 +651,8 @@ def _detalhes_venda_outbound(db, payload: "PedidoOutboundCreate", usuario: Usuar
 
 
 def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega: date,
-                       tipo_frete: str, local_entrega: Optional[str], usuario: UsuarioOut) -> dict:
+                       tipo_frete: str, local_entrega: Optional[str], usuario: UsuarioOut,
+                       condicao_pagamento: Optional[str] = None) -> dict:
     """A operadora preenche o que faltava na OV vinda do CRM e ela entra no
     fluxo normal — mesmo portão de duplicidade de numero_pedido da criação
     manual, porque o número real do D365 pode colidir com outra OV."""
@@ -674,6 +677,7 @@ def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega
         "data_prevista_entrega": data_prevista_entrega.isoformat(),
         "tipo_frete": tipo_frete,
         "local_entrega": local_entrega,
+        "condicao_pagamento": condicao_pagamento,
         "status": StatusPedido.LIBERADO.value,
         "atualizado_em": agora,
     }

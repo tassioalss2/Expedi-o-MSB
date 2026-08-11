@@ -128,7 +128,8 @@ def completar_dados_ov(pedido_id: UUID, payload: GerarOVRequest,
     para LIBERADO."""
     return pedido_service.completar_dados_ov(
         str(pedido_id), payload.numero_pedido, payload.data_prevista_entrega,
-        payload.tipo_frete, payload.local_entrega, usuario)
+        payload.tipo_frete, payload.local_entrega, usuario,
+        payload.condicao_pagamento)
 
 
 @router.patch("/{pedido_id}/canal-licitacao")

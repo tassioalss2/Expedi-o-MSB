@@ -107,6 +107,7 @@ export interface Pedido {
   tipo_operacao?: string
   canal?: string
   local_entrega?: string
+  condicao_pagamento?: string
   data_prevista_entrega: string
   data_esperada_cliente?: string
   data_prevista_coleta?: string

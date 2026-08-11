@@ -2131,6 +2131,9 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
     (pedido.tipo_frete as any) || 'FOB'
   )
   const [local, setLocal] = useState(pedido.local_entrega || '')
+  // OVs vindas do CRM/outbound nascem sem condição de pagamento — é aqui, ao
+  // completar os dados, que o operador informa a que foi negociada.
+  const [condPagamento, setCondPagamento] = useState(pedido.condicao_pagamento || '')
   const hoje = hojeLocal()
 
   const mutation = useMutation({
@@ -2139,6 +2142,7 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
       data_prevista_entrega: data,
       tipo_frete: tipoFrete,
       local_entrega: local || null,
+      condicao_pagamento: condPagamento.trim(),
     }),
     onSuccess: () => {
       toast.success(`OV ${numero.trim().toUpperCase()} liberada`)
@@ -2147,7 +2151,7 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao completar a OV'),
   })
 
-  const valido = numero.trim() && data
+  const valido = numero.trim() && data && condPagamento.trim()
 
   return (
     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5 mb-5">
@@ -2178,6 +2182,12 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
             <option value="CIF_COM_VALOR">CIF com Valor NF</option>
             <option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
           </select>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700">Condição de pagamento *</label>
+          <input value={condPagamento} onChange={e => setCondPagamento(e.target.value)}
+            className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${condPagamento.trim() ? '' : 'border-amber-400'}`}
+            placeholder="Ex: 30 dias, 28/56/84, à vista" />
         </div>
         <div>
           <label className="text-sm font-medium text-gray-700">Local de entrega</label>
@@ -2573,6 +2583,7 @@ export function PedidoDetalhe() {
                 <Pencil size={14} className="text-gray-400 group-hover:text-blue-500" />
               </button>
             </div>
+            <Linha label="Condição de Pagamento" valor={pedido.condicao_pagamento} />
             <Linha label="Local de Entrega" valor={pedido.local_entrega} />
             <Linha label="Entrega Prevista" valor={
               pedido.data_prevista_entrega

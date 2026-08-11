@@ -603,6 +603,7 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
             canal=payload.canal or d.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
+            condicao_pagamento=payload.condicao_pagamento,
             observacoes=obs,
             valor_frete=float(valor_frete) if valor_frete else None,
             empenho_id=empenho_id,
@@ -877,6 +878,8 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         if getattr(payload, "gerar_ov", False) and tipo == "VENDA_DIRETA":
             if not payload.numero_pedido or not payload.numero_pedido.strip():
                 raise HTTPException(status_code=422, detail="Informe o número da OV para gerar a entrega junto.")
+            if not (payload.condicao_pagamento or "").strip():
+                raise HTTPException(status_code=422, detail="Informe a condição de pagamento da OV.")
             from app.models.schemas import EntregaVendaDiretaCreate
             itens_ov = [ItemPedidoCreate(
                 produto_id=it["produto_id"],
@@ -891,6 +894,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
                     canal=canal,
                     data_prevista_entrega=payload.data_prevista_entrega or _hoje_brt(),
                     local_entrega=payload.local_entrega,
+                    condicao_pagamento=payload.condicao_pagamento,
                     itens=itens_ov,
                 ),
                 usuario,

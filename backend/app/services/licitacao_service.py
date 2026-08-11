@@ -275,6 +275,7 @@ def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuari
             canal=payload.canal or detalhe.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
+            condicao_pagamento=payload.condicao_pagamento,
             itens=payload.itens,
             empenho_id=empenho_id,
         ),

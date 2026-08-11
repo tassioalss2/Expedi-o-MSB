@@ -34,6 +34,7 @@ export function VendaOutbound() {
     canal: '',
     local_entrega: '',
     data_prevista_entrega: '',
+    condicao_pagamento: '',
     prioridade: 'NORMAL',
     observacoes: '',
   })
@@ -120,6 +121,7 @@ export function VendaOutbound() {
 
   const cnpjValido = form.cliente_cnpj.replace(/\D/g, '').length === 14
   const podeEnviar = form.cliente_id && cnpjValido && form.data_prevista_entrega
+    && form.condicao_pagamento.trim()
     && form.tipo_operacao && form.canal && itens.length > 0
 
   const handleClienteChange = (id: string, nome: string) => {
@@ -231,6 +233,13 @@ export function VendaOutbound() {
             <label className="text-sm font-medium text-gray-700">Data Prevista de Entrega *</label>
             <input type="date" value={form.data_prevista_entrega} onChange={e => setForm({...form, data_prevista_entrega: e.target.value})}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Condição de Pagamento *</label>
+            <input value={form.condicao_pagamento} onChange={e => setForm({...form, condicao_pagamento: e.target.value})}
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.condicao_pagamento.trim() ? '' : 'border-amber-400'}`}
+              placeholder="Ex: 30 dias, 28/56/84, à vista" />
           </div>
 
           <div className="col-span-2">

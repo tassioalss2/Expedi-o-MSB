@@ -363,6 +363,9 @@ def gerar_ov(cotacao_id: str, payload, usuario: UsuarioOut) -> dict:
             canal=c.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
+            # O operador confirma no formulário (já vem preenchida com a da cotação),
+            # porque a condição pode ter mudado entre a proposta e o fechamento.
+            condicao_pagamento=payload.condicao_pagamento,
             valor_frete=float(c.get("frete") or 0) or None,
             itens=[ItemPedidoCreate(produto_id=i["produto_id"], qtd_solicitada=float(i["qtd"]),
                                     valor_unitario=_preco_liquido(i)) for i in itens_validos],

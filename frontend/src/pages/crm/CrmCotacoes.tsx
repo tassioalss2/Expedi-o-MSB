@@ -305,6 +305,9 @@ function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onCl
   const [tipoFrete, setTipoFrete] = useState('FOB')
   const [dataEntrega, setDataEntrega] = useState('')
   const [local, setLocal] = useState('')
+  // Já vem com a condição negociada na proposta — o operador confirma ou ajusta,
+  // porque ela pode ter mudado entre a cotação e o fechamento.
+  const [condPagamento, setCondPagamento] = useState(cotacao.condicao_pagamento || '')
 
   const gerar = useMutation({
     mutationFn: () => api.post(`/crm/cotacoes/${cotacao.id}/gerar-ov`, {
@@ -312,6 +315,7 @@ function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onCl
       tipo_frete: tipoFrete,
       data_prevista_entrega: dataEntrega,
       local_entrega: local || null,
+      condicao_pagamento: condPagamento.trim(),
     }),
     onSuccess: (res) => {
       toast.success('OV gerada — itens e preços herdados da cotação')
@@ -322,7 +326,7 @@ function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onCl
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao gerar OV'), { duration: 6000 }),
   })
 
-  const valido = numero.trim() && dataEntrega
+  const valido = numero.trim() && dataEntrega && condPagamento.trim()
 
   return (
     <ModalBase titulo={`Gerar OV · ${cotacao.numero}`} onClose={onClose} max="max-w-md">
@@ -339,6 +343,7 @@ function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onCl
             </select>
           </Campo>
         </div>
+        <Campo label="Condição de pagamento *"><input value={condPagamento} onChange={e => setCondPagamento(e.target.value)} className={inputCls} placeholder="Ex: 30 dias, 28/56/84, à vista" /></Campo>
         <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">

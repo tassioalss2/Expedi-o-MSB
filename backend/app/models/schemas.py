@@ -202,6 +202,24 @@ class ItemPedidoOut(BaseModel):
 _DECISOES_ESTOQUE = ("PARCIAL", "AGUARDAR")
 
 
+class CondicaoPagamentoMixin(BaseModel):
+    """Toda OV nasce com a condição de pagamento negociada — sem ela, quem fatura
+    depois não sabe em que prazo cobrar.
+
+    Texto livre de propósito: a condição vem de negociação e varia caso a caso
+    ("30 dias", "28/56/84", "à vista", "empenho — 30 dias após liquidação"), então
+    uma lista fixa envelheceria e forçaria o operador a escolher o item errado.
+    """
+    condicao_pagamento: str
+
+    @field_validator("condicao_pagamento")
+    @classmethod
+    def _exige_condicao_pagamento(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("Informe a condição de pagamento.")
+        return v.strip()
+
+
 class DecisaoEstoqueMixin(BaseModel):
     """`decisao_estoque` só é exigida depois de o app responder 409 dizendo que
     falta material. Fora disso fica None e nada muda no fluxo."""
@@ -226,7 +244,7 @@ class DecisaoEstoqueMixin(BaseModel):
         return self.previsao_pcp.isoformat() if self.previsao_pcp else None
 
 
-class PedidoCreate(DecisaoEstoqueMixin):
+class PedidoCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):
     """OV manual cadastrada por operações de vendas (número já emitido no D365).
 
     Herda a decisão de estoque, mas aqui a única escolha válida é PARCIAL: a OV já
@@ -264,7 +282,7 @@ class PedidoCreate(DecisaoEstoqueMixin):
         return v.strip() if v else v
 
 
-class PedidoOutboundCreate(DecisaoEstoqueMixin):
+class PedidoOutboundCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):
     """Venda outbound fechada direto pelo comercial, sem passar pelo funil do
     CRM. Mesmos dados da 'Nova OV' manual, exceto número da OV (operações
     de vendas emite no D365 depois) e gerenciamento de crédito (não se aplica
@@ -423,7 +441,7 @@ class NeCreate(BaseModel):
         return v.strip() if v else v
 
 
-class EntregaVendaDiretaCreate(BaseModel):
+class EntregaVendaDiretaCreate(CondicaoPagamentoMixin):
     """Entrega parcial de um contrato de venda direta — gera uma OV que baixa o saldo."""
     numero_pedido: str
     tipo_frete: str = "FOB"
@@ -553,6 +571,9 @@ class DemandaConcluir(BaseModel):
     tipo_frete: Optional[str] = None
     data_prevista_entrega: Optional[date] = None
     local_entrega: Optional[str] = None
+    # Só usada no atalho "gerar a OV junto" (venda direta) — nos outros tipos a
+    # conclusão não cria OV. Exigida no serviço, onde se sabe se há OV em jogo.
+    condicao_pagamento: Optional[str] = None
     vigencia: Optional[date] = None
     data_empenho: Optional[date] = None
     numero_nf: Optional[str] = None
@@ -682,7 +703,7 @@ class NotaCreate(BaseModel):
     texto: str
 
 
-class GerarOVRequest(BaseModel):
+class GerarOVRequest(CondicaoPagamentoMixin):
     numero_pedido: str
     tipo_frete: str = "FOB"
     data_prevista_entrega: date
@@ -904,6 +925,8 @@ class PedidoOut(BaseModel):
     codigo_rastreio: Optional[str] = None
     tipo_operacao: Optional[TipoOperacao] = None
     observacoes: Optional[str]
+    # Opcional na leitura: as OVs anteriores à exigência não têm o campo preenchido.
+    condicao_pagamento: Optional[str] = None
     criado_em: datetime
     atualizado_em: datetime
     atrasado: bool = False

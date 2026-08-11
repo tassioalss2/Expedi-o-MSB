@@ -362,6 +362,10 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             numero_pedido=ov["numero_pedido"],
             cliente_id=reg.get("cliente_id") or ov.get("cliente_id"),
             data_prevista_entrega=_hoje_brt() + timedelta(days=7),
+            # Mesma venda, segunda remessa: a condição é a que já foi negociada na
+            # OV original — não faz sentido perguntar de novo. As OVs antigas não
+            # têm o campo, daí o fallback.
+            condicao_pagamento=(ov.get("condicao_pagamento") or "—").strip() or "—",
             itens=itens_ov,
             criar_derivada=True,
             observacoes=f"Remessa do saldo que estava pendente de estoque. {observacao or ''}".strip(),

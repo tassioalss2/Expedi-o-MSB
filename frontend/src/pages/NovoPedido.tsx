@@ -113,6 +113,7 @@ export function NovoPedido() {
     canal: '',
     local_entrega: '',
     data_prevista_entrega: '',
+    condicao_pagamento: '',
     prioridade: 'NORMAL',
     observacoes: '',
     em_gerenciamento_credito: false,
@@ -263,6 +264,7 @@ export function NovoPedido() {
   })
 
   const podeEnviar = form.numero_pedido && form.cliente_id && form.data_prevista_entrega
+    && form.condicao_pagamento.trim()
     && form.tipo_operacao && form.canal && itens.length > 0
   const podeConfirmarRecriar =
     modalRecriar.motivo.trim().length >= 5 && modalRecriar.confirmado
@@ -370,6 +372,13 @@ export function NovoPedido() {
             <label className="text-sm font-medium text-gray-700">Data Prevista de Entrega *</label>
             <input type="date" value={form.data_prevista_entrega} onChange={e => setForm({...form, data_prevista_entrega: e.target.value})}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Condição de Pagamento *</label>
+            <input value={form.condicao_pagamento} onChange={e => setForm({...form, condicao_pagamento: e.target.value})}
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.condicao_pagamento.trim() ? '' : 'border-amber-400'}`}
+              placeholder="Ex: 30 dias, 28/56/84, à vista" />
           </div>
 
           <div className="col-span-2">

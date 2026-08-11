@@ -1472,11 +1472,13 @@ function ModalGerarOV({ opp, onClose, onSaved }: { opp: any; onClose: () => void
   const [tipoFrete, setTipoFrete] = useState('FOB')
   const [dataEntrega, setDataEntrega] = useState('')
   const [local, setLocal] = useState('')
+  const [condPagamento, setCondPagamento] = useState('')
   const temItens = (opp.itens || []).some((i: any) => i.produto_id && i.qtd > 0)
 
   const m = useMutation({
     mutationFn: () => api.post(`/crm/oportunidades/${opp.id}/gerar-ov`, {
       numero_pedido: numero.trim(), tipo_frete: tipoFrete, data_prevista_entrega: dataEntrega || null, local_entrega: local || null,
+      condicao_pagamento: condPagamento.trim(),
     }),
     onSuccess: (res) => {
       toast.success('OV gerada no fluxo logístico!'); onSaved(); onClose()
@@ -1498,12 +1500,13 @@ function ModalGerarOV({ opp, onClose, onSaved }: { opp: any; onClose: () => void
               <option value="FOB">FOB</option><option value="CIF_COM_VALOR">CIF com Valor NF</option><option value="CIF_SEM_VALOR">CIF sem Valor NF</option>
             </select>
           </Campo>
+          <Campo label="Condição de pagamento *"><input value={condPagamento} onChange={e => setCondPagamento(e.target.value)} className={inputCls} placeholder="Ex: 30 dias, 28/56/84, à vista" /></Campo>
           <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         </div>
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => m.mutate()} disabled={!numero.trim() || !dataEntrega || !temItens || m.isPending}
+        <button onClick={() => m.mutate()} disabled={!numero.trim() || !dataEntrega || !condPagamento.trim() || !temItens || m.isPending}
           className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
           {m.isPending ? 'Gerando…' : 'Gerar OV'}
         </button>

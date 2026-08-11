@@ -1285,6 +1285,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const [gerarOvJunto, setGerarOvJunto] = useState(false)
   const [ovNumero, setOvNumero] = useState('')
   const [dataEntregaOv, setDataEntregaOv] = useState(hojeLocal())
+  const [ovCondPagamento, setOvCondPagamento] = useState('')
   const [clienteId, setClienteId] = useState(demanda.cliente_id || '')
   const [clienteNome, setClienteNome] = useState(demanda.cliente || '')
   const [canal, setCanal] = useState(demanda.canal || '')
@@ -1362,6 +1363,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
           body.numero_pedido = ovNumero.trim()
           body.data_prevista_entrega = dataEntregaOv || null
           body.tipo_frete = 'CIF_SEM_VALOR'
+          body.condicao_pagamento = ovCondPagamento.trim()
         }
       } else {
         body.numero_pedido = numero.trim()
@@ -1390,7 +1392,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   // Comunicado: se já existe lançamento com esse número, o backend vincula e conclui
   // (não exige NF/valor). Para um comunicado novo, o backend cobra NF/valor.
   let valido = false
-  if (ehContrato) valido = !!numeroPregao.trim() && !!numero.trim() && itensOk && (!(tipo === 'VENDA_DIRETA' && gerarOvJunto) || !!ovNumero.trim())
+  if (ehContrato) valido = !!numeroPregao.trim() && !!numero.trim() && itensOk && (!(tipo === 'VENDA_DIRETA' && gerarOvJunto) || (!!ovNumero.trim() && !!ovCondPagamento.trim()))
   else valido = !!numero.trim() && itensOk && !!clienteId && !!af.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!dataProcedimento
 
   return (
@@ -1441,6 +1443,7 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
               <div className="grid grid-cols-2 gap-3 mt-2.5">
                 <Campo label="Nº da OV *"><input value={ovNumero} onChange={e => setOvNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV016000" /></Campo>
                 <Campo label="Entrega prevista"><input type="date" value={dataEntregaOv} onChange={e => setDataEntregaOv(e.target.value)} className={inputCls} /></Campo>
+                <Campo label="Condição de pagamento *"><input value={ovCondPagamento} onChange={e => setOvCondPagamento(e.target.value)} className={inputCls} placeholder="Ex: 30 dias, 28/56/84, à vista" /></Campo>
                 <p className="col-span-2 text-[11px] text-gray-500">Cria o contrato <strong>e</strong> a OV com o total de uma vez. Depois é só <strong>cotar o frete</strong> e <strong>enviar a NF</strong> no painel.</p>
               </div>
             ) : (
@@ -2252,6 +2255,7 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
   const [canal, setCanal] = useState(demanda.canal || '')
   const [dataEntrega, setDataEntrega] = useState('')
   const [local, setLocal] = useState('')
+  const [condPagamento, setCondPagamento] = useState('')
   // Quando o saldo vem do pregão a lista chega depois (query), então não dá para
   // pré-preencher no estado inicial — deixa em branco e o operador informa.
   const [qtds, setQtds] = useState<Record<string, string>>(
@@ -2265,6 +2269,7 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
       canal: canal || null,
       data_prevista_entrega: dataEntrega || null,
       local_entrega: local || null,
+      condicao_pagamento: condPagamento.trim(),
       transportadora_id: frete.transportadora_id || null,
       valor_frete: frete.valor ?? null,
       itens: saldoLinhas.filter(l => Number(qtds[l.produto_id]) > 0)
@@ -2280,7 +2285,7 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
   })
 
   const algum = saldoLinhas.some(l => Number(qtds[l.produto_id]) > 0)
-  const valido = numero.trim() && dataEntrega && algum
+  const valido = numero.trim() && dataEntrega && condPagamento.trim() && algum
 
   return (
     <ModalBase titulo={`Gerar OV · ${demanda.cliente || ''}`} onClose={onClose}>
@@ -2307,6 +2312,7 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
               {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
             </select>
           </Campo>
+          <Campo label="Condição de pagamento *"><input value={condPagamento} onChange={e => setCondPagamento(e.target.value)} className={inputCls} placeholder="Ex: 30 dias, 28/56/84, à vista" /></Campo>
         </div>
         <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         <div>
