@@ -263,12 +263,6 @@ function PainelDemandas() {
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao liberar estoque')),
   })
 
-  const resumoTeams = useMutation({
-    mutationFn: () => api.post('/pedidos/resumo-diario'),
-    onSuccess: () => toast.success('Resumo do dia enviado ao canal do Teams'),
-    onError: (e: any) => toast.error(msgErro(e, 'Erro ao enviar resumo'), { duration: 5000 }),
-  })
-
   // Data de hoje no fuso local (para comparar prazos)
   const hojeISO = useMemo(() => hojeLocal(), [])
 
@@ -362,11 +356,6 @@ function PainelDemandas() {
           <span className="text-xs text-gray-400 hidden lg:block">{filtradas.filter(d => !ehFinal(d)).length} no filtro</span>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => resumoTeams.mutate()} disabled={resumoTeams.isPending}
-            className="flex items-center gap-1.5 text-gray-600 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50"
-            title="Envia agora o resumo de pendências ao canal do Teams (também sai automático às 08h)">
-            📣 {resumoTeams.isPending ? 'Enviando…' : 'Resumo Teams'}
-          </button>
           <button onClick={() => setHistorico(true)}
             title="Busque por pregão, NE, AF, paciente, prontuário, OV ou cliente — mesmo o que ainda está em andamento, antes de criar de novo"
             className="flex items-center gap-1.5 text-gray-600 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
