@@ -69,6 +69,12 @@ const TIPOS: {
   },
 ]
 const TIPO_MAP = Object.fromEntries(TIPOS.map(t => [t.key, t]))
+// O painel de demandas é só do comunicado de uso. Venda direta e consignação são
+// lançadas e acompanhadas na aba Contratos (pregão → NE → entregas com saldo) —
+// ter as duas aqui também duplicava o trabalho e enchia a tela de coluna vazia.
+// TIPOS continua com os 3 porque histórico e relatório mostram os registros
+// antigos de venda direta/consignação e precisam do rótulo e da cor certos.
+const TIPOS_PAINEL = TIPOS.filter(t => t.key === 'COMUNICADO_USO')
 
 const ETAPA_LABEL: Record<string, string> = {
   RECEBIDO: 'Recebido',
@@ -224,7 +230,7 @@ function PainelDemandas() {
   // Deep-link (ex: /licitacoes?novo=COMUNICADO_USO) — outras telas mandam direto
   // para cá em vez de ter um formulário próprio de comunicado de uso.
   const novoParam = new URLSearchParams(window.location.search).get('novo') as TipoKey | null
-  const [modalNovo, setModalNovo] = useState<TipoKey | null>(novoParam && TIPOS.some(t => t.key === novoParam) ? novoParam : null)
+  const [modalNovo, setModalNovo] = useState<TipoKey | null>(novoParam && TIPOS_PAINEL.some(t => t.key === novoParam) ? novoParam : null)
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [concluirManual, setConcluirManual] = useState<any | null>(null)
   const [gerar, setGerar] = useState<any | null>(null)
@@ -234,8 +240,7 @@ function PainelDemandas() {
   const [semEstoqueModal, setSemEstoqueModal] = useState<any | null>(null)
   const [historico, setHistorico] = useState(false)
   const [busca, setBusca] = useState('')
-  const [canalFiltro, setCanalFiltro] = useState('')
-  const [alerta, setAlerta] = useState<'' | 'PARADAS' | 'PRAZO' | 'NF' | 'ESTOQUE'>('')
+  const [alerta, setAlerta] = useState<'' | 'PARADAS' | 'PRAZO'>('')
   const [colapsadas, setColapsadas] = useState<Record<string, boolean>>({})
 
   const { data: demandas = [], isLoading } = useQuery<any[]>({
@@ -269,18 +274,14 @@ function PainelDemandas() {
 
   // KPIs de controle — calculados sobre TODAS as demandas do painel.
   // "Parado" = sem movimento (mede pelo último update, não pela criação).
+  // Comunicado de uso não passa por estoque, OV, frete nem NF — os indicadores
+  // desses passos viviam zerados no topo, então saíram junto com a venda direta.
   const kpis = useMemo(() => {
     const pendentes = demandas.filter(d => !ehFinal(d))
-    const semEst = pendentes.filter(semEstoque)
     return {
       pendentes: pendentes.length,
-      // "Parado" ignora quem está aguardando estoque de propósito (esperando o PCP).
-      paradas: pendentes.filter(d => !semEstoque(d) && diasParado(d.atualizado_em || d.criado_em) >= 2).length,
+      paradas: pendentes.filter(d => diasParado(d.atualizado_em || d.criado_em) >= 2).length,
       prazoVencido: pendentes.filter(d => d.prazo && d.prazo < hojeISO).length,
-      // "NF a enviar" = OV já faturada (NF emitida) e ainda não confirmada como enviada ao cliente.
-      nfPendente: demandas.filter(d => ovFaturada(d) && etapaColuna(d) !== 'NF_ENVIADA' && !d.nf).length,
-      semEstoque: semEst.length,
-      semEstoqueRisco: semEst.filter(riscoMulta).length,
       concluidasHoje: demandas.filter(d => ehFinal(d)).length,
     }
   }, [demandas, hojeISO])
@@ -298,18 +299,15 @@ function PainelDemandas() {
   const filtradas = useMemo(() => {
     const b = busca.trim().toLowerCase()
     return demandas.filter(d => {
-      if (canalFiltro && d.canal !== canalFiltro) return false
-      if (alerta === 'PARADAS' && (ehFinal(d) || semEstoque(d) || diasParado(d.atualizado_em || d.criado_em) < 2)) return false
+      if (alerta === 'PARADAS' && (ehFinal(d) || diasParado(d.atualizado_em || d.criado_em) < 2)) return false
       if (alerta === 'PRAZO' && (ehFinal(d) || !d.prazo || d.prazo >= hojeISO)) return false
-      if (alerta === 'NF' && !(ovFaturada(d) && etapaColuna(d) !== 'NF_ENVIADA' && !d.nf)) return false
-      if (alerta === 'ESTOQUE' && !semEstoque(d)) return false
       if (b) {
         const alvo = `${d.cliente || ''} ${d.numero || ''} ${d.gerado_ref || ''}`.toLowerCase()
         if (!alvo.includes(b)) return false
       }
       return true
     })
-  }, [demandas, busca, canalFiltro, alerta, hojeISO])
+  }, [demandas, busca, alerta, hojeISO])
 
   const porTipoEtapa = (tipo: string, etapa: string) => filtradas.filter(d => d.tipo_operacao === tipo && etapaColuna(d) === etapa)
 
@@ -329,20 +327,17 @@ function PainelDemandas() {
   return (
     <div className="space-y-4">
       {/* Faixa de controle — clique num indicador para filtrar o painel */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         {([
-          { key: '', label: 'Pendentes', valor: kpis.pendentes, cor: 'text-blue-700', borda: 'ring-blue-400', desc: 'tudo que ainda não fechou', sub: '' },
-          { key: 'PARADAS', label: '⏳ Paradas 2+ dias', valor: kpis.paradas, cor: kpis.paradas > 0 ? 'text-amber-600' : 'text-gray-400', borda: 'ring-amber-400', desc: 'sem movimento (não conta as sem estoque)', sub: '' },
-          { key: 'ESTOQUE', label: '🏭 Sem estoque', valor: kpis.semEstoque, cor: kpis.semEstoqueRisco > 0 ? 'text-red-600' : kpis.semEstoque > 0 ? 'text-orange-600' : 'text-gray-400', borda: 'ring-orange-400', desc: 'aguardando previsão do PCP — não esquecer!', sub: kpis.semEstoqueRisco > 0 ? `🔴 ${kpis.semEstoqueRisco} c/ risco de multa` : '' },
-          { key: 'PRAZO', label: '🔴 Prazo vencido', valor: kpis.prazoVencido, cor: kpis.prazoVencido > 0 ? 'text-red-600' : 'text-gray-400', borda: 'ring-red-400', desc: 'prazo do cliente estourado', sub: '' },
-          { key: 'NF', label: '📄 NF a enviar', valor: kpis.nfPendente, cor: kpis.nfPendente > 0 ? 'text-indigo-600' : 'text-gray-400', borda: 'ring-indigo-400', desc: 'OV pronta, falta NF ao cliente', sub: '' },
+          { key: '', label: 'Pendentes', valor: kpis.pendentes, cor: 'text-blue-700', borda: 'ring-blue-400', desc: 'tudo que ainda não fechou' },
+          { key: 'PARADAS', label: '⏳ Paradas 2+ dias', valor: kpis.paradas, cor: kpis.paradas > 0 ? 'text-amber-600' : 'text-gray-400', borda: 'ring-amber-400', desc: 'sem movimento há 2 dias ou mais' },
+          { key: 'PRAZO', label: '🔴 Prazo vencido', valor: kpis.prazoVencido, cor: kpis.prazoVencido > 0 ? 'text-red-600' : 'text-gray-400', borda: 'ring-red-400', desc: 'prazo do cliente estourado' },
         ] as const).map(k => (
           <button key={k.label} onClick={() => setAlerta(alerta === k.key ? '' : k.key as any)}
             title={k.desc}
             className={`bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2 text-left transition hover:border-gray-300 ${alerta === k.key && k.key !== '' ? `ring-2 ${k.borda}` : ''}`}>
             <p className={`text-xl font-bold leading-tight tabular-nums ${k.cor}`}>{k.valor}</p>
             <p className="text-[11px] text-gray-500">{k.label}</p>
-            {k.sub && <p className="text-[10px] text-red-600 font-medium leading-tight mt-0.5">{k.sub}</p>}
           </button>
         ))}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-3 py-2">
@@ -352,7 +347,7 @@ function PainelDemandas() {
       </div>
       {alerta && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-center justify-between">
-          <span>Mostrando só <strong>{alerta === 'PARADAS' ? 'paradas há 2+ dias' : alerta === 'PRAZO' ? 'com prazo vencido' : alerta === 'ESTOQUE' ? 'aguardando estoque (PCP)' : 'com NF a enviar'}</strong>.</span>
+          <span>Mostrando só <strong>{alerta === 'PARADAS' ? 'paradas há 2+ dias' : 'com prazo vencido'}</strong>.</span>
           <button onClick={() => setAlerta('')} className="underline">Ver tudo</button>
         </div>
       )}
@@ -364,10 +359,6 @@ function PainelDemandas() {
             <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar cliente ou número…"
               className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
           </div>
-          <select value={canalFiltro} onChange={e => setCanalFiltro(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
-            <option value="">Todos os canais</option>
-            {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
-          </select>
           <span className="text-xs text-gray-400 hidden lg:block">{filtradas.filter(d => !ehFinal(d)).length} no filtro</span>
         </div>
         <div className="flex items-center gap-2">
@@ -381,7 +372,7 @@ function PainelDemandas() {
             className="flex items-center gap-1.5 text-gray-600 text-sm font-medium px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
             <Search size={15} /> Pesquisar / Histórico
           </button>
-          {TIPOS.map(t => (
+          {TIPOS_PAINEL.map(t => (
             <button key={t.key} onClick={() => setModalNovo(t.key)}
               className={`flex items-center gap-1.5 text-white text-sm font-medium px-3 py-2 rounded-lg ${t.header} hover:opacity-90`}>
               <Plus size={15} /> {t.label}
@@ -391,14 +382,14 @@ function PainelDemandas() {
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-xs text-blue-700">
-        💡 <strong>Venda direta</strong>: D365 → <strong>Gerar OV</strong> (cria o contrato automático e segue no kanban) → <strong>Cotar frete</strong> → <strong>Enviar NF</strong>. <strong>Consignação</strong>: cria o contrato (baixa por comunicado de uso). <strong>Comunicado de uso</strong>: regido pela <strong>AF + paciente + prontuário</strong> — confira em <strong>Pesquisar / Histórico</strong> antes de lançar, evita processar o mesmo caso duas vezes. Sem estoque? Use <strong>🏭 Sem estoque</strong> — o card fica na coluna do PCP e <strong>não some</strong> até o material chegar. As finalizadas <strong>saem do painel no dia seguinte</strong> — veja em <strong>Pesquisar / Histórico</strong>.
+        💡 Antes de lançar, confira em <strong>Pesquisar / Histórico</strong> — evita processar o mesmo caso duas vezes. Venda direta e consignação são lançadas na aba <strong>Contratos</strong>.
       </div>
 
       {isLoading ? (
         <p className="text-center text-gray-400 py-10 text-sm">Carregando painel…</p>
       ) : (
         <div className="space-y-4">
-          {TIPOS.map(tipo => {
+          {TIPOS_PAINEL.map(tipo => {
             const Icone = tipo.icone
             const colaps = colapsadas[tipo.key]
             const totalTipo = filtradas.filter(d => d.tipo_operacao === tipo.key).length
@@ -672,10 +663,11 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   })
 
   return (
-    <ModalBase titulo="Nova demanda de licitação" onClose={onClose}>
+    <ModalBase titulo={TIPOS_PAINEL.length > 1 ? 'Nova demanda de licitação' : `Novo ${cfg.label.toLowerCase()}`} onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
-        <div className="grid grid-cols-3 gap-2">
-          {TIPOS.map(t => {
+        {/* Com um tipo só no painel, o seletor não tem o que escolher. */}
+        <div className={`grid gap-2 ${TIPOS_PAINEL.length > 1 ? 'grid-cols-3' : 'hidden'}`}>
+          {TIPOS_PAINEL.map(t => {
             const Icone = t.icone
             const ativo = tipo === t.key
             return (
