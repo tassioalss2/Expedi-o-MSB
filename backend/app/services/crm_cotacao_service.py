@@ -166,6 +166,24 @@ def obter_cotacao(cotacao_id: str) -> dict:
     return out
 
 
+def _observacao_para_ov(cotacao: dict) -> Optional[str]:
+    """O que a proposta combinou, no formato que a expedição lê na OV.
+
+    Leva a observação e o prazo de entrega, identificando a proposta de origem —
+    sem isso quem separa não sabe de onde veio a condição.
+    """
+    partes = []
+    obs = (cotacao.get("observacao") or "").strip()
+    if obs:
+        partes.append(obs)
+    prazo = (cotacao.get("prazo_entrega") or "").strip()
+    if prazo:
+        partes.append(f"Prazo de entrega: {prazo}")
+    if not partes:
+        return None
+    return f"Da proposta {cotacao.get('numero') or ''}".strip() + ":\n" + "\n".join(partes)
+
+
 def criar_cotacao(payload: CotacaoCreate, usuario: UsuarioOut) -> dict:
     db = get_service_db()
     itens_dict = [{"qtd": i.qtd, "valor_unitario": i.valor_unitario, "desconto_pct": i.desconto_pct} for i in payload.itens]
@@ -216,12 +234,19 @@ def atualizar_cotacao(cotacao_id: str, payload: CotacaoUpdate, usuario: UsuarioO
         update["cliente_id"] = str(payload.cliente_id)
     if payload.contato_id is not None:
         update["contato_id"] = str(payload.contato_id) if payload.contato_id else None
+    # "não veio no corpo" é diferente de "veio vazio". Testar `is not None`
+    # confundia os dois: apagar a observação (ou qualquer texto) na tela mandava
+    # null e o servidor mantinha o texto antigo — não dava para corrigir um texto
+    # errado deixando o campo em branco. `model_fields_set` diz o que a tela
+    # realmente mandou, então mudar o status (que envia só `status`) continua sem
+    # encostar nos outros campos.
+    enviados = payload.model_fields_set
     for campo in ("canal", "condicao_pagamento", "prazo_entrega", "observacao",
                   "cliente_cnpj", "contato_nome", "contato_email",
                   "endereco", "endereco_bairro", "endereco_cidade", "endereco_uf", "endereco_cep"):
-        val = getattr(payload, campo)
-        if val is not None:
-            update[campo] = val
+        if campo in enviados:
+            val = getattr(payload, campo)
+            update[campo] = val.strip() or None if isinstance(val, str) else val
     if payload.validade is not None:
         update["validade"] = payload.validade.isoformat()
     if payload.frete is not None:
@@ -366,6 +391,11 @@ def gerar_ov(cotacao_id: str, payload, usuario: UsuarioOut) -> dict:
             # O operador confirma no formulário (já vem preenchida com a da cotação),
             # porque a condição pode ter mudado entre a proposta e o fechamento.
             condicao_pagamento=payload.condicao_pagamento,
+            # A observação da proposta desce para a OV. É onde o vendedor escreve
+            # o que foi combinado com o cliente ("frete FOB", "retira na MSB",
+            # prazos) — quem separa e fatura precisa disso, e antes a informação
+            # morria na cotação.
+            observacoes=_observacao_para_ov(c),
             valor_frete=float(c.get("frete") or 0) or None,
             itens=[ItemPedidoCreate(produto_id=i["produto_id"], qtd_solicitada=float(i["qtd"]),
                                     valor_unitario=_preco_liquido(i)) for i in itens_validos],
