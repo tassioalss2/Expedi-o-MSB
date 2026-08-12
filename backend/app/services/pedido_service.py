@@ -286,6 +286,43 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
             "atualizado_em":         agora,
         }).eq("id", pid).execute()
 
+        # ── Os ITENS também vêm do formulário ─────────────────────────────────
+        # Antes só o cabeçalho era atualizado e os itens da OV cancelada ficavam
+        # de pé, calados. O caso real: OV cadastrada com os itens de um cliente,
+        # devolvida para correção, recriada com o cliente certo — e seguiu com os
+        # itens do cliente errado, porque o que a operadora digitou era descartado.
+        # Recriar é justamente para corrigir; o formulário tem que mandar.
+        itens_novos = [{
+            "pedido_id": pid,
+            "produto_id": str(item.produto_id),
+            "lote_id": str(item.lote_id) if item.lote_id else None,
+            "qtd_solicitada": float(item.qtd_solicitada),
+            "valor_unitario": item.valor_unitario,
+            "status_item": "PENDENTE",
+        } for item in payload.itens if float(item.qtd_solicitada) > 0]
+
+        troca_itens = ""
+        if itens_novos:
+            antigos = db.table("itens_pedido").select("produto_id, qtd_solicitada")\
+                .eq("pedido_id", pid).execute().data
+            db.table("itens_pedido").delete().eq("pedido_id", pid).execute()
+            db.table("itens_pedido").insert(itens_novos).execute()
+
+            ids = {l.get("produto_id") for l in (antigos + itens_novos) if l.get("produto_id")}
+            cods = {}
+            if ids:
+                for r in db.table("produtos").select("id, codigo").in_("id", list(ids)).execute().data:
+                    cods[r["id"]] = r.get("codigo")
+
+            def _resumo(linhas):
+                return ", ".join(f"{cods.get(l.get('produto_id')) or '?'}x{float(l.get('qtd_solicitada') or 0):g}"
+                                 for l in linhas) or "—"
+
+            de = _resumo(antigos)
+            para = _resumo(itens_novos)
+            if de != para:
+                troca_itens = f"\nItens substituídos pelos do formulário:\n  de:   {de}\n  para: {para}"
+
         # Registra ocorrência auditável
         db.table("ocorrencias").insert({
             "pedido_id":      pid,
@@ -294,6 +331,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
                 f"OV {payload.numero_pedido} foi recriada após cancelamento.\n"
                 f"Motivo informado: {payload.motivo_duplicata}\n"
                 f"Operador confirmou que a recriação é intencional."
+                f"{troca_itens}"
             ),
             "responsavel_id": uid,
             "status":         "FECHADA",
@@ -305,7 +343,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
 
         _registrar_movimentacao(
             pid, "CANCELADO", StatusPedido.LIBERADO.value,
-            uid, f"OV recriada após cancelamento. Motivo: {payload.motivo_duplicata}"
+            uid, f"OV recriada após cancelamento. Motivo: {payload.motivo_duplicata}{troca_itens}"
         )
 
         return db.table("pedidos").select("*").eq("id", pid).execute().data[0]
