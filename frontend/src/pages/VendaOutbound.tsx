@@ -92,7 +92,12 @@ export function VendaOutbound() {
       previsao_pcp: decisao?.previsao_pcp || null,
     }),
     onSuccess: (res, decisao) => {
-      toast.success(decisao?.decisao === 'PARCIAL'
+      // O servidor decide: sem material nenhum, "seguir com o disponível" vira
+      // aguardar do mesmo jeito — então o aviso segue o status que voltou.
+      const aguardando = res.data?.status === 'AGUARD_PRODUCAO'
+      toast.success(aguardando
+        ? 'Venda registrada aguardando a produção — nada foi para a expedição. Ela está em Pendências até o material chegar.'
+        : decisao?.decisao === 'PARCIAL'
         ? 'Venda lançada só com o material disponível — o saldo ficou como pendência.'
         : 'Venda outbound lançada! Aguardando operações completar o número da OV.',
         { duration: 7000 })
@@ -105,11 +110,6 @@ export function VendaOutbound() {
       // Falta material: abre a decisão em vez de mostrar erro.
       if (detail?.tipo === 'ESTOQUE_INSUFICIENTE' && detail.analise) {
         setFaltaEstoque(detail.analise)
-        return
-      }
-      if (detail?.tipo === 'AGUARDANDO_PRODUCAO') {
-        setFaltaEstoque(null)
-        toast.error(detail.msg, { duration: 9000 })
         return
       }
       const msg = typeof detail === 'string' ? detail
@@ -291,11 +291,8 @@ export function VendaOutbound() {
       </div>
 
       {faltaEstoque && (
-        // Aqui "aguardar produção" não é oferecido: sem OV não há onde pendurar a
-        // pendência na venda outbound, então o caminho é registrar pelo CRM. O
-        // modal explica isso em vez de oferecer um botão que falharia.
         <ModalDecisaoEstoque analise={faltaEstoque} pendente={mutation.isPending}
-          permiteAguardar={false}
+          avisoAguardar="Nenhum item desce para a expedição. A venda inteira fica pendente e aparece em Pendências até o material chegar."
           onClose={() => setFaltaEstoque(null)}
           onDecidir={(d) => mutation.mutate(d)} />
       )}

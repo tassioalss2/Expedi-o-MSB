@@ -7,6 +7,12 @@ class StatusPedido(str, Enum):
     # data prevista de entrega ainda não — quem completa é a operadora de vendas,
     # direto no card do kanban.
     AGUARD_DADOS_OV = "AGUARD_DADOS_OV"
+    # Venda outbound fechada sem material em estoque: o comercial escolheu aguardar
+    # a produção. A venda fica guardada aqui — FORA do kanban da expedição, que não
+    # tem o que fazer com um card sem material — e aparece na aba Pendências. Quando
+    # o material chega, as quantidades entram nesta mesma OV (que ainda é provisória,
+    # sem número do D365) e ela segue para AGUARD_DADOS_OV.
+    AGUARD_PRODUCAO = "AGUARD_PRODUCAO"
     AGUARD_CREDITO = "AGUARD_CREDITO"
     LIBERADO = "LIBERADO"
     EM_INVENTARIO = "EM_INVENTARIO"
@@ -27,6 +33,8 @@ class StatusPedido(str, Enum):
 
 TRANSICOES_PERMITIDAS: dict[StatusPedido, list[StatusPedido]] = {
     StatusPedido.AGUARD_DADOS_OV:        [StatusPedido.LIBERADO, StatusPedido.AGUARD_CREDITO, StatusPedido.CANCELADO],
+    # Só sai quando o material chega (vira OV normal) ou quando a venda cai.
+    StatusPedido.AGUARD_PRODUCAO:        [StatusPedido.AGUARD_DADOS_OV, StatusPedido.CANCELADO],
     StatusPedido.AGUARD_CREDITO:         [StatusPedido.LIBERADO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
     # LIBERADO → AGUARD_CREDITO: o D365 joga a OV em gerenciamento de crédito
     # DEPOIS de ela já ter sido liberada, e a expedição só descobria isso mais

@@ -11,6 +11,9 @@ export interface StatusConfig {
 
 export const STATUS_CONFIG: Record<StatusPedido, StatusConfig> = {
   AGUARD_DADOS_OV:        { label: 'Dados da OV',          cor: '#DBEAFE', corTexto: '#1E3A8A', icone: '🆕', descricao: 'Venda ganha no CRM — falta o número real da OV (D365) e a data de entrega', responsavel: 'Op. Vendas' },
+  // Fora do ORDEM_KANBAN de propósito: a venda ainda não tem material, então não
+  // vira card na expedição. Ela vive na aba Pendências até o material chegar.
+  AGUARD_PRODUCAO:        { label: 'Aguardando produção',   cor: '#FFEDD5', corTexto: '#7C2D12', icone: '🏭', descricao: 'Venda outbound sem material — aguardando a produção. Entra na expedição quando o estoque chegar', responsavel: 'Comercial' },
   AGUARD_CREDITO:         { label: 'Ger. Crédito',         cor: '#FEF9C3', corTexto: '#713F12', icone: '💳', descricao: 'OV aguardando aprovação de crédito no D365 — separação bloqueada', responsavel: 'Op. Vendas' },
   LIBERADO:               { label: 'Liberado',             cor: '#E5E7EB', corTexto: '#374151', icone: '📋', descricao: 'OV recebida via Teams — aguardando inventário', responsavel: 'Operador 1' },
   EM_INVENTARIO:          { label: 'Em Inventário',        cor: '#DBEAFE', corTexto: '#1D4ED8', icone: '📦', descricao: 'Operador 1 preenchendo inventário contínuo', responsavel: 'Operador 1' },

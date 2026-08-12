@@ -35,6 +35,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from app.core.database import get_service_db
+from app.models.enums import StatusPedido
 from app.models.schemas import UsuarioOut
 from app.services import disponibilidade_service
 
@@ -86,6 +87,34 @@ def montar(analise: dict, decisao: str, usuario_id: str, origem: str,
         "previsao_pcp": previsao_pcp,
         "resolvido_em": None,
         "resolucao": None,
+    }
+
+
+def analise_venda_inteira(analise: dict) -> dict:
+    """A mesma análise, mas com a venda TODA marcada como pendente.
+
+    Serve para "aguardar a produção" quando não existe outro lugar guardando o
+    que foi vendido — caso da venda outbound, onde a OV nasce sem nenhum item e a
+    pendência é a única memória do pedido. Gravar só o que faltava perderia os
+    itens que tinham estoque: eles não entraram na OV (nada entrou) e não estariam
+    na pendência para entrar depois.
+
+    Na venda do CRM isto não é preciso: a oportunidade guarda os itens, e `liberar`
+    os relê de crm_oportunidade_itens.
+    """
+    itens = []
+    for i in (analise.get("itens") or []):
+        qtd = float(i.get("qtd_pedida") or 0)
+        vu = float(i.get("valor_unitario") or 0)
+        itens.append({**i, "qtd_atendida": 0.0, "qtd_pendente": qtd,
+                      "valor_pendente": round(qtd * vu, 2)})
+    return {
+        **analise,
+        "itens": itens,
+        "tem_falta": True,
+        "tudo_disponivel": False,
+        "qtd_pendente_total": round(sum(float(i["qtd_pendente"]) for i in itens), 2),
+        "valor_pendente": round(sum(float(i["valor_pendente"]) for i in itens), 2),
     }
 
 
@@ -372,6 +401,16 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
         ), usuario)
     elif acao == "SOMAR_R1":
         resultado_ov = _somar_na_ov(db, ov, a_liberar, usuario)
+        # Venda outbound que estava aguardando a produção: agora tem material e
+        # itens, então entra no kanban da expedição, na coluna "Dados da OV" —
+        # é lá que operações de vendas informa o número real do D365.
+        if ov.get("status") == StatusPedido.AGUARD_PRODUCAO.value:
+            db.table("pedidos").update({
+                "status": StatusPedido.AGUARD_DADOS_OV.value, "atualizado_em": _agora(),
+            }).eq("id", ov["id"]).execute()
+            pedido_service._registrar_movimentacao(
+                ov["id"], StatusPedido.AGUARD_PRODUCAO.value, StatusPedido.AGUARD_DADOS_OV.value,
+                str(usuario.id), "Material chegou — a venda entrou na expedição.")
     else:  # GERAR_OV
         resultado_ov = _gerar_ov_do_saldo(db, reg, a_liberar, usuario)
 

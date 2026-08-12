@@ -527,19 +527,15 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
 
     atendidos = disponibilidade_service.itens_atendidos(analise)
     pendentes = disponibilidade_service.itens_pendentes(analise)
-    if pendentes and (decisao == "AGUARDAR" or not atendidos):
-        # Aguardar produção: não abre OV nenhuma. Abrir uma OV vazia só para
-        # carregar a pendência colocaria um card sem material no kanban da
-        # expedição — exatamente o que este processo existe para evitar.
-        raise HTTPException(status_code=409, detail={
-            "tipo": "AGUARDANDO_PRODUCAO",
-            "msg": "Sem material suficiente para abrir a OV agora. Registre a venda pelo CRM "
-                   "para ela ficar na coluna de pendência até a produção chegar.",
-            "analise": analise,
-        })
+    # Aguardar a produção: a venda é registrada, mas NENHUM item desce para a
+    # expedição — a OV nasce em AGUARD_PRODUCAO, que não tem coluna no kanban.
+    # O que foi vendido fica todo na pendência; quando o material chegar, ele é
+    # somado nesta mesma OV (ainda provisória) e ela vai para "Dados da OV".
+    aguardando = bool(pendentes) and (decisao == "AGUARDAR" or not atendidos)
 
-    # Quantidade que efetivamente vai para a OV, item a item.
-    qtd_por_ref = {i.get("ref"): float(i.get("qtd_atendida") or 0)
+    # Quantidade que efetivamente vai para a OV, item a item. Aguardando a
+    # produção, nada vai: a OV nasce sem item nenhum e tudo fica na pendência.
+    qtd_por_ref = {i.get("ref"): (0.0 if aguardando else float(i.get("qtd_atendida") or 0))
                    for i in (analise.get("itens") or []) if i.get("ref") is not None}
 
     # CNPJ é obrigatório neste fluxo — grava/atualiza no cadastro do cliente
@@ -555,7 +551,8 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
         "tipo_operacao": payload.tipo_operacao.value if payload.tipo_operacao else "VENDA_NORMAL",
         "canal": payload.canal.value if payload.canal else None,
         "local_entrega": payload.local_entrega,
-        "status": StatusPedido.AGUARD_DADOS_OV.value,
+        "status": (StatusPedido.AGUARD_PRODUCAO.value if aguardando
+                   else StatusPedido.AGUARD_DADOS_OV.value),
         "prioridade": payload.prioridade.value,
         "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
         "observacoes": payload.observacoes,
@@ -588,8 +585,14 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
     except Exception:
         pass
 
+    # Aguardando: a pendência guarda a venda INTEIRA, porque a OV ficou sem item
+    # nenhum e ela é o único registro do que foi vendido. Gravar só o que faltava
+    # perderia os itens que tinham estoque — eles não entraram na OV nem estariam
+    # na pendência para entrar depois.
     pendencia = pendencia_service.montar(
-        analise, decisao or "PARCIAL", str(usuario.id), origem="OUTBOUND",
+        pendencia_service.analise_venda_inteira(analise) if aguardando else analise,
+        "AGUARDAR" if aguardando else (decisao or "PARCIAL"),
+        str(usuario.id), origem="OUTBOUND",
         observacao=payload.observacao_estoque,
         previsao_pcp=payload.previsao_pcp_iso()) if pendentes else None
     if pendencia:
@@ -605,10 +608,16 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
         faltas = "; ".join(
             f"{i.get('codigo') or '—'} faltam {float(i.get('qtd_pendente') or 0):g}"
             for i in pendencia.get("itens") or [])
-        detalhes += (f"\nEstoque insuficiente — OV aberta só com o disponível. "
-                     f"Pendência: {faltas} (R$ {float(pendencia.get('valor') or 0):,.2f}). "
-                     f"O saldo entra depois como 2ª remessa nesta mesma OV.")
-    _registrar_movimentacao(pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, str(usuario.id),
+        valor_pend = float(pendencia.get("valor") or 0)
+        if aguardando:
+            detalhes += (f"\nSem material — o comercial escolheu aguardar a produção. Nenhum item "
+                         f"desceu para a expedição: a venda inteira ficou pendente ({faltas} — "
+                         f"R$ {valor_pend:,.2f}). Quando o material chegar, ela entra nesta mesma OV.")
+        else:
+            detalhes += (f"\nEstoque insuficiente — OV aberta só com o disponível. "
+                         f"Pendência: {faltas} (R$ {valor_pend:,.2f}). "
+                         f"O saldo entra depois como 2ª remessa nesta mesma OV.")
+    _registrar_movimentacao(pedido["id"], None, pedido_data["status"], str(usuario.id),
                             detalhes)
     return pedido
 
