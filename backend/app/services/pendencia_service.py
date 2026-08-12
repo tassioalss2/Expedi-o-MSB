@@ -234,15 +234,102 @@ def listar(incluir_resolvidas: bool = False) -> dict:
             canal=p.get("canal"), ov=p, pend=pend, acao=acao, bloqueio=bloqueio,
             extra={"oportunidade_id": None}))
 
-    # Maior valor primeiro: é onde o dinheiro parado está.
-    saida.sort(key=lambda x: -(x.get("valor") or 0))
+    estoque = _estoque_agora(saida)
+
+    # Quem já tem material primeiro: a coluna existe para ser esvaziada, e o que
+    # dá para liberar hoje é o que merece o olho do operador. Dentro de cada
+    # grupo, maior valor primeiro — é onde o dinheiro parado está.
+    ordem = {"COMPLETO": 0, "PARCIAL": 1, "NENHUM": 2}
+    saida.sort(key=lambda x: (ordem.get((x.get("estoque_agora") or {}).get("status"), 3),
+                              -(x.get("valor") or 0)))
     return {
         "pendencias": saida,
         "total": round(sum(x.get("valor") or 0 for x in saida), 2),
         "quantidade": len(saida),
         "aguardando": sum(1 for x in saida if x.get("decisao") == "AGUARDAR"),
         "parciais": sum(1 for x in saida if x.get("decisao") == "PARCIAL"),
+        # Para o cabeçalho da coluna: quantas dá para resolver agora e quanto isso
+        # destrava em dinheiro.
+        "com_estoque": sum(1 for x in saida
+                           if (x.get("estoque_agora") or {}).get("status") == "COMPLETO"),
+        "com_estoque_parcial": sum(1 for x in saida
+                                   if (x.get("estoque_agora") or {}).get("status") == "PARCIAL"),
+        "valor_liberavel": round(sum((x.get("estoque_agora") or {}).get("valor_disponivel") or 0
+                                     for x in saida), 2),
+        "estoque_desatualizado": estoque.get("desatualizado", False),
+        "estoque_data_ref": estoque.get("data_ref"),
     }
+
+
+def _estoque_agora(pendencias: list) -> dict:
+    """Marca em cada pendência quanto do que falta JÁ existe em estoque hoje.
+
+    Uma chamada só para todas as pendências, de propósito: `analisar` faz rateio
+    sequencial, então a mesma unidade não é prometida a duas pendências. Item a
+    item por pendência mostraria "chegou" nas duas e o segundo operador levaria
+    um 409 na cara ao tentar liberar.
+
+    A ordem do rateio é quem espera há mais tempo primeiro — é a fila justa
+    quando o material não dá para todos.
+
+    Não sincroniza com o PCP: esta é a listagem, tem que abrir na hora. Por isso
+    devolve `desatualizado`, para a tela não afirmar "chegou" em cima de uma foto
+    velha. Quem libera reconfere o estoque de verdade, com sincronização.
+    """
+    fila = sorted(pendencias, key=lambda p: -(p.get("dias_parada") or 0))
+    entrada = []
+    for pos, p in enumerate(fila):
+        for j, i in enumerate(p.get("itens") or []):
+            if float(i.get("qtd_pendente") or 0) <= 0:
+                continue
+            entrada.append({
+                "ref": f"{pos}:{j}",
+                "produto_id": i.get("produto_id"),
+                "codigo": i.get("codigo"),
+                "descricao": i.get("descricao"),
+                "qtd": float(i.get("qtd_pendente") or 0),
+                "valor_unitario": float(i.get("valor_unitario") or 0),
+            })
+
+    if not entrada:
+        for p in fila:
+            p["estoque_agora"] = {"status": "NENHUM", "qtd_disponivel": 0.0,
+                                  "valor_disponivel": 0.0, "itens_prontos": 0,
+                                  "itens_total": len(p.get("itens") or []), "itens": []}
+        return {"desatualizado": False, "data_ref": None}
+
+    analise = disponibilidade_service.analisar(entrada, sincronizar=False)
+
+    por_pendencia: dict = {}
+    for item in analise.get("itens") or []:
+        ref = str(item.get("ref") or "")
+        if ":" not in ref:
+            continue
+        pos = int(ref.split(":")[0])
+        por_pendencia.setdefault(pos, []).append(item)
+
+    for pos, p in enumerate(fila):
+        itens = por_pendencia.get(pos, [])
+        prontos = [i for i in itens if float(i.get("qtd_atendida") or 0) > 0]
+        falta = any(float(i.get("qtd_pendente") or 0) > 0 for i in itens)
+        qtd = sum(float(i.get("qtd_atendida") or 0) for i in itens)
+        valor = sum(float(i.get("qtd_atendida") or 0) * float(i.get("valor_unitario") or 0)
+                    for i in itens)
+        status = "NENHUM" if not prontos else ("PARCIAL" if falta else "COMPLETO")
+        p["estoque_agora"] = {
+            "status": status,
+            "qtd_disponivel": round(qtd, 3),
+            "valor_disponivel": round(valor, 2),
+            "itens_prontos": len(prontos),
+            "itens_total": len(itens),
+            # Só o que interessa por item, para a tela não recalcular nada.
+            "itens": [{"codigo": i.get("codigo"),
+                       "qtd_atendida": float(i.get("qtd_atendida") or 0),
+                       "qtd_pendente": float(i.get("qtd_pendente") or 0)} for i in itens],
+        }
+
+    return {"desatualizado": analise.get("desatualizado", False),
+            "data_ref": analise.get("data_ref")}
 
 
 def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,

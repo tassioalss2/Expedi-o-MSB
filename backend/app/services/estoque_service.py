@@ -25,6 +25,7 @@ saiu do estoque, mas a foto da manhã ainda o continha.
 O que NÃO conta: OV cancelada, e OV que já havia faturado ANTES da foto — essa
 o PCP já descontou, contar de novo seria baixa dupla.
 """
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from app.core.database import get_service_db
@@ -460,8 +461,29 @@ def disponivel_por_codigo() -> dict:
     }
 
 
+# Montar o estoque custa alguns segundos: o comprometido é recalculado varrendo
+# as OVs abertas, e o vendido no mês, as faturadas. Vale a pena e não vai virar
+# saldo guardado (ver o topo do módulo) — mas telas que só EXIBEM chamam isto a
+# cada refetch, e a coluna de pendências do CRM recarrega a cada 30s.
+#
+# Então o caminho "só exibição" (sincronizar_se_preciso=False) reaproveita o
+# último resultado por alguns segundos. Quem VINCULA decisão passa True, faz o
+# round trip no PCP e nunca lê daqui.
+# 2 min: a foto do PCP muda UMA VEZ AO DIA, e o que varia no meio do dia é o
+# comprometido pelas OVs. Segurar por 2 minutos não muda decisão nenhuma, e é
+# maior que o refetch de 30s da coluna — senão metade das chamadas pagaria tudo
+# de novo.
+_CACHE_EXIBICAO: dict = {"em": 0.0, "dados": None}
+_CACHE_SEGUNDOS = 120
+
+
 def listar(sincronizar_se_preciso: bool = True) -> dict:
     """Estoque disponível por item: foto do PCP menos o comprometido pelas OVs."""
+    if not sincronizar_se_preciso:
+        cache = _CACHE_EXIBICAO
+        if cache["dados"] is not None and (time.monotonic() - cache["em"]) < _CACHE_SEGUNDOS:
+            return cache["dados"]
+
     db = get_service_db()
     dia = _hoje_brt()
 
@@ -538,7 +560,7 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
         })
 
     itens.sort(key=lambda i: (i["cobertura_disponivel"] is None, i["cobertura_disponivel"] or 0))
-    return {
+    resultado = {
         "itens": itens,
         "data_ref": dia.isoformat(),
         "sincronizado_em": sincronizado_em,
@@ -548,3 +570,8 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
         "sync": sync,
         "integracao": pcp_estoque_service.integracao_ativa(),
     }
+    # Guarda para as telas de exibição. Vale também o resultado vindo de uma
+    # chamada com sincronização: ele é mais fresco ainda.
+    _CACHE_EXIBICAO["dados"] = {**resultado, "sync": None}
+    _CACHE_EXIBICAO["em"] = time.monotonic()
+    return resultado

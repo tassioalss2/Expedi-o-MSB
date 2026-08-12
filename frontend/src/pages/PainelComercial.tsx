@@ -1027,11 +1027,23 @@ function SecaoPendencias() {
         <h2 className="text-sm font-semibold text-gray-700">Pendências de estoque</h2>
         <span className="text-sm font-semibold text-red-700">{fmt(data?.total || 0)}</span>
       </div>
-      <p className="text-xs text-gray-400 mb-4">
+      <p className="text-xs text-gray-400 mb-2">
         Venda fechada esperando material · {data?.quantidade} pendência(s)
         {(data?.aguardando || 0) > 0 && ` · ${data?.aguardando} sem OV aberta`}
         {(data?.parciais || 0) > 0 && ` · ${data?.parciais} com OV parcial`}
       </p>
+      {/* O material que já chegou é a única coisa acionável aqui — vem antes da
+          tabela para não depender de o operador varrer linha por linha. */}
+      {((data?.com_estoque || 0) > 0 || (data?.com_estoque_parcial || 0) > 0) && (
+        <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-800">
+          ✓ <strong>{data?.com_estoque || 0}</strong> já com todo o material
+          {(data?.com_estoque_parcial || 0) > 0 && <> · <strong>{data?.com_estoque_parcial}</strong> com parte</>}
+          {' '}— dá para destravar <strong>{fmt(data?.valor_liberavel || 0)}</strong> agora.
+          {data?.estoque_desatualizado && (
+            <span className="text-amber-700"> (estoque da última foto do PCP)</span>
+          )}
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -1040,6 +1052,7 @@ function SecaoPendencias() {
               <th className="py-2 pr-3 font-medium">Cliente</th>
               <th className="py-2 px-3 font-medium">OV</th>
               <th className="py-2 px-3 font-medium">Itens pendentes</th>
+              <th className="py-2 px-3 font-medium">Estoque hoje</th>
               <th className="py-2 px-3 font-medium text-right">Qtd</th>
               <th className="py-2 px-3 font-medium text-right">Valor</th>
               <th className="py-2 px-3 font-medium">Previsão</th>
@@ -1049,7 +1062,10 @@ function SecaoPendencias() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {lista.map(p => (
-              <tr key={`${p.fonte}-${p.id}`} className="hover:bg-gray-50">
+              <tr key={`${p.fonte}-${p.id}`}
+                className={p.estoque_agora?.status === 'COMPLETO'
+                  ? 'bg-emerald-50/70 hover:bg-emerald-50'
+                  : 'hover:bg-gray-50'}>
                 <td className="py-2 pr-3">
                   <span className="font-medium text-gray-800">{p.cliente || '—'}</span>
                   <span className="block text-[11px] text-gray-400 truncate max-w-[200px]">{p.titulo}</span>
@@ -1070,6 +1086,19 @@ function SecaoPendencias() {
                     </span>
                   ))}
                 </td>
+                <td className="py-2 px-3">
+                  {p.estoque_agora?.status === 'COMPLETO' ? (
+                    <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-emerald-600 text-white whitespace-nowrap">
+                      ✓ chegou tudo
+                    </span>
+                  ) : p.estoque_agora?.status === 'PARCIAL' ? (
+                    <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">
+                      parte · {fmt(p.estoque_agora.valor_disponivel)}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-gray-400">sem material</span>
+                  )}
+                </td>
                 <td className="py-2 px-3 text-right tabular-nums text-gray-700">{Number(p.qtd_total) || 0}</td>
                 <td className="py-2 px-3 text-right tabular-nums font-medium text-red-700">{fmt(p.valor)}</td>
                 <td className="py-2 px-3 text-[11px] text-gray-500">
@@ -1085,7 +1114,9 @@ function SecaoPendencias() {
                 <td className="py-2 pl-3 text-right">
                   <button onClick={() => setLiberando(p)} disabled={!p.pode_liberar}
                     title={p.motivo_bloqueio || undefined}
-                    className="text-[11px] font-medium px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-100 disabled:text-gray-400 text-white whitespace-nowrap">
+                    className={`text-[11px] font-medium px-2 py-1 rounded-lg disabled:bg-gray-100 disabled:text-gray-400 text-white whitespace-nowrap ${
+                      p.estoque_agora?.status === 'NENHUM'
+                        ? 'bg-gray-400 hover:bg-gray-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
                     {p.pode_liberar ? 'Liberar' : 'Bloqueada'}
                   </button>
                 </td>

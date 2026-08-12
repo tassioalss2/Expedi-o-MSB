@@ -102,6 +102,18 @@ export interface Pendencia {
   motivo_bloqueio: string | null
   estagio?: string | null
   oportunidade_id?: string | null
+  /** Quanto do que falta JÁ existe em estoque hoje — calculado no servidor, com
+   *  rateio entre as pendências (a mesma unidade não é prometida duas vezes). */
+  estoque_agora?: EstoqueAgora | null
+}
+
+export interface EstoqueAgora {
+  status: 'COMPLETO' | 'PARCIAL' | 'NENHUM'
+  qtd_disponivel: number
+  valor_disponivel: number
+  itens_prontos: number
+  itens_total: number
+  itens: { codigo: string | null; qtd_atendida: number; qtd_pendente: number }[]
 }
 
 export interface PendenciasResp {
@@ -110,6 +122,11 @@ export interface PendenciasResp {
   quantidade: number
   aguardando: number
   parciais: number
+  com_estoque: number
+  com_estoque_parcial: number
+  valor_liberavel: number
+  estoque_desatualizado: boolean
+  estoque_data_ref: string | null
 }
 
 // O que acontece ao liberar, em português — o comercial precisa saber se vai sair

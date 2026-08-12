@@ -360,27 +360,82 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
   )
 }
 
+/** Como o card se apresenta conforme o material JÁ existe em estoque ou não.
+ *  A cor é a informação principal: a coluna se lê de relance, e o que mudou
+ *  desde a decisão é justamente "o material chegou". */
+const VISUAL_ESTOQUE = {
+  COMPLETO: {
+    card: 'bg-emerald-50 border-emerald-400 ring-1 ring-emerald-200',
+    faixa: 'bg-emerald-600 text-white',
+    valor: 'text-emerald-800',
+    chip: 'bg-emerald-100 text-emerald-700',
+    botao: 'bg-emerald-600 hover:bg-emerald-500 text-white',
+  },
+  PARCIAL: {
+    card: 'bg-amber-50 border-amber-300',
+    faixa: 'bg-amber-500 text-white',
+    valor: 'text-amber-900',
+    chip: 'bg-amber-100 text-amber-800',
+    botao: 'bg-amber-600 hover:bg-amber-500 text-white',
+  },
+  NENHUM: {
+    card: 'bg-white border-red-200',
+    faixa: '',
+    valor: 'text-red-700',
+    chip: 'bg-red-100 text-red-700',
+    botao: 'bg-emerald-600 hover:bg-emerald-500 text-white',
+  },
+} as const
+
 /** Card da coluna "Pendência de estoque" do kanban. */
 export function CardPendencia({ p, onAbrir, onLiberar }: {
   p: Pendencia; onAbrir: () => void; onLiberar: () => void
 }) {
+  const est = p.estoque_agora
+  const status = est?.status || 'NENHUM'
+  const v = VISUAL_ESTOQUE[status]
+  // Item a item, o que já tem estoque — o operador confere sem abrir o card.
+  const porCodigo = new Map((est?.itens || []).map(i => [i.codigo || '—', i]))
+
   return (
-    <div className="bg-white rounded-lg border border-red-200 shadow-sm p-2">
+    <div className={`rounded-lg border shadow-sm overflow-hidden ${v.card}`}>
+      {status !== 'NENHUM' && (
+        <div className={`px-2 py-1 text-[11px] font-semibold flex items-center gap-1 ${v.faixa}`}>
+          {status === 'COMPLETO' ? (
+            <><Check size={12} className="shrink-0" /> Material chegou — dá para liberar tudo</>
+          ) : (
+            <><Clock size={12} className="shrink-0" /> Chegou parte · {fmtBRL(est?.valor_disponivel || 0)}</>
+          )}
+        </div>
+      )}
+      <div className="p-2">
       <div onClick={onAbrir} className="cursor-pointer">
         <p className="text-[13px] font-medium text-gray-800 leading-tight line-clamp-2 break-words">{p.titulo}</p>
         {p.cliente && <p className="text-[11px] text-gray-500 mt-0.5 leading-tight line-clamp-2">{p.cliente}</p>}
         <div className="flex items-center justify-between gap-1 flex-wrap mt-1.5">
-          <span className="text-[13px] font-semibold text-red-700">{fmtBRL(p.valor)}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
+          <span className={`text-[13px] font-semibold ${v.valor}`}>{fmtBRL(p.valor)}</span>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${v.chip}`}>
             {n(p.qtd_total)} un
           </span>
         </div>
         <div className="mt-1.5 space-y-0.5">
-          {p.itens.slice(0, 3).map((i, idx) => (
-            <p key={idx} className="text-[11px] text-gray-500 truncate">
-              {i.codigo || '—'} · faltam {n(i.qtd_pendente)}
-            </p>
-          ))}
+          {p.itens.slice(0, 3).map((i, idx) => {
+            const agora = porCodigo.get(i.codigo || '—')
+            const temTudo = agora && agora.qtd_pendente <= 0
+            const temParte = agora && agora.qtd_atendida > 0 && agora.qtd_pendente > 0
+            return (
+              <p key={idx} className="text-[11px] truncate">
+                <span className="text-gray-500">{i.codigo || '—'} · </span>
+                {temTudo ? (
+                  <span className="text-emerald-700 font-medium">✓ {n(i.qtd_pendente)} em estoque</span>
+                ) : temParte ? (
+                  <span className="text-amber-700">{n(agora!.qtd_atendida)} de {n(i.qtd_pendente)} em estoque</span>
+                ) : (
+                  <span className="text-gray-500">faltam {n(i.qtd_pendente)}</span>
+                )}
+              </p>
+            )
+          })}
           {p.itens.length > 3 && (
             <p className="text-[11px] text-gray-400">+{p.itens.length - 3} item(ns)</p>
           )}
@@ -403,11 +458,17 @@ export function CardPendencia({ p, onAbrir, onLiberar }: {
           )}
         </div>
       </div>
+      {/* O botão continua ativo mesmo sem estoque na foto: quem libera reconfere
+          com o PCP, e o operador pode saber de uma entrada que o app ainda não viu. */}
       <button onClick={onLiberar} disabled={!p.pode_liberar}
         title={p.motivo_bloqueio || ACAO_LIBERAR_LABEL[p.acao_liberar || ''] || ''}
-        className="mt-2 w-full text-xs font-medium bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-lg py-1.5">
-        {p.pode_liberar ? 'Material chegou · liberar' : 'Bloqueada'}
+        className={`mt-2 w-full text-xs font-medium rounded-lg py-1.5 disabled:bg-gray-200 disabled:text-gray-400 ${v.botao}`}>
+        {!p.pode_liberar ? 'Bloqueada'
+          : status === 'COMPLETO' ? 'Liberar agora'
+          : status === 'PARCIAL' ? 'Liberar o que chegou'
+          : 'Material chegou · liberar'}
       </button>
+      </div>
     </div>
   )
 }

@@ -103,6 +103,8 @@ export function CrmPipeline() {
   const totalPonderado = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_ponderado || 0), 0)
   const totalPipe = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_estimado || 0), 0)
   const totalPendente = pendencias.reduce((a, p) => a + (p.valor || 0), 0)
+  // Conta sobre a lista FILTRADA: o cabeçalho tem que falar do que está na tela.
+  const liberaveis = pendencias.filter(p => p.estoque_agora?.status === 'COMPLETO').length
 
   return (
     <div className="space-y-4">
@@ -150,6 +152,17 @@ export function CrmPipeline() {
                 <span className="text-[11px] text-gray-400 block mt-0.5">
                   {pendencias.length} · {fmtBRLcurto(totalPendente)}
                 </span>
+                {/* O que dá para resolver HOJE, antes de rolar a coluna. */}
+                {liberaveis > 0 && (
+                  <span className="text-[11px] font-semibold text-emerald-700 block mt-1 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
+                    ✓ {liberaveis} com material · destrava {fmtBRLcurto(pend?.valor_liberavel || 0)}
+                  </span>
+                )}
+                {pend?.estoque_desatualizado && (
+                  <span className="text-[10px] text-amber-700 block mt-0.5">
+                    ⚠ estoque da última foto do PCP
+                  </span>
+                )}
               </div>
               <div className="px-1.5 pb-2 space-y-2 flex-1 overflow-y-auto">
                 {pendencias.map(p => (
