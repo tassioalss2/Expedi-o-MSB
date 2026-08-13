@@ -13,6 +13,7 @@ import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { hojeLocal } from '../lib/dataLocal'
+import { msgErro } from '../lib/crm'
 
 const CANAIS = ['LICITACAO_URO', 'LICITACAO_VASCULAR', 'URO', 'VASCULAR', 'REALCLOSURE']
 
@@ -32,13 +33,8 @@ const CONTRATO_TIPO: Record<string, { label: string; cor: string; icone: any }> 
   CONSIGNACAO: { label: 'Consignação', cor: 'bg-amber-100 text-amber-700', icone: Boxes },
 }
 
-function msgErro(e: any, fb: string) {
-  const d = e?.response?.data?.detail
-  if (typeof d === 'string') return d
-  if (Array.isArray(d)) return d[0]?.msg || fb
-  if (d?.msg) return d.msg
-  return fb
-}
+// msgErro vem de lib/crm: a cópia local aqui não traduzia o 422 do FastAPI, e foi
+// por isso que a falta da condição de pagamento apareceu como "Field required".
 
 function vigenciaEmRisco(vigencia?: string | null, saldoUn?: number) {
   if (!vigencia || !saldoUn || saldoUn <= 0) return false
@@ -2672,6 +2668,7 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
   const [canal, setCanal] = useState(emp.canal || '')
   const [dataEntrega, setDataEntrega] = useState('')
   const [local, setLocal] = useState('')
+  const [condPagamento, setCondPagamento] = useState('')
   const [qtds, setQtds] = useState<Record<string, string>>({})
 
   const registrar = useMutation({
@@ -2681,6 +2678,7 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
       canal: canal || null,
       data_prevista_entrega: dataEntrega || null,
       local_entrega: local || null,
+      condicao_pagamento: condPagamento.trim(),
       itens: comSaldo
         .filter((i: any) => Number(qtds[i.produto_id]) > 0)
         .map((i: any) => ({ produto_id: i.produto_id, qtd_solicitada: Number(qtds[i.produto_id]) })),
@@ -2695,7 +2693,7 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
   })
 
   const algumItem = comSaldo.some((i: any) => Number(qtds[i.produto_id]) > 0)
-  const valido = numero.trim() && dataEntrega && algumItem
+  const valido = numero.trim() && dataEntrega && condPagamento.trim() && algumItem
 
   return (
     <ModalBase titulo={`Entrega parcial · ${emp.numero}`} onClose={onClose}>
@@ -2717,6 +2715,7 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
               {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
             </select>
           </Campo>
+          <Campo label="Condição de pagamento *"><input value={condPagamento} onChange={e => setCondPagamento(e.target.value)} className={inputCls} placeholder="Ex: 30 dias, 28/56/84, à vista" /></Campo>
         </div>
         <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         <div>

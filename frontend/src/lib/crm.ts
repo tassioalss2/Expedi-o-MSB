@@ -170,10 +170,47 @@ export const fmtBRLcurto = (v: number) => {
 export const fmtData = (d?: string | null) => d ? new Date((d.length <= 10 ? d + 'T12:00:00' : d)).toLocaleDateString('pt-BR') : '—'
 export const fmtDataHora = (d?: string | null) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
 
+// Nome do campo em português, para o erro de validação dizer o que falta em vez
+// do "Field required" cru que o FastAPI devolve.
+const CAMPO_LABEL: Record<string, string> = {
+  condicao_pagamento: 'Condição de pagamento',
+  numero_pedido: 'Número da OV',
+  data_prevista_entrega: 'Data esperada pelo cliente',
+  cliente_id: 'Cliente',
+  cliente_cnpj: 'CNPJ do cliente',
+  tipo_operacao: 'Tipo de operação',
+  canal: 'Canal',
+  itens: 'Itens',
+  numero_nf: 'Número da NF',
+  valor_nf: 'Valor da NF',
+  qtd: 'Quantidade',
+  prazo: 'Prazo',
+  numero: 'Número',
+}
+
 export function msgErro(e: any, fb: string) {
   const d = e?.response?.data?.detail
   if (typeof d === 'string') return d
-  if (Array.isArray(d)) return d[0]?.msg || fb
+  // 422 do FastAPI: lista de erros com o caminho do campo em `loc`. Sem traduzir,
+  // a tela mostrava só "Field required" e ninguém sabia qual campo faltava — foi o
+  // que aconteceu quando a condição de pagamento virou obrigatória e um formulário
+  // ficou sem o campo.
+  if (Array.isArray(d)) {
+    const faltando = d
+      .filter((x: any) => (x?.type || '').includes('missing') || /required/i.test(x?.msg || ''))
+      .map((x: any) => {
+        const campo = (x?.loc || []).filter((l: any) => l !== 'body').pop()
+        return CAMPO_LABEL[campo] || campo
+      })
+      .filter(Boolean)
+    if (faltando.length) {
+      return `Falta preencher: ${[...new Set(faltando)].join(', ')}.`
+    }
+    const x = d[0]
+    const campo = (x?.loc || []).filter((l: any) => l !== 'body').pop()
+    const nome = CAMPO_LABEL[campo] || campo
+    return nome ? `${nome}: ${x?.msg || fb}` : (x?.msg || fb)
+  }
   if (d?.msg) return d.msg
   return fb
 }
