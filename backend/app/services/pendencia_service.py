@@ -279,15 +279,19 @@ def _estoque_agora(pendencias: list) -> dict:
     fila = sorted(pendencias, key=lambda p: -(p.get("dias_parada") or 0))
     entrada = []
     for pos, p in enumerate(fila):
+        # Nada entregue = falta a venda inteira. Medir contra o saldo diria
+        # "chegou tudo" com 68 de 88 em estoque, porque só 34 estavam marcadas
+        # como em falta no dia da decisão.
+        campo = "qtd_pedida" if p.get("nada_entregue") else "qtd_pendente"
         for j, i in enumerate(p.get("itens") or []):
-            if float(i.get("qtd_pendente") or 0) <= 0:
+            if float(i.get(campo) or 0) <= 0:
                 continue
             entrada.append({
                 "ref": f"{pos}:{j}",
                 "produto_id": i.get("produto_id"),
                 "codigo": i.get("codigo"),
                 "descricao": i.get("descricao"),
-                "qtd": float(i.get("qtd_pendente") or 0),
+                "qtd": float(i.get(campo) or 0),
                 "valor_unitario": float(i.get("valor_unitario") or 0),
             })
 
@@ -335,7 +339,26 @@ def _estoque_agora(pendencias: list) -> dict:
 def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
                 ov, pend, acao, bloqueio, extra) -> dict:
     itens = pend.get("itens") or []
+
+    # "aguardar produção" sem OV = NADA saiu. Nesse caso `qtd_atendida` do item é
+    # o que HAVIA em estoque no dia da decisão, não o que foi entregue — e o que
+    # está parado é a venda inteira, não só o que faltava.
+    #
+    # Sem esta distinção a tela dizia "entregue 54 de 88" de material que nunca
+    # saiu, e o valor parado saía pela metade (contava as 34 em falta, não as 88
+    # da venda). O total de dinheiro parado, somado, ficava menor do que é.
+    nada_entregue = pend.get("decisao") == "AGUARDAR" and not ov
+    if nada_entregue:
+        qtd_parada = sum(float(i.get("qtd_pedida") or 0) for i in itens)
+        valor_parado = round(sum(float(i.get("qtd_pedida") or 0) * float(i.get("valor_unitario") or 0)
+                                 for i in itens), 2)
+    else:
+        qtd_parada = sum(float(i.get("qtd_pendente") or 0) for i in itens)
+        valor_parado = round(float(pend.get("valor") or 0), 2)
+
     return {
+        # A tela precisa saber se houve entrega para não escrever "entregue X".
+        "nada_entregue": nada_entregue,
         "fonte": fonte,
         "id": registro_id,
         "titulo": titulo,
@@ -348,8 +371,8 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "ov_provisoria": _provisorio((ov or {}).get("numero_pedido")),
         "decisao": pend.get("decisao"),
         "origem": pend.get("origem"),
-        "valor": round(float(pend.get("valor") or 0), 2),
-        "qtd_total": round(sum(float(i.get("qtd_pendente") or 0) for i in itens), 3),
+        "valor": valor_parado,
+        "qtd_total": round(qtd_parada, 3),
         "itens": itens,
         "previsao_sa": pend.get("previsao_sa"),
         "previsao_pcp": pend.get("previsao_pcp"),

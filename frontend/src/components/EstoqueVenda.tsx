@@ -363,6 +363,19 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
           <p className="text-xs text-gray-500">{p.cliente || '—'}</p>
         </div>
 
+        {/* De onde vem a coluna "Pedido". Sem isto o operador não sabia se aquele
+            número era a venda toda ou só o que sobrou — e a diferença muda o que
+            ele está prestes a mandar para a expedição. */}
+        <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-gray-600">
+          {p.nada_entregue ? (
+            <>Nada foi entregue ainda: a venda inteira — <strong>{n(p.qtd_total)} un</strong> —
+              está esperando material. Não há OV aberta.</>
+          ) : (
+            <>A OV <strong>{p.ov_ref || '—'}</strong> já levou o que havia. O que aparece abaixo é
+              o <strong>saldo</strong> que ficou faltando: {n(p.qtd_total)} un.</>
+          )}
+        </div>
+
         {faltaAinda ? (
           <>
             <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3">

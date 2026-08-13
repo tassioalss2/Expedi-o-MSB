@@ -97,6 +97,10 @@ export interface Pendencia {
   dias_parada: number | null
   resolvido_em: string | null
   resolucao: string | null
+  /** "Aguardar produção" sem OV: nada saiu, então o que falta é a venda inteira
+   *  e o `qtd_atendida` gravado no item é o estoque do dia da decisão — nunca
+   *  uma entrega. */
+  nada_entregue?: boolean
   acao_liberar: 'GERAR_OV' | 'SOMAR_R1' | 'REMESSA_2' | null
   pode_liberar: boolean
   motivo_bloqueio: string | null

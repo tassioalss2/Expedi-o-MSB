@@ -24,6 +24,9 @@ import {
 import { ModalBase, Campo, inputCls, InputMoeda } from './CrmShared'
 import { hojeLocal } from '../../lib/dataLocal'
 
+// Quantidade sem casas decimais — unidade de material é sempre inteira.
+const n = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
+
 // CRM é do comercial — licitação NÃO entra aqui (tem módulo próprio).
 const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE']
 
@@ -946,8 +949,6 @@ function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
     staleTime: 60_000,
   })
   const prontos = (analise?.itens || []).filter(i => (i.qtd_atendida || 0) > 0)
-  const valorPronto = prontos.reduce(
-    (a, i) => a + (i.qtd_atendida || 0) * (i.valor_unitario || 0), 0)
   // Só faz sentido oferecer liberação parcial quando NADA saiu ainda (decisão
   // "aguardar"); com a OV já aberta, o que sobrou é saldo e vira 2ª remessa.
   const podeLiberarParcial = !!pend && pend.decisao === 'AGUARDAR' && prontos.length > 0
@@ -958,6 +959,10 @@ function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
     enabled: !!pend,
   })
   const registro = pendencias?.pendencias?.find(p => p.fonte === 'oportunidade' && p.id === o.id)
+  // "Aguardar produção" sem OV: NADA saiu. O `qtd_atendida` gravado na pendência é
+  // o que havia em estoque no dia da decisão — chamar aquilo de "entregue" fazia a
+  // tela afirmar entrega de material que nunca saiu.
+  const nadaEntregue = registro?.nada_entregue ?? (pend?.decisao === 'AGUARDAR' && !registro?.ov_ref)
 
   if (!temItens) return null
 
@@ -971,12 +976,15 @@ function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
         <div className="rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
           <div className="flex items-start justify-between gap-3">
             <div>
+              {/* Valor e quantidade vêm do servidor (`registro`), não do jsonb da
+                  decisão: com "aguardar" o que está parado é a venda INTEIRA, e o
+                  jsonb guarda só o que faltava no dia. */}
               <p className="text-sm font-semibold text-red-800">
-                Pendência de estoque · {fmtBRL(pend.valor)}
+                Falta entregar {n(registro?.qtd_total ?? 0)} un · {fmtBRL(registro?.valor ?? pend.valor)}
               </p>
               <p className="text-xs text-red-700 mt-0.5">
-                {pend.decisao === 'AGUARDAR'
-                  ? 'Aguardando produção — nenhuma OV foi aberta para esta venda ainda.'
+                {nadaEntregue
+                  ? 'Aguardando produção — nada foi entregue e nenhuma OV foi aberta.'
                   : 'A OV saiu só com o material disponível; o saldo entra como 2ª remessa.'}
               </p>
             </div>
@@ -990,32 +998,49 @@ function PainelEstoqueDaVenda({ oportunidade: o, onChanged }: {
             )}
           </div>
 
-          {/* O que já pode ir para operações de vendas. Antes o bloco listava só o
-              item em falta, então um item COM estoque esperando junto ficava
-              invisível — era o caso que expôs o problema. */}
-          {prontos.length > 0 && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2">
-              <p className="text-xs font-semibold text-emerald-800">
-                Pronto para liberar agora · {fmtBRL(valorPronto)}
+          {/* UMA tabela por item. Antes eram dois blocos sobrepostos — um verde
+              com "68 de 88 em estoque" e um branco com "entregue 54 de 88" — que
+              falavam do mesmo item com números de bases diferentes (um do estoque
+              de hoje, outro da foto do dia da decisão). */}
+          <div className="bg-white rounded-lg border border-red-100 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] uppercase text-gray-400 text-left bg-gray-50">
+                  <th className="py-1.5 px-2.5 font-medium">Item</th>
+                  <th className="py-1.5 px-2 font-medium text-right">Falta entregar</th>
+                  <th className="py-1.5 px-2 font-medium text-right">Em estoque hoje</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {(registro?.itens || pend.itens || []).map((i: any, idx: number) => {
+                  const falta = nadaEntregue
+                    ? Number(i.qtd_pedida) || 0
+                    : Number(i.qtd_pendente) || 0
+                  const agora = (registro?.estoque_agora?.itens || [])
+                    .find((x: any) => x.codigo === i.codigo)
+                  const tem = Number(agora?.qtd_atendida) || 0
+                  const cobre = tem >= falta && falta > 0
+                  return (
+                    <tr key={idx} className={cobre ? 'bg-emerald-50' : ''}>
+                      <td className="py-1.5 px-2.5 text-gray-700">{i.codigo || '—'}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums font-medium text-red-700">
+                        {n(falta)} un
+                      </td>
+                      <td className={`py-1.5 px-2 text-right tabular-nums font-medium ${
+                        tem > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
+                        {tem > 0 ? `${n(tem)} un` : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+            {(registro?.estoque_agora?.valor_disponivel || 0) > 0 && (
+              <p className="text-[11px] text-emerald-800 bg-emerald-50 border-t border-emerald-100 px-2.5 py-1.5">
+                ✓ Dá para liberar {n(registro?.estoque_agora?.qtd_disponivel || 0)} un agora
+                ({fmtBRL(registro?.estoque_agora?.valor_disponivel || 0)}) — o resto continua aqui.
               </p>
-              {prontos.map((i, idx) => (
-                <div key={idx} className="flex items-center justify-between text-xs text-emerald-900 py-0.5">
-                  <span>{i.codigo || '—'}</span>
-                  <span>{i.qtd_atendida} de {i.qtd_pedida} un em estoque</span>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="bg-white rounded-lg border border-red-100 px-2.5 py-1.5">
-            {(pend.itens || []).map((i: any, idx: number) => (
-              <div key={idx} className="flex items-center justify-between text-xs py-0.5">
-                <span className="text-gray-700">{i.codigo || '—'}</span>
-                <span className="text-gray-500">
-                  entregue {Number(i.qtd_atendida) || 0} de {Number(i.qtd_pedida) || 0} ·{' '}
-                  <strong className="text-red-600">faltam {Number(i.qtd_pendente) || 0}</strong>
-                </span>
-              </div>
-            ))}
+            )}
           </div>
           {pend.previsao_pcp && (
             <p className="text-[11px] text-red-700">Previsão do PCP: {fmtData(pend.previsao_pcp)}</p>
