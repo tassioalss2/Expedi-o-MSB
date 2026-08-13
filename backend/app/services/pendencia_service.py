@@ -383,7 +383,8 @@ def _ler(db, fonte: str, registro_id: str) -> tuple:
 
 
 def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
-            parcial: bool = False, observacao: Optional[str] = None) -> dict:
+            parcial: bool = False, observacao: Optional[str] = None,
+            itens_escolhidos: Optional[list] = None) -> dict:
     """Manda o saldo para a expedição, agora que existe material.
 
     Confere o estoque OUTRA VEZ antes de liberar. Sem isso o app repetiria o erro
@@ -462,6 +463,36 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             "analise": analise,
         })
 
+    # ── O comercial pode escolher quanto de cada item vai agora ───────────────
+    # Sem a lista, sai tudo o que há em estoque (como era). Com ela, respeita a
+    # escolha — mas nunca acima do que existe: o estoque acabou de ser reconferido
+    # e prometer mais do que tem é o erro que este fluxo inteiro existe para evitar.
+    if itens_escolhidos is not None:
+        pedido_por_produto: dict = {}
+        for e in itens_escolhidos:
+            pid = str(getattr(e, "produto_id", None) or (e.get("produto_id") if isinstance(e, dict) else ""))
+            qtd = float(getattr(e, "qtd", None) if not isinstance(e, dict) else e.get("qtd") or 0)
+            if pid and qtd > 0:
+                pedido_por_produto[pid] = pedido_por_produto.get(pid, 0.0) + qtd
+
+        escolhidos = []
+        for i in a_liberar:
+            pid = str(i.get("produto_id") or "")
+            if pid not in pedido_por_produto:
+                continue  # o comercial deixou este item para depois
+            disponivel = float(i.get("qtd_atendida") or 0)
+            querido = pedido_por_produto[pid]
+            if querido > disponivel + 0.001:
+                raise HTTPException(status_code=422, detail=(
+                    f"Pedido {querido:g} un de {i.get('codigo') or 'um item'}, mas só há "
+                    f"{disponivel:g} em estoque agora."))
+            escolhidos.append({**i, "qtd_atendida": querido,
+                               "qtd_pendente": float(i.get("qtd_pedida") or 0) - querido})
+        if not escolhidos:
+            raise HTTPException(status_code=422,
+                                detail="Escolha ao menos um item (com quantidade) para liberar.")
+        a_liberar = escolhidos
+
     itens_ov = [ItemPedidoCreate(
         produto_id=i["produto_id"],
         qtd_solicitada=float(i["qtd_atendida"]),
@@ -502,7 +533,25 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
         resultado_ov = _gerar_ov_do_saldo(db, reg, a_liberar, usuario)
 
     # ── Baixa (ou reduz) a pendência ──────────────────────────────────────────
-    restante = disponibilidade_service.itens_pendentes(analise)
+    # O que fica pendente é o pedido MENOS o que acabou de sair — e não o que a
+    # análise achou em falta. Com escolha item a item, o comercial pode liberar
+    # menos do que havia em estoque (ou pular um item), e essa diferença tem que
+    # continuar pendente em vez de sumir junto com a baixa.
+    saiu_por_produto: dict = {}
+    for i in a_liberar:
+        pid = str(i.get("produto_id") or "")
+        if pid:
+            saiu_por_produto[pid] = saiu_por_produto.get(pid, 0.0) + float(i.get("qtd_atendida") or 0)
+
+    restante = []
+    for i in (analise.get("itens") or []):
+        pid = str(i.get("produto_id") or "")
+        falta = float(i.get("qtd_pedida") or 0) - saiu_por_produto.get(pid, 0.0)
+        if falta > 0.001:
+            vu = float(i.get("valor_unitario") or 0)
+            restante.append({**i, "qtd_atendida": saiu_por_produto.get(pid, 0.0),
+                             "qtd_pendente": round(falta, 3),
+                             "valor_pendente": round(falta * vu, 2)})
     agora = _agora()
     if restante:
         # Liberação parcial: o que ainda falta continua pendente, com o valor

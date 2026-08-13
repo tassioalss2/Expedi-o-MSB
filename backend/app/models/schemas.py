@@ -731,11 +731,22 @@ class DevolverAoCrmRequest(BaseModel):
     motivo: Optional[str] = None
 
 
+class ItemLiberacao(BaseModel):
+    """Quanto de um item o comercial escolheu liberar agora."""
+    produto_id: UUID
+    qtd: float
+
+
 class LiberarPendenciaRequest(BaseModel):
     # Libera só o que já chegou e mantém o resto pendente. Sem isso, uma
     # pendência de 8 unidades com 5 prontas ficaria travada esperando as 3.
     parcial: bool = False
     observacao: Optional[str] = None
+    # Quantidade escolhida item a item. Sem esta lista, libera tudo o que houver
+    # em estoque — que era o único comportamento possível antes. Com ela, quem
+    # decide é o comercial: dá para segurar um item para mandar tudo junto, ou
+    # soltar só o que o cliente precisa agora.
+    itens: Optional[list[ItemLiberacao]] = None
 
 
 # ── CRM · Empresas (prospecção e qualificação) ─────────────────────────────────

@@ -3,7 +3,7 @@
 // Mora num arquivo só porque a MESMA informação aparece em três telas — detalhe
 // da oportunidade, modal de ganho e venda outbound. Se cada tela montasse a sua,
 // elas divergiriam na primeira mudança de regra.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { AlertTriangle, Check, Clock, PackageCheck, PackageX } from 'lucide-react'
@@ -223,6 +223,77 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
  *  expedição — a pendência pode ter ficado dias parada e outra OV pode ter
  *  consumido a produção nesse meio tempo. Quando o material chegou só em parte,
  *  o servidor devolve 409 com a análise e a tela oferece liberar o que já tem. */
+/** Escolha item a item de quanto liberar agora.
+ *
+ *  Antes era tudo ou nada: o botão soltava todo o estoque disponível. Quem decide
+ *  isso é o comercial — pode querer segurar um item para mandar a entrega junta,
+ *  ou soltar só o que o cliente precisa agora.
+ *
+ *  Os itens COM estoque ficam no topo: são os únicos em que há o que decidir, e a
+ *  lista costuma ser longa o bastante para eles sumirem no meio dos que faltam. */
+function EscolhaDeLiberacao({ itens, qtds, onQtd }: {
+  itens: ItemDisponibilidade[]
+  qtds: Record<string, string>
+  onQtd: (produtoId: string, valor: string) => void
+}) {
+  const ordenados = [...itens].sort((a, b) => {
+    const da = (a.qtd_atendida || 0) > 0 ? 0 : 1
+    const db_ = (b.qtd_atendida || 0) > 0 ? 0 : 1
+    if (da !== db_) return da - db_
+    return (b.qtd_atendida || 0) - (a.qtd_atendida || 0)
+  })
+
+  return (
+    <div className="rounded-xl border border-gray-200 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[11px] uppercase text-gray-400 text-left bg-gray-50">
+            <th className="py-2 px-3 font-medium">Item</th>
+            <th className="py-2 px-2 font-medium text-right">Pedido</th>
+            <th className="py-2 px-2 font-medium text-right">Temos</th>
+            <th className="py-2 px-3 font-medium text-right w-28">Liberar agora</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {ordenados.map((i, idx) => {
+            const pid = i.produto_id || ''
+            const disp = i.qtd_atendida || 0
+            const tem = disp > 0
+            const valor = qtds[pid] ?? ''
+            const excedeu = Number(valor) > disp
+            return (
+              <tr key={pid || idx} className={tem ? 'bg-emerald-50/60' : ''}>
+                <td className="py-2 px-3">
+                  <span className={`font-medium ${tem ? 'text-emerald-900' : 'text-gray-500'}`}>
+                    {i.codigo || '—'}
+                  </span>
+                  {i.descricao && (
+                    <span className="block text-[11px] text-gray-400 truncate max-w-[230px]">{i.descricao}</span>
+                  )}
+                </td>
+                <td className="py-2 px-2 text-right tabular-nums text-gray-600">{n(i.qtd_pedida)}</td>
+                <td className={`py-2 px-2 text-right tabular-nums font-medium ${tem ? 'text-emerald-700' : 'text-gray-300'}`}>
+                  {n(disp)}
+                </td>
+                <td className="py-2 px-3 text-right">
+                  {tem ? (
+                    <input type="number" min={0} max={disp} step="any" value={valor}
+                      onChange={e => onQtd(pid, e.target.value)}
+                      className={`w-24 border rounded-lg px-2 py-1 text-sm text-right tabular-nums ${
+                        excedeu ? 'border-red-400 bg-red-50' : 'border-emerald-300'}`} />
+                  ) : (
+                    <span className="text-[11px] text-gray-400">sem estoque</span>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLiberado }: {
   pendencia: Pendencia
   /** Situação de agora, quando quem abriu o modal já a tem em mão. Com ela o modal
@@ -234,10 +305,14 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
 }) {
   const [observacao, setObservacao] = useState('')
   const [faltaAinda, setFaltaAinda] = useState<Disponibilidade | null>(null)
+  // Quantidade escolhida por item. Começa com tudo o que há em estoque — o caso
+  // comum é liberar tudo, e quem quiser segurar algo baixa o número.
+  const [qtds, setQtds] = useState<Record<string, string>>({})
+  const setQtd = (pid: string, v: string) => setQtds(q => ({ ...q, [pid]: v }))
 
   const liberar = useMutation({
-    mutationFn: (parcial: boolean) =>
-      api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`, { parcial, observacao })
+    mutationFn: ({ parcial, itens }: { parcial: boolean; itens?: { produto_id: string; qtd: number }[] }) =>
+      api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`, { parcial, observacao, itens })
         .then(r => r.data),
     onSuccess: (r: any) => {
       const acao = ACAO_LIBERAR_LABEL[r?.acao] || 'liberada'
@@ -262,6 +337,24 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
     && analise.itens.some(i => (i.qtd_atendida || 0) > 0)
   const prontos = (situacao?.itens || []).filter(i => (i.qtd_atendida || 0) > 0)
 
+  // Sempre que a situação muda (abriu, ou voltou um 409 com a análise nova),
+  // repõe as quantidades com o disponível daquele momento.
+  useEffect(() => {
+    if (!situacao?.itens) return
+    setQtds(Object.fromEntries(situacao.itens
+      .filter(i => (i.qtd_atendida || 0) > 0 && i.produto_id)
+      .map(i => [i.produto_id as string, String(i.qtd_atendida)])))
+  }, [situacao])
+
+  // O que vai ser enviado: só item com quantidade > 0, nunca acima do disponível.
+  const escolha = (situacao?.itens || [])
+    .filter(i => i.produto_id && (i.qtd_atendida || 0) > 0)
+    .map(i => ({ produto_id: i.produto_id as string, qtd: Number(qtds[i.produto_id as string] ?? 0) }))
+    .filter(i => i.qtd > 0)
+  const excedeuAlgum = (situacao?.itens || []).some(i =>
+    i.produto_id && Number(qtds[i.produto_id] ?? 0) > (i.qtd_atendida || 0) + 0.001)
+  const totalEscolhido = escolha.reduce((a, i) => a + i.qtd, 0)
+
   return (
     <ModalBase titulo="Liberar pendência de estoque" onClose={onClose} max="max-w-2xl">
       <div className="p-5 space-y-4 overflow-y-auto flex-1">
@@ -279,20 +372,20 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                 <strong>{n(faltaAinda.qtd_pendente_total)} un</strong>.
               </p>
             </div>
-            <TabelaDisponibilidade analise={faltaAinda} />
+            <EscolhaDeLiberacao itens={faltaAinda.itens} qtds={qtds} onQtd={setQtd} />
           </>
         ) : parcialDireto && analise ? (
           <>
             <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
               <Check size={16} className="text-emerald-600 mt-0.5 shrink-0" />
               <p className="text-sm text-emerald-900">
-                Dá para liberar <strong>
+                Tem estoque de <strong>
                   {prontos.map(i => `${n(i.qtd_atendida)} un de ${i.codigo}`).join(', ')}
-                </strong> agora. O que falta continua pendente e entra depois como 2ª remessa,
-                na mesma OV.
+                </strong>. Ajuste abaixo quanto de cada item vai agora — o que ficar
+                continua pendente e entra depois na mesma OV.
               </p>
             </div>
-            <TabelaDisponibilidade analise={analise} />
+            <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} onQtd={setQtd} />
             <div>
               <label className="text-sm text-gray-600">Observação (opcional)</label>
               <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />
@@ -339,18 +432,20 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
 
       <div className="p-5 border-t flex gap-2 shrink-0">
         <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Fechar</button>
-        {faltaAinda ? (
-          <button disabled={!podeParcial || liberar.isPending} onClick={() => liberar.mutate(true)}
+        {faltaAinda || parcialDireto ? (
+          <button
+            disabled={liberar.isPending || excedeuAlgum || escolha.length === 0
+              || (!!faltaAinda && !podeParcial)}
+            onClick={() => liberar.mutate({ parcial: true, itens: escolha })}
+            title={excedeuAlgum ? 'Há item acima do que existe em estoque' : undefined}
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl py-2.5 text-sm font-medium">
-            {podeParcial ? 'Liberar o que já tem' : 'Nada disponível ainda'}
-          </button>
-        ) : parcialDireto ? (
-          <button disabled={liberar.isPending} onClick={() => liberar.mutate(true)}
-            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl py-2.5 text-sm font-medium">
-            {liberar.isPending ? 'Liberando…' : 'Liberar o que tem em estoque'}
+            {liberar.isPending ? 'Liberando…'
+              : excedeuAlgum ? 'Quantidade acima do estoque'
+              : escolha.length === 0 ? 'Escolha o que liberar'
+              : `Liberar ${n(totalEscolhido)} un (${escolha.length} ${escolha.length === 1 ? 'item' : 'itens'})`}
           </button>
         ) : (
-          <button disabled={liberar.isPending} onClick={() => liberar.mutate(false)}
+          <button disabled={liberar.isPending} onClick={() => liberar.mutate({ parcial: false })}
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl py-2.5 text-sm font-medium">
             {liberar.isPending ? 'Liberando…' : 'Confirmar liberação'}
           </button>

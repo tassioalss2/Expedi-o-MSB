@@ -167,7 +167,8 @@ def liberar_pendencia(fonte: str, registro_id: UUID,
     return pendencia_service.liberar(
         fonte, str(registro_id), usuario,
         parcial=payload.parcial if payload else False,
-        observacao=payload.observacao if payload else None)
+        observacao=payload.observacao if payload else None,
+        itens_escolhidos=payload.itens if payload else None)
 
 
 # A fila "Repasse p/ OV" (GET /repasses e POST .../assumir) foi removida junto com
