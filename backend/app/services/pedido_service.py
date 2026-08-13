@@ -714,9 +714,18 @@ def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega
     numero = numero_pedido.strip().upper()
     if not numero:
         raise HTTPException(status_code=422, detail="Informe o número real da OV.")
-    dup = db.table("pedidos").select("id").eq("numero_pedido", numero).neq("id", pedido_id).execute().data
+    # OV cancelada NÃO reserva o número. Caso real: operações de vendas se
+    # antecipou e cadastrou a OV à mão; depois a mesma venda desceu do CRM. Ela
+    # cancelou a que digitou ("pedido duplicado") e foi pôr o número do D365 na
+    # que veio do CRM — e o app barrava, porque a cancelada ainda segurava o
+    # número. Sem saída: a certa não podia receber o número real.
+    #
+    # Recriar OV (criar_pedido) e reativar já ignoram canceladas; este era o
+    # único caminho que não ignorava.
+    dup = db.table("pedidos").select("id, status").eq("numero_pedido", numero)\
+        .neq("status", StatusPedido.CANCELADO.value).neq("id", pedido_id).execute().data
     if dup:
-        raise HTTPException(status_code=409, detail=f"Já existe uma OV com o número '{numero}'.")
+        raise HTTPException(status_code=409, detail=f"Já existe uma OV ativa com o número '{numero}'.")
 
     agora = _agora()
     update = {
