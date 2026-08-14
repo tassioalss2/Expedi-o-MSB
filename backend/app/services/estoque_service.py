@@ -27,6 +27,7 @@ o PCP já descontou, contar de novo seria baixa dupla.
 """
 import time
 from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 
 from app.core.database import get_service_db
 from app.services import linha_produto, pcp_estoque_service
@@ -146,15 +147,100 @@ def sincronizar(forcar: bool = False) -> dict:
     try:
         if existente:
             # Re-sincronização do mesmo dia: troca a foto (unique data_ref+codigo).
+            # Antes de trocar, olha o que mudou — depois do delete a foto anterior
+            # não existe mais, e é a comparação que revela o SA que virou acabado.
+            chegadas = _detectar_chegadas_sa(existente, linhas)
+            if not chegadas and _foto_igual(existente, linhas):
+                # Nada mudou: não reescreve 176 linhas à toa. Com sincronização
+                # automática ao longo do dia isso é a maioria das rodadas.
+                return {"sincronizou": False, "motivo": "sem_mudanca",
+                        "itens": len(existente), "data_ref": dia.isoformat(),
+                        "chegadas": []}
             db.table("estoque_pcp_snapshot").delete().eq("data_ref", dia.isoformat()).execute()
+        else:
+            chegadas = []
         _inserir_snapshot(db, linhas)
     except Exception:
         # Tabela ainda não migrada (v19).
         return {"sincronizou": False, "motivo": "tabela_ausente", "itens": 0,
                 "data_ref": dia.isoformat()}
 
+    if chegadas:
+        _registrar_chegadas(db, dia, chegadas)
+        _CACHE_EXIBICAO["dados"] = None  # o estoque mudou: a próxima leitura recalcula
+
     return {"sincronizou": True, "motivo": None, "itens": len(linhas),
-            "data_ref": dia.isoformat(), "sincronizado_em": agora}
+            "data_ref": dia.isoformat(), "sincronizado_em": agora,
+            "chegadas": chegadas}
+
+
+def _foto_igual(antiga: list, nova: list) -> bool:
+    """Mesmos códigos com o mesmo PA e SA — nada a regravar."""
+    def chave(linhas, campo_pa, campo_sa):
+        return {(l.get("codigo") or "").strip().upper():
+                (float(l.get(campo_pa) or 0), float(l.get(campo_sa) or 0)) for l in linhas}
+    return chave(antiga, "estoque_pa", "estoque_sa") == chave(nova, "estoque_pa", "estoque_sa")
+
+
+def _detectar_chegadas_sa(antiga: list, nova: list) -> list:
+    """Itens em que o semiacabado virou acabado desde a foto anterior.
+
+    A assinatura da chegada é o SA cair e o PA subir no mesmo código. Só isso —
+    PA subindo sozinho é compra ou devolução, e SA caindo sozinho é baixa de
+    produção que não entrou aqui; nenhum dos dois é "o material chegou".
+
+    A quantidade creditada é o MENOR dos dois movimentos: se o PA subiu mais do
+    que o SA caiu, a diferença veio de outro lugar e não é conversão.
+    """
+    por_cod = {(l.get("codigo") or "").strip().upper(): l for l in antiga}
+    chegadas = []
+    for l in nova:
+        cod = (l.get("codigo") or "").strip().upper()
+        ant = por_cod.get(cod)
+        if not ant:
+            continue
+        pa_antes, sa_antes = float(ant.get("estoque_pa") or 0), float(ant.get("estoque_sa") or 0)
+        pa_depois, sa_depois = float(l.get("estoque_pa") or 0), float(l.get("estoque_sa") or 0)
+        subiu_pa = pa_depois - pa_antes
+        caiu_sa = sa_antes - sa_depois
+        if subiu_pa > 0 and caiu_sa > 0:
+            chegadas.append({
+                "codigo": l.get("codigo"),
+                "descricao": l.get("descricao"),
+                "qtd": round(min(subiu_pa, caiu_sa), 3),
+                "pa_antes": pa_antes, "pa_depois": pa_depois,
+                "sa_antes": sa_antes, "sa_depois": sa_depois,
+            })
+    return chegadas
+
+
+def _registrar_chegadas(db, dia: date, chegadas: list) -> None:
+    """Grava o log da chegada. Best-effort: se a migration v12 ainda não rodou, a
+    sincronização segue valendo — só o aviso 'chegou agora' fica de fora."""
+    try:
+        db.table("estoque_chegadas_sa").insert([{
+            "data_ref": dia.isoformat(), **c} for c in chegadas]).execute()
+    except Exception:
+        pass
+
+
+def chegadas_do_dia(dia: Optional[date] = None) -> list:
+    """O que virou acabado hoje, agrupado por código (várias rodadas somam)."""
+    db = get_service_db()
+    d = dia or _hoje_brt()
+    try:
+        linhas = db.table("estoque_chegadas_sa").select("*")\
+            .eq("data_ref", d.isoformat()).order("detectado_em").execute().data
+    except Exception:
+        return []
+    por_cod: dict = {}
+    for l in linhas:
+        cod = (l.get("codigo") or "").strip().upper()
+        atual = por_cod.setdefault(cod, {"codigo": l.get("codigo"), "descricao": l.get("descricao"),
+                                         "qtd": 0.0, "ultima": None})
+        atual["qtd"] += float(l.get("qtd") or 0)
+        atual["ultima"] = l.get("detectado_em")
+    return sorted(por_cod.values(), key=lambda x: -x["qtd"])
 
 
 # ── Comprometido pelas OVs ──────────────────────────────────────────────────────
@@ -518,6 +604,11 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
         if cod:
             comprometido_por_codigo[cod] = comprometido_por_codigo.get(cod, 0.0) + qtd
 
+    # O que virou acabado hoje — a tela marca esses itens, porque é a mudança que
+    # pode destravar uma venda parada.
+    chegadas_por_codigo = {(c["codigo"] or "").strip().upper(): c
+                           for c in chegadas_do_dia(dia)}
+
     mes_atual = _hoje_brt().strftime("%Y-%m")
     vendido_mes = _vendido_no_mes_por_codigo(db, mes_atual)
     ultimo_fechado = _ultimo_mes_fechado([row.get("sales_history") for row in snapshot])
@@ -553,6 +644,7 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
             "cobertura_pcp": cobertura_pcp,
             "cobertura_disponivel": cob_disp,
             "status": _status_cobertura(cob_disp, consumo),
+            "chegou_hoje": round(float((chegadas_por_codigo.get(cod) or {}).get("qtd") or 0), 3),
             "vendido_mes_atual": round(vendido_mes.get(cod, 0.0)),
             "tendencia_pct": tendencia_pct,
             "media_3m": media_3m,
@@ -569,6 +661,8 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
         "ultimo_mes_fechado": ultimo_fechado,
         "sync": sync,
         "integracao": pcp_estoque_service.integracao_ativa(),
+        # Resumo do dia para o cabeçalho: o que chegou desde a primeira foto.
+        "chegadas_hoje": list(chegadas_por_codigo.values()),
     }
     # Guarda para as telas de exibição. Vale também o resultado vindo de uma
     # chamada com sincronização: ele é mais fresco ainda.

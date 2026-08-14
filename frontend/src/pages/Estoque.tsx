@@ -19,10 +19,18 @@ interface ItemEstoque {
   cobertura_pcp: number | null
   cobertura_disponivel: number | null
   status: string
+  /** Semiacabado que virou acabado hoje (detectado ao sincronizar com o PCP). */
+  chegou_hoje: number
   vendido_mes_atual: number
   tendencia_pct: number | null
   media_3m: number | null
   media_3m_anterior: number | null
+}
+interface ChegadaSa {
+  codigo: string
+  descricao: string | null
+  qtd: number
+  ultima: string | null
 }
 interface Resposta {
   itens: ItemEstoque[]
@@ -33,6 +41,7 @@ interface Resposta {
   ultimo_mes_fechado: string
   integracao: boolean
   sync?: { sincronizou: boolean; motivo: string | null; itens: number } | null
+  chegadas_hoje?: ChegadaSa[]
 }
 interface OvComprometida {
   pedido_id: string
@@ -254,6 +263,26 @@ export function Estoque() {
         </div>
       )}
 
+      {/* Chegadas do dia. O app repuxa o PCP a cada 20 min no expediente, então
+          isto aparece sozinho — sem ninguém clicar em "Sincronizar agora". */}
+      {(data?.chegadas_hoje?.length || 0) > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-900">
+          <p className="font-semibold flex items-center gap-1.5">
+            🏭 Virou acabado hoje — {data!.chegadas_hoje!.length} item(ns)
+          </p>
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            {data!.chegadas_hoje!.map(c => (
+              <span key={c.codigo}>
+                <strong>{c.codigo}</strong> +{fmtNum(c.qtd)} un
+              </span>
+            ))}
+          </div>
+          <p className="text-[11px] text-emerald-700 mt-1.5">
+            Já está contando como disponível. Confira as pendências de estoque — pode haver venda esperando.
+          </p>
+        </div>
+      )}
+
       {itens.length > 0 && (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -378,6 +407,14 @@ export function Estoque() {
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-700 whitespace-nowrap border-l border-gray-100">
                         {fmtNum(i.estoque_pcp)}
+                        {/* Semiacabado que virou acabado hoje: é a mudança que pode
+                            destravar uma venda parada esperando este item. */}
+                        {i.chegou_hoje > 0 && (
+                          <span className="block text-[10px] font-semibold text-emerald-600"
+                            title="Semiacabado que virou acabado hoje">
+                            🏭 +{fmtNum(i.chegou_hoje)} hoje
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                         {i.estoque_sa > 0 ? <span className="text-indigo-600">{fmtNum(i.estoque_sa)}</span> : <span className="text-gray-300">—</span>}

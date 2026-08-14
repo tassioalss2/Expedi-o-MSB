@@ -184,6 +184,37 @@ def enviar_resumo(forcar: bool = False) -> dict:
     return {"ok": True, "enviado": True, "texto": texto}
 
 
+_ultima_sync_estoque = 0.0
+# 20 min: o PCP publica ao vivo, mas cada rodada custa uma ida ao app deles e a
+# regravação da foto. 20 minutos deixa a chegada do semiacabado aparecer no mesmo
+# expediente sem transformar isso num pooling caro — e quando nada muda, a
+# sincronização nem regrava.
+_INTERVALO_SYNC_ESTOQUE = 20 * 60
+
+
+def _sincronizar_estoque_do_dia() -> None:
+    """Repuxa a foto do PCP durante o expediente.
+
+    O PCP publica ao vivo: quando um semiacabado vira acabado, o número muda lá na
+    hora. Sem isto o app só descobria na primeira abertura do dia seguinte, e a
+    venda parada esperando aquele material continuava parada com o estoque já no
+    armazém.
+    """
+    global _ultima_sync_estoque
+    agora = datetime.now(_BRT)
+    if agora.weekday() >= 5 or not (7 <= agora.hour < 19):
+        return
+    if (time.monotonic() - _ultima_sync_estoque) < _INTERVALO_SYNC_ESTOQUE:
+        return
+    _ultima_sync_estoque = time.monotonic()
+
+    from app.services import estoque_service
+    # A chegada fica registrada e aparece na tela de Estoque e nas pendências.
+    # Nada é enviado ao Teams: avisar em canal é decisão de quem usa, não efeito
+    # colateral de uma sincronização.
+    estoque_service.sincronizar(forcar=True)
+
+
 def _loop_agendador() -> None:
     while True:
         try:
@@ -191,6 +222,10 @@ def _loop_agendador() -> None:
             # Seg-sex, a partir das 08h (se o serviço acordar depois, envia na hora)
             if agora.weekday() < 5 and agora.hour >= 8:
                 enviar_resumo(forcar=False)
+        except Exception:
+            pass
+        try:
+            _sincronizar_estoque_do_dia()
         except Exception:
             pass
         time.sleep(300)
