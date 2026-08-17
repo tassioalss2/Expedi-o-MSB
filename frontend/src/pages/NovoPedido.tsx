@@ -26,8 +26,14 @@ export function ClienteAutocomplete({ value, onChange, initialNome, onCriarNovo 
     enabled: busca.length >= 2,
   })
 
+  // O servidor já procura por nome e por código; este filtro é só rede de
+  // segurança para o resultado em cache de uma busca anterior. Tolera código
+  // vazio — antes um cliente sem código derrubava a lista inteira.
   const clientesFiltrados = clientes
-    .filter(c => c.nome.toLowerCase().includes(busca.toLowerCase()) || c.codigo.toLowerCase().includes(busca.toLowerCase()))
+    .filter(c => {
+      const q = busca.toLowerCase()
+      return (c.nome || '').toLowerCase().includes(q) || (c.codigo || '').toLowerCase().includes(q)
+    })
     .slice(0, 10)
 
   useEffect(() => {

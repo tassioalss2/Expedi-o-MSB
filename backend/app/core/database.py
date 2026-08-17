@@ -35,6 +35,16 @@ class QueryBuilder:
         self._filters.append(f"{col}=ilike.{val}")
         return self
 
+    def or_(self, condicoes: str):
+        """`(cond or cond)` — no PostgREST é `or=(a,b)`.
+
+        Quem chama monta as condições no formato `coluna.operador.valor`,
+        separadas por vírgula. Dentro do `or()` o coringa do ilike é `*`, não `%`:
+        `%` cru na URL é sequência de escape inválida.
+        """
+        self._filters.append(f"or=({condicoes})")
+        return self
+
     def neq(self, col: str, val: Any):
         self._filters.append(f"{col}=neq.{val}")
         return self

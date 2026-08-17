@@ -127,7 +127,13 @@ def listar_clientes(
     db = get_service_db()
     query = db.table("clientes").select("*").eq("ativo", True)
     if search:
-        query = query.ilike("nome", f"%{search}%")
+        # Nome OU código. A tela já filtrava pelos dois, mas só sobre o que o
+        # servidor devolvia — e o servidor procurava apenas pelo nome, então
+        # digitar "C000006" não trazia nada para filtrar.
+        # Parênteses e aspas saem porque são a sintaxe do or() do PostgREST.
+        termo = search.replace('"', "").replace("(", "").replace(")", "").strip()
+        if termo:
+            query = query.or_(f'nome.ilike."*{termo}*",codigo.ilike."*{termo}*"')
     return query.order("nome").limit(50).execute().data
 
 
