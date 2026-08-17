@@ -1332,10 +1332,16 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
                   className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
                   <option value="" disabled>Selecione…</option>
                   <option value="VENDA_NORMAL">Venda normal</option>
-                  <option value="COMUNICADO_USO">Comunicado de uso</option>
-                  <option value="BONIFICACAO_DOACAO">Bonificação/Doação</option>
-                  <option value="AMOSTRA">Amostra</option>
-                  <option value="CONSIGNADO">Consignado</option>
+                  <option value="EXPORTACAO">Exportação</option>
+                  {/* Aqui é EDIÇÃO de OV que já existe. Se a natureza dela é uma
+                      das que saíram de uso, a opção continua na lista — senão o
+                      select abriria sem valor e salvar mudaria a natureza de uma
+                      OV antiga sem ninguém pedir. */}
+                  {!['VENDA_NORMAL', 'EXPORTACAO'].includes(form.tipo_operacao) && form.tipo_operacao && (
+                    <option value={form.tipo_operacao}>
+                      {OPERACAO_LABEL[form.tipo_operacao] || form.tipo_operacao} (não usar em OV nova)
+                    </option>
+                  )}
                 </select>
               </div>
 

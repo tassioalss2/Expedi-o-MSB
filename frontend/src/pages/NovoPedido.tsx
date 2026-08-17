@@ -322,18 +322,14 @@ export function NovoPedido() {
             <label className="text-sm font-medium text-gray-700">Tipo de Operação *</label>
             <select value={form.tipo_operacao} onChange={e => setForm({...form, tipo_operacao: e.target.value})}
               className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.tipo_operacao ? '' : 'border-amber-400 text-gray-400'}`}>
+              {/* Só as duas naturezas que operações de vendas lança por aqui.
+                  Comunicado de uso é lançado no módulo de Licitações, e
+                  bonificação/amostra/consignado saíram de uso — os registros
+                  antigos continuam válidos, só não se cria mais por aqui. */}
               <option value="" disabled>Selecione o tipo de operação…</option>
               <option value="VENDA_NORMAL">Venda normal</option>
-              <option value="COMUNICADO_USO">Comunicado de uso (consignado usado)</option>
-              <option value="BONIFICACAO_DOACAO">Bonificação/Doação</option>
-              <option value="AMOSTRA">Amostra</option>
-              <option value="CONSIGNADO">Consignado</option>
+              <option value="EXPORTACAO">Exportação</option>
             </select>
-            {['BONIFICACAO_DOACAO', 'AMOSTRA', 'CONSIGNADO'].includes(form.tipo_operacao) && (
-              <p className="text-xs text-amber-600 mt-1">
-                ⚠️ Esta operação gera NF e passa pelo fluxo, mas <strong>não entra no faturamento</strong>.
-              </p>
-            )}
           </div>
 
           <div>

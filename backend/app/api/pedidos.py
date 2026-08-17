@@ -479,7 +479,7 @@ def _eh_biomedical(pedido: dict) -> bool:
 
 # Só estas naturezas entram no faturamento; as demais (bonificação, amostra,
 # consignado) geram NF e passam pelo fluxo, mas não são faturamento.
-_OPERACOES_FATURAMENTO = {"VENDA_NORMAL", "COMUNICADO_USO"}
+_OPERACOES_FATURAMENTO = {"VENDA_NORMAL", "EXPORTACAO", "COMUNICADO_USO"}
 
 
 def _conta_faturamento(pedido: dict) -> bool:

@@ -50,7 +50,7 @@ from app.services import linha_produto
 
 # Mesma regra do Painel Comercial (app/api/pedidos.py): só estas naturezas são
 # faturamento; as outras geram NF mas não são venda.
-_OPERACOES_VENDA = {"VENDA_NORMAL", "COMUNICADO_USO"}
+_OPERACOES_VENDA = {"VENDA_NORMAL", "EXPORTACAO", "COMUNICADO_USO"}
 
 # Empresas do próprio grupo: a venda para elas é transfer price, não mercado.
 # Critério por nome, igual ao resto do app (o cadastro não tem flag de grupo).

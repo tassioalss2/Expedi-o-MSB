@@ -53,12 +53,16 @@ export const TIPO_FRETE_LABEL: Record<string, string> = {
   CIF_SEM_VALOR: 'CIF sem Valor NF',
 }
 
+// Continua com TODAS as naturezas, inclusive as que saíram do formulário: há OVs
+// antigas com esses valores e elas precisam de rótulo para serem lidas.
 export const OPERACAO_LABEL: Record<string, string> = {
   VENDA_NORMAL: 'Venda normal',
+  EXPORTACAO: 'Exportação',
   COMUNICADO_USO: 'Comunicado de uso',
   BONIFICACAO_DOACAO: 'Bonificação/Doação',
   AMOSTRA: 'Amostra',
   CONSIGNADO: 'Consignado',
+  DEVOLUCAO: 'Devolução',
 }
 
 export const CANAL_LABEL: Record<string, string> = {

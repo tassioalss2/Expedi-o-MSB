@@ -67,22 +67,29 @@ class TipoFrete(str, Enum):
 class TipoOperacao(str, Enum):
     """Natureza da operação da OV.
 
-    Só VENDA_NORMAL e COMUNICADO_USO contam como faturamento bruto. As demais
+    Só VENDA_NORMAL, EXPORTACAO e COMUNICADO_USO contam como faturamento bruto. As demais
     (exceto DEVOLUCAO) geram NF e passam pelo fluxo, mas não são faturamento
     (movimentam estoque). DEVOLUCAO tem tratamento à parte: não soma no bruto,
     mas subtrai do faturamento líquido — é o valor "correto" que o D365 usa
     quando uma venda é estornada (nota de devolução, direção Entrada).
     """
     VENDA_NORMAL = "VENDA_NORMAL"
+    # Venda ao exterior. Passa pela logística como a venda normal e é receita —
+    # o que muda é a natureza fiscal, que vive no D365, não aqui.
+    EXPORTACAO = "EXPORTACAO"
     COMUNICADO_USO = "COMUNICADO_USO"
+    # Bonificação, amostra e consignado saíram do formulário de Nova OV (não são
+    # mais lançados assim), mas continuam AQUI: 19 OVs já existem com esses
+    # valores e some-las do enum quebraria a leitura desses registros.
     BONIFICACAO_DOACAO = "BONIFICACAO_DOACAO"
     AMOSTRA = "AMOSTRA"
     CONSIGNADO = "CONSIGNADO"
     DEVOLUCAO = "DEVOLUCAO"
 
 
-# Operações que entram no faturamento
-OPERACOES_FATURAMENTO = {TipoOperacao.VENDA_NORMAL.value, TipoOperacao.COMUNICADO_USO.value}
+# Operações que entram no faturamento. Exportação entra: é venda, com receita.
+OPERACOES_FATURAMENTO = {TipoOperacao.VENDA_NORMAL.value, TipoOperacao.EXPORTACAO.value,
+                         TipoOperacao.COMUNICADO_USO.value}
 
 
 class CanalVenda(str, Enum):
