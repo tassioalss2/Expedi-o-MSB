@@ -137,6 +137,16 @@ export function Estoque() {
   const sincronizar = useMutation({
     mutationFn: () => api.post('/estoque/sincronizar').then(r => r.data),
     onSuccess: (res: any) => {
+      // SKU novo no PCP entra sozinho no cadastro — avisa, porque o comercial
+      // provavelmente precisa completar a linha comercial em Cadastros.
+      const novos: { codigo: string; linha: string | null }[] = res?.skus_novos || []
+      if (novos.length) {
+        const semLinha = novos.filter(n => !n.linha).map(n => n.codigo)
+        toast.success(
+          `${novos.length} SKU(s) novo(s) cadastrado(s): ${novos.map(n => n.codigo).join(', ')}` +
+          (semLinha.length ? ` — sem linha comercial: ${semLinha.join(', ')}. Defina em Cadastros.` : ''),
+          { duration: 10000 })
+      }
       if (res?.sincronizou) toast.success(`Estoque sincronizado com o PCP (${res.itens} itens)`)
       else if (res?.motivo === 'pcp_indisponivel') toast.error('App do PCP indisponível — mantida a última foto')
       else if (res?.motivo === 'tabela_ausente') toast.error('Rode a migration v19 no Supabase antes de sincronizar')

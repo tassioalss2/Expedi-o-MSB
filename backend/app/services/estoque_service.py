@@ -169,9 +169,60 @@ def sincronizar(forcar: bool = False) -> dict:
         _registrar_chegadas(db, dia, chegadas)
         _CACHE_EXIBICAO["dados"] = None  # o estoque mudou: a próxima leitura recalcula
 
+    novos = _cadastrar_skus_novos(db, linhas)
+
     return {"sincronizou": True, "motivo": None, "itens": len(linhas),
             "data_ref": dia.isoformat(), "sincronizado_em": agora,
-            "chegadas": chegadas}
+            "chegadas": chegadas, "skus_novos": novos}
+
+
+def _cadastrar_skus_novos(db, linhas: list) -> list:
+    """Cadastra em `produtos` os códigos que o PCP tem e o app ainda não.
+
+    Sem isto um lançamento novo só existia no app quando alguém cadastrasse à
+    mão — e até lá o item ficava invisível: a conferência de estoque da venda
+    não acha o produto, e a OV não pode nem ser montada com ele.
+
+    O PCP é a fonte do que existe de fato na fábrica, então ele é quem semeia o
+    cadastro. Descrição e família vêm de lá; a linha comercial sai da família
+    (Uro / Vascular / Realclosure). Se a família for nova e não estiver no mapa,
+    o produto entra sem linha — melhor existir sem classificação do que não
+    existir, e o comercial ajusta em Cadastros.
+
+    Só INSERE. Nunca atualiza quem já existe: descrição e família são editadas
+    na tela de Cadastros, e sobrescrever com o texto do PCP a cada 20 minutos
+    apagaria essa curadoria.
+    """
+    try:
+        existentes = {(p.get("codigo") or "").strip().upper()
+                      for p in db.table("produtos").select("codigo").execute().data}
+    except Exception:
+        return []
+
+    novos = []
+    for l in linhas:
+        cod = (l.get("codigo") or "").strip()
+        if not cod or cod.upper() in existentes:
+            continue
+        existentes.add(cod.upper())   # o PCP pode repetir o código na mesma carga
+        novos.append({
+            "codigo": cod,
+            "descricao": l.get("descricao"),
+            "familia": l.get("familia"),
+            "linha": linha_produto.linha_da_familia(l.get("familia")),
+            "unidade": "UN",
+            "ativo": True,
+        })
+    if not novos:
+        return []
+
+    try:
+        db.table("produtos").insert(novos).execute()
+    except Exception:
+        # Não derruba a sincronização do estoque por causa do cadastro.
+        return []
+    return [{"codigo": n["codigo"], "descricao": n["descricao"],
+             "familia": n["familia"], "linha": n["linha"]} for n in novos]
 
 
 def _foto_igual(antiga: list, nova: list) -> bool:
