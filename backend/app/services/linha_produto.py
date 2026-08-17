@@ -104,3 +104,66 @@ def resolver(codigo: Optional[str], familia: Optional[str] = None,
 
 def label(linha: Optional[str]) -> str:
     return LINHA_LABEL.get(linha or "", "Outros")
+
+
+# Canal legado embute a linha E se foi licitação ("LICITACAO_VASCULAR"). Para o
+# rateio interessa só a linha.
+_CANAL_LINHA = {
+    "URO": "URO", "LICITACAO_URO": "URO",
+    "VASCULAR": "VASCULAR", "LICITACAO_VASCULAR": "VASCULAR",
+    "REALCLOSURE": "REALCLOSURE",
+}
+
+
+def linha_do_canal(canal: Optional[str]) -> Optional[str]:
+    return _CANAL_LINHA.get((canal or "").strip().upper())
+
+
+def ratear_por_linha(valor: float, itens: list, produtos: dict,
+                     por_codigo: Optional[dict] = None,
+                     canal: Optional[str] = None) -> dict:
+    """Divide o valor de uma OV entre as linhas comerciais dos seus itens.
+
+    `itens`: linhas de itens_pedido (produto_id, qtd_solicitada, valor_unitario)
+    `produtos`: produto_id -> {codigo, familia}
+
+    Uma OV pode ter itens de linhas diferentes — hoje ela conta inteira para um
+    canal só, o que joga a venda para a meta errada. O rateio é pelo VALOR de
+    cada item (qtd × preço), não pela quantidade: 1 cateter caro e 50 fios
+    baratos não repartem meio a meio.
+
+    Sem itens, ou com itens sem preço, cai no canal da OV — é o que existia
+    antes e continua valendo enquanto o cadastro de itens não for completo.
+    Devolve {} quando não dá para dizer nada, e quem chama decide o que fazer.
+    """
+    total = float(valor or 0)
+    pesos: dict = {}
+    for it in itens or []:
+        p = produtos.get(it.get("produto_id")) or {}
+        linha = resolver(p.get("codigo"), p.get("familia"), por_codigo)
+        if not linha:
+            continue
+        peso = float(it.get("qtd_solicitada") or 0) * float(it.get("valor_unitario") or 0)
+        if peso > 0:
+            pesos[linha] = pesos.get(linha, 0.0) + peso
+
+    if not pesos:
+        # Sem preço nos itens, o rateio por valor não existe. Se todos os itens
+        # são da mesma linha, ainda dá para afirmar a linha; senão, usa o canal.
+        linhas = {resolver((produtos.get(it.get("produto_id")) or {}).get("codigo"),
+                           (produtos.get(it.get("produto_id")) or {}).get("familia"), por_codigo)
+                  for it in (itens or [])}
+        linhas = {l for l in linhas if l}
+        if len(linhas) == 1:
+            return {next(iter(linhas)): round(total, 2)}
+        fallback = linha_do_canal(canal)
+        return {fallback: round(total, 2)} if fallback else {}
+
+    soma = sum(pesos.values())
+    saida = {l: round(total * (p / soma), 2) for l, p in pesos.items()}
+    # Centavos da divisão vão para a maior linha, para o total fechar.
+    dif = round(total - sum(saida.values()), 2)
+    if dif and saida:
+        maior = max(saida, key=lambda k: saida[k])
+        saida[maior] = round(saida[maior] + dif, 2)
+    return saida

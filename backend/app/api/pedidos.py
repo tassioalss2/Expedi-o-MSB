@@ -868,9 +868,32 @@ def vendas_por_canal(
             "valor_nf, valor_frete, tipo_frete, tipo_operacao, canal, status, clientes(nome)"
         ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
 
+    # Para o rateio por linha do SKU: itens e produtos das OVs do período.
+    from app.services import linha_produto
+    itens_por_pedido: dict = {}
+    for i in range(0, len(ids), 40):
+        for it in db.table("itens_pedido").select(
+                "pedido_id, produto_id, qtd_solicitada, valor_unitario"
+        ).in_("pedido_id", ids[i:i + 40]).execute().data:
+            itens_por_pedido.setdefault(it["pedido_id"], []).append(it)
+    produtos = {p["id"]: p for p in db.table("produtos").select("id, codigo, familia").execute().data}
+    mapa_linha = linha_produto.mapa_por_codigo(db)
+
+    peds_full: list = []
+    for i in range(0, len(ids), 40):
+        peds_full += db.table("pedidos").select(
+            "id, valor_nf, valor_frete, tipo_frete, tipo_operacao, canal, status, clientes(nome)"
+        ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
+
     agg: dict = {}
     licit = {"qtd": 0, "valor": 0.0}
-    for p in peds:
+    # Mesma receita, atribuída pela linha do SKU em vez do canal digitado. Roda
+    # em PARALELO de propósito: serve para conferir a diferença antes de trocar
+    # a base da meta, sem mexer no número que o painel já mostra.
+    por_linha: dict = {}
+    sem_base = {"qtd": 0, "valor": 0.0}
+
+    for p in peds_full:
         nome = ((p.get("clientes") or {}).get("nome") or "").upper()
         if "ESTERILIZE" in nome or _eh_biomedical(p) or not _conta_faturamento(p):
             continue
@@ -885,12 +908,32 @@ def vendas_por_canal(
             licit["qtd"] += 1
             licit["valor"] += valor
 
+        rateio = linha_produto.ratear_por_linha(
+            valor, itens_por_pedido.get(p["id"]) or [], produtos, mapa_linha, p.get("canal"))
+        if rateio:
+            for linha, v in rateio.items():
+                l = por_linha.setdefault(linha, {"linha": linha, "label": linha_produto.label(linha),
+                                                 "qtd": 0, "valor": 0.0})
+                l["valor"] += v
+            # A OV conta uma vez, na linha de maior valor.
+            principal = max(rateio, key=lambda k: rateio[k])
+            por_linha[principal]["qtd"] += 1
+        else:
+            sem_base["qtd"] += 1
+            sem_base["valor"] += valor
+
     for g in agg.values():
         g["valor"] = round(g["valor"], 2)
+    for l in por_linha.values():
+        l["valor"] = round(l["valor"], 2)
     licit["valor"] = round(licit["valor"], 2)
+    sem_base["valor"] = round(sem_base["valor"], 2)
     return {
         "canais": sorted(agg.values(), key=lambda x: -x["valor"]),
         "licitacao": licit,
+        # Novo, ainda informativo: a mesma receita pela linha do SKU.
+        "por_linha": sorted(por_linha.values(), key=lambda x: -x["valor"]),
+        "por_linha_sem_base": sem_base,
     }
 
 
