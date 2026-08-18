@@ -21,6 +21,7 @@ from app.models.schemas import (
     EmpresaUpdate,
     DisponibilidadeRequest,
     AcompanharPendenciaRequest,
+    ReordenarFilaRequest,
     LiberarPendenciaRequest,
     NotaCreate,
     OportunidadeCreate,
@@ -170,6 +171,25 @@ def liberar_pendencia(fonte: str, registro_id: UUID,
         parcial=payload.parcial if payload else False,
         observacao=payload.observacao if payload else None,
         itens_escolhidos=payload.itens if payload else None)
+
+
+@router.post("/pendencias/ordem")
+def reordenar_fila(payload: ReordenarFilaRequest,
+                   usuario: UsuarioOut = Depends(get_current_user)):
+    """Define à mão a ordem da fila de material.
+
+    Quem está mais alto recebe primeiro quando o estoque não dá para todos. Fica
+    ANTES de /pendencias/{fonte}/... na ordem das rotas: "ordem" casaria com o
+    parâmetro `fonte` se viesse depois.
+    """
+    return pendencia_service.reordenar(
+        [{"fonte": i.fonte, "id": str(i.id)} for i in payload.ordem], usuario)
+
+
+@router.post("/pendencias/ordem/automatica")
+def fila_automatica(usuario: UsuarioOut = Depends(get_current_user)):
+    """Devolve a fila ao critério automático: quem espera há mais tempo primeiro."""
+    return pendencia_service.ordem_automatica(usuario)
 
 
 @router.patch("/pendencias/{fonte}/{registro_id}")

@@ -22,7 +22,8 @@ import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import {
   AlertTriangle, CalendarClock, CheckCircle2, ChevronDown, ChevronRight,
-  Clock, History, PackageCheck, PackageX, PencilLine, Search, Send, X,
+  ArrowDown, ArrowUp, ChevronsUp, Clock, History, ListOrdered, PackageCheck,
+  PackageX, PencilLine, RotateCcw, Search, Send, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -79,6 +80,7 @@ export default function Pendencias() {
   const [verHistorico, setVerHistorico] = useState(false)
   const [liberando, setLiberando] = useState<Pendencia | null>(null)
   const [acompanhando, setAcompanhando] = useState<Pendencia | null>(null)
+  const [verFila, setVerFila] = useState(false)
 
   const { data, isLoading } = useQuery<PendenciasResp>({
     queryKey: ['crm-pendencias', verHistorico],
@@ -182,12 +184,28 @@ export default function Pendencias() {
             <option key={l} value={l}>{LINHA_DO_CANAL[l]}</option>
           ))}
         </select>
+        <button onClick={() => setVerFila(v => !v)}
+          title="Quem recebe o material primeiro quando o estoque não dá para todos"
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border ${verFila
+            ? 'bg-indigo-600 text-white border-indigo-600' : 'text-gray-600 hover:bg-gray-50'}`}>
+          <ListOrdered size={14} /> Ordem da fila
+          {(data?.priorizadas_a_mao || 0) > 0 && (
+            <span className={`text-[10px] px-1 rounded ${verFila ? 'bg-indigo-500' : 'bg-indigo-100 text-indigo-700'}`}>
+              {data?.priorizadas_a_mao} à mão
+            </span>
+          )}
+        </button>
         <button onClick={() => setVerHistorico(v => !v)}
           className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border ${verHistorico
             ? 'bg-gray-800 text-white border-gray-800' : 'text-gray-600 hover:bg-gray-50'}`}>
           <History size={14} /> Já resolvidas
         </button>
       </div>
+
+      {verFila && (
+        <PainelFila abertas={abertas} priorizadas={data?.priorizadas_a_mao || 0}
+          onMudou={invalidar} />
+      )}
 
       {isLoading ? (
         <p className="text-sm text-gray-400 py-8 text-center">Carregando…</p>
@@ -315,6 +333,12 @@ function Card({ p, onLiberar, onAcompanhar }: {
             <span className="font-medium text-gray-800 truncate">{p.cliente || '—'}</span>
             {p.canal && (
               <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p.canal] || p.canal}</span>
+            )}
+            {p.prioridade_fila != null && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium"
+                title={`Posição escolhida à mão${p.prioridade_por_nome ? ` por ${p.prioridade_por_nome}` : ''}`}>
+                {p.posicao_fila}º na fila · à mão
+              </span>
             )}
             {p.decisao === 'AGUARDAR' ? (
               <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
@@ -608,5 +632,137 @@ function ModalAcompanhar({ p, onClose, onSalvo }: {
         </div>
       </div>
     </div>
+  )
+}
+
+/** A fila do material: quem recebe primeiro quando o estoque não dá para todos.
+ *
+ *  Precisa ser uma lista única, e não botões dentro de cada grupo da tela: o
+ *  rateio é global (uma unidade vai para UMA venda), então a ordem só faz sentido
+ *  vista de ponta a ponta.
+ *
+ *  O padrão é tempo de espera — regra que funciona sem ninguém e não gera
+ *  discussão. A prioridade manual existe para o que o padrão não sabe: multa por
+ *  atraso, o pedido que fecha o mês, o cliente que avisou que pode esperar.
+ */
+function PainelFila({ abertas, priorizadas, onMudou }: {
+  abertas: Pendencia[]; priorizadas: number; onMudou: () => void
+}) {
+  // Ordem local para o operador arrumar tudo e salvar uma vez — cada clique
+  // gravando geraria uma linha de histórico por clique em cada OV mexida.
+  const [ordem, setOrdem] = useState<Pendencia[] | null>(null)
+  const daTela = useMemo(
+    () => abertas.slice().sort((a, b) => (a.posicao_fila || 0) - (b.posicao_fila || 0)),
+    [abertas])
+  const lista = ordem ?? daTela
+  const mexeu = ordem !== null &&
+    ordem.map(p => `${p.fonte}${p.id}`).join('|') !== daTela.map(p => `${p.fonte}${p.id}`).join('|')
+
+  const mover = (de: number, para: number) => {
+    if (para < 0 || para >= lista.length) return
+    const nova = lista.slice()
+    const [item] = nova.splice(de, 1)
+    nova.splice(para, 0, item)
+    setOrdem(nova)
+  }
+
+  const salvar = useMutation({
+    mutationFn: () => api.post('/crm/pendencias/ordem', {
+      ordem: lista.map(p => ({ fonte: p.fonte, id: p.id })),
+    }).then(r => r.data),
+    onSuccess: (r: any) => {
+      toast.success(`Fila salva — ${r?.alterados?.length || 0} pendência(s) mudaram de posição.`)
+      setOrdem(null)
+      onMudou()
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não foi possível salvar a fila.')),
+  })
+
+  const automatica = useMutation({
+    mutationFn: () => api.post('/crm/pendencias/ordem/automatica').then(r => r.data),
+    onSuccess: () => {
+      toast.success('Fila de volta ao automático: quem espera há mais tempo primeiro.')
+      setOrdem(null)
+      onMudou()
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não foi possível voltar ao automático.')),
+  })
+
+  return (
+    <section className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+        <h2 className="text-sm font-semibold text-indigo-800 flex items-center gap-1.5">
+          <ListOrdered size={16} /> Ordem da fila de material
+        </h2>
+        <div className="flex items-center gap-2">
+          {priorizadas > 0 && (
+            <button onClick={() => automatica.mutate()} disabled={automatica.isPending}
+              title="Apaga todas as prioridades manuais e volta ao critério de tempo de espera"
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-gray-300 text-gray-600 hover:bg-white disabled:opacity-50">
+              <RotateCcw size={12} /> Voltar ao automático
+            </button>
+          )}
+          {mexeu && (
+            <button onClick={() => salvar.mutate()} disabled={salvar.isPending}
+              className="text-xs px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium disabled:opacity-50">
+              {salvar.isPending ? 'Salvando…' : 'Salvar esta ordem'}
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="text-xs text-gray-600 mb-3">
+        Quando duas vendas querem o mesmo item e o material não dá para as duas, quem
+        está mais alto recebe primeiro. Sem prioridade manual, a ordem é por tempo de
+        espera — e salvar <strong>fixa a fila inteira</strong> como está aqui, até alguém
+        voltar ao automático.
+        {mexeu && <strong className="text-indigo-700"> Você mexeu na ordem — salve para valer.</strong>}
+      </p>
+
+      <ol className="space-y-1">
+        {lista.map((p, idx) => (
+          <li key={`${p.fonte}-${p.id}`}
+            className="flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-2.5 py-1.5">
+            <span className="w-6 text-xs font-semibold text-gray-500 tabular-nums text-right">
+              {idx + 1}º
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className="text-sm font-medium text-gray-800 truncate">{p.cliente || '—'}</span>
+              {p.ov_ref && <span className="font-mono text-[11px] text-gray-500 ml-1.5">{p.ov_ref}</span>}
+              <span className="block text-[11px] text-gray-400">
+                {(p.itens || []).map(i => i.codigo).filter(Boolean).join(', ') || '—'}
+                {' · '}esperando há {p.dias_parada || 0} dia(s)
+                {p.prioridade_fila != null && p.prioridade_por_nome && (
+                  <span className="text-indigo-600"> · posicionada por {p.prioridade_por_nome}</span>
+                )}
+              </span>
+            </div>
+            <span className="text-xs tabular-nums text-red-700 font-medium">{fmtBRL(p.valor)}</span>
+            <span className="flex items-center gap-0.5">
+              <button onClick={() => mover(idx, 0)} disabled={idx === 0}
+                title="Mandar para o topo da fila"
+                className="p-1 rounded text-gray-400 hover:text-indigo-700 hover:bg-indigo-50 disabled:opacity-20">
+                <ChevronsUp size={14} />
+              </button>
+              <button onClick={() => mover(idx, idx - 1)} disabled={idx === 0}
+                title="Subir uma posição"
+                className="p-1 rounded text-gray-400 hover:text-indigo-700 hover:bg-indigo-50 disabled:opacity-20">
+                <ArrowUp size={14} />
+              </button>
+              <button onClick={() => mover(idx, idx + 1)} disabled={idx === lista.length - 1}
+                title="Descer uma posição"
+                className="p-1 rounded text-gray-400 hover:text-indigo-700 hover:bg-indigo-50 disabled:opacity-20">
+                <ArrowDown size={14} />
+              </button>
+            </span>
+          </li>
+        ))}
+      </ol>
+
+      {lista.length < 2 && (
+        <p className="text-xs text-gray-400 mt-2">
+          Com uma pendência só não há fila para ordenar.
+        </p>
+      )}
+    </section>
   )
 }

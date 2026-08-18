@@ -154,6 +154,110 @@ def _acao(ov: Optional[dict], fonte: str = "oportunidade") -> tuple:
     return "SOMAR_R1", None
 
 
+# ── Ordem da fila ─────────────────────────────────────────────────────────────
+#
+# Quando duas vendas querem o mesmo item e o material não dá para as duas, ALGUMA
+# ordem decide quem recebe. O padrão é quem espera há mais tempo — é a regra que
+# não precisa de ninguém para funcionar e não gera discussão.
+#
+# Mas o padrão não sabe o que o comercial sabe: que um cliente tem multa por
+# atraso, que outro é o pedido que fecha o mês, que aquele terceiro já avisou que
+# pode esperar. Daí a prioridade manual.
+#
+# `prioridade_fila` é um inteiro no jsonb da pendência (menor = primeiro). Sem
+# valor, a pendência fica no bloco automático, atrás de todas as priorizadas.
+#
+# ESTA função é a fonte única da ordem: o rateio do estoque e a listagem usam a
+# mesma. Duas ordenações diferentes fariam a tela mostrar uma fila e o material
+# seguir outra — que é exatamente o tipo de divergência que ninguém descobre até
+# alguém reclamar.
+
+_SEM_PRIORIDADE = 10 ** 6
+
+
+def _ordem_da_fila(pendencias: list) -> list:
+    """As pendências na ordem em que o material é distribuído."""
+    return sorted(
+        pendencias,
+        key=lambda p: (
+            p.get("prioridade_fila") if p.get("prioridade_fila") is not None else _SEM_PRIORIDADE,
+            -(p.get("dias_parada") or 0),
+            # Desempate estável, para a ordem não dançar entre dois refreshes.
+            str(p.get("id") or ""),
+        ),
+    )
+
+
+def reordenar(ordem: list, usuario: UsuarioOut) -> dict:
+    """Grava a prioridade manual da fila na ordem recebida.
+
+    `ordem`: [{fonte, id}, ...] — a fila inteira, de cima para baixo.
+
+    Grava só quem mudou de posição: reescrever tudo geraria movimentação repetida
+    no histórico de OVs que ninguém mexeu.
+    """
+    db = get_service_db()
+    agora = _agora()
+    alterados = []
+
+    for pos, item in enumerate(ordem or []):
+        fonte = (item.get("fonte") or "").strip()
+        rid = str(item.get("id") or "")
+        if fonte not in ("oportunidade", "pedido") or not rid:
+            raise HTTPException(status_code=400, detail="Fila com item inválido.")
+
+        tabela = "crm_oportunidades" if fonte == "oportunidade" else "pedidos"
+        rows = db.table(tabela).select("id, status, pendencia").eq("id", rid).execute().data
+        if not rows:
+            continue
+        pend = rows[0].get("pendencia") or None
+        if not pend or pend.get("resolvido_em"):
+            continue
+        if pend.get("prioridade_fila") == pos:
+            continue
+
+        nova = {**pend, "prioridade_fila": pos,
+                "prioridade_por": str(usuario.id), "prioridade_por_nome": usuario.nome,
+                "prioridade_em": agora}
+        db.table(tabela).update({"pendencia": nova, "atualizado_em": agora}).eq("id", rid).execute()
+        alterados.append({"fonte": fonte, "id": rid, "posicao": pos})
+        _registrar_acompanhamento(
+            db, fonte, rid, rows[0], usuario, None, None,
+            f"prioridade na fila de material: {pos + 1}º", False)
+
+    return {"ok": True, "alterados": alterados}
+
+
+def ordem_automatica(usuario: UsuarioOut) -> dict:
+    """Devolve a fila ao critério automático (quem espera mais, primeiro)."""
+    db = get_service_db()
+    agora = _agora()
+    limpos = 0
+
+    for fonte, tabela in (("oportunidade", "crm_oportunidades"), ("pedido", "pedidos")):
+        try:
+            rows = db.table(tabela).select("id, status, pendencia")\
+                .not_is("pendencia", "null").execute().data
+        except Exception:
+            rows = []
+        for r in rows:
+            pend = r.get("pendencia") or None
+            if not pend or pend.get("resolvido_em"):
+                continue
+            if pend.get("prioridade_fila") is None:
+                continue
+            nova = {k: v for k, v in pend.items()
+                    if k not in ("prioridade_fila", "prioridade_por",
+                                 "prioridade_por_nome", "prioridade_em")}
+            db.table(tabela).update({"pendencia": nova, "atualizado_em": agora})\
+                .eq("id", r["id"]).execute()
+            limpos += 1
+            _registrar_acompanhamento(db, fonte, r["id"], r, usuario, None, None,
+                                      "fila voltou ao critério automático (tempo de espera)", False)
+
+    return {"ok": True, "limpos": limpos}
+
+
 # ── Listagem ──────────────────────────────────────────────────────────────────
 def _ov_por_ids(db, ids: list) -> dict:
     ids = [i for i in ids if i]
@@ -236,6 +340,11 @@ def listar(incluir_resolvidas: bool = False) -> dict:
 
     estoque = _estoque_agora(saida)
 
+    # Posição de cada uma na fila do material — é a ordem que decide quem recebe
+    # quando não dá para todos, e a tela precisa poder mostrá-la.
+    for pos, x in enumerate(_ordem_da_fila(saida)):
+        x["posicao_fila"] = pos + 1
+
     # Quem já tem material primeiro: a coluna existe para ser esvaziada, e o que
     # dá para liberar hoje é o que merece o olho do operador. Dentro de cada
     # grupo, maior valor primeiro — é onde o dinheiro parado está.
@@ -258,6 +367,8 @@ def listar(incluir_resolvidas: bool = False) -> dict:
                                      for x in saida), 2),
         "estoque_desatualizado": estoque.get("desatualizado", False),
         "estoque_data_ref": estoque.get("data_ref"),
+        # Quantas foram posicionadas à mão: com zero, a fila é 100% automática.
+        "priorizadas_a_mao": sum(1 for x in saida if x.get("prioridade_fila") is not None),
     }
 
 
@@ -269,14 +380,15 @@ def _estoque_agora(pendencias: list) -> dict:
     item por pendência mostraria "chegou" nas duas e o segundo operador levaria
     um 409 na cara ao tentar liberar.
 
-    A ordem do rateio é quem espera há mais tempo primeiro — é a fila justa
-    quando o material não dá para todos.
+    A ordem do rateio vem de `_ordem_da_fila`: a prioridade manual primeiro, e
+    depois quem espera há mais tempo. Mesma função que ordena a tela, senão a
+    fila mostrada e a fila que recebe material seriam duas coisas diferentes.
 
     Não sincroniza com o PCP: esta é a listagem, tem que abrir na hora. Por isso
     devolve `desatualizado`, para a tela não afirmar "chegou" em cima de uma foto
     velha. Quem libera reconfere o estoque de verdade, com sincronização.
     """
-    fila = sorted(pendencias, key=lambda p: -(p.get("dias_parada") or 0))
+    fila = _ordem_da_fila(pendencias)
     entrada = []
     for pos, p in enumerate(fila):
         # Nada entregue = falta a venda inteira. Medir contra o saldo diria
@@ -406,6 +518,10 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         # Cada cobrança feita ao PCP, em ordem. É o que mostra "prometeram dia 10,
         # empurraram para 20" sem ninguém ter que lembrar.
         "acompanhamentos": pend.get("acompanhamentos") or [],
+        # Posição manual na fila de material (menor = primeiro). None = automático.
+        "prioridade_fila": pend.get("prioridade_fila"),
+        "prioridade_por_nome": pend.get("prioridade_por_nome"),
+        "prioridade_em": pend.get("prioridade_em"),
         "decidido_em": pend.get("decidido_em"),
         "dias_parada": _dias(pend.get("decidido_em")),
         "resolvido_em": pend.get("resolvido_em"),

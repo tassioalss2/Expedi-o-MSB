@@ -753,6 +753,21 @@ class ItemLiberacao(BaseModel):
     qtd: float
 
 
+class ItemFilaPendencia(BaseModel):
+    fonte: str
+    id: UUID
+
+
+class ReordenarFilaRequest(BaseModel):
+    """A fila de material inteira, de cima para baixo.
+
+    Manda a lista completa em vez de "sobe um" porque a ordem é global: com dois
+    operadores mexendo, incrementos brigam entre si e a fila fica num estado que
+    nenhum dos dois pediu. A lista inteira é o que a pessoa está vendo na tela.
+    """
+    ordem: list[ItemFilaPendencia] = []
+
+
 class AjusteEstoqueRequest(BaseModel):
     """Correção manual do PA da foto de hoje. O motivo é obrigatório: ajuste sem
     motivo não se audita, e este número destrava OV."""

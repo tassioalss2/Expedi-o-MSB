@@ -96,6 +96,13 @@ export interface Pendencia {
   /** Cada cobrança feita ao PCP, em ordem. Mostra promessa furada sem ninguém
    *  ter que lembrar: "prometeram dia 10, empurraram para 20". */
   acompanhamentos?: AcompanhamentoPendencia[]
+  /** Posição escolhida à mão na fila do material (menor = primeiro).
+   *  null = a fila decide sozinha, por tempo de espera. */
+  prioridade_fila?: number | null
+  prioridade_por_nome?: string | null
+  prioridade_em?: string | null
+  /** Posição atual na fila, contando de 1 — já com a prioridade manual aplicada. */
+  posicao_fila?: number
   decidido_em: string | null
   dias_parada: number | null
   resolvido_em: string | null
@@ -155,6 +162,8 @@ export interface PendenciasResp {
   valor_liberavel: number
   estoque_desatualizado: boolean
   estoque_data_ref: string | null
+  /** Quantas pendências foram posicionadas à mão. Zero = fila 100% automática. */
+  priorizadas_a_mao?: number
 }
 
 // O que acontece ao liberar, em português — o comercial precisa saber se vai sair
