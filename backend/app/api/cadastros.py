@@ -195,6 +195,12 @@ def buscar_produtos(
     # Mescla sem duplicar
     vistos = {p["id"] for p in por_codigo}
     resultado = por_codigo + [p for p in por_desc if p["id"] not in vistos]
+    # `linha` sai preenchida sempre que der: a tela de OV mostra para qual meta o
+    # item vai, e ela não deve ter que conhecer o mapa de famílias do backend.
+    from app.services import linha_produto
+    for p in resultado[:10]:
+        if not p.get("linha"):
+            p["linha"] = linha_produto.linha_da_familia(p.get("familia"))
     return resultado[:10]
 
 

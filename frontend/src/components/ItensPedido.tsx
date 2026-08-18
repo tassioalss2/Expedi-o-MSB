@@ -4,10 +4,48 @@ import { Search, Plus, Trash2, Package } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
 import type { Produto } from '../types'
+import { LINHA_DO_CANAL } from '../lib/statusConfig'
 
-export type ItemLinha = { produto_id: string; codigo: string; descricao: string; qtd: number; valor?: number }
+export type ItemLinha = {
+  produto_id: string; codigo: string; descricao: string; qtd: number; valor?: number
+  /** Linha comercial do SKU — é ela que decide para qual meta esta venda vai. */
+  linha?: string | null
+}
 
-type EstoqueItem = { disponivel: number | null; estoque_sa: number | null; descricao: string | null }
+/** Cores por linha, para o operador distinguir de relance numa OV misturada. */
+const COR_LINHA: Record<string, string> = {
+  URO: 'bg-indigo-100 text-indigo-700',
+  VASCULAR: 'bg-rose-100 text-rose-700',
+  REALCLOSURE: 'bg-amber-100 text-amber-800',
+}
+
+/** Linha de um código. O item pode trazê-la (foi escolhido agora) ou não (veio
+ *  gravado do servidor) — nos dois casos o mapa de estoque responde. */
+function linhaDoCodigo(mapa: EstoqueMapa | undefined, codigo: string,
+                       doItem?: string | null): string | null {
+  if (doItem) return doItem
+  return mapa?.itens?.[(codigo || '').trim().toUpperCase()]?.linha || null
+}
+
+/** Selo da linha do item: para qual meta ele conta. */
+function SeloLinha({ linha }: { linha?: string | null }) {
+  if (!linha) {
+    return (
+      <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 whitespace-nowrap"
+        title="Este item não tem linha no cadastro do produto — sem ela a venda não entra em nenhuma meta">
+        linha a definir
+      </span>
+    )
+  }
+  return (
+    <span className={`text-[11px] px-1.5 py-0.5 rounded whitespace-nowrap ${COR_LINHA[linha] || 'bg-gray-100 text-gray-600'}`}
+      title="Linha comercial deste item — é para esta meta que ele conta">
+      {LINHA_DO_CANAL[linha] || linha}
+    </span>
+  )
+}
+
+type EstoqueItem = { disponivel: number | null; estoque_sa: number | null; descricao: string | null; linha?: string | null }
 type EstoqueMapa = { itens: Record<string, EstoqueItem>; data_ref: string | null; desatualizado: boolean }
 
 /** Disponível de um código, já descontando o que as OUTRAS linhas desta mesma
@@ -113,7 +151,8 @@ export function ItensPedido({ value, onChange, comValor = false }: {
     if (value.some(i => i.produto_id === selecionado.id)) {
       toast.error('Este item já foi adicionado'); return
     }
-    const linha: ItemLinha = { produto_id: selecionado.id, codigo: selecionado.codigo, descricao: selecionado.descricao, qtd: q }
+    const linha: ItemLinha = { produto_id: selecionado.id, codigo: selecionado.codigo,
+                               descricao: selecionado.descricao, qtd: q, linha: selecionado.linha || null }
     if (comValor) linha.valor = Number(valor) || 0
     onChange([...value, linha])
     limpar()
@@ -159,7 +198,10 @@ export function ItensPedido({ value, onChange, comValor = false }: {
                     </span>
                     {/* Estoque já na lista de escolha: evita escolher o item,
                         digitar a quantidade e só então descobrir que não tem. */}
-                    <SeloEstoque e={livreParaLinha(estoque, p.codigo, value)} />
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      <SeloLinha linha={linhaDoCodigo(estoque, p.codigo, p.linha)} />
+                      <SeloEstoque e={livreParaLinha(estoque, p.codigo, value)} />
+                    </span>
                   </div>
                 </button>
               ))}
@@ -197,6 +239,7 @@ export function ItensPedido({ value, onChange, comValor = false }: {
       {selecionado && (
         <div className="flex items-center gap-2 px-1 text-xs">
           <span className="text-gray-400">{selecionado.codigo}:</span>
+          <SeloLinha linha={linhaDoCodigo(estoque, selecionado.codigo, selecionado.linha)} />
           <SeloEstoque e={estoqueSelecionado} pedido={Number(qtd) || 0} />
           {estoque?.data_ref && (
             <span className="text-gray-400 ml-auto">
@@ -222,7 +265,8 @@ export function ItensPedido({ value, onChange, comValor = false }: {
                 {/* Continua visível depois de adicionado: mudar a quantidade aqui
                     reavalia a falta na hora. Desconta as outras linhas, não a
                     própria — senão o item competiria consigo mesmo. */}
-                <span className="block mt-0.5">
+                <span className="flex items-center gap-1.5 mt-0.5">
+                  <SeloLinha linha={linhaDoCodigo(estoque, i.codigo, i.linha)} />
                   <SeloEstoque
                     e={livreParaLinha(estoque, i.codigo, value.filter(o => o.produto_id !== i.produto_id))}
                     pedido={i.qtd} />
@@ -250,6 +294,7 @@ export function ItensPedido({ value, onChange, comValor = false }: {
               </button>
             </div>
           ))}
+          <ResumoLinhas itens={value} comValor={comValor} estoque={estoque} />
           <div className="flex justify-between px-3 py-2 bg-gray-50 text-xs text-gray-500">
             <span>{value.length} item(ns)</span>
             <span>
@@ -259,6 +304,60 @@ export function ItensPedido({ value, onChange, comValor = false }: {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Para quais metas esta OV vai — o que antes se digitava no campo "canal".
+ *
+ *  Com preço, mostra quanto vai para cada linha (é assim que o rateio é feito no
+ *  fechamento). Sem preço, mostra só quais linhas foram tocadas: melhor dizer
+ *  "duas linhas" do que inventar uma divisão que o painel não vai reproduzir.
+ */
+function ResumoLinhas({ itens, comValor, estoque }: {
+  itens: ItemLinha[]; comValor: boolean; estoque?: EstoqueMapa
+}) {
+  const porLinha: Record<string, number> = {}
+  let semLinha = 0
+  let temPreco = false
+  for (const i of itens) {
+    const v = (i.qtd || 0) * (i.valor || 0)
+    if (v > 0) temPreco = true
+    const l = linhaDoCodigo(estoque, i.codigo, i.linha)
+    if (!l) { semLinha++; continue }
+    porLinha[l] = (porLinha[l] || 0) + v
+  }
+  const linhas = Object.keys(porLinha)
+  if (linhas.length === 0 && semLinha === 0) return null
+
+  const total = Object.values(porLinha).reduce((a, v) => a + v, 0)
+  const mostrarValor = comValor && temPreco && total > 0
+
+  return (
+    <div className="px-3 py-2 bg-blue-50/60 border-t border-blue-100 text-xs">
+      <span className="text-gray-500">
+        {linhas.length > 1 ? 'Esta OV conta para mais de uma meta:' : 'Conta para a meta:'}
+      </span>
+      <span className="inline-flex flex-wrap items-center gap-2 ml-1.5">
+        {linhas
+          .sort((a, b) => porLinha[b] - porLinha[a])
+          .map(l => (
+            <span key={l} className="inline-flex items-center gap-1">
+              <SeloLinha linha={l} />
+              {mostrarValor && (
+                <span className="text-gray-600 tabular-nums">
+                  {porLinha[l].toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  <span className="text-gray-400"> ({Math.round(porLinha[l] / total * 100)}%)</span>
+                </span>
+              )}
+            </span>
+          ))}
+        {semLinha > 0 && (
+          <span className="text-amber-700">
+            {semLinha} item(ns) sem linha — não entram em meta nenhuma
+          </span>
+        )}
+      </span>
     </div>
   )
 }

@@ -116,7 +116,6 @@ export function NovoPedido() {
     transportadora_id: '',
     tipo_frete: 'FOB',
     tipo_operacao: '',
-    forma_venda: '',
     local_entrega: '',
     data_prevista_entrega: '',
     condicao_pagamento: '',
@@ -170,7 +169,9 @@ export function NovoPedido() {
   const buildBody = (extra?: Record<string, unknown>) => ({
     ...form,
     transportadora_id: form.transportadora_id || null,
-    forma_venda: form.forma_venda || null,
+    // Licitação sai pela página de Licitações; o que passa por aqui é
+    // sempre venda direta. A linha vem dos itens, no servidor.
+    forma_venda: 'DIRETA',
     itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
     decisao_estoque: decisao?.decisao || null,
     observacao_estoque: decisao?.observacao || null,
@@ -271,7 +272,7 @@ export function NovoPedido() {
 
   const podeEnviar = form.numero_pedido && form.cliente_id && form.data_prevista_entrega
     && form.condicao_pagamento.trim()
-    && form.tipo_operacao && form.forma_venda && itens.length > 0
+    && form.tipo_operacao && itens.length > 0
   const podeConfirmarRecriar =
     modalRecriar.motivo.trim().length >= 5 && modalRecriar.confirmado
 
@@ -338,18 +339,7 @@ export function NovoPedido() {
             </select>
           </div>
 
-          <div>
-            <label className="text-sm font-medium text-gray-700">Forma de Venda *</label>
-            <select value={form.forma_venda} onChange={e => setForm({...form, forma_venda: e.target.value})}
-              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.forma_venda ? '' : 'border-amber-400 text-gray-400'}`}>
-              <option value="" disabled>Direta ou licitação?</option>
-              <option value="DIRETA">Venda direta</option>
-              <option value="LICITACAO">Licitação</option>
-            </select>
-            <p className="text-[11px] text-gray-400 mt-1">
-              A linha (Uro/Vascular/Realclosure) sai dos itens — não precisa escolher.
-            </p>
-          </div>
+
 
           <div>
             <label className="text-sm font-medium text-gray-700">Prioridade</label>

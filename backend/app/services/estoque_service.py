@@ -54,6 +54,11 @@ _FAIXA_CRITICO, _FAIXA_ATENCAO, _FAIXA_ADEQUADO, _FAIXA_ALTO = 1.0, 2.0, 6.0, 12
 # A view do PCP (pa_coverage) não tem coluna "linha" — só família. A linha vem
 # do cadastro do produto (produtos.linha), com fallback por família; ver
 # app/services/linha_produto.py.
+# `listar` devolve a linha já como rótulo ("Urologia"). Quem precisa comparar
+# precisa da chave, e é aqui que ela volta.
+_CHAVE_POR_LABEL = {v: k for k, v in linha_produto.LINHA_LABEL.items()}
+
+
 def _linha_do_item(codigo, familia, por_codigo: dict) -> str:
     # Sem correspondência nem no cadastro nem no mapa de família: cai em
     # "Outros" em vez de sumir da lista.
@@ -576,7 +581,7 @@ def historico_vendas(codigo: str) -> dict:
 # ── Consulta ────────────────────────────────────────────────────────────────────
 
 def disponivel_por_codigo() -> dict:
-    """{codigo: {disponivel, estoque_sa, descricao}} para o seletor de itens.
+    """{codigo: {disponivel, estoque_sa, descricao, linha}} para o seletor de itens.
 
     Não sincroniza com o PCP: quem escolhe um produto numa lista não pode esperar
     um round trip. A foto da manhã com o comprometido descontado em tempo real já
@@ -590,6 +595,11 @@ def disponivel_por_codigo() -> dict:
                 "disponivel": i.get("disponivel"),
                 "estoque_sa": i.get("estoque_sa"),
                 "descricao": i.get("descricao"),
+                # Linha comercial: o seletor mostra para qual meta o item conta,
+                # inclusive nos itens já gravados de uma OV que está sendo editada.
+                # Vai a CHAVE (URO/VASCULAR/...), não o rótulo: quem consome
+                # compara com a chave, e o rótulo é decisão de exibição.
+                "linha": _CHAVE_POR_LABEL.get(i.get("linha")),
             }
             for i in (dados.get("itens") or []) if i.get("codigo")
         },

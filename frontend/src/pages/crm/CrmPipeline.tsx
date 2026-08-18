@@ -31,12 +31,8 @@ const n = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFract
 // para FILTRAR o funil pelo que já se sabe.
 const LINHAS = ['URO', 'VASCULAR', 'REALCLOSURE']
 
-// O que resta perguntar. CRM é do comercial, então a venda direta é o normal —
-// licitação tem módulo próprio, mas acontece de uma cair no funil.
-const FORMAS = [
-  { key: 'DIRETA', label: 'Venda direta' },
-  { key: 'LICITACAO', label: 'Licitação' },
-]
+// Nada mais a perguntar sobre classificação: a linha sai dos itens e a forma é
+// sempre venda direta — licitação sai pela página de Licitações, não pelo funil.
 
 // Progressão linear real do funil. DESAFIOS fica de fora de propósito: não é um
 // degrau que se avança clicando — é um desvio que o sistema entra sozinho quando
@@ -372,8 +368,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
   const [clienteId, setClienteId] = useState(base.cliente_id || '')
   const [clienteNome, setClienteNome] = useState(base.cliente || '')
   const [contatoId, setContatoId] = useState(base.contato_id || '')
-  // Venda direta é o caso normal do funil; já vem escolhida para não dar trabalho.
-  const [formaVenda, setFormaVenda] = useState(base.forma_venda || 'DIRETA')
+
   const [estagio, setEstagio] = useState<string>(base.estagio || 'QUALIFICACAO')
   const [valor, setValor] = useState<number | null>(base.valor_estimado ? Number(base.valor_estimado) : null)
   const [previsao, setPrevisao] = useState(base.previsao_fechamento || '')
@@ -431,7 +426,8 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
         titulo: titulo.trim(),
         cliente_id: clienteId || null,
         contato_id: contatoId || null,
-        forma_venda: formaVenda || null,
+        // Licitação não passa pelo funil (tem página própria).
+        forma_venda: 'DIRETA',
         estagio,
         valor_estimado: totalItens > 0 ? totalItens : valor,
         previsao_fechamento: previsao || null,
@@ -471,14 +467,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
               </button>
             </div>
           </Campo>
-          <Campo label="Forma de venda *">
-            <select value={formaVenda} onChange={e => setFormaVenda(e.target.value)} className={inputCls}>
-              {FORMAS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
-            </select>
-            <p className="text-[11px] text-gray-400 mt-1">
-              A linha (Uro/Vascular/Realclosure) vem dos itens abaixo.
-            </p>
-          </Campo>
+
           <Campo label="Estágio">
             {/* Ganho e Perdido ficam fora: são desfechos, e cada um tem portão
                 próprio (Ganhar confere proposta e estoque e abre a OV; Perder
@@ -532,7 +521,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => salvar.mutate()} disabled={!titulo.trim() || !formaVenda || salvar.isPending}
+        <button onClick={() => salvar.mutate()} disabled={!titulo.trim() || salvar.isPending}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
           {salvar.isPending ? 'Salvando…' : edicao ? 'Salvar' : 'Criar oportunidade'}
         </button>
