@@ -83,3 +83,22 @@ export function resolveNomeTransportadora(nome?: string, observacoes?: string): 
   }
   return nome
 }
+
+/** COMO a venda aconteceu — a pergunta que o SKU não responde. */
+export const FORMA_VENDA_LABEL: Record<string, string> = {
+  DIRETA: 'Venda direta',
+  LICITACAO: 'Licitação',
+}
+
+/**
+ * Linha comercial embutida no canal legado — é ela que define a meta.
+ * O canal antigo misturava a linha com a forma de venda ("LICITACAO_URO");
+ * aqui fica só a linha, para exibir sem repetir a informação de licitação.
+ */
+export const LINHA_DO_CANAL: Record<string, string> = {
+  URO: 'Uro',
+  LICITACAO_URO: 'Uro',
+  VASCULAR: 'Vascular',
+  LICITACAO_VASCULAR: 'Vascular',
+  REALCLOSURE: 'Realclosure',
+}

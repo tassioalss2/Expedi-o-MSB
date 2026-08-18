@@ -107,6 +107,8 @@ export interface Pedido {
   valor_frete?: number
   tipo_operacao?: string
   canal?: string
+  /** DIRETA | LICITACAO — a linha da meta vem dos itens, não daqui. */
+  forma_venda?: string
   local_entrega?: string
   condicao_pagamento?: string
   data_prevista_entrega: string

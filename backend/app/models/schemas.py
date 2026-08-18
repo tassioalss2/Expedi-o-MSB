@@ -12,6 +12,7 @@ from app.models.enums import (
     StatusOcorrencia,
     StatusPedido,
     CanalVenda,
+    FormaVenda,
     TipoDivergencia,
     TipoFrete,
     TipoOperacao,
@@ -256,6 +257,10 @@ class PedidoCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):
     transportadora_id: Optional[UUID] = None
     tipo_frete: TipoFrete = TipoFrete.FOB
     tipo_operacao: TipoOperacao = TipoOperacao.VENDA_NORMAL
+    # A LINHA (Uro/Vascular/Realclosure) não é mais digitada: sai dos itens.
+    # Só sobra o COMO. `canal` fica aceito para compatibilidade e é
+    # sobrescrito pelo derivado quando há itens.
+    forma_venda: Optional[FormaVenda] = None
     canal: Optional[CanalVenda] = None
     local_entrega: Optional[str] = None
     data_prevista_entrega: date
@@ -293,6 +298,10 @@ class PedidoOutboundCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):
     transportadora_id: Optional[UUID] = None
     tipo_frete: TipoFrete = TipoFrete.FOB
     tipo_operacao: TipoOperacao = TipoOperacao.VENDA_NORMAL
+    # A LINHA (Uro/Vascular/Realclosure) não é mais digitada: sai dos itens.
+    # Só sobra o COMO. `canal` fica aceito para compatibilidade e é
+    # sobrescrito pelo derivado quando há itens.
+    forma_venda: Optional[FormaVenda] = None
     canal: Optional[CanalVenda] = None
     local_entrega: Optional[str] = None
     data_prevista_entrega: date
@@ -446,6 +455,7 @@ class EntregaVendaDiretaCreate(CondicaoPagamentoMixin):
     numero_pedido: str
     tipo_frete: str = "FOB"
     canal: Optional[str] = None
+    forma_venda: Optional[FormaVenda] = None
     data_prevista_entrega: date
     local_entrega: Optional[str] = None
     itens: list[ItemPedidoCreate] = []
@@ -708,6 +718,8 @@ class GerarOVRequest(CondicaoPagamentoMixin):
     tipo_frete: str = "FOB"
     data_prevista_entrega: date
     local_entrega: Optional[str] = None
+    # Herdado da oportunidade quando não vem preenchido.
+    forma_venda: Optional[FormaVenda] = None
 
 
 class DisponibilidadeItem(BaseModel):
@@ -935,6 +947,8 @@ class PedidoOut(BaseModel):
     valor_nf: Optional[float]
     codigo_rastreio: Optional[str] = None
     tipo_operacao: Optional[TipoOperacao] = None
+    canal: Optional[str] = None
+    forma_venda: Optional[FormaVenda] = None
     observacoes: Optional[str]
     # Opcional na leitura: as OVs anteriores à exigência não têm o campo preenchido.
     condicao_pagamento: Optional[str] = None

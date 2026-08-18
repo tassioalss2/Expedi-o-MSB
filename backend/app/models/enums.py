@@ -106,6 +106,17 @@ class CanalVenda(str, Enum):
     LICITACAO = "LICITACAO"  # legado (antes da separação Uro/Vascular)
 
 
+class FormaVenda(str, Enum):
+    """COMO a venda aconteceu — a única parte que o SKU não sabe responder.
+
+    A LINHA comercial (Uro/Vascular/Realclosure) é calculada a partir dos itens
+    da OV, então não se pergunta mais. O que resta perguntar é se a venda saiu
+    por negociação direta ou por licitação.
+    """
+    DIRETA = "DIRETA"
+    LICITACAO = "LICITACAO"
+
+
 class Prioridade(str, Enum):
     NORMAL = "NORMAL"
     ALTA = "ALTA"

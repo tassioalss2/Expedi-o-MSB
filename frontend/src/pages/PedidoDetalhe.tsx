@@ -11,7 +11,7 @@ import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
-import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
+import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
 import { hojeLocal } from '../lib/dataLocal'
@@ -1210,7 +1210,7 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
     transportadora_id: pedido.transportadora_id || '',
     tipo_frete: (pedido.tipo_frete || 'FOB') as string,
     tipo_operacao: pedido.tipo_operacao || '',
-    canal: pedido.canal || '',
+    forma_venda: pedido.forma_venda || '',
     prioridade: (pedido.prioridade || 'NORMAL') as string,
     data_prevista_entrega: pedido.data_prevista_entrega || '',
     local_entrega: pedido.local_entrega || '',
@@ -1232,7 +1232,7 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
             transportadora_id: form.transportadora_id || null,
             tipo_frete: form.tipo_frete,
             tipo_operacao: form.tipo_operacao,
-            canal: form.canal || null,
+            forma_venda: form.forma_venda || null,
             prioridade: form.prioridade,
             data_prevista_entrega: form.data_prevista_entrega,
             local_entrega: form.local_entrega,
@@ -1346,16 +1346,14 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
               </div>
 
               <div>
-                <label className="text-xs font-medium text-gray-600">Canal de Venda</label>
-                <select value={form.canal} onChange={e => setForm({ ...form, canal: e.target.value })}
+                <label className="text-xs font-medium text-gray-600">Forma de Venda</label>
+                <select value={form.forma_venda} onChange={e => setForm({ ...form, forma_venda: e.target.value })}
                   className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
                   <option value="">—</option>
-                  <option value="URO">Uro</option>
-                  <option value="VASCULAR">Vascular</option>
-                  <option value="REALCLOSURE">Realclosure</option>
-                  <option value="LICITACAO_URO">Licitação - Uro</option>
-                  <option value="LICITACAO_VASCULAR">Licitação - Vascular</option>
+                  <option value="DIRETA">Venda direta</option>
+                  <option value="LICITACAO">Licitação</option>
                 </select>
+                <p className="text-[11px] text-gray-400 mt-1">A linha vem dos itens.</p>
               </div>
 
               <div>
@@ -2579,7 +2577,8 @@ export function PedidoDetalhe() {
             {pedido.cliente?.cnpj && <Linha label="CNPJ" valor={formatarCnpjExibicao(pedido.cliente.cnpj)} />}
             <Linha label="Tipo de Operação" valor={pedido.tipo_operacao ? (OPERACAO_LABEL[pedido.tipo_operacao] || pedido.tipo_operacao) : null} />
             <Linha label="Prioridade" valor={PRIORIDADE_LABEL[pedido.prioridade] || pedido.prioridade} />
-            <Linha label="Canal de Venda" valor={pedido.canal ? (CANAL_LABEL[pedido.canal] || pedido.canal) : null} />
+            <Linha label="Linha (meta)" valor={pedido.canal ? (LINHA_DO_CANAL[pedido.canal] || CANAL_LABEL[pedido.canal] || pedido.canal) : null} />
+            <Linha label="Forma de Venda" valor={FORMA_VENDA_LABEL[pedido.forma_venda || ''] || null} />
             <div className="flex justify-between items-center py-2 border-b border-gray-50">
               <span className="text-sm text-gray-500">Tipo de Frete</span>
               <button onClick={() => setModal('tipo_frete')}

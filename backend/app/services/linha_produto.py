@@ -167,3 +167,29 @@ def ratear_por_linha(valor: float, itens: list, produtos: dict,
         maior = max(saida, key=lambda k: saida[k])
         saida[maior] = round(saida[maior] + dif, 2)
     return saida
+
+
+def linha_predominante(itens: list, produtos: dict,
+                       por_codigo: Optional[dict] = None) -> Optional[str]:
+    """Linha de maior valor entre os itens — a "cara" da OV.
+
+    Usada só para gravar `pedidos.canal` (histórico e rótulo de tela). A meta
+    NÃO usa isto: ela usa `ratear_por_linha`, que divide a OV multi-linha em vez
+    de escolher uma. Sem valor nos itens, cai na quantidade; sem nada, None.
+    """
+    rateio = ratear_por_linha(1.0, itens, produtos, por_codigo, None)
+    if rateio:
+        return max(rateio, key=lambda k: rateio[k])
+    return None
+
+
+def canal_legado(linha: Optional[str], forma_venda: Optional[str]) -> Optional[str]:
+    """Monta o valor de `pedidos.canal` a partir das duas perguntas separadas.
+
+    O canal continua gravado porque telas, filtros e o histórico o usam como
+    rótulo. Agora ele é DERIVADO (linha dos itens + forma de venda), não
+    digitado — é o que tira a chance de a venda ir para a meta errada.
+    """
+    if not linha:
+        return None
+    return f"LICITACAO_{linha}" if forma_venda == "LICITACAO" else linha

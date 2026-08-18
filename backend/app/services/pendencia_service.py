@@ -536,12 +536,19 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             # OV original — não faz sentido perguntar de novo. As OVs antigas não
             # têm o campo, daí o fallback.
             condicao_pagamento=(ov.get("condicao_pagamento") or "—").strip() or "—",
+            # A remessa é a mesma venda: herda direta/licitação da OV original,
+            # senão a 2ª remessa de uma licitação seria rotulada como direta.
+            forma_venda=ov.get("forma_venda"),
+            canal=ov.get("canal"),
             itens=itens_ov,
             criar_derivada=True,
             observacoes=f"Remessa do saldo que estava pendente de estoque. {observacao or ''}".strip(),
         ), usuario)
     elif acao == "SOMAR_R1":
         resultado_ov = _somar_na_ov(db, ov, a_liberar, usuario)
+        # A OV pode ter nascido sem item (aguardando produção): o rótulo da linha
+        # só dá para calcular agora que os itens entraram.
+        pedido_service._sincronizar_linha(db, ov["id"], ov.get("forma_venda"))
         # Venda outbound que estava aguardando a produção: agora tem material e
         # itens, então entra no kanban da expedição, na coluna "Dados da OV" —
         # é lá que operações de vendas informa o número real do D365.

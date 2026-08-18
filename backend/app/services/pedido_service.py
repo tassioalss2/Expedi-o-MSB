@@ -158,6 +158,72 @@ def _gravar_data_faturamento(db, pedido_id: str, quando: str) -> None:
         pass
 
 
+# ── O QUE foi vendido × COMO foi vendido ────────────────────────────────────────
+#
+# `canal` misturava as duas coisas ("LICITACAO_URO" = licitação + Uro), e quem
+# digitava tinha que acertar a linha de cabeça. Numa OV com itens de duas linhas
+# não existe resposta certa: a venda inteira ia para uma meta só.
+#
+# Agora a LINHA sai dos itens (`linha_produto`) e o que se pergunta é só a FORMA
+# (direta ou licitação). `canal` continua gravado — telas, filtros e histórico o
+# usam como rótulo — mas DERIVADO, não digitado.
+
+class _Legado:
+    """Adapta uma OV já gravada ao formato que `_forma_venda_de` espera."""
+    forma_venda = None
+
+    def __init__(self, canal):
+        self.canal = canal
+
+
+def _forma_venda_de(payload) -> Optional[str]:
+    """Forma de venda do payload, caindo no canal legado quando não vem."""
+    fv = getattr(payload, "forma_venda", None)
+    if fv is not None:
+        return fv.value if hasattr(fv, "value") else str(fv)
+    canal = getattr(payload, "canal", None)
+    canal = canal.value if hasattr(canal, "value") else canal
+    if canal:
+        return "LICITACAO" if str(canal).startswith("LICITACAO") else "DIRETA"
+    return None
+
+
+def _sincronizar_linha(db, pedido_id: str, forma_venda: Optional[str]) -> None:
+    """Grava forma_venda e recalcula `canal` pela linha dos itens da OV.
+
+    Roda DEPOIS do insert dos itens (é deles que a linha sai). Best-effort de
+    propósito: é campo de rótulo, não pode derrubar a criação de uma OV. Sem
+    itens ou sem linha resolvida, mantém o canal que já estava lá.
+    """
+    try:
+        from app.services import linha_produto
+        update: dict = {}
+        if forma_venda:
+            update["forma_venda"] = forma_venda
+        itens = db.table("itens_pedido").select("produto_id, qtd_solicitada, valor_unitario")            .eq("pedido_id", pedido_id).execute().data
+        if itens:
+            produtos = {x["id"]: x for x in
+                        db.table("produtos").select("id, codigo, familia").execute().data}
+            linha = linha_produto.linha_predominante(
+                itens, produtos, linha_produto.mapa_por_codigo(db))
+            canal = linha_produto.canal_legado(linha, forma_venda)
+            if canal:
+                update["canal"] = canal
+        if not update:
+            return
+        update["atualizado_em"] = _agora()
+        try:
+            db.table("pedidos").update(update).eq("id", pedido_id).execute()
+        except Exception:
+            # Migration v13 pendente: grava o que dá (o canal derivado, que é o
+            # que as telas leem) e deixa a forma de venda para depois.
+            update.pop("forma_venda", None)
+            if len(update) > 1:
+                db.table("pedidos").update(update).eq("id", pedido_id).execute()
+    except Exception:
+        pass
+
+
 def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     db = get_service_db()
 
@@ -249,6 +315,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
             ]
             if itens:
                 db.table("itens_pedido").insert(itens).execute()
+            _sincronizar_linha(db, pedido["id"], _forma_venda_de(payload))
             _registrar_movimentacao(pedido["id"], None, StatusPedido.LIBERADO.value, uid,
                                     f"Remessa R{nova_remessa} criada a partir da OV original {payload.numero_pedido}")
             return pedido
@@ -322,6 +389,8 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
             para = _resumo(itens_novos)
             if de != para:
                 troca_itens = f"\nItens substituídos pelos do formulário:\n  de:   {de}\n  para: {para}"
+
+        _sincronizar_linha(db, pid, _forma_venda_de(payload))
 
         # Registra ocorrência auditável
         db.table("ocorrencias").insert({
@@ -445,6 +514,8 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     if itens:
         db.table("itens_pedido").insert(itens).execute()
 
+    _sincronizar_linha(db, pedido["id"], _forma_venda_de(payload))
+
     if pendencia:
         try:
             db.table("pedidos").update({"pendencia": pendencia}).eq("id", pedido["id"]).execute()
@@ -522,6 +593,7 @@ def criar_pedido_stub_crm(oportunidade: dict, itens: list, usuario_id: str) -> d
             "valor_unitario": float(i.get("valor_unitario") or 0) or None,
             "status_item": "PENDENTE",
         } for i in itens_validos]).execute()
+        _sincronizar_linha(db, pedido["id"], _forma_venda_de(_Legado(oportunidade.get("canal"))))
 
     _registrar_movimentacao(pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, usuario_id,
                             f"OV criada a partir da oportunidade ganha no CRM: {oportunidade.get('titulo') or '—'}")
@@ -617,6 +689,8 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
         })
     if itens:
         db.table("itens_pedido").insert(itens).execute()
+
+    _sincronizar_linha(db, pedido["id"], _forma_venda_de(payload))
 
     try:
         db.table("pedidos").update({"data_esperada_cliente": pedido_data["data_prevista_entrega"]}).eq("id", pedido["id"]).execute()
@@ -742,6 +816,9 @@ def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega
     except Exception:
         pass
     db.table("pedidos").update(update).eq("id", pedido_id).execute()
+    # A OV do CRM/outbound pode ter nascido sem item (aguardando produção); os
+    # itens chegaram depois, então o rótulo da linha é recalculado aqui.
+    _sincronizar_linha(db, pedido_id, ped.get("forma_venda") or _forma_venda_de(_Legado(ped.get("canal"))))
     _registrar_movimentacao(pedido_id, StatusPedido.AGUARD_DADOS_OV.value, StatusPedido.LIBERADO.value,
                             str(usuario.id), f"Dados completados — OV {numero} liberada")
 
@@ -779,6 +856,13 @@ def reclassificar_canal_licitacao(pedido_id: str, canal: str, usuario: UsuarioOu
         raise HTTPException(status_code=400, detail="Esta OV já tem canal definido — não está pendente de reclassificação.")
 
     db.table("pedidos").update({"canal": canal, "atualizado_em": _agora()}).eq("id", pedido_id).execute()
+    # O canal escolhido aqui também responde o COMO, que agora tem coluna própria.
+    try:
+        db.table("pedidos").update({
+            "forma_venda": "LICITACAO" if str(canal).startswith("LICITACAO") else "DIRETA",
+        }).eq("id", pedido_id).execute()
+    except Exception:
+        pass
     _registrar_movimentacao(pedido_id, ped["status"], ped["status"], str(usuario.id),
                             f"Canal reclassificado: {canal_atual or 'sem canal'} → {canal}")
     return obter_pedido(pedido_id)
@@ -1042,6 +1126,17 @@ def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut, dados: Opt
     update["status"] = destino
 
     db.table("pedidos").update(update).eq("id", pedido_id).execute()
+
+    # Forma de venda fica fora do update principal: a coluna é nova (v13) e não
+    # pode impedir uma reativação. O canal é recalculado pelos itens junto.
+    forma_nova = (dados or {}).get("forma_venda")
+    if forma_nova or update.get("canal"):
+        forma = forma_nova or pedido.get("forma_venda") or _forma_venda_de(_Legado(update.get("canal") or pedido.get("canal")))
+        _sincronizar_linha(db, pedido_id, forma)
+        if forma_nova and forma_nova != pedido.get("forma_venda"):
+            rot = {"DIRETA": "Venda direta", "LICITACAO": "Licitação"}
+            alteracoes.append(f"Forma de venda: {rot.get(pedido.get('forma_venda') or '', '—')} → "
+                              f"{rot.get(forma_nova, forma_nova)}")
 
     desc = (
         f"OV {update.get('numero_pedido', pedido['numero_pedido'])} reativada "

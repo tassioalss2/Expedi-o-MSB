@@ -131,9 +131,13 @@ export function PainelComercial() {
     refetchInterval: 60000,
   })
 
+  // `canais` vem pela LINHA do SKU (é a base da meta). `canais_digitado` é o que
+  // o canal escrito na OV diria — serve para conferir a diferença.
   const { data: vendasCanalResp } = useQuery<{
-    canais: Array<{ canal: string; label: string; qtd: number; valor: number }>
+    canais: Array<{ canal: string; linha?: string | null; label: string; qtd: number; valor: number }>
     licitacao: { qtd: number; valor: number }
+    canais_digitado: Array<{ canal: string; label: string; qtd: number; valor: number }>
+    sem_linha: { qtd: number; valor: number }
   }>({
     queryKey: ['vendas-por-canal', inicioFinanceiro, fimFinanceiro],
     queryFn: () => api.get('/pedidos/dashboard/vendas-por-canal', {
@@ -143,6 +147,7 @@ export function PainelComercial() {
   })
   const vendasCanal = vendasCanalResp?.canais ?? []
   const licitacaoInfo = vendasCanalResp?.licitacao ?? { qtd: 0, valor: 0 }
+  const vendasDigitado = vendasCanalResp?.canais_digitado ?? []
 
   // Faturamento diário (Vendas sem frete) do mês selecionado — para o gráfico
   const { data: fatDiario } = useQuery<{ dias: Array<{ dia: string; valor: number; qtd: number }>; total: number }>({
@@ -197,10 +202,25 @@ export function PainelComercial() {
     }
     if (categoria.startsWith('canal:')) {
       const k = categoria.slice(6)
-      // Licitação é dobrada no canal base: canal:URO inclui LICITACAO_URO, etc.
-      const base = (c?: string) => c === 'LICITACAO_URO' ? 'URO' : c === 'LICITACAO_VASCULAR' ? 'VASCULAR' : (c || 'SEM_CANAL')
-      return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '')
-        && (k === 'LICITACAO' ? /^LICITACAO/.test(r.canal || '') : base(r.canal) === k))
+      const doEscopo = (r: any) => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '')
+      // Recorte transversal: a mesma venda que já conta na linha dela.
+      if (k === 'LICITACAO') return rows.filter(r => doEscopo(r) && r.eh_licitacao)
+      // Sem linha = nem item cadastrado nem canal legado para deduzir.
+      if (k === 'SEM_CANAL') {
+        return rows.filter(r => doEscopo(r) && Object.keys(r.linhas || {}).length === 0)
+      }
+      // Uma NF com itens de duas linhas aparece nas duas, mas com a PARCELA de
+      // cada uma — senão a soma do drill-down não fecharia com o card.
+      return rows.filter(r => doEscopo(r) && Number((r.linhas || {})[k] || 0) > 0)
+        .map(r => {
+          const partes: Record<string, number> = r.linhas || {}
+          const total = Object.values(partes).reduce((a, v) => a + Number(v || 0), 0)
+          const parcela = Number(partes[k] || 0)
+          if (!total || Math.abs(total - parcela) < 0.01) return r
+          const f = parcela / total
+          return { ...r, valor_nf: r.valor_nf * f, valor_frete: r.valor_frete * f,
+                   valor_sem_frete: parcela, _parcial: true }
+        })
     }
     if (categoria.startsWith('cliente:')) {
       const nome = categoria.slice(8)
@@ -628,8 +648,12 @@ export function PainelComercial() {
 
       <div id="canais" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
         <div className="mb-4">
-          <h2 className="text-sm font-semibold text-gray-700">Vendas por Canal</h2>
+          <h2 className="text-sm font-semibold text-gray-700">Vendas por Linha</h2>
           <p className="text-xs text-gray-400 mt-0.5">Realizado × meta · sem frete · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            A linha vem dos itens da OV: uma venda com produtos de duas linhas entra
+            dividida em cada meta, pelo valor de cada item.
+          </p>
         </div>
         {(() => {
           const CANAIS = [
@@ -639,6 +663,8 @@ export function PainelComercial() {
           ]
           const de = (k: string) => vendasCanal.find(c => c.canal === k)
           const semCanal = de('SEM_CANAL')
+          // Onde o canal digitado discorda dos itens — quanto a meta mudou de lugar.
+          const digitadoDe = (k: string) => vendasDigitado.find(c => c.canal === k)?.valor || 0
           const licitLegado = de('LICITACAO')  // OVs antigas sem base Uro/Vascular
           return (
             <div className="space-y-4">
@@ -648,12 +674,14 @@ export function PainelComercial() {
                 const mt = meta?.por_canal?.[ch.key] ?? null
                 const pct = mt && mt > 0 ? (rz / mt) * 100 : 0
                 const ritmo = ritmoMeta(rz, mt)
+                // Quanto esta linha mudou por vir dos itens em vez do canal digitado.
+                const dif = rz - digitadoDe(ch.key)
                 const editing = editandoCanal === ch.key
                 return (
                   <div key={ch.key}
                     onClick={() => { if (!editing) setDetalheFin({ categoria: `canal:${ch.key}`, titulo: `Vendas · ${ch.label}` }) }}
                     className={editing ? '' : 'cursor-pointer rounded-lg -mx-1 px-1 py-0.5 hover:bg-gray-50 transition-colors'}
-                    title={editing ? undefined : 'Ver as NFs deste canal'}
+                    title={editing ? undefined : 'Ver as NFs desta linha'}
                   >
                     <div className="flex items-baseline justify-between gap-2 mb-1">
                       <span className="text-sm font-medium text-gray-700 flex-1">
@@ -709,6 +737,12 @@ export function PainelComercial() {
                             {rz < mt && <span>faltam {fmtR$(mt - rz)}</span>}
                           </div>
                         )}
+                        {Math.abs(dif) >= 1 && (
+                          <p className="text-[11px] text-gray-400 mt-0.5">
+                            {dif > 0 ? '+' : '−'}{fmtR$(Math.abs(dif))} em relação ao canal digitado
+                            <span className="text-gray-300"> · pelos itens da OV</span>
+                          </p>
+                        )}
                       </>
                     )}
                   </div>
@@ -727,11 +761,11 @@ export function PainelComercial() {
               )}
               {semCanal && semCanal.valor > 0 && (
                 <div
-                  onClick={() => setDetalheFin({ categoria: 'canal:SEM_CANAL', titulo: 'Vendas · sem canal' })}
+                  onClick={() => setDetalheFin({ categoria: 'canal:SEM_CANAL', titulo: 'Vendas · sem linha identificada' })}
                   className="pt-3 border-t border-dashed border-gray-200 flex items-baseline justify-between gap-2 text-gray-500 cursor-pointer hover:bg-gray-50 rounded-lg -mx-1 px-1 transition-colors"
-                  title="Ver as NFs sem canal"
+                  title="Ver as NFs cuja linha não deu para identificar"
                 >
-                  <span className="text-sm flex-1">Sem canal <span className="text-xs text-amber-500">(preencher na OV)</span></span>
+                  <span className="text-sm flex-1">Sem linha <span className="text-xs text-amber-500">(item sem cadastro — definir a linha do produto)</span></span>
                   <span className="text-xs text-gray-400 tabular-nums">{semCanal.qtd} NF</span>
                   <span className="text-sm font-medium tabular-nums">{fmtR$(semCanal.valor)}</span>
                 </div>
@@ -744,7 +778,7 @@ export function PainelComercial() {
                 >
                   <span className="text-xs text-gray-500 flex-1">
                     🏛️ Vendas por licitação no mês
-                    <span className="block text-[11px] text-gray-400 font-normal">informativo · já somado em Uro/Vascular</span>
+                    <span className="block text-[11px] text-gray-400 font-normal">informativo · já somado na linha de cada venda</span>
                   </span>
                   <span className="text-xs text-gray-400 tabular-nums">{licitacaoInfo.qtd} NF</span>
                   <span className="text-sm font-semibold text-teal-600 tabular-nums">{fmtR$(licitacaoInfo.valor)}</span>
@@ -907,6 +941,7 @@ export function PainelComercial() {
                   <h2 className="text-lg font-bold">{detalheFin.titulo}</h2>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })} · notas faturadas no mês
+                    {linhas.some((r: any) => r._parcial) && ' · as marcadas como "parcial" têm itens de outra linha e entram aqui só com a parte desta'}
                   </p>
                 </div>
                 <button onClick={() => setDetalheFin(null)} className="p-1.5 hover:bg-gray-100 rounded-lg">
@@ -939,7 +974,15 @@ export function PainelComercial() {
                         <tr key={r.id}
                           onClick={() => { setDetalheFin(null); navigate(`/expedicao/${r.id}`) }}
                           className="hover:bg-gray-50 cursor-pointer">
-                          <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700">{r.numero_pedido}</td>
+                          <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700">
+                            {r.numero_pedido}
+                            {r._parcial && (
+                              <span className="ml-1.5 font-sans text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1 py-0.5"
+                                title="Esta NF tem itens de mais de uma linha — aqui aparece só a parte desta linha">
+                                parcial
+                              </span>
+                            )}
+                          </td>
                           <td className="px-4 py-2.5 font-mono text-gray-600">{r.numero_nf || '—'}</td>
                           <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
                             {r.data ? format(new Date(r.data + 'T00:00:00'), 'dd/MM/yyyy') : '—'}

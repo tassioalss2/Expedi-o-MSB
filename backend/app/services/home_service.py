@@ -279,10 +279,12 @@ def pendencias() -> dict:
 
 
 def _canais_atras_do_ritmo(hoje: date) -> list:
-    """Canais cuja venda no mês está abaixo do ritmo esperado para hoje.
+    """Linhas cuja venda no mês está abaixo do ritmo esperado para hoje.
 
-    Comparado contra a meta DO CANAL (não a rateada do total): é a meta que o
-    time do canal recebeu, é por ela que ele é cobrado.
+    Comparado contra a meta DA LINHA (não a rateada do total): é a meta que o
+    time recebeu, é por ela que ele é cobrado. O realizado vem de
+    `vendas_por_canal`, que atribui a receita pela linha do SKU — uma OV com
+    itens de duas linhas entra dividida em vez de inteira na meta errada.
     """
     from app.api.pedidos import vendas_por_canal
     from app.services import pedido_service
@@ -310,7 +312,7 @@ def _canais_atras_do_ritmo(hoje: date) -> list:
     rotulos = {"URO": "Uro", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure", "LICITACAO": "Licitação"}
     return [_pendencia(
         f"canal_{canal.lower()}",
-        f"Canal {rotulos.get(canal, canal)} em {pct:.0f}% da meta",
+        f"Linha {rotulos.get(canal, canal)} em {pct:.0f}% da meta",
         f"o ritmo esperado para hoje é {esperado:.0f}%",
         1, "/comercial#canais", "Ver", "MEDIA",
     ) for pct, canal in fora]

@@ -31,7 +31,7 @@ export function VendaOutbound() {
     transportadora_id: '',
     tipo_frete: 'FOB',
     tipo_operacao: '',
-    canal: '',
+    forma_venda: '',
     local_entrega: '',
     data_prevista_entrega: '',
     condicao_pagamento: '',
@@ -50,7 +50,7 @@ export function VendaOutbound() {
     mutationFn: () => api.post('/crm/cotacoes', {
       cliente_id: form.cliente_id,
       cliente_cnpj: form.cliente_cnpj || null,
-      canal: form.canal || null,
+      forma_venda: form.forma_venda || null,
       itens: itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor_unitario: i.valor || 0 })),
     }),
     onSuccess: (res) => {
@@ -85,7 +85,7 @@ export function VendaOutbound() {
     mutationFn: (decisao?: DecisaoEstoque) => api.post('/pedidos/outbound', {
       ...form,
       transportadora_id: form.transportadora_id || null,
-      canal: form.canal || null,
+      forma_venda: form.forma_venda || null,
       itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
       decisao_estoque: decisao?.decisao || null,
       observacao_estoque: decisao?.observacao || null,
@@ -122,7 +122,7 @@ export function VendaOutbound() {
   const cnpjValido = form.cliente_cnpj.replace(/\D/g, '').length === 14
   const podeEnviar = form.cliente_id && cnpjValido && form.data_prevista_entrega
     && form.condicao_pagamento.trim()
-    && form.tipo_operacao && form.canal && itens.length > 0
+    && form.tipo_operacao && form.forma_venda && itens.length > 0
 
   const handleClienteChange = (id: string, nome: string) => {
     setForm(f => ({ ...f, cliente_id: id, cliente_nome: nome }))
@@ -191,16 +191,16 @@ export function VendaOutbound() {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Canal de Venda *</label>
-            <select value={form.canal} onChange={e => setForm({...form, canal: e.target.value})}
-              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.canal ? '' : 'border-amber-400 text-gray-400'}`}>
-              <option value="" disabled>Selecione o canal…</option>
-              <option value="URO">Uro</option>
-              <option value="VASCULAR">Vascular</option>
-              <option value="REALCLOSURE">Realclosure</option>
-              <option value="LICITACAO_URO">Licitação - Uro</option>
-              <option value="LICITACAO_VASCULAR">Licitação - Vascular</option>
+            <label className="text-sm font-medium text-gray-700">Forma de Venda *</label>
+            <select value={form.forma_venda} onChange={e => setForm({...form, forma_venda: e.target.value})}
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.forma_venda ? '' : 'border-amber-400 text-gray-400'}`}>
+              <option value="" disabled>Direta ou licitação?</option>
+              <option value="DIRETA">Venda direta</option>
+              <option value="LICITACAO">Licitação</option>
             </select>
+            <p className="text-[11px] text-gray-400 mt-1">
+              A linha (Uro/Vascular/Realclosure) sai dos itens — não precisa escolher.
+            </p>
           </div>
 
           <div>

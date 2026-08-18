@@ -501,8 +501,47 @@ def _canal_base(canal: Optional[str]) -> str:
     return canal or "SEM_CANAL"
 
 
-def _eh_licitacao(canal: Optional[str]) -> bool:
-    return canal in ("LICITACAO_URO", "LICITACAO_VASCULAR", "LICITACAO")
+def _eh_licitacao(pedido: dict) -> bool:
+    """Licitação vem de `forma_venda`; o canal legado cobre as OVs antigas."""
+    fv = pedido.get("forma_venda")
+    if fv:
+        return fv == "LICITACAO"
+    return str(pedido.get("canal") or "").startswith("LICITACAO")
+
+
+# O deploy do código sobe antes de a migration v13 rodar. Sem isto, pedir
+# `forma_venda` no select derrubaria o Painel Comercial nesse intervalo — e a
+# licitação já tem fallback no canal legado, então dá para viver sem a coluna.
+_TEM_FORMA_VENDA: Optional[bool] = None
+
+
+def _campos_pedido(db, base: str) -> str:
+    """Acrescenta `forma_venda` ao select só se a coluna já existir."""
+    global _TEM_FORMA_VENDA
+    if _TEM_FORMA_VENDA is None:
+        try:
+            db.table("pedidos").select("forma_venda").limit(1).execute()
+            _TEM_FORMA_VENDA = True
+        except Exception:
+            _TEM_FORMA_VENDA = False
+    return base + (", forma_venda" if _TEM_FORMA_VENDA else "")
+
+
+def _contexto_linha(db, ids: list) -> tuple:
+    """Itens, produtos e mapa de linhas — o necessário para ratear por SKU.
+
+    Um pacote só porque os três andam juntos em toda leitura que atribui receita
+    a uma linha comercial.
+    """
+    from app.services import linha_produto
+    itens_por_pedido: dict = {}
+    for i in range(0, len(ids), 40):
+        for it in db.table("itens_pedido").select(
+                "pedido_id, produto_id, qtd_solicitada, valor_unitario"
+        ).in_("pedido_id", ids[i:i + 40]).execute().data:
+            itens_por_pedido.setdefault(it["pedido_id"], []).append(it)
+    produtos = {p["id"]: p for p in db.table("produtos").select("id, codigo, familia").execute().data}
+    return itens_por_pedido, produtos, linha_produto.mapa_por_codigo(db)
 
 
 def _faturados_no_periodo(inicio: date, fim: date) -> dict:
@@ -762,10 +801,15 @@ def dashboard_financeiro_detalhe(
         return []
 
     ids = list(faturados.keys())
-    pedidos = db.table("pedidos").select(
-        "id, numero_pedido, numero_nf, valor_nf, valor_produtos, valor_frete, "
-        "tipo_frete, tipo_operacao, canal, status, clientes(nome)"
+    pedidos = db.table("pedidos").select(_campos_pedido(
+        db, "id, numero_pedido, numero_nf, valor_nf, valor_produtos, valor_frete, "
+            "tipo_frete, tipo_operacao, canal, status, clientes(nome)")
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
+
+    # A LINHA de cada NF sai dos itens, igual ao card por linha. Sem isso o
+    # drill-down (que filtra no front) não fecharia com o total do card.
+    from app.services import linha_produto
+    itens_por_pedido, produtos, mapa_linha = _contexto_linha(db, ids)
 
     linhas = []
     for p in pedidos:
@@ -785,6 +829,8 @@ def dashboard_financeiro_detalhe(
             "tipo_frete": tipo_frete,
             "tipo_operacao": p.get("tipo_operacao") or "VENDA_NORMAL",
             "canal": p.get("canal"),
+            "forma_venda": p.get("forma_venda"),
+            "eh_licitacao": _eh_licitacao(p),
             "eh_faturamento": _conta_faturamento(p),
             "eh_devolucao": _eh_devolucao(p),
             "valor_nf": round(bruto, 2),
@@ -792,6 +838,10 @@ def dashboard_financeiro_detalhe(
             "valor_sem_frete": round(bruto - frete_na_nf, 2),
             "eh_biomedical": _eh_biomedical(p),
             "data": faturados.get(p["id"]),
+            # {linha: valor} — quanto desta NF foi para cada meta.
+            "linhas": linha_produto.ratear_por_linha(
+                round(bruto - frete_na_nf, 2), itens_por_pedido.get(p["id"]) or [],
+                produtos, mapa_linha, p.get("canal")),
         })
 
     return sorted(linhas, key=lambda x: (x["data"] or "", x["numero_pedido"] or ""))
@@ -847,93 +897,98 @@ def vendas_por_canal(
     data_fim: date = Query(...),
     _: UsuarioOut = Depends(get_current_user),
 ):
-    """Vendas (sem frete) agrupadas por canal comercial no período.
+    """Vendas (sem frete) por LINHA comercial no período, contra a meta da linha.
 
     Mesmo escopo de "Vendas": faturamento, sem Transfer Price nem Esterilize.
-    A licitação é dobrada no canal base (Uro/Vascular) e também somada num
-    total informativo à parte (quanto vendemos por licitação no mês).
+
+    A linha vem dos ITENS da OV (o SKU sabe a que meta pertence), e não do canal
+    que alguém digitou. Muda duas coisas em relação ao que existia antes:
+
+      · OV com itens de duas linhas é DIVIDIDA pelo valor de cada item, em vez
+        de contar inteira para uma meta só;
+      · canal digitado errado deixa de mandar a venda para a meta errada.
+
+    O canal digitado continua sendo devolvido em `canais_digitado` — é como se
+    confere a virada e se acham as OVs cujo palpite não batia com os itens.
+
+    A licitação é um recorte transversal (vem de `forma_venda`): a mesma venda
+    conta na linha dela e também aqui, para responder "quanto saiu por licitação
+    no mês".
     """
     from app.core.database import get_service_db
     db = get_service_db()
 
     faturados = _faturados_no_periodo(data_inicio, data_fim)
     if not faturados:
-        return {"canais": [], "licitacao": {"qtd": 0, "valor": 0.0}}
+        return {"canais": [], "licitacao": {"qtd": 0, "valor": 0.0},
+                "canais_digitado": [], "sem_linha": {"qtd": 0, "valor": 0.0}}
 
     LABELS = {"URO": "Uro", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure", "LICITACAO": "Licitação"}
     ids = list(faturados.keys())
+
+    from app.services import linha_produto
+    itens_por_pedido, produtos, mapa_linha = _contexto_linha(db, ids)
+
     peds: list = []
     for i in range(0, len(ids), 40):
-        peds += db.table("pedidos").select(
-            "valor_nf, valor_frete, tipo_frete, tipo_operacao, canal, status, clientes(nome)"
+        peds += db.table("pedidos").select(_campos_pedido(
+            db, "id, valor_nf, valor_frete, tipo_frete, tipo_operacao, canal, "
+                "status, clientes(nome)")
         ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
 
-    # Para o rateio por linha do SKU: itens e produtos das OVs do período.
-    from app.services import linha_produto
-    itens_por_pedido: dict = {}
-    for i in range(0, len(ids), 40):
-        for it in db.table("itens_pedido").select(
-                "pedido_id, produto_id, qtd_solicitada, valor_unitario"
-        ).in_("pedido_id", ids[i:i + 40]).execute().data:
-            itens_por_pedido.setdefault(it["pedido_id"], []).append(it)
-    produtos = {p["id"]: p for p in db.table("produtos").select("id, codigo, familia").execute().data}
-    mapa_linha = linha_produto.mapa_por_codigo(db)
-
-    peds_full: list = []
-    for i in range(0, len(ids), 40):
-        peds_full += db.table("pedidos").select(
-            "id, valor_nf, valor_frete, tipo_frete, tipo_operacao, canal, status, clientes(nome)"
-        ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
-
-    agg: dict = {}
+    agg: dict = {}            # por LINHA do SKU — a base da meta
+    digitado: dict = {}       # por canal digitado — só para conferência
     licit = {"qtd": 0, "valor": 0.0}
-    # Mesma receita, atribuída pela linha do SKU em vez do canal digitado. Roda
-    # em PARALELO de propósito: serve para conferir a diferença antes de trocar
-    # a base da meta, sem mexer no número que o painel já mostra.
-    por_linha: dict = {}
-    sem_base = {"qtd": 0, "valor": 0.0}
+    sem_linha = {"qtd": 0, "valor": 0.0}
 
-    for p in peds_full:
+    for p in peds:
         nome = ((p.get("clientes") or {}).get("nome") or "").upper()
         if "ESTERILIZE" in nome or _eh_biomedical(p) or not _conta_faturamento(p):
             continue
-        canal = _canal_base(p.get("canal"))
         valor = float(p.get("valor_nf") or 0)
         if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
             valor -= float(p.get("valor_frete") or 0)
-        g = agg.setdefault(canal, {"canal": canal, "label": LABELS.get(canal, "Sem canal"), "qtd": 0, "valor": 0.0})
-        g["qtd"] += 1
-        g["valor"] += valor
-        if _eh_licitacao(p.get("canal")):
+
+        ck = _canal_base(p.get("canal"))
+        d = digitado.setdefault(ck, {"canal": ck, "label": LABELS.get(ck, "Sem canal"),
+                                     "qtd": 0, "valor": 0.0})
+        d["qtd"] += 1
+        d["valor"] += valor
+
+        if _eh_licitacao(p):
             licit["qtd"] += 1
             licit["valor"] += valor
 
         rateio = linha_produto.ratear_por_linha(
             valor, itens_por_pedido.get(p["id"]) or [], produtos, mapa_linha, p.get("canal"))
-        if rateio:
-            for linha, v in rateio.items():
-                l = por_linha.setdefault(linha, {"linha": linha, "label": linha_produto.label(linha),
-                                                 "qtd": 0, "valor": 0.0})
-                l["valor"] += v
-            # A OV conta uma vez, na linha de maior valor.
-            principal = max(rateio, key=lambda k: rateio[k])
-            por_linha[principal]["qtd"] += 1
-        else:
-            sem_base["qtd"] += 1
-            sem_base["valor"] += valor
+        if not rateio:
+            # Nem itens cadastrados nem canal legado: não há como afirmar a linha.
+            sem_linha["qtd"] += 1
+            sem_linha["valor"] += valor
+            continue
+        for linha, v in rateio.items():
+            g = agg.setdefault(linha, {"canal": linha, "linha": linha,
+                                       "label": linha_produto.label(linha),
+                                       "qtd": 0, "valor": 0.0})
+            g["valor"] += v
+            # A NF dividida conta em CADA linha que ela toca: é o que o
+            # drill-down lista. A soma das contagens pode passar do total de NFs
+            # do mês, e é isso mesmo — uma NF de duas linhas aparece nas duas.
+            g["qtd"] += 1
 
-    for g in agg.values():
+    for g in list(agg.values()) + list(digitado.values()):
         g["valor"] = round(g["valor"], 2)
-    for l in por_linha.values():
-        l["valor"] = round(l["valor"], 2)
     licit["valor"] = round(licit["valor"], 2)
-    sem_base["valor"] = round(sem_base["valor"], 2)
+    sem_linha["valor"] = round(sem_linha["valor"], 2)
+    if sem_linha["qtd"]:
+        agg["SEM_CANAL"] = {"canal": "SEM_CANAL", "linha": None, "label": "Sem linha",
+                            "qtd": sem_linha["qtd"], "valor": sem_linha["valor"]}
     return {
         "canais": sorted(agg.values(), key=lambda x: -x["valor"]),
         "licitacao": licit,
-        # Novo, ainda informativo: a mesma receita pela linha do SKU.
-        "por_linha": sorted(por_linha.values(), key=lambda x: -x["valor"]),
-        "por_linha_sem_base": sem_base,
+        # O que o canal digitado diria — para conferir a virada, não para a meta.
+        "canais_digitado": sorted(digitado.values(), key=lambda x: -x["valor"]),
+        "sem_linha": sem_linha,
     }
 
 
