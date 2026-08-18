@@ -438,9 +438,11 @@ function Card({ p, onLiberar, onAcompanhar }: {
                         )}
                         {i.codigo && (
                           <button onClick={() => setAjustando({ codigo: i.codigo!, descricao: i.descricao })}
-                            title="O estoque na prateleira está diferente? Ajuste aqui para destravar a OV"
-                            className="ml-1.5 text-violet-600 hover:text-violet-800 align-middle">
-                            <PencilLine size={12} />
+                            title="O estoque na prateleira está diferente? Corrija aqui para destravar a OV"
+                            className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md
+                                       border border-violet-200 text-[10px] font-medium text-violet-700
+                                       bg-violet-50 hover:bg-violet-100 hover:border-violet-300 align-middle">
+                            <PencilLine size={10} /> corrigir
                           </button>
                         )}
                       </td>
@@ -455,7 +457,8 @@ function Card({ p, onLiberar, onAcompanhar }: {
             <p className="text-[11px] text-gray-400 mt-1">
               "Em estoque hoje" é o que sobrou para ESTA venda depois da fila: quando
               duas vendas querem o mesmo item, quem espera há mais tempo recebe primeiro.
-              O lápis ajusta o estoque quando a prateleira não bate com a foto do PCP.
+              O botão <strong>corrigir</strong> ajusta o estoque quando a prateleira não bate
+              com a foto do PCP — vale só para hoje.
             </p>
           </div>
 

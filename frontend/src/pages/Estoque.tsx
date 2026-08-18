@@ -422,12 +422,16 @@ export function Estoque() {
                         </span>
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-700 whitespace-nowrap border-l border-gray-100">
-                        {fmtNum(i.estoque_pcp)}
-                        <button onClick={() => setAjustando(i)}
-                          title="A prateleira não bate com a foto do PCP? Ajuste aqui"
-                          className="ml-1.5 text-gray-300 hover:text-violet-600 align-middle">
-                          <PencilLine size={12} />
-                        </button>
+                        <span className="inline-flex items-center gap-1.5">
+                          {fmtNum(i.estoque_pcp)}
+                          <button onClick={() => setAjustando(i)}
+                            title="A prateleira não bate com a foto do PCP? Corrija aqui"
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-violet-200
+                                       text-[10px] font-medium text-violet-700 bg-violet-50
+                                       hover:bg-violet-100 hover:border-violet-300">
+                            <PencilLine size={11} /> corrigir
+                          </button>
+                        </span>
                         {i.ajuste && (
                           <span className="block mt-0.5"><SeloAjustado ajuste={i.ajuste} /></span>
                         )}
@@ -488,7 +492,9 @@ export function Estoque() {
 
       {itens.length > 0 && (
         <p className="text-[11px] text-gray-400">
-          <strong>Estoque PCP</strong> é o produto acabado pronto pra faturar, na foto da manhã.
+          <strong>Estoque PCP</strong> é o produto acabado pronto pra faturar, na foto da manhã —
+          se a prateleira não bater com ela, use <strong>corrigir</strong> na coluna PA (vale só para
+          hoje; amanhã a foto do PCP volta a mandar).
           <strong> SA (a liberar)</strong> é o semi-acabado — ainda depende da produção, não entra no disponível.
           <strong> Comprometido</strong> são as OVs deste app que ainda não faturaram, mais as que faturaram depois da foto.
           <strong> Cobertura</strong> é o disponível ÷ consumo médio dos últimos 6 meses.
