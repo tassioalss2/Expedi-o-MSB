@@ -7,12 +7,13 @@ import api from '../../lib/api'
 import { ClienteAutocomplete } from '../NovoPedido'
 import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
 import { LocalEntregaInput } from '../../components/LocalEntregaInput'
-import { CANAL_LABEL } from '../../lib/statusConfig'
+import { LINHA_DO_CANAL, FORMA_VENDA_LABEL } from '../../lib/statusConfig'
 import { hojeLocal } from '../../lib/dataLocal'
 import { fmtBRL, fmtData, msgErro } from '../../lib/crm'
 import { ModalBase, Campo, inputCls } from './CrmShared'
 
-const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE', 'LICITACAO_URO', 'LICITACAO_VASCULAR']
+// A linha da proposta sai dos itens; o que se pergunta é como a venda sai.
+const FORMAS = ['DIRETA', 'LICITACAO']
 const STATUS: Record<string, { label: string; cor: string }> = {
   RASCUNHO: { label: 'Rascunho', cor: 'bg-gray-100 text-gray-600' },
   ENVIADA: { label: 'Enviada', cor: 'bg-blue-100 text-blue-700' },
@@ -118,7 +119,7 @@ function FormCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
   const base = cotacao || prefill || {}
   const [clienteId, setClienteId] = useState(base.cliente_id || '')
   const [clienteNome, setClienteNome] = useState(base.cliente || '')
-  const [canal, setCanal] = useState(base.canal || '')
+  const [formaVenda, setFormaVenda] = useState(base.forma_venda || 'DIRETA')
   // Validade já vem sugerida pelo servidor (recomendação, não regra) — o
   // comercial sobrescreve à vontade.
   const validadeSugerida: string = base.validade_sugerida || ''
@@ -150,7 +151,7 @@ function FormCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
   const salvar = useMutation({
     mutationFn: () => {
       const body: any = {
-        cliente_id: clienteId || null, canal: canal || null,
+        cliente_id: clienteId || null, forma_venda: formaVenda || null,
         validade: validade || null, condicao_pagamento: condPagamento || null, prazo_entrega: prazoEntrega || null,
         frete: Number(frete) || 0, desconto_pct: Number(descPct) || 0, observacao: observacao || null,
         cliente_cnpj: clienteCnpj || null,
@@ -245,9 +246,9 @@ function FormCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Campo label="CEP"><input value={enderecoCep} onChange={e => setEnderecoCep(e.target.value)} className={inputCls} placeholder="00000-000" /></Campo>
-          <Campo label="Canal">
-            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
-              <option value="">—</option>{CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+          <Campo label="Forma de venda">
+            <select value={formaVenda} onChange={e => setFormaVenda(e.target.value)} className={inputCls}>
+              {FORMAS.map(f => <option key={f} value={f}>{FORMA_VENDA_LABEL[f] || f}</option>)}
             </select>
           </Campo>
           <Campo label="Validade">
@@ -332,7 +333,7 @@ function ModalGerarOVCotacao({ cotacao, onClose, onSaved }: { cotacao: any; onCl
     <ModalBase titulo={`Gerar OV · ${cotacao.numero}`} onClose={onClose} max="max-w-md">
       <div className="p-5 space-y-3">
         <div className="bg-blue-50 rounded-lg p-2.5 text-xs text-blue-700">
-          Cliente, canal, itens e <strong>preços</strong> (com desconto) vêm da cotação. O valor da NF será sugerido no faturamento automaticamente.
+          Cliente, itens e <strong>preços</strong> (com desconto) vêm da cotação. A linha da meta sai dos itens. O valor da NF será sugerido no faturamento automaticamente.
         </div>
         <Campo label="Número da OV *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: OV015500" autoFocus /></Campo>
         <div className="grid grid-cols-2 gap-3">

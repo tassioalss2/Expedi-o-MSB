@@ -26,7 +26,7 @@ from app.models.schemas import (
     PerderRequest,
     UsuarioOut,
 )
-from app.services import disponibilidade_service, pendencia_service
+from app.services import disponibilidade_service, linha_produto, pendencia_service
 
 # Estágios do funil e probabilidade BASE de cada um (%).
 #
@@ -203,6 +203,51 @@ def _itens_json(itens, oportunidade_id: str) -> list:
     return out
 
 
+def _forma_venda_crm(payload, atual: Optional[dict] = None) -> Optional[str]:
+    """Direta ou licitação, caindo no canal legado quando o payload não diz."""
+    fv = getattr(payload, "forma_venda", None)
+    if fv is not None:
+        return fv.value if hasattr(fv, "value") else str(fv)
+    canal = getattr(payload, "canal", None) or (atual or {}).get("canal")
+    if canal:
+        return "LICITACAO" if str(canal).startswith("LICITACAO") else "DIRETA"
+    return (atual or {}).get("forma_venda")
+
+
+def _sincronizar_linha_opp(db, oportunidade_id: str, forma_venda: Optional[str]) -> None:
+    """Grava a forma de venda e deriva `canal` pela linha dos itens.
+
+    Mesma ideia da OV: o funil não pergunta mais a linha (os itens respondem), mas
+    `canal` continua gravado porque os filtros e o histórico do CRM o leem. No
+    começo do funil pode não haver item nenhum — aí fica sem linha, e é honesto:
+    ninguém sabe ainda. Best-effort: rótulo não derruba o salvamento.
+    """
+    try:
+        from app.services import linha_produto
+        update: dict = {}
+        if forma_venda:
+            update["forma_venda"] = forma_venda
+        itens = db.table("crm_oportunidade_itens")\
+            .select("codigo, qtd, valor_unitario").eq("oportunidade_id", oportunidade_id)\
+            .execute().data
+        linha = linha_produto.predominante_por_codigo(db, itens) if itens else None
+        canal = linha_produto.canal_legado(linha, forma_venda)
+        if canal:
+            update["canal"] = canal
+        if not update:
+            return
+        update["atualizado_em"] = _agora()
+        try:
+            db.table("crm_oportunidades").update(update).eq("id", oportunidade_id).execute()
+        except Exception:
+            # Migration v14 pendente: grava o canal derivado e deixa a forma para depois.
+            update.pop("forma_venda", None)
+            if len(update) > 1:
+                db.table("crm_oportunidades").update(update).eq("id", oportunidade_id).execute()
+    except Exception:
+        pass
+
+
 def _dias_no_estagio(o: dict) -> Optional[int]:
     ref = o.get("estagio_em") or o.get("criado_em")
     if not ref:
@@ -271,6 +316,10 @@ def _serializar_opp(o: dict, itens: Optional[list] = None) -> dict:
         "cliente": (o.get("clientes") or {}).get("nome") if o.get("clientes") else None,
         "contato_id": o.get("contato_id"),
         "canal": o.get("canal"),
+        "forma_venda": o.get("forma_venda"),
+        # Linha embutida no canal derivado — é ela que decide a meta quando a
+        # oportunidade virar OV. Sem itens ainda, vem None (ninguém sabe).
+        "linha": linha_produto.linha_do_canal(o.get("canal")),
         "estagio": o.get("estagio"),
         "estagio_label": _ESTAGIO_LABEL.get(o.get("estagio"), o.get("estagio")),
         "valor_estimado": round(valor, 2),
@@ -507,6 +556,7 @@ def _gerar_cotacao_proposta(db, oportunidade_id: str, usuario: UsuarioOut) -> Op
         contato_id=opp.get("contato_id"),
         oportunidade_id=oportunidade_id,
         canal=opp.get("canal"),
+        forma_venda=opp.get("forma_venda"),
         # Validade recomendada — o comercial altera na tela quando precisar.
         validade=date.fromisoformat(crm_cotacao_service.validade_sugerida()),
         endereco_cidade=endereco_cidade,
@@ -578,6 +628,7 @@ def criar_oportunidade(payload: OportunidadeCreate, usuario: UsuarioOut,
 
     if payload.itens:
         db.table("crm_oportunidade_itens").insert(_itens_json(payload.itens, row["id"])).execute()
+    _sincronizar_linha_opp(db, row["id"], _forma_venda_crm(payload))
     _log_evento(db, row["id"], "Oportunidade criada", str(usuario.id))
     return obter_oportunidade(row["id"])
 
@@ -595,8 +646,6 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
         update["cliente_id"] = str(payload.cliente_id)
     if payload.contato_id is not None:
         update["contato_id"] = str(payload.contato_id) if payload.contato_id else None
-    if payload.canal is not None:
-        update["canal"] = payload.canal or None
     if payload.origem is not None:
         update["origem"] = payload.origem
     if payload.previsao_fechamento is not None:
@@ -649,6 +698,11 @@ def atualizar_oportunidade(oportunidade_id: str, payload: OportunidadeUpdate, us
             if novo_valor > 0:
                 db.table("crm_oportunidades").update({"valor_estimado": novo_valor}).eq("id", oportunidade_id).execute()
         _reavaliar_pendencia(db, oportunidade_id, usuario)
+
+    # Depois de qualquer mexida nos itens: a linha pode ter mudado, e a forma de
+    # venda é a única parte que continua vindo do formulário.
+    if payload.forma_venda is not None or payload.canal is not None or payload.itens is not None:
+        _sincronizar_linha_opp(db, oportunidade_id, _forma_venda_crm(payload, atual))
 
     out = obter_oportunidade(oportunidade_id)
     if entrando_em_proposta:
@@ -1283,6 +1337,8 @@ def gerar_ov(oportunidade_id: str, payload: GerarOVRequest, usuario: UsuarioOut)
             cliente_id=o["cliente_id"],
             tipo_frete=payload.tipo_frete or "FOB",
             tipo_operacao="VENDA_NORMAL",
+            # A OV recalcula a linha pelos itens; daqui vai só o COMO.
+            forma_venda=o.get("forma_venda"),
             canal=o.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,

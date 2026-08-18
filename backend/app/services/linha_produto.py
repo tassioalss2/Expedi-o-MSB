@@ -193,3 +193,37 @@ def canal_legado(linha: Optional[str], forma_venda: Optional[str]) -> Optional[s
     if not linha:
         return None
     return f"LICITACAO_{linha}" if forma_venda == "LICITACAO" else linha
+
+
+def predominante_por_codigo(db, itens: list) -> Optional[str]:
+    """Linha de maior peso numa lista de itens identificados por CÓDIGO.
+
+    É o caso do CRM: o item da oportunidade pode ter só o código digitado, sem
+    produto_id — inclusive de produto que ainda não está cadastrado. E no começo
+    do funil raramente tem preço, então cai no peso pela quantidade.
+    """
+    codigos = [str(i.get("codigo") or "").strip() for i in (itens or [])]
+    codigos = [c for c in codigos if c]
+    if not codigos:
+        return None
+
+    familia_por_codigo: dict = {}
+    try:
+        for r in db.table("produtos").select("codigo, familia").in_("codigo", codigos).execute().data:
+            familia_por_codigo[(r.get("codigo") or "").strip()] = r.get("familia")
+    except Exception:
+        pass
+
+    por_codigo = mapa_por_codigo(db)
+    pesos: dict = {}
+    for it in itens or []:
+        cod = str(it.get("codigo") or "").strip()
+        linha = resolver(cod, familia_por_codigo.get(cod), por_codigo)
+        if not linha:
+            continue
+        qtd = float(it.get("qtd") or 0)
+        # Sem preço, a quantidade é o melhor peso que existe.
+        peso = qtd * float(it.get("valor_unitario") or 0) or qtd
+        if peso > 0:
+            pesos[linha] = pesos.get(linha, 0.0) + peso
+    return max(pesos, key=lambda k: pesos[k]) if pesos else None

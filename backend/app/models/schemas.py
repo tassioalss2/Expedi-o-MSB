@@ -644,6 +644,9 @@ class OportunidadeCreate(BaseModel):
     titulo: str
     cliente_id: Optional[UUID] = None
     contato_id: Optional[UUID] = None
+    # A linha comercial sai dos itens; o que se pergunta é direta ou licitação.
+    # `canal` segue aceito para compatibilidade e é derivado quando há itens.
+    forma_venda: Optional[FormaVenda] = None
     canal: Optional[str] = None
     # O funil começa em QUALIFICACAO: o estágio LEAD duplicava o status do lead.
     estagio: str = "QUALIFICACAO"
@@ -660,6 +663,7 @@ class OportunidadeUpdate(BaseModel):
     titulo: Optional[str] = None
     cliente_id: Optional[UUID] = None
     contato_id: Optional[UUID] = None
+    forma_venda: Optional[FormaVenda] = None
     canal: Optional[str] = None
     estagio: Optional[str] = None
     valor_estimado: Optional[float] = None
@@ -886,6 +890,7 @@ class CotacaoCreate(BaseModel):
     cliente_id: Optional[UUID] = None
     contato_id: Optional[UUID] = None
     oportunidade_id: Optional[UUID] = None
+    forma_venda: Optional[FormaVenda] = None
     canal: Optional[str] = None
     validade: Optional[date] = None
     condicao_pagamento: Optional[str] = None
@@ -908,6 +913,7 @@ class CotacaoUpdate(BaseModel):
     numero: Optional[str] = None
     cliente_id: Optional[UUID] = None
     contato_id: Optional[UUID] = None
+    forma_venda: Optional[FormaVenda] = None
     canal: Optional[str] = None
     validade: Optional[date] = None
     condicao_pagamento: Optional[str] = None

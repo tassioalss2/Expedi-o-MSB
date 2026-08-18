@@ -11,7 +11,7 @@ import api from '../../lib/api'
 import { ClienteAutocomplete } from '../NovoPedido'
 import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
 import { LocalEntregaInput } from '../../components/LocalEntregaInput'
-import { CANAL_LABEL } from '../../lib/statusConfig'
+import { LINHA_DO_CANAL } from '../../lib/statusConfig'
 import {
   ESTAGIOS, ESTAGIOS_PIPELINE, ESTAGIO_MAP, ORIGENS, TIPOS_ATIVIDADE, TIPO_ATIV_MAP,
   fmtBRL, fmtBRLcurto, fmtData, fmtDataHora, prazoCor, msgErro, type EstagioKey,
@@ -27,8 +27,16 @@ import { hojeLocal } from '../../lib/dataLocal'
 // Quantidade sem casas decimais — unidade de material é sempre inteira.
 const n = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
 
-// CRM é do comercial — licitação NÃO entra aqui (tem módulo próprio).
-const CANAIS = ['URO', 'VASCULAR', 'REALCLOSURE']
+// A LINHA não se escolhe mais: sai dos itens da oportunidade. Aqui ela serve só
+// para FILTRAR o funil pelo que já se sabe.
+const LINHAS = ['URO', 'VASCULAR', 'REALCLOSURE']
+
+// O que resta perguntar. CRM é do comercial, então a venda direta é o normal —
+// licitação tem módulo próprio, mas acontece de uma cair no funil.
+const FORMAS = [
+  { key: 'DIRETA', label: 'Venda direta' },
+  { key: 'LICITACAO', label: 'Licitação' },
+]
 
 // Progressão linear real do funil. DESAFIOS fica de fora de propósito: não é um
 // degrau que se avança clicando — é um desvio que o sistema entra sozinho quando
@@ -56,7 +64,7 @@ export function CrmPipeline() {
   const [novo, setNovo] = useState(false)
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
-  const [canal, setCanal] = useState('')
+  const [linha, setLinha] = useState('')
   const [liberando, setLiberando] = useState<Pendencia | null>(null)
 
   const { data: opps = [], isLoading } = useQuery<any[]>({
@@ -75,11 +83,11 @@ export function CrmPipeline() {
   const filtradas = useMemo(() => {
     const b = busca.trim().toLowerCase()
     return opps.filter(o => {
-      if (canal && o.canal !== canal) return false
+      if (linha && o.linha !== linha) return false
       if (b && !`${o.titulo || ''} ${o.cliente || ''}`.toLowerCase().includes(b)) return false
       return true
     })
-  }, [opps, busca, canal])
+  }, [opps, busca, linha])
 
   // Pendência de estoque é coluna VIRTUAL: o card sai da coluna do estágio dele e
   // aparece aqui enquanto o material não chega. Sem isso, uma venda travada por
@@ -92,11 +100,11 @@ export function CrmPipeline() {
   const pendencias = useMemo(() => {
     const b = busca.trim().toLowerCase()
     return (pend?.pendencias || []).filter(p => {
-      if (canal && p.canal !== canal) return false
+      if (linha && LINHA_DO_CANAL[p.canal || ''] !== LINHA_DO_CANAL[linha]) return false
       if (b && !`${p.titulo || ''} ${p.cliente || ''}`.toLowerCase().includes(b)) return false
       return true
     })
-  }, [pend, busca, canal])
+  }, [pend, busca, linha])
   const idsPendentes = useMemo(
     () => new Set(pendencias.filter(p => p.fonte === 'oportunidade').map(p => p.id)),
     [pendencias])
@@ -118,9 +126,10 @@ export function CrmPipeline() {
             <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar oportunidade ou cliente…"
               className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
           </div>
-          <select value={canal} onChange={e => setCanal(e.target.value)} className="border rounded-lg px-3 py-2 text-sm">
-            <option value="">Todos os canais</option>
-            {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+          <select value={linha} onChange={e => setLinha(e.target.value)} className="border rounded-lg px-3 py-2 text-sm"
+            title="A linha vem dos itens da oportunidade — as que ainda não têm item ficam de fora do filtro">
+            <option value="">Todas as linhas</option>
+            {LINHAS.map(c => <option key={c} value={c}>{LINHA_DO_CANAL[c] || c}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-3">
@@ -244,7 +253,7 @@ function CardOpp({ o, onClick }: { o: any; onClick: () => void }) {
         </span>
       </div>
       <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
-        {o.canal && <span className="text-gray-400">{CANAL_LABEL[o.canal] || o.canal}</span>}
+        {o.canal && <span className="text-gray-400">{LINHA_DO_CANAL[o.canal] || o.canal}</span>}
         {o.previsao_fechamento && <span className={`flex items-center gap-1 ${prazoCor(o.previsao_fechamento)}`}><Clock size={11} /> {fmtData(o.previsao_fechamento)}</span>}
         {o.atividades_pendentes > 0 && <span className="flex items-center gap-1 text-blue-500"><CalendarPlus size={11} /> {o.atividades_pendentes}</span>}
       </div>
@@ -363,7 +372,8 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
   const [clienteId, setClienteId] = useState(base.cliente_id || '')
   const [clienteNome, setClienteNome] = useState(base.cliente || '')
   const [contatoId, setContatoId] = useState(base.contato_id || '')
-  const [canal, setCanal] = useState(base.canal || '')
+  // Venda direta é o caso normal do funil; já vem escolhida para não dar trabalho.
+  const [formaVenda, setFormaVenda] = useState(base.forma_venda || 'DIRETA')
   const [estagio, setEstagio] = useState<string>(base.estagio || 'QUALIFICACAO')
   const [valor, setValor] = useState<number | null>(base.valor_estimado ? Number(base.valor_estimado) : null)
   const [previsao, setPrevisao] = useState(base.previsao_fechamento || '')
@@ -421,7 +431,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
         titulo: titulo.trim(),
         cliente_id: clienteId || null,
         contato_id: contatoId || null,
-        canal: canal || null,
+        forma_venda: formaVenda || null,
         estagio,
         valor_estimado: totalItens > 0 ? totalItens : valor,
         previsao_fechamento: previsao || null,
@@ -461,11 +471,13 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
               </button>
             </div>
           </Campo>
-          <Campo label="Canal *">
-            <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
-              <option value="">Selecione o canal…</option>
-              {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
+          <Campo label="Forma de venda *">
+            <select value={formaVenda} onChange={e => setFormaVenda(e.target.value)} className={inputCls}>
+              {FORMAS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
             </select>
+            <p className="text-[11px] text-gray-400 mt-1">
+              A linha (Uro/Vascular/Realclosure) vem dos itens abaixo.
+            </p>
           </Campo>
           <Campo label="Estágio">
             {/* Ganho e Perdido ficam fora: são desfechos, e cada um tem portão
@@ -520,8 +532,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
       </div>
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => salvar.mutate()} disabled={!titulo.trim() || !canal || salvar.isPending}
-          title={!canal ? 'Selecione o canal' : ''}
+        <button onClick={() => salvar.mutate()} disabled={!titulo.trim() || !formaVenda || salvar.isPending}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
           {salvar.isPending ? 'Salvando…' : edicao ? 'Salvar' : 'Criar oportunidade'}
         </button>
@@ -771,7 +782,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
               <p className="text-sm text-gray-700 font-medium">{o.cliente || 'Sem cliente'}</p>
               {o.contato && <p className="text-xs text-gray-500">{o.contato.nome}{o.contato.cargo ? ` · ${o.contato.cargo}` : ''}{o.contato.telefone ? ` · ${o.contato.telefone}` : ''}</p>}
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-400 mt-1">
-                {o.canal && <span>{CANAL_LABEL[o.canal] || o.canal}</span>}
+                {o.canal && <span>{LINHA_DO_CANAL[o.canal] || o.canal}</span>}
                 {o.origem && <span>Origem: {o.origem}</span>}
                 {o.previsao_fechamento && <span className={prazoCor(o.previsao_fechamento)}>Previsão: {fmtData(o.previsao_fechamento)}</span>}
               </div>

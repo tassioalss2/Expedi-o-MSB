@@ -90,6 +90,7 @@ def _serializar(c: dict, itens: Optional[list] = None) -> dict:
         "contato_id": c.get("contato_id"),
         "oportunidade_id": c.get("oportunidade_id"),
         "canal": c.get("canal"),
+        "forma_venda": c.get("forma_venda"),
         "status": c.get("status"),
         "validade": c.get("validade"),
         "condicao_pagamento": c.get("condicao_pagamento"),
@@ -189,12 +190,15 @@ def criar_cotacao(payload: CotacaoCreate, usuario: UsuarioOut) -> dict:
     itens_dict = [{"qtd": i.qtd, "valor_unitario": i.valor_unitario, "desconto_pct": i.desconto_pct} for i in payload.itens]
     bruto, total = _totais(itens_dict, payload.frete, payload.desconto_pct)
 
-    row = db.table("crm_cotacoes").insert({
+    dados = {
         "numero": (payload.numero or "").strip() or _gerar_numero(db),
         "cliente_id": str(payload.cliente_id) if payload.cliente_id else None,
         "contato_id": str(payload.contato_id) if payload.contato_id else None,
         "oportunidade_id": str(payload.oportunidade_id) if payload.oportunidade_id else None,
         "canal": payload.canal,
+        # A linha da proposta sai dos itens; aqui fica só direta ou licitação.
+        "forma_venda": (payload.forma_venda.value if hasattr(payload.forma_venda, "value")
+                        else payload.forma_venda),
         "status": "RASCUNHO",
         "validade": payload.validade.isoformat() if payload.validade else None,
         "condicao_pagamento": payload.condicao_pagamento,
@@ -214,11 +218,27 @@ def criar_cotacao(payload: CotacaoCreate, usuario: UsuarioOut) -> dict:
         "valor_total": total,
         "responsavel_id": str(usuario.id),
         "ativo": True,
-    }).execute().data[0]
+    }
+    row = _inserir_tolerante(db, dados)
 
     if payload.itens:
         db.table("crm_cotacao_itens").insert(_itens_in(payload.itens, row["id"])).execute()
     return obter_cotacao(row["id"])
+
+
+def _inserir_tolerante(db, dados: dict) -> dict:
+    """Insere a cotação; sem a coluna `forma_venda` (migration v14), insere sem ela.
+
+    O deploy do código sobe antes do SQL rodar, e uma proposta não pode deixar de
+    ser criada por causa de um campo de classificação.
+    """
+    try:
+        return db.table("crm_cotacoes").insert(dados).execute().data[0]
+    except Exception:
+        if "forma_venda" not in dados:
+            raise
+        dados = {k: v for k, v in dados.items() if k != "forma_venda"}
+        return db.table("crm_cotacoes").insert(dados).execute().data[0]
 
 
 def atualizar_cotacao(cotacao_id: str, payload: CotacaoUpdate, usuario: UsuarioOut) -> dict:
@@ -241,7 +261,7 @@ def atualizar_cotacao(cotacao_id: str, payload: CotacaoUpdate, usuario: UsuarioO
     # realmente mandou, então mudar o status (que envia só `status`) continua sem
     # encostar nos outros campos.
     enviados = payload.model_fields_set
-    for campo in ("canal", "condicao_pagamento", "prazo_entrega", "observacao",
+    for campo in ("canal", "forma_venda", "condicao_pagamento", "prazo_entrega", "observacao",
                   "cliente_cnpj", "contato_nome", "contato_email",
                   "endereco", "endereco_bairro", "endereco_cidade", "endereco_uf", "endereco_cep"):
         if campo in enviados:
@@ -277,7 +297,14 @@ def atualizar_cotacao(cotacao_id: str, payload: CotacaoUpdate, usuario: UsuarioO
     update["valor_bruto"] = bruto
     update["valor_total"] = total
 
-    db.table("crm_cotacoes").update(update).eq("id", cotacao_id).execute()
+    try:
+        db.table("crm_cotacoes").update(update).eq("id", cotacao_id).execute()
+    except Exception:
+        # Migration v14 pendente: salva o resto da cotação e deixa a forma de venda.
+        if "forma_venda" not in update:
+            raise
+        update.pop("forma_venda")
+        db.table("crm_cotacoes").update(update).eq("id", cotacao_id).execute()
 
     # Cotação aceita → marca a oportunidade vinculada como ganha
     if payload.status == "ACEITA" and atual.get("oportunidade_id"):
@@ -301,12 +328,13 @@ def duplicar_cotacao(cotacao_id: str, usuario: UsuarioOut) -> dict:
     if not base:
         raise HTTPException(status_code=404, detail="Cotação não encontrada")
 
-    nova = db.table("crm_cotacoes").insert({
+    nova = _inserir_tolerante(db, {
         "numero": _gerar_numero(db),
         "cliente_id": base.get("cliente_id"),
         "contato_id": base.get("contato_id"),
         "oportunidade_id": base.get("oportunidade_id"),
         "canal": base.get("canal"),
+        "forma_venda": base.get("forma_venda"),
         "status": "RASCUNHO",
         "validade": validade_sugerida(),
         "condicao_pagamento": base.get("condicao_pagamento"),
@@ -326,7 +354,7 @@ def duplicar_cotacao(cotacao_id: str, usuario: UsuarioOut) -> dict:
         "valor_total": float(base.get("valor_total") or 0),
         "responsavel_id": str(usuario.id),
         "ativo": True,
-    }).execute().data[0]
+    })
 
     itens = db.table("crm_cotacao_itens").select("*").eq("cotacao_id", cotacao_id).execute().data
     if itens:
@@ -385,6 +413,7 @@ def gerar_ov(cotacao_id: str, payload, usuario: UsuarioOut) -> dict:
             cliente_id=c["cliente_id"],
             tipo_frete=payload.tipo_frete or "FOB",
             tipo_operacao="VENDA_NORMAL",
+            forma_venda=c.get("forma_venda"),
             canal=c.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,

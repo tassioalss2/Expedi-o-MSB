@@ -180,6 +180,7 @@ const CAMPO_LABEL: Record<string, string> = {
   cliente_cnpj: 'CNPJ do cliente',
   tipo_operacao: 'Tipo de operação',
   canal: 'Canal',
+  forma_venda: 'Forma de venda',
   itens: 'Itens',
   numero_nf: 'Número da NF',
   valor_nf: 'Valor da NF',
