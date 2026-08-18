@@ -753,6 +753,16 @@ class ItemLiberacao(BaseModel):
     qtd: float
 
 
+class AcompanharPendenciaRequest(BaseModel):
+    """Cobrança registrada numa pendência aberta: o que o PCP respondeu e para
+    quando. Não libera material — só grava o que se sabe da espera."""
+    previsao_pcp: Optional[date] = None
+    observacao: Optional[str] = None
+    # Previsão que não se cumpriu e não tem nova data: apagar é informação, e
+    # `previsao_pcp=None` não distingue "não mexe" de "tira".
+    limpar_previsao: bool = False
+
+
 class LiberarPendenciaRequest(BaseModel):
     # Libera só o que já chegou e mantém o resto pendente. Sem isso, uma
     # pendência de 8 unidades com 5 prontas ficaria travada esperando as 3.

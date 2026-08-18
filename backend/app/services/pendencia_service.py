@@ -378,6 +378,9 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "previsao_pcp": pend.get("previsao_pcp"),
         "cobre_com_sa": pend.get("cobre_com_sa"),
         "observacao": pend.get("observacao"),
+        # Cada cobrança feita ao PCP, em ordem. É o que mostra "prometeram dia 10,
+        # empurraram para 20" sem ninguém ter que lembrar.
+        "acompanhamentos": pend.get("acompanhamentos") or [],
         "decidido_em": pend.get("decidido_em"),
         "dias_parada": _dias(pend.get("decidido_em")),
         "resolvido_em": pend.get("resolvido_em"),
@@ -387,6 +390,96 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "motivo_bloqueio": bloqueio,
         **(extra or {}),
     }
+
+
+# ── Acompanhamento ────────────────────────────────────────────────────────────
+def acompanhar(fonte: str, registro_id: str, usuario: UsuarioOut,
+               previsao_pcp: Optional[str] = None, observacao: Optional[str] = None,
+               limpar_previsao: bool = False) -> dict:
+    """Registra o que se descobriu sobre uma pendência: quando o material vem e
+    o que o PCP respondeu.
+
+    Antes, previsão e observação só podiam ser escritas no INSTANTE da decisão de
+    estoque. Depois disso a pendência ficava muda: quem cobrava o PCP toda semana
+    não tinha onde anotar, e a próxima pessoa recomeçava do zero — ou pior,
+    cobrava de novo o que já tinha resposta.
+
+    Cada cobrança entra em `acompanhamentos` (lista, não sobrescreve), então a
+    pendência velha conta a própria história: quantas vezes foi cobrada, o que
+    responderam, e quantas vezes a data prometida mudou.
+
+    Não mexe em item, quantidade nem valor: isso é liberação, e tem função
+    própria. Aqui é só o que se sabe sobre a espera.
+    """
+    if fonte not in ("oportunidade", "pedido"):
+        raise HTTPException(status_code=400, detail="Origem de pendência inválida.")
+
+    nota = (observacao or "").strip()
+    prev = (previsao_pcp or "").strip() or None
+    if not nota and not prev and not limpar_previsao:
+        raise HTTPException(status_code=422,
+                            detail="Informe uma previsão ou uma anotação — algo do que você apurou.")
+
+    db = get_service_db()
+    reg, pend = _ler(db, fonte, registro_id)
+    agora = _agora()
+
+    prev_antiga = pend.get("previsao_pcp")
+    registro = {
+        "em": agora,
+        "por": str(usuario.id),
+        "por_nome": usuario.nome,
+        "observacao": nota or None,
+        "previsao_pcp": prev,
+        # Guardar a data ANTERIOR é o que revela promessa furada: três
+        # acompanhamentos empurrando a data para frente contam essa história.
+        "previsao_anterior": prev_antiga if (prev or limpar_previsao) else None,
+    }
+
+    nova = {**pend, "acompanhamentos": list(pend.get("acompanhamentos") or []) + [registro]}
+    if limpar_previsao:
+        nova["previsao_pcp"] = None
+    elif prev:
+        nova["previsao_pcp"] = prev
+    if nota:
+        # `observacao` é o texto que as telas mostram: fica o mais recente, e o
+        # histórico completo continua em `acompanhamentos`.
+        nova["observacao"] = nota
+
+    db.table("crm_oportunidades" if fonte == "oportunidade" else "pedidos")\
+        .update({"pendencia": nova, "atualizado_em": agora}).eq("id", registro_id).execute()
+
+    _registrar_acompanhamento(db, fonte, registro_id, reg, usuario, prev, prev_antiga,
+                              nota, limpar_previsao)
+    return {"ok": True, "pendencia": nova}
+
+
+def _registrar_acompanhamento(db, fonte: str, registro_id: str, reg: dict,
+                              usuario: UsuarioOut, prev: Optional[str],
+                              prev_antiga: Optional[str], nota: str,
+                              limpou: bool) -> None:
+    """Deixa a cobrança no histórico que a pessoa já lê (evento do CRM ou
+    movimentação da OV). Best-effort: anotar não pode falhar por causa do log."""
+    partes = []
+    if limpou:
+        partes.append("previsão removida")
+    elif prev and prev != prev_antiga:
+        partes.append(f"previsão {'alterada de ' + str(prev_antiga)[:10] + ' para ' if prev_antiga else 'definida para '}{prev}")
+    if nota:
+        partes.append(nota)
+    texto = "📦 Pendência de estoque — " + (" · ".join(partes) or "acompanhada")
+
+    try:
+        if fonte == "oportunidade":
+            from app.services import crm_service
+            crm_service._log_evento(db, registro_id, texto, str(usuario.id))
+        else:
+            from app.services import pedido_service
+            status = reg.get("status")
+            pedido_service._registrar_movimentacao(registro_id, status, status,
+                                                  str(usuario.id), texto)
+    except Exception:
+        pass
 
 
 # ── Liberação ─────────────────────────────────────────────────────────────────

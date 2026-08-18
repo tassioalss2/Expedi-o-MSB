@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, Home, Users, Gavel, Handshake, TrendingUp, Boxes, Sparkles,
+  DollarSign, Home, Users, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -19,7 +19,7 @@ type NavItem = {
    *  atalhos de dentro do Painel Comercial. */
   subs?: Array<{ hash: string; label: string }>
   /** Chave do contador vermelho, quando o item tem um. */
-  badge?: 'expedicao' | 'ocorrencias'
+  badge?: 'expedicao' | 'ocorrencias' | 'pendencias'
 }
 
 const navOperacoes: NavItem[] = [
@@ -43,6 +43,7 @@ const navComercial: NavItem[] = [
       { hash: '#produtos', label: 'Vendas por Produto' },
     ],
   },
+  { to: '/pendencias', label: 'Pendências de OV', icone: PackageX, badge: 'pendencias' },
   { to: '/previsao', label: 'Previsão de Faturamento', icone: TrendingUp },
   { to: '/crm',      label: 'CRM',                     icone: Handshake },
   { to: '/inteligencia', label: 'Inteligência',        icone: Sparkles },
@@ -121,9 +122,17 @@ export function Layout() {
     queryFn: () => api.get('/ocorrencias', { params: { status: 'ABERTA' } }).then(r => r.data),
     refetchInterval: 60000,
   })
+  // Badge: vendas fechadas esperando material. Vale no menu porque é dinheiro
+  // parado — e porque a fila só anda quando alguém olha.
+  const { data: pendencias } = useQuery({
+    queryKey: ['pendencias-count'],
+    queryFn: () => api.get('/crm/pendencias').then(r => r.data),
+    refetchInterval: 60000,
+  })
   const badges: Record<string, number> = {
     expedicao: (ovsPendentes as any[]).length,
     ocorrencias: (ocorrenciasAbertas as any[]).length,
+    pendencias: (pendencias as any)?.quantidade || 0,
   }
 
   /** Um item de menu. Estilo inline nos tokens da spec — o Tailwind não tem

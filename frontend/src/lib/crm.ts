@@ -93,6 +93,9 @@ export interface Pendencia {
   previsao_pcp: string | null
   cobre_com_sa: boolean | null
   observacao: string | null
+  /** Cada cobrança feita ao PCP, em ordem. Mostra promessa furada sem ninguém
+   *  ter que lembrar: "prometeram dia 10, empurraram para 20". */
+  acompanhamentos?: AcompanhamentoPendencia[]
   decidido_em: string | null
   dias_parada: number | null
   resolvido_em: string | null
@@ -109,6 +112,16 @@ export interface Pendencia {
   /** Quanto do que falta JÁ existe em estoque hoje — calculado no servidor, com
    *  rateio entre as pendências (a mesma unidade não é prometida duas vezes). */
   estoque_agora?: EstoqueAgora | null
+}
+
+export interface AcompanhamentoPendencia {
+  em: string
+  por?: string | null
+  por_nome?: string | null
+  observacao?: string | null
+  previsao_pcp?: string | null
+  /** Data que a previsão tinha antes desta cobrança — é o que revela atraso. */
+  previsao_anterior?: string | null
 }
 
 export interface EstoqueAgora {

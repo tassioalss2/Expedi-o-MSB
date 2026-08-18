@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { DollarSign, Truck, FileText, X, Pencil, CalendarDays, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
@@ -9,8 +9,7 @@ import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
 import { hojeLocal } from '../lib/dataLocal'
-import { ModalLiberarPendencia } from '../components/EstoqueVenda'
-import type { Pendencia, PendenciasResp } from '../lib/crm'
+import type { PendenciasResp } from '../lib/crm'
 
 export function PainelComercial() {
   const navigate = useNavigate()
@@ -1042,17 +1041,17 @@ export function PainelComercial() {
   )
 }
 
-/** Pendências de estoque — venda fechada esperando material.
+/** Resumo das pendências de estoque — venda fechada esperando material.
  *
- *  A mesma fonte da coluna do kanban do CRM (/crm/pendencias), para as duas telas
- *  nunca discordarem. Aqui a leitura é de conjunto: quanto de dinheiro está
- *  parado, com quem, e há quantos dias. Some da tela quando não há pendência —
- *  seção vazia todo mês treina o olho a ignorá-la.
+ *  Aqui é só o número e o caminho: o tratamento (cobrar o PCP, liberar item a
+ *  item, ver o histórico) mora em /pendencias. Antes esta seção repetia a tabela
+ *  inteira, e duas tabelas com a mesma fonte divergem no primeiro ajuste que
+ *  alguém faz em uma só.
+ *
+ *  Some da tela quando não há pendência — seção vazia todo mês treina o olho a
+ *  ignorá-la.
  */
 function SecaoPendencias() {
-  const qc = useQueryClient()
-  const [liberando, setLiberando] = useState<Pendencia | null>(null)
-
   const { data } = useQuery<PendenciasResp>({
     queryKey: ['crm-pendencias'],
     queryFn: () => api.get('/crm/pendencias').then(r => r.data),
@@ -1063,120 +1062,34 @@ function SecaoPendencias() {
   if (lista.length === 0) return null
 
   const fmt = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const liberaveis = (data?.com_estoque || 0) + (data?.com_estoque_parcial || 0)
+  const maisParada = Math.max(...lista.map(p => p.dias_parada || 0))
 
   return (
-    <div id="pendencias" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
+    <Link to="/pendencias" id="pendencias"
+      className="block bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4 hover:border-gray-200 transition-colors">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-sm font-semibold text-gray-700">Pendências de estoque</h2>
         <span className="text-sm font-semibold text-red-700">{fmt(data?.total || 0)}</span>
       </div>
-      <p className="text-xs text-gray-400 mb-2">
+      <p className="text-xs text-gray-400">
         Venda fechada esperando material · {data?.quantidade} pendência(s)
-        {(data?.aguardando || 0) > 0 && ` · ${data?.aguardando} sem OV aberta`}
-        {(data?.parciais || 0) > 0 && ` · ${data?.parciais} com OV parcial`}
+        {maisParada > 0 && ` · a mais antiga há ${maisParada} dia(s)`}
       </p>
-      {/* O material que já chegou é a única coisa acionável aqui — vem antes da
-          tabela para não depender de o operador varrer linha por linha. */}
-      {((data?.com_estoque || 0) > 0 || (data?.com_estoque_parcial || 0) > 0) && (
-        <div className="mb-4 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-800">
-          ✓ <strong>{data?.com_estoque || 0}</strong> já com todo o material
-          {(data?.com_estoque_parcial || 0) > 0 && <> · <strong>{data?.com_estoque_parcial}</strong> com parte</>}
-          {' '}— dá para destravar <strong>{fmt(data?.valor_liberavel || 0)}</strong> agora.
-          {data?.estoque_desatualizado && (
-            <span className="text-amber-700"> (estoque da última foto do PCP)</span>
-          )}
-        </div>
-      )}
 
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[11px] uppercase text-gray-400 text-left border-b">
-              <th className="py-2 pr-3 font-medium">Cliente</th>
-              <th className="py-2 px-3 font-medium">OV</th>
-              <th className="py-2 px-3 font-medium">Itens pendentes</th>
-              <th className="py-2 px-3 font-medium">Estoque hoje</th>
-              <th className="py-2 px-3 font-medium text-right">Qtd</th>
-              <th className="py-2 px-3 font-medium text-right">Valor</th>
-              <th className="py-2 px-3 font-medium">Previsão</th>
-              <th className="py-2 px-3 font-medium text-right">Parada</th>
-              <th className="py-2 pl-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {lista.map(p => (
-              <tr key={`${p.fonte}-${p.id}`}
-                className={p.estoque_agora?.status === 'COMPLETO'
-                  ? 'bg-emerald-50/70 hover:bg-emerald-50'
-                  : 'hover:bg-gray-50'}>
-                <td className="py-2 pr-3">
-                  <span className="font-medium text-gray-800">{p.cliente || '—'}</span>
-                  <span className="block text-[11px] text-gray-400 truncate max-w-[200px]">{p.titulo}</span>
-                </td>
-                <td className="py-2 px-3">
-                  {p.decisao === 'AGUARDAR' ? (
-                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">sem OV</span>
-                  ) : p.ov_provisoria ? (
-                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">sem nº D365</span>
-                  ) : (
-                    <span className="text-xs text-gray-700">{p.ov_ref || '—'}</span>
-                  )}
-                </td>
-                <td className="py-2 px-3">
-                  {p.itens.map((i, idx) => (
-                    <span key={idx} className="block text-[11px] text-gray-600">
-                      {i.codigo || '—'} · {Number(i.qtd_pendente) || 0} un
-                    </span>
-                  ))}
-                </td>
-                <td className="py-2 px-3">
-                  {p.estoque_agora?.status === 'COMPLETO' ? (
-                    <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-emerald-600 text-white whitespace-nowrap">
-                      ✓ chegou tudo
-                    </span>
-                  ) : p.estoque_agora?.status === 'PARCIAL' ? (
-                    <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">
-                      parte · {fmt(p.estoque_agora.valor_disponivel)}
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-gray-400">sem material</span>
-                  )}
-                </td>
-                <td className="py-2 px-3 text-right tabular-nums text-gray-700">{Number(p.qtd_total) || 0}</td>
-                <td className="py-2 px-3 text-right tabular-nums font-medium text-red-700">{fmt(p.valor)}</td>
-                <td className="py-2 px-3 text-[11px] text-gray-500">
-                  {p.previsao_pcp
-                    ? `PCP ${format(new Date(p.previsao_pcp + 'T12:00:00'), 'dd/MM')}`
-                    : p.cobre_com_sa && p.previsao_sa
-                      ? `SA ~${format(new Date(p.previsao_sa + 'T12:00:00'), 'dd/MM')}`
-                      : '—'}
-                </td>
-                <td className={`py-2 px-3 text-right tabular-nums text-xs ${(p.dias_parada || 0) >= 15 ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
-                  {p.dias_parada != null ? `${p.dias_parada}d` : '—'}
-                </td>
-                <td className="py-2 pl-3 text-right">
-                  <button onClick={() => setLiberando(p)} disabled={!p.pode_liberar}
-                    title={p.motivo_bloqueio || undefined}
-                    className={`text-[11px] font-medium px-2 py-1 rounded-lg disabled:bg-gray-100 disabled:text-gray-400 text-white whitespace-nowrap ${
-                      p.estoque_agora?.status === 'NENHUM'
-                        ? 'bg-gray-400 hover:bg-gray-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
-                    {p.pode_liberar ? 'Liberar' : 'Bloqueada'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {liberando && (
-        <ModalLiberarPendencia pendencia={liberando} onClose={() => setLiberando(null)}
-          onLiberado={() => {
-            qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
-            qc.invalidateQueries({ queryKey: ['pedidos'] })
-          }} />
+      {liberaveis > 0 ? (
+        <p className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-800">
+          ✓ <strong>{liberaveis}</strong> com material em estoque — dá para destravar{' '}
+          <strong>{fmt(data?.valor_liberavel || 0)}</strong> agora.
+          <span className="font-medium underline ml-1">Abrir o tratamento →</span>
+        </p>
+      ) : (
+        <p className="mt-3 text-xs text-gray-500">
+          Nenhuma tem material ainda.
+          <span className="font-medium text-indigo-700 underline ml-1">Cobrar o PCP →</span>
+        </p>
       )}
-    </div>
+    </Link>
   )
 }
 

@@ -20,6 +20,7 @@ from app.models.schemas import (
     EmpresaCreate,
     EmpresaUpdate,
     DisponibilidadeRequest,
+    AcompanharPendenciaRequest,
     LiberarPendenciaRequest,
     NotaCreate,
     OportunidadeCreate,
@@ -169,6 +170,20 @@ def liberar_pendencia(fonte: str, registro_id: UUID,
         parcial=payload.parcial if payload else False,
         observacao=payload.observacao if payload else None,
         itens_escolhidos=payload.itens if payload else None)
+
+
+@router.patch("/pendencias/{fonte}/{registro_id}")
+def acompanhar_pendencia(fonte: str, registro_id: UUID,
+                         payload: AcompanharPendenciaRequest,
+                         usuario: UsuarioOut = Depends(get_current_user)):
+    """Anota o que se apurou sobre uma pendência: quando o material vem e o que o
+    PCP respondeu. Não libera nada e não mexe em item — para isso existe
+    .../liberar."""
+    return pendencia_service.acompanhar(
+        fonte, str(registro_id), usuario,
+        previsao_pcp=payload.previsao_pcp.isoformat() if payload.previsao_pcp else None,
+        observacao=payload.observacao,
+        limpar_previsao=payload.limpar_previsao)
 
 
 # A fila "Repasse p/ OV" (GET /repasses e POST .../assumir) foi removida junto com
