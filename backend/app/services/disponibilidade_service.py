@@ -130,7 +130,11 @@ def analisar(itens: list, sincronizar: bool = False) -> dict:
 
         disponivel = float(row.get("disponivel") or 0)
         sa = float(row.get("estoque_sa") or 0)
-        livre = max(0.0, disponivel - ja_alocado.get(cod, 0.0))
+        # Quanto deste código já foi prometido a itens ANTERIORES desta análise.
+        # Sem devolver isso, quem recebe zero não tem como saber se o estoque
+        # está vazio ou se a fila levou tudo — e são coisas muito diferentes.
+        reservado_antes = ja_alocado.get(cod, 0.0)
+        livre = max(0.0, disponivel - reservado_antes)
         atendida = min(qtd, livre)
         pendente = round(qtd - atendida, 3)
         ja_alocado[cod] = ja_alocado.get(cod, 0.0) + atendida
@@ -152,6 +156,9 @@ def analisar(itens: list, sincronizar: bool = False) -> dict:
             "qtd_pedida": qtd,
             "disponivel": round(disponivel),
             "estoque_sa": round(sa),
+            # O que a fila levou antes deste item. `disponivel - reservado_antes`
+            # é o que sobrou para ele.
+            "reservado_antes": round(reservado_antes, 3),
             "qtd_atendida": atendida,
             "qtd_pendente": pendente,
             "valor_unitario": vu,

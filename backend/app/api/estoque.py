@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.core.deps import get_current_user
-from app.models.schemas import UsuarioOut
+from app.models.schemas import AjusteEstoqueRequest, UsuarioOut
 from app.services import estoque_service
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
@@ -34,6 +34,36 @@ def disponivel_por_codigo(_: UsuarioOut = Depends(get_current_user)):
     casaria com o parâmetro `codigo` se viesse depois.
     """
     return estoque_service.disponivel_por_codigo()
+
+
+@router.post("/ajuste")
+def ajustar_estoque(payload: AjusteEstoqueRequest,
+                    usuario: UsuarioOut = Depends(get_current_user)):
+    """Corrige à mão o PA da foto de hoje — para quando a divergência trava uma OV.
+
+    Não altera a foto do PCP: o ajuste é uma camada por cima, e vale só para a
+    foto de hoje. Amanhã o PCP volta a mandar.
+
+    Fica ANTES de /{codigo}/... na ordem das rotas: "ajuste" casaria com o
+    parâmetro `codigo` se viesse depois.
+    """
+    from fastapi import HTTPException
+    try:
+        return estoque_service.ajustar(payload.codigo, payload.estoque_pa,
+                                       payload.motivo, str(usuario.id))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        # A tabela do ajuste é nova (migration v15): sem ela, dizer o que falta é
+        # melhor do que um 500 sem explicação.
+        raise HTTPException(status_code=500,
+                            detail=f"Não foi possível gravar o ajuste: {e}")
+
+
+@router.get("/{codigo}/ajustes")
+def historico_ajustes(codigo: str, _: UsuarioOut = Depends(get_current_user)):
+    """Ajustes manuais já feitos num código — quem, quando, de quanto para quanto."""
+    return estoque_service.ajustes_do_codigo(codigo)
 
 
 @router.get("/{codigo}/comprometido")

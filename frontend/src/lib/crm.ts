@@ -130,7 +130,18 @@ export interface EstoqueAgora {
   valor_disponivel: number
   itens_prontos: number
   itens_total: number
-  itens: { codigo: string | null; qtd_atendida: number; qtd_pendente: number }[]
+  itens: Array<{
+    codigo: string | null
+    qtd_atendida: number
+    qtd_pendente: number
+    /** Estoque do código como um todo, antes do rateio da fila. */
+    disponivel?: number | null
+    /** Quanto a fila levou antes desta pendência. */
+    reservado_antes?: number
+    /** Quem está na frente segurando este código — é o que explica um zero
+     *  quando a tela de Estoque mostra saldo. */
+    reservado_para?: Array<{ ov: string | null; cliente: string | null; qtd: number }>
+  }>
 }
 
 export interface PendenciasResp {

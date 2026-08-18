@@ -312,6 +312,23 @@ def _estoque_agora(pendencias: list) -> dict:
         pos = int(ref.split(":")[0])
         por_pendencia.setdefault(pos, []).append(item)
 
+    # Quem ficou com cada código, na ordem da fila. É o que transforma um "0 em
+    # estoque" — que parece bug quando a tela de Estoque mostra 12 — em "as 12
+    # unidades estão reservadas para a OV que está na frente".
+    donos: dict = {}
+    for pos, p in enumerate(fila):
+        for item in por_pendencia.get(pos, []):
+            q = float(item.get("qtd_atendida") or 0)
+            if q <= 0:
+                continue
+            cod = (item.get("codigo") or "").strip().upper()
+            donos.setdefault(cod, []).append({
+                "pos": pos,
+                "ov": p.get("ov_ref") or None,
+                "cliente": p.get("cliente") or None,
+                "qtd": round(q, 3),
+            })
+
     for pos, p in enumerate(fila):
         itens = por_pendencia.get(pos, [])
         prontos = [i for i in itens if float(i.get("qtd_atendida") or 0) > 0]
@@ -327,9 +344,17 @@ def _estoque_agora(pendencias: list) -> dict:
             "itens_prontos": len(prontos),
             "itens_total": len(itens),
             # Só o que interessa por item, para a tela não recalcular nada.
-            "itens": [{"codigo": i.get("codigo"),
-                       "qtd_atendida": float(i.get("qtd_atendida") or 0),
-                       "qtd_pendente": float(i.get("qtd_pendente") or 0)} for i in itens],
+            "itens": [{
+                "codigo": i.get("codigo"),
+                "qtd_atendida": float(i.get("qtd_atendida") or 0),
+                "qtd_pendente": float(i.get("qtd_pendente") or 0),
+                # Estoque do código como um todo, antes do rateio da fila.
+                "disponivel": i.get("disponivel"),
+                "reservado_antes": float(i.get("reservado_antes") or 0),
+                # Quem está na frente segurando este código.
+                "reservado_para": [d for d in donos.get((i.get("codigo") or "").strip().upper(), [])
+                                   if d["pos"] < pos],
+            } for i in itens],
         }
 
     return {"desatualizado": analise.get("desatualizado", False),

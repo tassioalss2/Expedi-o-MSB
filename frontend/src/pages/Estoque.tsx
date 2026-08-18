@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { Boxes, Search, X, RefreshCw, AlertTriangle, Download, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { Boxes, Search, X, RefreshCw, AlertTriangle, Download, TrendingUp, TrendingDown, Minus, PencilLine } from 'lucide-react'
 import api from '../lib/api'
 import { msgErro } from '../lib/crm'
 import { STATUS_CONFIG } from '../lib/statusConfig'
+import { ModalAjusteEstoque, SeloAjustado, type AjusteEstoque } from '../components/AjusteEstoque'
 
 interface ItemEstoque {
   codigo: string
@@ -25,6 +26,10 @@ interface ItemEstoque {
   tendencia_pct: number | null
   media_3m: number | null
   media_3m_anterior: number | null
+  /** Correção manual do PA de hoje, quando alguém conferiu a prateleira. */
+  ajuste?: AjusteEstoque | null
+  /** O que a foto do PCP trouxe, antes do ajuste. */
+  estoque_pcp_original?: number
 }
 interface ChegadaSa {
   codigo: string
@@ -116,6 +121,7 @@ export function Estoque() {
   const [ordem, setOrdem] = useState<'' | 'alta' | 'baixa'>('')
   const [detalheCodigo, setDetalheCodigo] = useState<string | null>(null)
   const [historicoCodigo, setHistoricoCodigo] = useState<string | null>(null)
+  const [ajustando, setAjustando] = useState<ItemEstoque | null>(null)
 
   const { data, isLoading } = useQuery<Resposta>({
     queryKey: ['estoque'],
@@ -417,6 +423,14 @@ export function Estoque() {
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-gray-700 whitespace-nowrap border-l border-gray-100">
                         {fmtNum(i.estoque_pcp)}
+                        <button onClick={() => setAjustando(i)}
+                          title="A prateleira não bate com a foto do PCP? Ajuste aqui"
+                          className="ml-1.5 text-gray-300 hover:text-violet-600 align-middle">
+                          <PencilLine size={12} />
+                        </button>
+                        {i.ajuste && (
+                          <span className="block mt-0.5"><SeloAjustado ajuste={i.ajuste} /></span>
+                        )}
                         {/* Semiacabado que virou acabado hoje: é a mudança que pode
                             destravar uma venda parada esperando este item. */}
                         {i.chegou_hoje > 0 && (
@@ -537,6 +551,16 @@ export function Estoque() {
             </div>
           </div>
         </div>
+      )}
+
+      {ajustando && (
+        <ModalAjusteEstoque
+          codigo={ajustando.codigo}
+          descricao={ajustando.descricao}
+          paAtual={ajustando.estoque_pcp}
+          pcpDizia={ajustando.ajuste?.pcp_dizia ?? ajustando.estoque_pcp_original ?? null}
+          onClose={() => setAjustando(null)}
+        />
       )}
 
       {historicoCodigo && (

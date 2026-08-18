@@ -326,6 +326,84 @@ def _ovs_faturadas_apos(db, momento: str) -> list:
     return list({m["pedido_id"] for m in movs if m.get("pedido_id")})
 
 
+# ── Ajuste manual ─────────────────────────────────────────────────────────────
+#
+# A divergência é real: o PCP fotografa de manhã, o material chega durante o dia,
+# e a OV não pode ficar parada esperando a foto de amanhã.
+#
+# O ajuste corrige a FOTO, não guarda um saldo — a conta continua sendo
+# "PA (corrigido) menos comprometido", que é o que mantém o número auditável. E
+# vale só para a foto daquele dia: quando o PCP manda a próxima, o ajuste sai de
+# cena sozinho, para a correção de hoje não virar mentira permanente.
+
+def _ajustes_do_dia(db, dia: date) -> dict:
+    """codigo -> ajuste vigente (o mais recente do dia). Tolera a tabela não
+    existir: sem a migration v15 o app segue com a foto crua do PCP."""
+    try:
+        rows = db.table("estoque_ajustes")\
+            .select("codigo, estoque_pa, pa_anterior, motivo, usuario_id, criado_em")\
+            .eq("data_ref", dia.isoformat()).order("criado_em").execute().data
+    except Exception:
+        return {}
+    # Ordem crescente + sobrescrita = o último do dia vence.
+    return {(r.get("codigo") or "").strip().upper(): r for r in rows}
+
+
+def ajustar(codigo: str, estoque_pa: float, motivo: str, usuario_id: str) -> dict:
+    """Corrige o PA da foto de hoje para um código, com motivo obrigatório.
+
+    Não mexe em `estoque_pcp_snapshot`: a foto do PCP fica intacta, e o ajuste é
+    uma camada por cima. Assim dá para ver lado a lado o que o PCP disse e o que
+    foi conferido na prateleira.
+    """
+    cod = (codigo or "").strip().upper()
+    if not cod:
+        raise ValueError("Informe o código do item.")
+    if not (motivo or "").strip():
+        raise ValueError("Informe o motivo do ajuste — ajuste sem motivo não se audita.")
+    qtd = float(estoque_pa)
+    if qtd < 0:
+        raise ValueError("A quantidade em estoque não pode ser negativa.")
+
+    db = get_service_db()
+    dia = _hoje_brt()
+    snap = db.table("estoque_pcp_snapshot").select("codigo, estoque_pa")\
+        .eq("data_ref", dia.isoformat()).ilike("codigo", cod).execute().data
+    if not snap:
+        # Sem foto de hoje para o código: aceita mesmo assim. É justamente o caso
+        # do SKU novo que o PCP ainda não fotografou, e travar aqui deixaria a OV
+        # parada por falta de dado nosso.
+        anterior = None
+    else:
+        anterior = float(snap[0].get("estoque_pa") or 0)
+
+    linha = {
+        "codigo": cod,
+        "data_ref": dia.isoformat(),
+        "estoque_pa": qtd,
+        "pa_anterior": anterior,
+        "motivo": motivo.strip(),
+        "usuario_id": usuario_id,
+    }
+    novo = db.table("estoque_ajustes").insert(linha).execute().data[0]
+    # A tela de estoque lê do cache de exibição; sem invalidar, o ajuste só
+    # apareceria dois minutos depois — e quem ajustou acharia que não funcionou.
+    _CACHE_EXIBICAO["dados"] = None
+    return novo
+
+
+def ajustes_do_codigo(codigo: str, limite: int = 20) -> list:
+    """Histórico de ajustes de um código, do mais recente para o mais antigo."""
+    db = get_service_db()
+    try:
+        return db.table("estoque_ajustes")\
+            .select("codigo, data_ref, estoque_pa, pa_anterior, motivo, usuario_id, criado_em")\
+            .ilike("codigo", (codigo or "").strip().upper())\
+            .order("criado_em", desc=True).limit(limite).execute().data
+    except Exception:
+        return []
+
+
 def _comprometido_por_produto(db, sincronizado_em: str) -> dict:
     """produto_id -> qtd comprometida (ver regra no docstring do módulo)."""
     ids = set()
@@ -600,6 +678,9 @@ def disponivel_por_codigo() -> dict:
                 # Vai a CHAVE (URO/VASCULAR/...), não o rótulo: quem consome
                 # compara com a chave, e o rótulo é decisão de exibição.
                 "linha": _CHAVE_POR_LABEL.get(i.get("linha")),
+                # Avisa que este número passou por ajuste manual hoje — quem
+                # escolhe o item na OV precisa saber que não veio do PCP.
+                "ajustado": bool(i.get("ajuste")),
             }
             for i in (dados.get("itens") or []) if i.get("codigo")
         },
@@ -670,6 +751,17 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
     chegadas_por_codigo = {(c["codigo"] or "").strip().upper(): c
                            for c in chegadas_do_dia(dia)}
 
+    ajustes = _ajustes_do_dia(db, dia)
+    nomes_ajuste = {}
+    if ajustes:
+        ids = [a.get("usuario_id") for a in ajustes.values() if a.get("usuario_id")]
+        if ids:
+            try:
+                for u in db.table("usuarios").select("id, nome").in_("id", list(set(ids))).execute().data:
+                    nomes_ajuste[u["id"]] = u.get("nome")
+            except Exception:
+                pass
+
     mes_atual = _hoje_brt().strftime("%Y-%m")
     vendido_mes = _vendido_no_mes_por_codigo(db, mes_atual)
     ultimo_fechado = _ultimo_mes_fechado([row.get("sales_history") for row in snapshot])
@@ -679,6 +771,12 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
     for row in snapshot:
         cod = (row.get("codigo") or "").strip().upper()
         pa = float(row.get("estoque_pa") or 0)
+        # Ajuste manual do dia substitui o PA da foto — a foto continua intacta no
+        # snapshot, e as duas quantidades aparecem lado a lado na tela.
+        aj = ajustes.get(cod)
+        pa_pcp = pa
+        if aj is not None:
+            pa = float(aj.get("estoque_pa") or 0)
         sa = float(row.get("estoque_sa") or 0)
         comp = comprometido_por_codigo.get(cod, 0.0)
         # Pode ficar negativo: a foto é de manhã e mais OVs entraram do que havia
@@ -710,6 +808,17 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
             "tendencia_pct": tendencia_pct,
             "media_3m": media_3m,
             "media_3m_anterior": media_3m_ant,
+            # Ajuste manual do dia, quando houver. A tela mostra o que o PCP
+            # fotografou junto do que foi conferido — quem lê precisa saber que
+            # aquele número não veio do PCP.
+            "ajuste": None if aj is None else {
+                "estoque_pa": round(float(aj.get("estoque_pa") or 0)),
+                "pcp_dizia": None if aj.get("pa_anterior") is None else round(float(aj["pa_anterior"])),
+                "motivo": aj.get("motivo"),
+                "por": nomes_ajuste.get(aj.get("usuario_id")),
+                "em": aj.get("criado_em"),
+            },
+            "estoque_pcp_original": round(pa_pcp),
         })
 
     itens.sort(key=lambda i: (i["cobertura_disponivel"] is None, i["cobertura_disponivel"] or 0))

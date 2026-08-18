@@ -22,12 +22,13 @@ import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import {
   AlertTriangle, CalendarClock, CheckCircle2, ChevronDown, ChevronRight,
-  Clock, History, PackageCheck, PackageX, Search, Send, X,
+  Clock, History, PackageCheck, PackageX, PencilLine, Search, Send, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { fmtBRL, msgErro, type Pendencia, type PendenciasResp } from '../lib/crm'
 import { ModalLiberarPendencia } from '../components/EstoqueVenda'
+import { ModalAjusteEstoque } from '../components/AjusteEstoque'
 import { LINHA_DO_CANAL } from '../lib/statusConfig'
 import { hojeLocal } from '../lib/dataLocal'
 
@@ -292,6 +293,7 @@ function Card({ p, onLiberar, onAcompanhar }: {
   p: Pendencia; onLiberar: () => void; onAcompanhar: () => void
 }) {
   const [aberto, setAberto] = useState(false)
+  const [ajustando, setAjustando] = useState<{ codigo: string; descricao?: string | null } | null>(null)
   const dias = p.dias_parada || 0
   const corDias = dias >= DIAS_CRITICO ? 'text-red-600 font-semibold'
     : dias >= DIAS_ATENCAO ? 'text-amber-700' : 'text-gray-500'
@@ -404,16 +406,27 @@ function Card({ p, onLiberar, onAcompanhar }: {
                   const agora = (p.estoque_agora?.itens || [])
                     .find(x => (x.codigo || '') === (i.codigo || ''))
                   const temTudo = agora && agora.qtd_atendida >= (i.qtd_pendente || 0) - 0.001
+                  // O caso que parecia bug: a tela de Estoque mostra 12, aqui dá 0.
+                  // O estoque existe, mas a fila levou — quem está na frente é o
+                  // que fecha a conta.
+                  const naFila = (agora?.reservado_para || [])
                   return (
-                    <tr key={idx} className="border-t border-gray-50">
+                    <tr key={idx} className="border-t border-gray-50 align-top">
                       <td className="py-1 pr-2">
                         <span className="font-mono text-gray-700">{i.codigo || '—'}</span>
                         <span className="text-gray-400 ml-1.5">{i.descricao}</span>
+                        {naFila.length > 0 && (
+                          <span className="block text-[11px] text-amber-700">
+                            {agora?.disponivel} un existem, reservadas para{' '}
+                            {naFila.map(d => `${d.ov || d.cliente || 'outra venda'} (${d.qtd})`).join(', ')}
+                            {' '}— espera desde antes desta
+                          </span>
+                        )}
                       </td>
                       <td className="py-1 text-right tabular-nums text-gray-700">
                         {Number(i.qtd_pendente) || 0}
                       </td>
-                      <td className="py-1 text-right tabular-nums">
+                      <td className="py-1 text-right tabular-nums whitespace-nowrap">
                         {!agora ? (
                           <span className="text-gray-300">—</span>
                         ) : temTudo ? (
@@ -422,6 +435,13 @@ function Card({ p, onLiberar, onAcompanhar }: {
                           <span className="text-amber-700">{agora.qtd_atendida}</span>
                         ) : (
                           <span className="text-gray-400">0</span>
+                        )}
+                        {i.codigo && (
+                          <button onClick={() => setAjustando({ codigo: i.codigo!, descricao: i.descricao })}
+                            title="O estoque na prateleira está diferente? Ajuste aqui para destravar a OV"
+                            className="ml-1.5 text-violet-600 hover:text-violet-800 align-middle">
+                            <PencilLine size={12} />
+                          </button>
                         )}
                       </td>
                       <td className="py-1 text-right tabular-nums text-gray-600">
@@ -432,6 +452,11 @@ function Card({ p, onLiberar, onAcompanhar }: {
                 })}
               </tbody>
             </table>
+            <p className="text-[11px] text-gray-400 mt-1">
+              "Em estoque hoje" é o que sobrou para ESTA venda depois da fila: quando
+              duas vendas querem o mesmo item, quem espera há mais tempo recebe primeiro.
+              O lápis ajusta o estoque quando a prateleira não bate com a foto do PCP.
+            </p>
           </div>
 
           <div>
@@ -469,6 +494,11 @@ function Card({ p, onLiberar, onAcompanhar }: {
             )}
           </div>
         </div>
+      )}
+
+      {ajustando && (
+        <ModalAjusteEstoque codigo={ajustando.codigo} descricao={ajustando.descricao}
+          onClose={() => setAjustando(null)} />
       )}
     </div>
   )

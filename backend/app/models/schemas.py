@@ -753,6 +753,35 @@ class ItemLiberacao(BaseModel):
     qtd: float
 
 
+class AjusteEstoqueRequest(BaseModel):
+    """Correção manual do PA da foto de hoje. O motivo é obrigatório: ajuste sem
+    motivo não se audita, e este número destrava OV."""
+    codigo: str
+    estoque_pa: float
+    motivo: str
+
+    @field_validator("codigo")
+    @classmethod
+    def _cod(cls, v: str) -> str:
+        if not (v or "").strip():
+            raise ValueError("Informe o código do item.")
+        return v.strip().upper()
+
+    @field_validator("motivo")
+    @classmethod
+    def _motivo(cls, v: str) -> str:
+        if len((v or "").strip()) < 5:
+            raise ValueError("Explique o motivo do ajuste (mín. 5 caracteres).")
+        return v.strip()
+
+    @field_validator("estoque_pa")
+    @classmethod
+    def _qtd(cls, v: float) -> float:
+        if v < 0:
+            raise ValueError("A quantidade em estoque não pode ser negativa.")
+        return v
+
+
 class AcompanharPendenciaRequest(BaseModel):
     """Cobrança registrada numa pendência aberta: o que o PCP respondeu e para
     quando. Não libera material — só grava o que se sabe da espera."""
