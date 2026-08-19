@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     # então uma var não declarada no ambiente derruba o boot do backend.
     pcp_supabase_url: Optional[str] = None
     pcp_supabase_key: Optional[str] = None
+    # Dynamics 365 F&O (opcional, SÓ LEITURA — ver app/services/d365_service.py).
+    # Sem as quatro primeiras a integração fica desligada e o app segue como antes.
+    d365_resource: Optional[str] = None       # https://<ambiente>.operations.dynamics.com
+    d365_tenant_id: Optional[str] = None
+    d365_client_id: Optional[str] = None
+    d365_client_secret: Optional[str] = None
+    d365_empresa: Optional[str] = None        # dataAreaId, quando há mais de uma empresa
 
     class Config:
         env_file = ".env"
