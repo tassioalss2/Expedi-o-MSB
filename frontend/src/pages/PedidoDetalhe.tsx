@@ -5,6 +5,7 @@ import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText,
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
+import { erroNumeroOv } from '../lib/crm'
 import type { InventarioItem, Pedido, Cubagem, Transportadora } from '../types'
 import { ClienteAutocomplete } from './NovoPedido'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
@@ -2163,7 +2164,7 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao completar a OV'),
   })
 
-  const valido = numero.trim() && data && condPagamento.trim()
+  const valido = numero.trim() && !erroNumeroOv(numero) && data && condPagamento.trim()
 
   return (
     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5 mb-5">

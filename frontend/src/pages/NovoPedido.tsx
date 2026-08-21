@@ -8,6 +8,7 @@ import toast from 'react-hot-toast'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { BlocoDisponibilidade, ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
 import type { Disponibilidade } from '../lib/crm'
+import { erroNumeroOv, limpaNumeroOv } from '../lib/crm'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 
 export function ClienteAutocomplete({ value, onChange, initialNome, onCriarNovo }: {
@@ -270,7 +271,8 @@ export function NovoPedido() {
     },
   })
 
-  const podeEnviar = form.numero_pedido && form.cliente_id && form.data_prevista_entrega
+  const podeEnviar = form.numero_pedido && !erroNumeroOv(form.numero_pedido)
+    && form.cliente_id && form.data_prevista_entrega
     && form.condicao_pagamento.trim()
     && form.tipo_operacao && itens.length > 0
   const podeConfirmarRecriar =
@@ -302,9 +304,14 @@ export function NovoPedido() {
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
             <label className="text-sm font-medium text-gray-700">Número da OV *</label>
-            <input type="text" value={form.numero_pedido} onChange={e => setForm({...form, numero_pedido: e.target.value.toUpperCase()})}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono"
+            <input type="text" value={form.numero_pedido}
+              onChange={e => setForm({...form, numero_pedido: limpaNumeroOv(e.target.value)})}
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono ${
+                erroNumeroOv(form.numero_pedido) ? 'border-red-400' : ''}`}
               placeholder="Ex: OV015437" />
+            {erroNumeroOv(form.numero_pedido) && (
+              <p className="text-xs text-red-600 mt-1">{erroNumeroOv(form.numero_pedido)}</p>
+            )}
           </div>
 
           <div className="col-span-2">

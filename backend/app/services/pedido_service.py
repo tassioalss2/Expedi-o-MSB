@@ -1100,7 +1100,17 @@ def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut, dados: Opt
 
         novo_numero = campos.get("numero_pedido")
         if novo_numero:
-            novo_numero = str(novo_numero).strip().upper()
+            # Mesma regra da criação: corrigir o número na reativação é
+            # justamente quando o erro de digitação costuma entrar.
+            from app.models.schemas import validar_numero_ov, _OPERACOES_SEM_NUMERO_OV
+            op = campos.get("tipo_operacao") or pedido.get("tipo_operacao") or "VENDA_NORMAL"
+            if op in _OPERACOES_SEM_NUMERO_OV:
+                novo_numero = str(novo_numero).strip().upper()
+            else:
+                try:
+                    novo_numero = validar_numero_ov(str(novo_numero))
+                except ValueError as e:
+                    raise HTTPException(status_code=422, detail=str(e))
             if novo_numero != pedido.get("numero_pedido"):
                 conflito = db.table("pedidos").select("id").eq("numero_pedido", novo_numero)\
                     .neq("status", StatusPedido.CANCELADO.value).neq("id", pedido_id).execute().data

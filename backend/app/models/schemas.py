@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator
 
 from app.models.enums import (
     DecisaoTratativa,
@@ -203,6 +203,44 @@ class ItemPedidoOut(BaseModel):
 _DECISOES_ESTOQUE = ("PARCIAL", "AGUARDAR")
 
 
+# Operacoes que NAO sao OV e por isso tem numeracao propria: devolucao usa
+# DEV+numero da nota estornada, comunicado de uso usa CU/NF. Barrar o prefixo
+# delas quebraria fluxo que funciona.
+_OPERACOES_SEM_NUMERO_OV = ("DEVOLUCAO", "COMUNICADO_USO")
+
+# Provisorios gerados pelo proprio app, substituidos pelo numero real depois.
+_PREFIXOS_PROVISORIOS = ("CRM-", "OUT-")
+
+
+def validar_numero_ov(valor: str) -> str:
+    """Normaliza e exige o formato OV + digitos.
+
+    Existe porque o erro real e sempre o mesmo: entra o numero do CONTRATO
+    (MSB-000206), o numero da NF, ou o numero da OV sem o "OV" na frente. Ja
+    aconteceu com OV faturada e entregue, e a correcao depois custa bem mais do
+    que a recusa na hora.
+
+    O ponto final sobrando ("MSB-000206.") e a digitacao com espaco entram na
+    limpeza — sao escorregao de teclado, nao decisao de ninguem.
+    """
+    n = (valor or "").strip().upper().rstrip(". ").replace(" ", "")
+    if not n:
+        raise ValueError("Informe o número da OV.")
+    if n.startswith(_PREFIXOS_PROVISORIOS):
+        return n
+    if not n.startswith("OV"):
+        raise ValueError(
+            "O número da OV precisa começar com 'OV' — veio '%s'. "
+            "Se o que você tem em mão é o número do contrato (MSB-...) ou da nota, "
+            "esse não é o número da OV." % valor
+        )
+    if not n[2:].isdigit():
+        raise ValueError(
+            "Depois do 'OV' só entram números — veio '%s'." % valor
+        )
+    return n
+
+
 class CondicaoPagamentoMixin(BaseModel):
     """Toda OV nasce com a condição de pagamento negociada — sem ela, quem fatura
     depois não sabe em que prazo cobrar.
@@ -280,11 +318,16 @@ class PedidoCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):
     # OV em gerenciamento de crédito — inicia no status AGUARD_CREDITO
     em_gerenciamento_credito: bool = False
 
-    @field_validator("numero_pedido")
-    @classmethod
-    def _strip_numero_pedido(cls, v: str) -> str:
-        # Evita espaços sobrando que criam "OVs fantasma" (ex.: 'OV015619 ').
-        return v.strip() if v else v
+    @model_validator(mode="after")
+    def _exige_numero_ov(self):
+        # Depois dos outros campos: a regra depende do tipo de operação, e
+        # devolução / comunicado de uso têm numeração própria.
+        op = self.tipo_operacao.value if hasattr(self.tipo_operacao, "value") else self.tipo_operacao
+        if op in _OPERACOES_SEM_NUMERO_OV:
+            self.numero_pedido = (self.numero_pedido or "").strip()
+        else:
+            self.numero_pedido = validar_numero_ov(self.numero_pedido)
+        return self
 
 
 class PedidoOutboundCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):
@@ -719,6 +762,11 @@ class NotaCreate(BaseModel):
 
 class GerarOVRequest(CondicaoPagamentoMixin):
     numero_pedido: str
+
+    @field_validator("numero_pedido")
+    @classmethod
+    def _numero_ov(cls, v: str) -> str:
+        return validar_numero_ov(v)
     tipo_frete: str = "FOB"
     data_prevista_entrega: date
     local_entrega: Optional[str] = None

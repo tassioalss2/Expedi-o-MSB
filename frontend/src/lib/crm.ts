@@ -257,3 +257,28 @@ export function prazoCor(d?: string | null): string {
   if (dias <= 3) return 'text-amber-600 font-medium'
   return 'text-gray-500'
 }
+
+/** Número de OV válido: OV seguido de dígitos.
+ *
+ *  O erro que isto evita é sempre o mesmo: entra o número do contrato
+ *  (MSB-000206), o da nota, ou o da OV sem o "OV" na frente. Já aconteceu com OV
+ *  faturada e entregue — corrigir depois custa bem mais do que avisar aqui.
+ *
+ *  Devolução (DEV...) e comunicado de uso (CU.../NF...) têm numeração própria e
+ *  não passam por esta regra.
+ */
+export function erroNumeroOv(valor: string): string | null {
+  const n = (valor || '').trim().toUpperCase().replace(/[.\s]+$/, '').replace(/\s/g, '')
+  if (!n) return null                       // vazio é "ainda não preencheu", não erro
+  if (/^(CRM|OUT)-/.test(n)) return null    // provisórios do próprio app
+  if (!n.startsWith('OV')) {
+    return `Precisa começar com "OV". Se o que você tem é o número do contrato (MSB-…) ou da nota, esse não é o número da OV.`
+  }
+  if (!/^OV\d+$/.test(n)) return 'Depois do "OV" só entram números.'
+  return null
+}
+
+/** Limpa o que é escorregão de teclado: espaço e ponto sobrando. */
+export function limpaNumeroOv(valor: string): string {
+  return (valor || '').toUpperCase().replace(/\s/g, '')
+}
