@@ -1599,9 +1599,17 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
     }),
     onSuccess: (res) => {
       const d = res.data
+      // Trocar o tipo de frete pode trocar a ETAPA (CIF cota o frete, FOB espera a
+      // transportadora do cliente). Dizer isso evita a pessoa corrigir o frete e
+      // não entender por que o próximo passo mudou.
+      const etapa = d.etapa_refeita === 'EM_COTACAO_FRETE'
+        ? ' — a OV voltou para a cotação de frete'
+        : d.etapa_refeita === 'AGUARD_TRANSPORTADORA'
+          ? ' — a OV passou a aguardar a transportadora do cliente'
+          : ''
       toast.success(d.tipo_frete_anterior === d.tipo_frete_novo
         ? `Valor do frete corrigido (${TIPO_FRETE_LABEL[d.tipo_frete_novo]})`
-        : `Tipo de frete alterado: ${TIPO_FRETE_LABEL[d.tipo_frete_anterior]} → ${TIPO_FRETE_LABEL[d.tipo_frete_novo]}`)
+        : `Tipo de frete alterado: ${TIPO_FRETE_LABEL[d.tipo_frete_anterior]} → ${TIPO_FRETE_LABEL[d.tipo_frete_novo]}${etapa}`)
       qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       qc.invalidateQueries({ queryKey: ['ocorrencias'] })

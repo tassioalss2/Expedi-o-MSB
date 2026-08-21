@@ -14,7 +14,7 @@ from app.models.schemas import (
     VerificarFisicoRequest,
 )
 from app.services import inventario_service
-from app.models.enums import TipoFrete
+from app.models.enums import StatusPedido, TipoFrete
 
 router = APIRouter(tags=["inventario"])
 
@@ -291,6 +291,26 @@ def alterar_tipo_frete(
         update_frete["valor_nf"] = round(valor_produtos + valor_frete_novo, 2)
     db.table("pedidos").update(update_frete).eq("id", str(pedido_id)).execute()
 
+    # O ramo do frete e escolhido na cubagem, pelo tipo daquele momento: CIF vai
+    # cotar, FOB espera a transportadora do cliente. Mudar o tipo DEPOIS deixava a
+    # OV no ramo errado — pedindo cotacao de um frete que o cliente paga, ou
+    # esperando uma transportadora que nao vem. Aqui ela troca de ramo junto.
+    etapa_refeita = None
+    if not mesmo_tipo:
+        destino = (StatusPedido.EM_COTACAO_FRETE.value if eh_cif
+                   else StatusPedido.AGUARD_TRANSPORTADORA.value)
+        if pedido["status"] in (StatusPedido.EM_COTACAO_FRETE.value,
+                                StatusPedido.AGUARD_TRANSPORTADORA.value) \
+                and pedido["status"] != destino:
+            from app.services.inventario_service import alterar_status
+            alterar_status(
+                str(pedido_id), destino, usuario,
+                "Tipo de frete alterado para %s — etapa refeita: %s"
+                % (labels.get(frete_novo, frete_novo),
+                   "aguardando cotacao de frete" if eh_cif
+                   else "aguardando transportadora do cliente"))
+            etapa_refeita = destino
+
     linha_valor = f"\n• Valor do frete: {_brl(valor_frete_novo)}" if eh_cif else ""
     if mesmo_tipo:
         tipo_ocorrencia = "Correção de Valor do Frete"
@@ -320,7 +340,7 @@ def alterar_tipo_frete(
     db.table("movimentacoes").insert({
         "pedido_id": str(pedido_id),
         "status_anterior": pedido["status"],
-        "status_novo": pedido["status"],
+        "status_novo": etapa_refeita or pedido["status"],
         "usuario_id": uid,
         "observacao": (
             f"Valor do frete corrigido ({labels.get(frete_novo, frete_novo)}): "
@@ -338,6 +358,9 @@ def alterar_tipo_frete(
         "tipo_frete_anterior": frete_anterior,
         "tipo_frete_novo": frete_novo,
         "valor_frete": valor_frete_novo,
+        # A tela avisa quando a OV trocou de etapa, senao a pessoa corrige o frete
+        # e nao entende por que o proximo passo mudou.
+        "etapa_refeita": etapa_refeita,
     }
 
 

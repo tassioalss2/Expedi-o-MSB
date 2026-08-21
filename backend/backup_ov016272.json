@@ -1,0 +1,64 @@
+{
+ "pedido": {
+  "id": "11262af4-bd0e-456b-af3f-def38b0b8e9d",
+  "numero_pedido": "MSB-000206.",
+  "cliente_id": "cf36bfbb-ba09-4c3c-96e5-6f61b8abe358",
+  "transportadora_id": null,
+  "status": "LIBERADO",
+  "prioridade": "NORMAL",
+  "data_prevista_entrega": "2026-08-18",
+  "data_prevista_coleta": null,
+  "data_real_coleta": null,
+  "numero_nf": null,
+  "chave_nfe": null,
+  "valor_nf": null,
+  "observacoes": null,
+  "criado_por": null,
+  "criado_em": "2026-08-17T19:36:46.390753+00:00",
+  "atualizado_em": "2026-08-18T15:31:21.633704+00:00",
+  "tipo_frete": "CIF_SEM_VALOR",
+  "local_entrega": "Campina Grande/PB",
+  "valor_frete": null,
+  "valor_produtos": null,
+  "pedido_pai_id": null,
+  "remessa_numero": 1,
+  "codigo_rastreio": null,
+  "tipo_operacao": "VENDA_NORMAL",
+  "canal": "VASCULAR",
+  "empenho_id": "793ef1fa-20a3-4069-a72b-a311ae90f004",
+  "data_esperada_cliente": "2026-08-18",
+  "af": null,
+  "nome_paciente": null,
+  "prontuario": null,
+  "data_procedimento": null,
+  "pendencia": null,
+  "data_faturamento": null,
+  "condicao_pagamento": "30 dias",
+  "forma_venda": "DIRETA"
+ },
+ "movimentacoes": [
+  {
+   "id": "46616cfc-7c59-4ada-aecc-d72ebe5d08bd",
+   "pedido_id": "11262af4-bd0e-456b-af3f-def38b0b8e9d",
+   "status_anterior": null,
+   "status_novo": "LIBERADO",
+   "usuario_id": "2ee10cc9-4c76-4e77-9354-dfe88e8a6d9e",
+   "observacao": "Pedido criado",
+   "criado_em": "2026-08-17T19:36:47.009377+00:00"
+  }
+ ],
+ "itens": [
+  {
+   "id": "f18ee871-31ed-4b34-98ed-241911640e3f",
+   "pedido_id": "11262af4-bd0e-456b-af3f-def38b0b8e9d",
+   "produto_id": "578c0a77-db34-4ea9-b4b3-a4589cf0f659",
+   "lote_id": null,
+   "qtd_solicitada": 30.0,
+   "qtd_separada": null,
+   "qtd_conferida": null,
+   "qtd_divergente": null,
+   "status_item": "PENDENTE",
+   "valor_unitario": 51.2
+  }
+ ]
+}

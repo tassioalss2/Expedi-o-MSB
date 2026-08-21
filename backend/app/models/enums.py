@@ -46,8 +46,13 @@ TRANSICOES_PERMITIDAS: dict[StatusPedido, list[StatusPedido]] = {
     StatusPedido.DIVERGENCIA:            [StatusPedido.AGUARD_TRATATIVA],
     StatusPedido.AGUARD_TRATATIVA:       [StatusPedido.EM_INVENTARIO, StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.BLOQUEADO, StatusPedido.CANCELADO],
     StatusPedido.EM_PROCESSO_SISTEMICO:  [StatusPedido.EM_COTACAO_FRETE, StatusPedido.AGUARD_TRANSPORTADORA, StatusPedido.AGUARD_FATURAMENTO],
-    StatusPedido.EM_COTACAO_FRETE:       [StatusPedido.AGUARD_FATURAMENTO, StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.BLOQUEADO],
-    StatusPedido.AGUARD_TRANSPORTADORA:  [StatusPedido.AGUARD_FATURAMENTO, StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.BLOQUEADO],
+    # Cotar frete e aguardar transportadora do cliente sao a MESMA etapa do
+    # processo, em ramos diferentes: CIF cota, FOB espera o cliente informar. Qual
+    # ramo vale depende do tipo de frete, e o tipo de frete muda depois da cubagem
+    # (caso real: OV016324 saiu de CIF com Valor para FOB e ficou presa pedindo uma
+    # cotacao que nao existe mais). Por isso os dois se alcancam.
+    StatusPedido.EM_COTACAO_FRETE:       [StatusPedido.AGUARD_FATURAMENTO, StatusPedido.AGUARD_TRANSPORTADORA, StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.BLOQUEADO],
+    StatusPedido.AGUARD_TRANSPORTADORA:  [StatusPedido.AGUARD_FATURAMENTO, StatusPedido.EM_COTACAO_FRETE, StatusPedido.EM_PROCESSO_SISTEMICO, StatusPedido.BLOQUEADO],
     StatusPedido.AGUARD_FATURAMENTO:     [StatusPedido.FATURADO, StatusPedido.EM_COTACAO_FRETE, StatusPedido.AGUARD_TRANSPORTADORA, StatusPedido.BLOQUEADO],
     StatusPedido.FATURADO:               [StatusPedido.AGUARD_COLETA],
     StatusPedido.AGUARD_COLETA:          [StatusPedido.COLETADO],
