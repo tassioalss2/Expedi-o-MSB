@@ -25,3 +25,6 @@ backend/migrar_*.py
 *.xlsx
 *.xls
 *.csv
+
+# Backups de registros de producao: ficam fora do repositorio
+backend/backup_*.json
