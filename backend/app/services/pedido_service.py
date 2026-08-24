@@ -93,12 +93,30 @@ def _validar_transicao(atual: str, novo: str) -> None:
         )
 
 
+def _autor(usuario_id: Optional[str]) -> Optional[str]:
+    """O id de quem agiu, conferido contra a tabela de usuários.
+
+    A conferência existe porque `movimentacoes.usuario_id` tem chave estrangeira:
+    um id que não existe derruba o insert e, com ele, a acao inteira. Quando o id
+    não confere, grava sem autor — perder o nome é ruim, perder a movimentação é
+    pior (ela é o que atribui competência ao faturamento).
+
+    Antes daqui saía `select('id').limit(1)`: o PRIMEIRO usuário que o banco
+    devolvesse, ignorando quem de fato agiu. Todo o histórico ficava assinado pela
+    mesma pessoa — 91% das movimentações de uma semana saíram no nome de alguém do
+    comercial que não tinha feito inventário nenhum.
+    """
+    if not usuario_id:
+        return None
+    db = get_service_db()
+    achou = db.table("usuarios").select("id").eq("id", str(usuario_id)).execute().data
+    return str(usuario_id) if achou else None
+
+
 def _registrar_movimentacao(pedido_id: str, status_anterior: str, status_novo: str,
                              usuario_id: str, observacao: Optional[str] = None) -> None:
     db = get_service_db()
-    # Busca o primeiro usuário real do banco para usar como referência
-    usuarios = db.table("usuarios").select("id").limit(1).execute()
-    uid = usuarios.data[0]["id"] if usuarios.data else None
+    uid = _autor(usuario_id)
     db.table("movimentacoes").insert({
         "pedido_id": pedido_id,
         "status_anterior": status_anterior,
@@ -962,8 +980,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     # A movimentação de FATURADO é o que o faturamento usa para atribuir a
     # competência. Cria já — se falhar, desfaz o pedido para não deixar um
     # comunicado "faturado" órfão (que ficaria fora do faturamento).
-    usuarios = db.table("usuarios").select("id").limit(1).execute()
-    uid = usuarios.data[0]["id"] if usuarios.data else None
+    uid = _autor(str(usuario.id))
     try:
         db.table("movimentacoes").insert({
             "pedido_id":       pedido["id"],
@@ -1041,8 +1058,7 @@ def criar_devolucao(payload, usuario: UsuarioOut) -> dict:
     pedido = resultado.data[0]
     _gravar_data_faturamento(db, pedido["id"], ts_dev)
 
-    usuarios = db.table("usuarios").select("id").limit(1).execute()
-    uid = usuarios.data[0]["id"] if usuarios.data else None
+    uid = _autor(str(usuario.id))
     try:
         db.table("movimentacoes").insert({
             "pedido_id": pedido["id"],

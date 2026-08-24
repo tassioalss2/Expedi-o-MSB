@@ -2278,7 +2278,7 @@ export function PedidoDetalhe() {
     enabled: !!id && !!pedido && ['EM_PROCESSO_SISTEMICO', 'EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA', 'AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'EXPEDIDO'].includes(pedido?.status || ''),
   })
 
-  const { data: movimentacoes = [] } = useQuery<Array<{ status_anterior: string | null; status_novo: string; observacao: string | null; criado_em: string }>>({
+  const { data: movimentacoes = [] } = useQuery<Array<{ status_anterior: string | null; status_novo: string; observacao: string | null; criado_em: string; usuario: string | null }>>({
     queryKey: ['movimentacoes', id],
     queryFn: () => api.get(`/pedidos/${id}/movimentacoes`).then(r => r.data),
     enabled: !!id && !!pedido,
@@ -2839,8 +2839,11 @@ export function PedidoDetalhe() {
                         {m.status_anterior ? `${STATUS_CONFIG[m.status_anterior as keyof typeof STATUS_CONFIG]?.label || m.status_anterior} → ` : ''}
                         {STATUS_CONFIG[m.status_novo as keyof typeof STATUS_CONFIG]?.label || m.status_novo}
                       </p>
-                      <span className="text-xs text-gray-400 whitespace-nowrap ml-3">
+                      <span className="text-xs text-gray-400 whitespace-nowrap ml-3 text-right">
                         {format(new Date(m.criado_em), 'dd/MM/yyyy HH:mm', { locale: ptBR })}
+                        {m.usuario
+                          ? <span className="block text-gray-500 font-medium">{m.usuario}</span>
+                          : <span className="block text-gray-300 italic" title="Antes de 24/08/2026 o app não registrava quem fez o passo">autor não registrado</span>}
                       </span>
                     </div>
                     {m.observacao && (

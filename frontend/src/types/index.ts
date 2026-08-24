@@ -192,6 +192,9 @@ export interface Movimentacao {
   status_anterior?: string
   status_novo: string
   usuario_id: string
+  /** Nome de quem fez o passo. Vem nulo no histórico anterior a 24/08/2026,
+   *  quando a autoria ainda não era gravada de verdade. */
+  usuario?: string | null
   observacao?: string
   criado_em: string
 }

@@ -110,13 +110,31 @@ def obter_pedido(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return pedido_service.obter_pedido(str(pedido_id))
 
 
+# Ate 24/08/2026 a autoria da movimentacao nao valia: o codigo gravava sempre o
+# primeiro usuario da tabela, nao quem agiu — 91% do historico de uma semana saiu
+# no nome de uma pessoa do comercial que nao tinha feito inventario nenhum.
+# Mostrar aquele nome seria afirmar uma coisa falsa sobre alguem, entao o historico
+# ate ali aparece sem autor.
+#
+# O corte e 25/08 e nao 24/08 de proposito: a correcao subiu no dia 24, e as
+# movimentacoes gravadas ANTES do deploy daquele mesmo dia ainda saíram erradas.
+# Perder um dia de autoria correta e melhor do que exibir um dia de autoria falsa.
+_AUTORIA_CONFIAVEL_A_PARTIR_DE = "2026-08-25"
+
+
 @router.get("/{pedido_id}/movimentacoes")
 def listar_movimentacoes(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """Histórico da OV, com quem fez cada passo."""
     from app.core.database import get_service_db
     db = get_service_db()
     rows = db.table("movimentacoes").select(
-        "status_anterior, status_novo, observacao, criado_em"
+        "status_anterior, status_novo, observacao, criado_em, usuarios(nome)"
     ).eq("pedido_id", str(pedido_id)).order("criado_em").execute().data
+
+    for r in rows:
+        nome = (r.pop("usuarios", None) or {}).get("nome")
+        confiavel = str(r.get("criado_em") or "")[:10] >= _AUTORIA_CONFIAVEL_A_PARTIR_DE
+        r["usuario"] = nome if (nome and confiavel) else None
     return rows
 
 
