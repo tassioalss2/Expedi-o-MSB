@@ -512,16 +512,49 @@ def criar_demanda(payload: DemandaCreate) -> dict:
                 detail="Informe os itens e quantidades da NE — é o que vira a linha do contrato do pregão.",
             )
     # Anti-duplicidade: o mesmo número (empenho/AF/pregão) não pode ter duas
-    # demandas ativas — evita o time processar o mesmo pedido duas vezes.
+    # demandas EM ANDAMENTO — evita o time processar o mesmo pedido duas vezes.
+    #
+    # Demanda já concluída não bloqueia mais, no comunicado de uso, e isso é uma
+    # correção: a regra olhava só `ativo`, que continua true depois de concluir,
+    # então cada AF lançada travava a si mesma para sempre. Uma AF volta com nota
+    # nova o tempo todo — o cliente usa mais material do mesmo consignado, e o
+    # faturamento sai em notas separadas.
+    #
+    # O que protege de faturar duas vezes não é a AF, é a NF: documento fiscal
+    # não se emite duas vezes. A checagem de NF vem logo abaixo.
     if num:
-        dup = db.table("licitacao_demandas").select("id, etapa, clientes(nome)")\
+        candidatas = (
+            db.table("licitacao_demandas")
+            .select("id, etapa, clientes(nome)")
             .eq("ativo", True).eq("numero", num).execute().data
+        )
+        dup = [d for d in candidatas
+               if payload.tipo_operacao != "COMUNICADO_USO"
+               or _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) not in ETAPAS_FINAIS]
         if dup:
             cli = (dup[0].get("clientes") or {}).get("nome") or "cliente não informado"
             campo = "AF" if payload.tipo_operacao == "COMUNICADO_USO" else "número"
             raise HTTPException(
                 status_code=409,
-                detail=f"Já existe uma demanda ativa com o {campo} '{num}' ({cli}). Confira no painel/histórico antes de criar — risco de processar duas vezes.",
+                detail=f"Já existe uma demanda em andamento com o {campo} '{num}' ({cli}). "
+                       f"Confira no painel/histórico antes de criar — risco de processar duas vezes.",
+            )
+
+    # A NF é a trava de verdade: a mesma nota não sai duas vezes. Barrar aqui, e
+    # não só na conclusão, poupa o operador de preencher o card inteiro para
+    # descobrir no fim que a nota já tinha sido lançada.
+    if payload.tipo_operacao == "COMUNICADO_USO" and notas:
+        ja = (
+            db.table("pedidos").select("numero_pedido, numero_nf")
+            .in_("numero_nf", [n["numero_nf"] for n in notas])
+            .neq("status", "CANCELADO").execute().data
+        )
+        if ja:
+            q = ja[0]
+            raise HTTPException(
+                status_code=409,
+                detail=f"A NF {q['numero_nf']} já está lançada na {q['numero_pedido']}. "
+                       f"Se esta é outra nota da mesma AF, confira o número.",
             )
     row = db.table("licitacao_demandas").insert({
         "tipo_operacao": payload.tipo_operacao,

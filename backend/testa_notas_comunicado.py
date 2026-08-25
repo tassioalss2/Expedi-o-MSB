@@ -126,5 +126,108 @@ nc = S._notas_normalizadas(conc)
 faltando = [n['numero_nf'] for n in nc if not (n.get('numero_pedido') or '').strip()]
 checa('detecta a nota sem OV', faltando == ['20480'], faltando)
 
+
+
+# ── A regra anti-duplicidade, com banco falso ────────────────────────────────
+#
+# Foi ela que barrou o lancamento real da AF 57048: a demanda dela ja estava
+# CONCLUIDO (gerou a OV016364 com a NF 20476), mas `ativo` continua true depois
+# de concluir, e a regra olhava so `ativo`. Cada AF lancada travava a si mesma.
+print('\n8) a regra anti-duplicidade')
+
+DEMANDAS = []
+PEDIDOS = []
+
+
+class _Q:
+    def __init__(self, t):
+        self.t, self.filtros, self.dentro = t, {}, None
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, c, v):
+        self.filtros[c] = v
+        return self
+
+    def neq(self, c, v):
+        self.filtros['!' + c] = v
+        return self
+
+    def in_(self, c, vs):
+        self.dentro = (c, [str(x) for x in vs])
+        return self
+
+    def limit(self, *a, **k):
+        return self
+
+    def order(self, *a, **k):
+        return self
+
+    def insert(self, d):
+        self._novo = d
+        return self
+
+    def execute(self):
+        base = DEMANDAS if self.t == 'licitacao_demandas' else PEDIDOS if self.t == 'pedidos' else []
+        if hasattr(self, '_novo'):
+            linha = dict(self._novo, id='novo')
+            base.append(linha)
+            return type('R', (), {'data': [linha]})()
+        achados = []
+        for r in base:
+            if any(r.get(c) != v for c, v in self.filtros.items() if not c.startswith('!')):
+                continue
+            if any(r.get(c[1:]) == v for c, v in self.filtros.items() if c.startswith('!')):
+                continue
+            if self.dentro and str(r.get(self.dentro[0])) not in self.dentro[1]:
+                continue
+            achados.append(r)
+        return type('R', (), {'data': achados})()
+
+
+class _Db:
+    def table(self, t):
+        return _Q(t)
+
+
+S.get_service_db = lambda: _Db()
+S.obter_demanda = lambda i: {'id': i}
+S._garantir_contrato_vd = lambda *a, **k: None
+
+
+def nova(af, nf):
+    return DemandaCreate(
+        tipo_operacao='COMUNICADO_USO', cliente_id=CLI, numero=af,
+        nome_paciente='VFM', prontuario='711476', canal='LICITACAO_VASCULAR',
+        data_procedimento='2026-06-29',
+        notas=[nota(nf, [(P1, '73197', 1, 315.30)])])
+
+
+DEMANDAS[:] = [{'id': 'd1', 'numero': '57048', 'etapa': 'CONCLUIDO', 'ativo': True,
+                'tipo_operacao': 'COMUNICADO_USO', 'clientes': {'nome': 'EBSERH'}}]
+PEDIDOS[:] = [{'numero_pedido': 'OV016364', 'numero_nf': '20476', 'status': 'FATURADO'}]
+
+# O caso real: AF ja concluida, nota NOVA -> tem que passar.
+try:
+    S.criar_demanda(nova('57048', '20480'))
+    print('   OK   AF ja concluida aceita nota nova (o caso da AF 57048)')
+except HTTPException as e:
+    ok = False
+    print('   *** FALHOU *** AF concluida ainda bloqueia -> ' + str(e.detail)[:80])
+
+# A chamada acima deixou uma demanda EM ANDAMENTO nesta AF — em producao ela
+# passa a bloquear, e e o certo. Para exercitar a trava de NF, parte do zero.
+DEMANDAS[:] = [{'id': 'd1', 'numero': '57048', 'etapa': 'CONCLUIDO', 'ativo': True,
+                'tipo_operacao': 'COMUNICADO_USO', 'clientes': {'nome': 'EBSERH'}}]
+recusa('mesma NF ja lancada', lambda: S.criar_demanda(nova('57048', '20476')),
+       'já está lançada na OV016364')
+
+# Demanda EM ANDAMENTO na mesma AF -> continua bloqueando.
+DEMANDAS[:] = [{'id': 'd2', 'numero': '57044', 'etapa': 'PROCESSANDO', 'ativo': True,
+                'tipo_operacao': 'COMUNICADO_USO', 'clientes': {'nome': 'EBSERH'}}]
+recusa('AF em andamento segue bloqueada', lambda: S.criar_demanda(nova('57044', '20485')),
+       'em andamento')
+
 print('\n' + ('TUDO OK' if ok else '*** TEM FALHA ***'))
 sys.exit(0 if ok else 1)
