@@ -579,6 +579,76 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplic
   )
 }
 
+// ── Notas fiscais de um comunicado de uso ────────────────────────────────────────
+//
+// Uma AF, várias notas. O e-mail da licitação chega literalmente assim:
+//
+//     NF 20476 e NF 20480, referente ao comunicado de uso 57048
+//     NF 20482,            referente ao comunicado de uso 57046
+//
+// Cada nota cobre itens e quantidades próprios, então cada nota tem a sua lista
+// e o seu valor. O valor sai dos itens e não é digitável: com várias notas na
+// mesma AF, um total à mão não tem como ser conferido depois — ninguém saberia
+// qual item entrou em qual nota.
+export type NotaLinha = { nf: string; itens: ItemLinha[] }
+
+function NotasComunicado({ value, onChange, repetidas }: {
+  value: NotaLinha[]; onChange: (n: NotaLinha[]) => void; repetidas: string[]
+}) {
+  const troca = (idx: number, patch: Partial<NotaLinha>) =>
+    onChange(value.map((n, i) => (i === idx ? { ...n, ...patch } : n)))
+  const valorDa = (n: NotaLinha) =>
+    n.itens.reduce((s, i) => s + i.qtd * (i.valor || 0), 0)
+  const total = value.reduce((s, n) => s + valorDa(n), 0)
+
+  return (
+    <div className="space-y-2.5">
+      {value.map((n, idx) => {
+        const repetida = !!n.nf.trim() && repetidas.includes(n.nf.trim())
+        return (
+          <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50/50">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-medium text-gray-400 w-12 shrink-0">NF {idx + 1}</span>
+              <input value={n.nf} onChange={e => troca(idx, { nf: e.target.value })}
+                className={`flex-1 border rounded-lg px-3 py-1.5 text-sm font-mono ${repetida ? 'border-red-400' : ''}`}
+                placeholder="Número da nota — ex: 20476" />
+              <span className="text-sm font-medium text-gray-700 tabular-nums w-28 text-right shrink-0">
+                {valorDa(n) > 0 ? fmtBRL(valorDa(n)) : '—'}
+              </span>
+              {/* A última nota não some: sem nota nenhuma o comunicado não existe. */}
+              {value.length > 1 && (
+                <button type="button" title="Remover esta nota"
+                  onClick={() => onChange(value.filter((_, i) => i !== idx))}
+                  className="text-gray-400 hover:text-red-500 shrink-0 px-1">
+                  <Trash2 size={15} />
+                </button>
+              )}
+            </div>
+            {repetida && (
+              <p className="text-xs text-red-600 mb-2">Esta NF já está em outra linha — cada nota entra uma vez.</p>
+            )}
+            <ItensPedido value={n.itens} onChange={itens => troca(idx, { itens })} comValor />
+            {n.itens.length === 0 && (
+              <p className="text-xs text-amber-600 mt-1.5">Informe o que esta nota cobre — item, quantidade e valor unitário.</p>
+            )}
+          </div>
+        )
+      })}
+      <div className="flex items-center justify-between">
+        <button type="button" onClick={() => onChange([...value, { nf: '', itens: [] }])}
+          className="text-sm text-blue-600 hover:text-blue-500 font-medium">
+          + Adicionar nota fiscal
+        </button>
+        {value.length > 1 && total > 0 && (
+          <span className="text-sm text-gray-500">
+            {value.length} notas · total <strong className="text-gray-800">{fmtBRL(total)}</strong>
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Modal: Nova demanda (cadastro rápido) ────────────────────────────────────────
 function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: TipoKey; onClose: () => void; onSaved: () => void }) {
   const [tipo, setTipo] = useState<TipoKey>(tipoInicial)
@@ -588,8 +658,10 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const [numero, setNumero] = useState('')
   const [nomePaciente, setNomePaciente] = useState('')
   const [prontuario, setProntuario] = useState('')
-  const [numeroNf, setNumeroNf] = useState('')
   const [dataProcedimento, setDataProcedimento] = useState('')
+  // Uma AF, varias notas. O e-mail da licitacao chega assim: "NF 20476 e
+  // NF 20480, referente ao comunicado de uso 57048" — cada nota com seus itens.
+  const [notas, setNotas] = useState<NotaLinha[]>([{ nf: '', itens: [] }])
   const [canal, setCanal] = useState('')
   const [prazo, setPrazo] = useState('')
   const [prioridade, setPrioridade] = useState('NORMAL')
@@ -633,8 +705,13 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const itensVdOk = tipo !== 'VENDA_DIRETA' ? true : usaItensDoPregao ? itensPregaoComQtd.length > 0 : false
   const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim() && itensVdOk)
   // Comunicado de uso é regido pela AF + paciente + prontuário + NF + data do procedimento + itens com valor.
-  const itensComunicadoOk = itens.length > 0 && itens.every(i => i.qtd > 0 && (i.valor || 0) > 0)
-  const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!numeroNf.trim() && !!dataProcedimento && !!canal && itensComunicadoOk)
+  const notaOk = (n: NotaLinha) => !!n.nf.trim() && n.itens.length > 0
+    && n.itens.every(i => i.qtd > 0 && (i.valor || 0) > 0)
+  const nfsRepetidas = notas
+    .map(n => n.nf.trim())
+    .filter((nf, idx, arr) => nf && arr.indexOf(nf) !== idx)
+  const notasOk = notas.length > 0 && notas.every(notaOk) && nfsRepetidas.length === 0
+  const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!dataProcedimento && !!canal && notasOk)
 
   const criar = useMutation({
     mutationFn: () => api.post('/licitacoes/demandas', {
@@ -644,7 +721,10 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
       numero: numero.trim() || null,
       nome_paciente: nomePaciente.trim() || null,
       prontuario: prontuario.trim() || null,
-      numero_nf: ehComunicado ? (numeroNf.trim() || null) : null,
+      notas: ehComunicado ? notas.map(n => ({
+        numero_nf: n.nf.trim(),
+        itens: n.itens.map(i => ({ produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao, qtd: i.qtd, valor: i.valor || 0 })),
+      })) : [],
       data_procedimento: ehComunicado ? (dataProcedimento || null) : null,
       canal: canal || null,
       prazo: ehComunicado ? null : (prazo || null),
@@ -713,9 +793,6 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
               </Campo>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Campo label="Número da NF *">
-                <input value={numeroNf} onChange={e => setNumeroNf(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 20045" />
-              </Campo>
               <Campo label="Data do procedimento *">
                 <input type="date" value={dataProcedimento} onChange={e => setDataProcedimento(e.target.value)} className={inputCls} />
               </Campo>
@@ -750,16 +827,16 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 
         <div>
           <label className="text-sm text-gray-600">
-            Itens {ehComunicado ? '(o que foi usado, com valor unitário) *'
-              : tipo === 'VENDA_DIRETA' ? '(quantidades desta NE, com valor) *'
-              : '(quantidades TOTAIS do contrato, com valor)'}
+            {ehComunicado ? 'Notas fiscais deste comunicado *'
+              : tipo === 'VENDA_DIRETA' ? 'Itens (quantidades desta NE, com valor) *'
+              : 'Itens (quantidades TOTAIS do contrato, com valor)'}
           </label>
           <p className="text-xs text-gray-400 mb-1.5">
             {tipo === 'VENDA_DIRETA'
               ? usaItensDoPregao
                 ? 'Os itens já estão cadastrados neste pregão — informe só a quantidade desta NE por item.'
                 : 'Quantidades desta NE. As entregas parciais você lança depois, na aba Contratos.'
-              : ehComunicado ? 'Informe o que foi usado com o valor unitário — o valor da NF é calculado ao concluir.' : 'Opcional agora — pode completar ao processar.'}
+              : ehComunicado ? 'Uma AF pode ter várias notas. Em cada uma, informe o que aquela nota cobre — o valor sai dos itens.' : 'Opcional agora — pode completar ao processar.'}
           </p>
           {tipo === 'VENDA_DIRETA' && !itensVdOk && (
             <p className="text-xs text-red-500 mb-1.5">Obrigatório — sem itens a NE não vira linha do contrato do pregão.</p>
@@ -797,6 +874,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
                 </button>
               </div>
             )
+          ) : ehComunicado ? (
+            <NotasComunicado value={notas} onChange={setNotas} repetidas={nfsRepetidas} />
           ) : (
             <ItensPedido value={itens} onChange={setItens} comValor={comValor} />
           )}
@@ -1292,6 +1371,13 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   const [valorNf, setValorNf] = useState('')
   const [dataFat, setDataFat] = useState(hoje)
   const [empenhoId, setEmpenhoId] = useState('')
+  // As notas capturadas na triagem. Cada uma vira um lancamento proprio, e por
+  // isso cada uma precisa do SEU numero de OV — dois lancamentos nao dividem
+  // numero. Quando ha uma nota so, o campo geral acima ja serve.
+  const notasDemanda: any[] = demanda.notas || []
+  const varias = notasDemanda.length > 1
+  const [ovsPorNota, setOvsPorNota] = useState<string[]>(
+    notasDemanda.map((n: any) => n.numero_pedido || ''))
   const [itens, setItens] = useState<ItemLinha[]>(
     (demanda.itens || []).filter((i: any) => i.produto_id).map((i: any) => ({
       produto_id: i.produto_id, codigo: i.codigo || '', descricao: i.descricao || '',
@@ -1365,6 +1451,15 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
         body.numero_pedido = numero.trim()
         body.numero_nf = nf.trim()
         body.valor_nf = Number(valorNf)
+        if (varias) {
+          // Com varias notas o valor de cada uma sai dos seus itens (no backend)
+          // — nao do campo unico de valor, que nao saberia a qual nota pertence.
+          body.notas = notasDemanda.map((n: any, idx: number) => ({
+            numero_nf: n.numero_nf,
+            numero_pedido: (ovsPorNota[idx] || '').trim(),
+            itens: n.itens || [],
+          }))
+        }
         body.data_faturamento = dataFat || null
         body.empenho_id = empenhoId || null
         body.numero = af.trim()
@@ -1389,6 +1484,11 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
   // (não exige NF/valor). Para um comunicado novo, o backend cobra NF/valor.
   let valido = false
   if (ehContrato) valido = !!numeroPregao.trim() && !!numero.trim() && itensOk && (!(tipo === 'VENDA_DIRETA' && gerarOvJunto) || (!!ovNumero.trim() && !!ovCondPagamento.trim()))
+  else if (varias) valido = itensOk && !!clienteId && !!af.trim() && !!nomePaciente.trim()
+    && !!prontuario.trim() && !!dataProcedimento
+    && ovsPorNota.length === notasDemanda.length
+    && ovsPorNota.every(o => !!(o || '').trim())
+    && new Set(ovsPorNota.map(o => o.trim().toUpperCase())).size === notasDemanda.length
   else valido = !!numero.trim() && itensOk && !!clienteId && !!af.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!dataProcedimento
 
   return (
@@ -1479,17 +1579,54 @@ function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: (
                 <input type="date" value={dataProcedimento} onChange={e => setDataProcedimento(e.target.value)} className={inputCls} />
               </Campo>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Campo label="Nº do lançamento *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: CU000123" /></Campo>
-              <Campo label="Data do faturamento"><input type="date" value={dataFat} onChange={e => setDataFat(e.target.value)} className={inputCls} /></Campo>
-              <Campo label="Número da NF *"><input value={nf} onChange={e => setNf(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 20045" /></Campo>
-              <Campo label="Valor da NF (R$) *">
-                <input type="number" step="0.01" value={valorNf} onChange={e => { setValorNf(e.target.value); setValorNfManual(true) }} className={inputCls} placeholder="0,00" />
-                {sugestaoNf != null && (
-                  <p className="text-xs text-blue-500 mt-1">💡 Calculado pelos preços do contrato: {fmtBRL(sugestaoNf)} — confira com a NF do D365.</p>
-                )}
-              </Campo>
-            </div>
+            {varias ? (
+              <>
+                <Campo label="Data do faturamento">
+                  <input type="date" value={dataFat} onChange={e => setDataFat(e.target.value)} className={inputCls} />
+                </Campo>
+                <div>
+                  <label className="text-sm text-gray-600">Um lançamento por nota *</label>
+                  <p className="text-xs text-gray-400 mb-1.5">
+                    Esta AF tem {notasDemanda.length} notas. Cada uma vira um lançamento próprio —
+                    informe o número da OV de cada uma. O valor sai dos itens da nota.
+                  </p>
+                  <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+                    {notasDemanda.map((n: any, idx: number) => (
+                      <div key={n.numero_nf || idx} className="flex items-center gap-2 px-3 py-2.5 text-sm">
+                        <div className="w-40 shrink-0">
+                          <span className="font-mono font-medium text-gray-800">NF {n.numero_nf}</span>
+                          <span className="block text-[11px] text-gray-400">
+                            {(n.itens || []).length} item(ns) · {fmtBRL(Number(n.valor) || 0)}
+                          </span>
+                        </div>
+                        <input value={ovsPorNota[idx] || ''}
+                          onChange={e => setOvsPorNota(v => v.map((x, i) => i === idx ? e.target.value.toUpperCase() : x))}
+                          className={`${inputCls} font-mono`} placeholder="Nº da OV desta nota — ex: OV016364" />
+                      </div>
+                    ))}
+                  </div>
+                  {ovsPorNota.some(o => !(o || '').trim()) && (
+                    <p className="text-xs text-red-500 mt-1">Falta o número da OV de alguma nota.</p>
+                  )}
+                  {new Set(ovsPorNota.map(o => (o || '').trim().toUpperCase()).filter(Boolean)).size
+                    < ovsPorNota.filter(o => (o || '').trim()).length && (
+                    <p className="text-xs text-red-500 mt-1">Duas notas com a mesma OV — cada nota é um lançamento.</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <Campo label="Nº do lançamento *"><input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: CU000123" /></Campo>
+                <Campo label="Data do faturamento"><input type="date" value={dataFat} onChange={e => setDataFat(e.target.value)} className={inputCls} /></Campo>
+                <Campo label="Número da NF *"><input value={nf} onChange={e => setNf(e.target.value)} className={`${inputCls} font-mono`} placeholder="Ex: 20045" /></Campo>
+                <Campo label="Valor da NF (R$) *">
+                  <input type="number" step="0.01" value={valorNf} onChange={e => { setValorNf(e.target.value); setValorNfManual(true) }} className={inputCls} placeholder="0,00" />
+                  {sugestaoNf != null && (
+                    <p className="text-xs text-blue-500 mt-1">💡 Calculado pelos preços do contrato: {fmtBRL(sugestaoNf)} — confira com a NF do D365.</p>
+                  )}
+                </Campo>
+              </div>
+            )}
             <Campo label="Canal">
               <select value={canal} onChange={e => setCanal(e.target.value)} className={inputCls}>
                 <option value="">A definir…</option>

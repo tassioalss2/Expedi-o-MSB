@@ -74,6 +74,115 @@ def _itens_json(itens) -> list:
     return out
 
 
+def _notas_json(notas) -> list:
+    """Serializa NotaComunicado[] para o jsonb."""
+    out = []
+    for n in notas or []:
+        out.append({
+            "numero_nf": (n.numero_nf or "").strip(),
+            "numero_pedido": (n.numero_pedido or "").strip() or None,
+            "itens": _itens_json(n.itens),
+        })
+    return out
+
+
+def _valor_da_nota(nota: dict) -> float:
+    """Σ qtd × valor unitário dos itens da nota.
+
+    O valor da NF sai dos itens, nunca de um total digitado: com várias notas na
+    mesma AF, um total à mão não tem como ser conferido depois — não se sabe qual
+    item entrou em qual nota."""
+    return round(sum(float(i.get("qtd") or 0) * float(i.get("valor") or 0)
+                     for i in (nota.get("itens") or [])), 2)
+
+
+def _notas_normalizadas(payload, itens_fallback=None) -> list:
+    """A lista de notas do comunicado, em jsonb.
+
+    Aceita as duas formas de chamada: `notas=[...]` (nova) e
+    `numero_nf` + `itens` soltos (como a API era antes, e como o CRM e scripts
+    antigos ainda chamam). A forma antiga vira uma nota só."""
+    if getattr(payload, "notas", None):
+        return _notas_json(payload.notas)
+    nf = (getattr(payload, "numero_nf", None) or "").strip()
+    if not nf:
+        return []
+    itens = itens_fallback if itens_fallback is not None else (getattr(payload, "itens", None) or [])
+    return [{
+        "numero_nf": nf,
+        "numero_pedido": (getattr(payload, "numero_pedido", None) or "").strip() or None,
+        "itens": _itens_json(itens),
+    }]
+
+
+def _validar_notas_comunicado(notas: list) -> None:
+    """Cada nota precisa de número e de itens com quantidade e valor.
+
+    Sem itens com valor a nota não tem valor, e um comunicado sem valor não entra
+    no faturamento — ficaria parecendo lançado e invisível no resultado."""
+    if not notas:
+        raise HTTPException(
+            status_code=422,
+            detail="Informe pelo menos uma nota fiscal deste comunicado.",
+        )
+    vistos = set()
+    for n in notas:
+        nf = (n.get("numero_nf") or "").strip()
+        if not nf:
+            raise HTTPException(status_code=422, detail="Há uma nota sem número — preencha ou remova.")
+        if nf in vistos:
+            raise HTTPException(
+                status_code=422,
+                detail=f"A NF '{nf}' está repetida neste comunicado.",
+            )
+        vistos.add(nf)
+        uteis = [i for i in (n.get("itens") or [])
+                 if i.get("produto_id") and float(i.get("qtd") or 0) > 0]
+        if not uteis:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Informe os itens e quantidades da NF {nf} — é o que foi usado no paciente.",
+            )
+        if any(float(i.get("valor") or 0) <= 0 for i in uteis):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Informe o valor unitário de cada item da NF {nf} — é o que dá o valor da nota.",
+            )
+
+
+def _itens_das_notas(notas: list) -> list:
+    """Todos os itens das notas somados por produto.
+
+    A coluna `itens` da demanda continua existindo e é lida pelo painel, pelo
+    relatório e pela comparação previsto × realizado. Ela passa a ser a soma das
+    notas — não uma terceira verdade mantida à mão."""
+    soma: dict = {}
+    for n in notas or []:
+        for i in (n.get("itens") or []):
+            pid = i.get("produto_id")
+            if not pid:
+                continue
+            alvo = soma.setdefault(pid, {
+                "produto_id": pid, "codigo": i.get("codigo"),
+                "descricao": i.get("descricao"), "qtd": 0.0, "valor": 0.0,
+                "_total": 0.0,
+            })
+            qtd = float(i.get("qtd") or 0)
+            alvo["qtd"] += qtd
+            alvo["_total"] += qtd * float(i.get("valor") or 0)
+
+    # O mesmo item pode sair em duas notas com preço diferente. O unitário do
+    # espelho é a média ponderada, e não o primeiro que apareceu: assim
+    # qtd × valor continua dando o total de verdade, que é o número que alguém
+    # vai conferir contra as notas.
+    saida = []
+    for alvo in soma.values():
+        total, qtd = alvo.pop("_total"), alvo["qtd"]
+        alvo["valor"] = round(total / qtd, 4) if qtd else 0.0
+        saida.append(alvo)
+    return saida
+
+
 def _serializar(d: dict) -> dict:
     return {
         "id": d["id"],
@@ -94,6 +203,9 @@ def _serializar(d: dict) -> dict:
         "numero_nf": d.get("numero_nf"),
         "data_procedimento": d.get("data_procedimento"),
         "itens": d.get("itens") or [],
+        # Cada nota ja sai com o valor calculado — a tela nao precisa repetir a
+        # conta, e a conta e uma so em todo lugar.
+        "notas": [dict(n, valor=_valor_da_nota(n)) for n in (d.get("notas") or [])],
         "gerado_tipo": d.get("gerado_tipo"),
         "gerado_id": d.get("gerado_id"),
         "gerado_ref": d.get("gerado_ref"),
@@ -369,6 +481,7 @@ def criar_demanda(payload: DemandaCreate) -> dict:
         raise HTTPException(status_code=422, detail="Tipo de operação inválido")
     db = get_service_db()
     num = (payload.numero or "").strip()
+    notas: list = []
     # Comunicado de uso é regido pela AF + paciente + prontuário — obrigatórios
     # para rastreabilidade (evita o time processar o mesmo caso duas vezes).
     if payload.tipo_operacao == "COMUNICADO_USO":
@@ -378,12 +491,14 @@ def criar_demanda(payload: DemandaCreate) -> dict:
             raise HTTPException(status_code=422, detail="Informe o nome do paciente.")
         if not (payload.prontuario or "").strip():
             raise HTTPException(status_code=422, detail="Informe o prontuário.")
-        if not (payload.numero_nf or "").strip():
-            raise HTTPException(status_code=422, detail="Informe o número da NF.")
         if not payload.data_procedimento:
             raise HTTPException(status_code=422, detail="Informe a data do procedimento.")
         if not (payload.canal or "").strip():
             raise HTTPException(status_code=422, detail="Informe o canal.")
+        # Uma AF, varias notas. O e-mail da licitacao chega assim: "NF 20476 e
+        # NF 20480, referente ao comunicado de uso 57048".
+        notas = _notas_normalizadas(payload)
+        _validar_notas_comunicado(notas)
     elif payload.tipo_operacao in ("VENDA_DIRETA", "CONSIGNACAO"):
         if not num:
             raise HTTPException(status_code=422, detail="Informe a Nota de Empenho (NE).")
@@ -418,10 +533,12 @@ def criar_demanda(payload: DemandaCreate) -> dict:
         "prazo": payload.prazo.isoformat() if payload.prazo else None,
         "prioridade": payload.prioridade or "NORMAL",
         "observacao": payload.observacao,
-        "itens": _itens_json(payload.itens),
+        "itens": _itens_das_notas(notas) if notas else _itens_json(payload.itens),
+        "notas": notas,
         "nome_paciente": (payload.nome_paciente or "").strip() or None,
         "prontuario": (payload.prontuario or "").strip() or None,
-        "numero_nf": (payload.numero_nf or "").strip() or None,
+        # Espelham a PRIMEIRA nota: o painel, o relatorio e a busca leem daqui.
+        "numero_nf": (notas[0]["numero_nf"] if notas else None),
         "data_procedimento": payload.data_procedimento.isoformat() if payload.data_procedimento else None,
         "ativo": True,
     }).execute().data[0]
@@ -779,6 +896,13 @@ def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
         update["responsavel_id"] = str(payload.responsavel_id)
     if payload.itens is not None:
         update["itens"] = _itens_json(payload.itens)
+    if payload.notas is not None:
+        notas = _notas_json(payload.notas)
+        _validar_notas_comunicado(notas)
+        update["notas"] = notas
+        # As colunas antigas seguem espelhando a primeira nota e a soma dos itens.
+        update["numero_nf"] = notas[0]["numero_nf"]
+        update["itens"] = _itens_das_notas(notas)
 
     db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
 
@@ -903,9 +1027,9 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             # que acompanha frete/NF. O contrato (esta demanda) fica concluído.
 
     elif tipo == "COMUNICADO_USO":
-        if not payload.numero_pedido or not payload.numero_pedido.strip():
-            raise HTTPException(status_code=422, detail="Informe o número do lançamento (comunicado).")
-        numped = payload.numero_pedido.strip().upper()
+        # O numero do lancamento e cobrado POR NOTA mais abaixo: com varias notas
+        # na mesma AF, cada uma vira um lancamento e tem o seu numero.
+        numped = (payload.numero_pedido or "").strip().upper()
 
         # AF/paciente/prontuário: o que rege o comunicado. Payload (editado na
         # conclusão) prevalece; senão usa o que já foi capturado na triagem.
@@ -924,7 +1048,7 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         # Não vale quando a demanda foi reaberta pra corrigir algo — nesse caso o
         # "existente" é o próprio lançamento que ela já gerou, e o objetivo é
         # atualizar os dados errados, não só vincular de novo.
-        existente = None if reabrindo else db.table("pedidos").select("id, numero_pedido")\
+        existente = None if (reabrindo or not numped) else db.table("pedidos").select("id, numero_pedido")\
             .eq("numero_pedido", numped).neq("status", "CANCELADO").limit(1).execute().data
         if existente:
             p = existente[0]
@@ -944,14 +1068,61 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             }).eq("id", demanda_id).execute()
             return obter_demanda(demanda_id)
 
-        numero_nf = (payload.numero_nf or "").strip() or d.get("numero_nf")
         data_procedimento = payload.data_procedimento or (
             date.fromisoformat(d["data_procedimento"]) if d.get("data_procedimento") else None
         )
-        if not numero_nf:
-            raise HTTPException(status_code=422, detail="Informe o número da NF.")
-        if not payload.valor_nf or float(payload.valor_nf) <= 0:
-            raise HTTPException(status_code=422, detail="Informe o valor da NF (maior que zero).")
+
+        # As notas desta conclusao: o que veio no payload; senao o que a triagem
+        # ja capturou no card.
+        notas_concluir = _notas_normalizadas(payload, itens_fallback=itens_src)             or [dict(n) for n in (d.get("notas") or [])]
+        for n in notas_concluir:
+            n["valor"] = _valor_da_nota(n)
+        _validar_notas_comunicado(notas_concluir)
+
+        # Uma nota so pode herdar o numero digitado no campo geral. Varias, nao:
+        # dois lancamentos com o mesmo numero nao existem, e adivinhar qual nota
+        # fica com o numero digitado seria escolher no lugar de quem lanca.
+        if len(notas_concluir) == 1 and not (notas_concluir[0].get("numero_pedido") or "").strip():
+            notas_concluir[0]["numero_pedido"] = numped
+        sem_numero = [n["numero_nf"] for n in notas_concluir
+                      if not (n.get("numero_pedido") or "").strip()]
+        if sem_numero:
+            raise HTTPException(
+                status_code=422,
+                detail="Informe o número do lançamento (OV) de cada nota — falta o da NF %s."
+                       % ", ".join(sem_numero),
+            )
+        for n in notas_concluir:
+            n["numero_pedido"] = n["numero_pedido"].strip().upper()
+        contagem = {}
+        for n in notas_concluir:
+            contagem[n["numero_pedido"]] = contagem.get(n["numero_pedido"], 0) + 1
+        repetido = next((k for k, v in contagem.items() if v > 1), None)
+        if repetido:
+            raise HTTPException(
+                status_code=422,
+                detail="O número de lançamento '%s' está em duas notas — cada nota é um lançamento."
+                       % repetido,
+            )
+
+        # Reabertura e baixa de empenho ainda trabalham com uma nota. Recusar e
+        # melhor que faturar so a primeira e deixar as outras sumidas.
+        if len(notas_concluir) > 1 and (reabrindo or payload.empenho_id):
+            raise HTTPException(
+                status_code=422,
+                detail="Comunicado com mais de uma nota ainda não pode ser %s. "
+                       "Conclua uma nota por vez." %
+                       ("reaberto para correção" if reabrindo else "baixado de um empenho"),
+            )
+
+        # Os ramos de uma nota continuam lendo estes dois nomes.
+        numero_nf = notas_concluir[0]["numero_nf"]
+        valor_primeira = (float(payload.valor_nf) if payload.valor_nf
+                          else notas_concluir[0]["valor"])
+        if valor_primeira <= 0:
+            raise HTTPException(
+                status_code=422,
+                detail="A NF %s ficou com valor zero — confira os itens." % numero_nf)
 
         if reabrindo:
             # Já tinha gerado o lançamento antes (demanda reaberta pra corrigir
@@ -964,8 +1135,8 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             pid = ped[0]["id"]
             db.table("pedidos").update({
                 "numero_nf": numero_nf,
-                "valor_nf": float(payload.valor_nf),
-                "valor_produtos": float(payload.valor_nf),
+                "valor_nf": valor_primeira,
+                "valor_produtos": valor_primeira,
                 "af": af,
                 "nome_paciente": nome_paciente,
                 "prontuario": prontuario,
@@ -986,9 +1157,9 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             licitacao_service.registrar_consumo(
                 str(payload.empenho_id),
                 ConsumoEmpenhoCreate(
-                    numero_pedido=payload.numero_pedido.strip().upper(),
+                    numero_pedido=notas_concluir[0]["numero_pedido"],
                     numero_nf=numero_nf,
-                    valor_nf=float(payload.valor_nf),
+                    valor_nf=valor_primeira,
                     data_faturamento=payload.data_faturamento,
                     canal=canal,
                     itens=_itens_pedido(itens_src, "o comunicado de uso"),
@@ -1000,22 +1171,39 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
             gerado_tipo, gerado_id, gerado_ref = "COMUNICADO", str(payload.empenho_id), payload.numero_pedido.strip().upper()
         else:
             # Comunicado avulso (consignado não rastreado no painel).
-            com = pedido_service.criar_comunicado_uso(
-                ComunicadoUsoCreate(
-                    numero_pedido=payload.numero_pedido.strip().upper(),
-                    cliente_id=cliente_id,
-                    numero_nf=numero_nf,
-                    valor_nf=float(payload.valor_nf),
-                    canal=canal,
-                    data_faturamento=payload.data_faturamento,
-                    af=af, nome_paciente=nome_paciente, prontuario=prontuario,
-                    data_procedimento=data_procedimento,
-                    itens=[ItemPedidoCreate(produto_id=it.produto_id, qtd_solicitada=float(it.qtd))
-                           for it in itens_src if it.produto_id and float(it.qtd or 0) > 0],
-                ),
-                usuario,
-            )
-            gerado_tipo, gerado_id, gerado_ref = "COMUNICADO", com.get("id"), com.get("numero_pedido")
+            #
+            # Uma AF, VÁRIAS notas: cada nota vira um lançamento próprio, porque
+            # `pedidos.numero_nf` é único e o faturamento conta por lançamento.
+            # Uma nota só continua caindo aqui pelo mesmo caminho — a lista tem
+            # um item.
+            lancados = []
+            for nota in notas_concluir:
+                com = pedido_service.criar_comunicado_uso(
+                    ComunicadoUsoCreate(
+                        numero_pedido=nota["numero_pedido"],
+                        cliente_id=cliente_id,
+                        numero_nf=nota["numero_nf"],
+                        valor_nf=nota["valor"],
+                        canal=canal,
+                        data_faturamento=payload.data_faturamento,
+                        af=af, nome_paciente=nome_paciente, prontuario=prontuario,
+                        data_procedimento=data_procedimento,
+                        itens=[ItemPedidoCreate(
+                            produto_id=it["produto_id"],
+                            qtd_solicitada=float(it["qtd"]),
+                            valor_unitario=float(it.get("valor") or 0) or None,
+                        ) for it in nota["itens"]
+                            if it.get("produto_id") and float(it.get("qtd") or 0) > 0],
+                    ),
+                    usuario,
+                )
+                lancados.append(com)
+            # O card guarda todos; gerado_id/gerado_ref apontam para o primeiro
+            # por compatibilidade com quem já lê esses campos.
+            ovs_final = [{"id": c.get("id"), "numero": c.get("numero_pedido")} for c in lancados]
+            gerado_tipo = "COMUNICADO"
+            gerado_id = lancados[0].get("id")
+            gerado_ref = ", ".join(c.get("numero_pedido") or "" for c in lancados)
     else:
         raise HTTPException(status_code=422, detail="Tipo de operação da demanda inválido.")
 
@@ -1036,6 +1224,12 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
     }
     if ovs_final is not None:
         update_final["ovs"] = ovs_final
+    if tipo == "COMUNICADO_USO" and notas_concluir:
+        # O card guarda as notas ja com o numero do lancamento de cada uma — e
+        # assim que se sabe depois qual NF virou qual OV.
+        update_final["notas"] = notas_concluir
+        update_final["numero_nf"] = notas_concluir[0]["numero_nf"]
+        update_final["itens"] = _itens_das_notas(notas_concluir)
     db.table("licitacao_demandas").update(update_final).eq("id", demanda_id).execute()
 
     return obter_demanda(demanda_id)

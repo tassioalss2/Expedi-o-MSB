@@ -574,6 +574,32 @@ class DemandaItem(BaseModel):
     valor: float = 0
 
 
+class NotaComunicado(BaseModel):
+    """Uma nota fiscal do comunicado de uso, com o que ela cobre.
+
+    A AF é uma; as notas são várias. O e-mail da licitação chega literalmente
+    assim: "NF 20476 e NF 20480, referente ao comunicado de uso 57048". Cada nota
+    tem itens e quantidades próprios, então o valor de cada uma sai dos seus
+    itens — não de um total digitado à mão, que ninguém consegue conferir depois.
+    """
+    numero_nf: str
+    numero_pedido: Optional[str] = None   # a OV; só existe quando a nota é lançada
+    itens: list[DemandaItem] = []
+
+    @field_validator("numero_nf")
+    @classmethod
+    def _nf_limpa(cls, v: str) -> str:
+        limpo = (v or "").strip()
+        if not limpo:
+            raise ValueError("Informe o número da NF.")
+        return limpo
+
+    @property
+    def valor(self) -> float:
+        """Σ qtd × valor unitário dos itens desta nota."""
+        return round(sum(float(i.qtd or 0) * float(i.valor or 0) for i in self.itens), 2)
+
+
 class DemandaCreate(BaseModel):
     tipo_operacao: str            # VENDA_DIRETA | CONSIGNACAO | COMUNICADO_USO
     numero_pregao: Optional[str] = None  # pregão (mestre) — rege o contrato
@@ -589,6 +615,9 @@ class DemandaCreate(BaseModel):
     prontuario: Optional[str] = None
     numero_nf: Optional[str] = None
     data_procedimento: Optional[date] = None
+    # As notas da AF. `numero_nf` acima continua aceito (uma nota só) para não
+    # quebrar quem já chama a API assim; o serviço converte para uma nota.
+    notas: list[NotaComunicado] = []
 
 
 class DemandaUpdate(BaseModel):
@@ -608,6 +637,7 @@ class DemandaUpdate(BaseModel):
     prontuario: Optional[str] = None
     numero_nf: Optional[str] = None
     data_procedimento: Optional[date] = None
+    notas: Optional[list[NotaComunicado]] = None
 
 
 class DemandaConcluir(BaseModel):
@@ -645,6 +675,10 @@ class DemandaConcluir(BaseModel):
     # cheia baixando todo o saldo (usa numero_pedido como nº da OV).
     gerar_ov: bool = False
     itens: list[DemandaItem] = []
+    # Comunicado de uso com varias notas: cada nota vira um lancamento proprio
+    # (pedidos.numero_nf e unico, e o faturamento conta por lancamento). Quando
+    # vem vazia, `numero_nf`/`valor_nf`/`itens` acima valem como a nota unica.
+    notas: list[NotaComunicado] = []
 
 
 # ── CRM ──────────────────────────────────────────────────────────────────────────
