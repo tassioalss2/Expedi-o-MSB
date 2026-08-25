@@ -26,18 +26,34 @@ def _status(vigencia: Optional[str], saldo_un: float, empenhado_un: float) -> st
     return "ABERTO"
 
 
+# A remessa de consignado (OV do tipo CONSIGNADO) tira o material do estoque e
+# manda para o cliente, mas NÃO cumpre o contrato: quem cumpre é o comunicado de
+# uso, quando o material é usado no paciente. Contar a remessa como consumo
+# deixaria o contrato 100% consumido no instante em que o material sai, e os
+# comunicados seguintes não achariam saldo.
+#
+# Na venda direta é o contrário, e por isso ela não entra nesta lista: ali,
+# entregar É cumprir o contrato.
+_NAO_CONSOME_CONTRATO = ("CONSIGNADO",)
+
+
 def _consumo_por_empenho(db, empenho_ids: list[str]) -> dict:
-    """{empenho_id: {produto_id: qtd_consumida}} a partir dos comunicados vinculados."""
+    """{empenho_id: {produto_id: qtd_consumida}}.
+
+    Consumo é o que baixa o contrato de verdade: entrega de venda direta e
+    comunicado de uso. Remessa de consignado fica de fora — ver acima."""
     consumo: dict = {}
     if not empenho_ids:
         return consumo
     for i in range(0, len(empenho_ids), 80):
         lote = empenho_ids[i:i + 80]
-        peds = db.table("pedidos").select("id, empenho_id, itens_pedido(produto_id, qtd_solicitada)")\
+        peds = db.table("pedidos").select("id, empenho_id, tipo_operacao, itens_pedido(produto_id, qtd_solicitada)")\
             .in_("empenho_id", lote).neq("status", "CANCELADO").execute().data
         for p in peds:
             emp = p.get("empenho_id")
             if not emp:
+                continue
+            if (p.get("tipo_operacao") or "") in _NAO_CONSOME_CONTRATO:
                 continue
             alvo = consumo.setdefault(emp, {})
             for it in (p.get("itens_pedido") or []):
@@ -45,6 +61,33 @@ def _consumo_por_empenho(db, empenho_ids: list[str]) -> dict:
                 if pid:
                     alvo[pid] = alvo.get(pid, 0.0) + float(it.get("qtd_solicitada") or 0)
     return consumo
+
+
+def _remessa_por_empenho(db, empenho_ids: list[str]) -> dict:
+    """{empenho_id: {produto_id: qtd_remetida}} — o que ja saiu em remessa.
+
+    So faz sentido em contrato de consignacao, onde remeter e consumir sao dois
+    momentos diferentes. E este numero, cruzado com o consumo, que responde
+    "quanto material meu esta na mao do cliente" — pergunta que hoje nao tem
+    resposta em lugar nenhum."""
+    remessa: dict = {}
+    if not empenho_ids:
+        return remessa
+    for i in range(0, len(empenho_ids), 80):
+        lote = empenho_ids[i:i + 80]
+        peds = db.table("pedidos").select(
+            "id, empenho_id, tipo_operacao, itens_pedido(produto_id, qtd_solicitada)"
+        ).in_("empenho_id", lote).neq("status", "CANCELADO").execute().data
+        for p in peds:
+            emp = p.get("empenho_id")
+            if not emp or (p.get("tipo_operacao") or "") not in _NAO_CONSOME_CONTRATO:
+                continue
+            alvo = remessa.setdefault(emp, {})
+            for it in (p.get("itens_pedido") or []):
+                pid = it.get("produto_id")
+                if pid:
+                    alvo[pid] = alvo.get(pid, 0.0) + float(it.get("qtd_solicitada") or 0)
+    return remessa
 
 
 def _resumo_empenho(itens: list, consumo_prod: dict) -> dict:
@@ -150,14 +193,17 @@ def obter_empenho(empenho_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Empenho não encontrado")
     itens = db.table("empenho_itens").select("*").eq("empenho_id", empenho_id).execute().data
     consumo = _consumo_por_empenho(db, [empenho_id]).get(empenho_id, {})
+    remetido = _remessa_por_empenho(db, [empenho_id]).get(empenho_id, {})
 
     itens_out = []
     for it in itens:
         q = float(it.get("qtd_empenhada") or 0)
         vu = float(it.get("valor_unitario") or 0)
-        cons = min(float(consumo.get(it.get("produto_id"), 0.0)), q)
+        pid = it.get("produto_id")
+        cons = min(float(consumo.get(pid, 0.0)), q)
+        rem = min(float(remetido.get(pid, 0.0)), q)
         itens_out.append({
-            "produto_id": it.get("produto_id"),
+            "produto_id": pid,
             "codigo": it.get("codigo"),
             "descricao": it.get("descricao"),
             "qtd_empenhada": round(q),
@@ -165,6 +211,14 @@ def obter_empenho(empenho_id: str) -> dict:
             "qtd_faturada": round(cons),
             "qtd_saldo": round(q - cons),
             "valor_saldo": round((q - cons) * vu, 2),
+            # Consignacao tem dois saldos, e sao coisas diferentes:
+            #   a remeter        = contratado - ja remetido
+            #   na mao do cliente = remetido - consumido por comunicado de uso
+            # Na venda direta remessa nao existe: `qtd_remetida` fica 0 e
+            # `qtd_a_remeter` acompanha o saldo.
+            "qtd_remetida": round(rem),
+            "qtd_a_remeter": round(q - rem),
+            "qtd_com_cliente": round(max(rem - cons, 0)),
         })
 
     # Comunicados (consumos) vinculados
@@ -239,8 +293,21 @@ def registrar_consumo(empenho_id: str, payload: ConsumoEmpenhoCreate, usuario: U
 
 
 def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuario: UsuarioOut) -> dict:
-    """Entrega parcial de um contrato de VENDA DIRETA — gera uma OV no fluxo
-    logístico, vinculada ao contrato, baixando o saldo por item."""
+    """Saída de material de um contrato — gera uma OV no fluxo logístico.
+
+    Vale para os dois tipos de contrato, porque a saída é a MESMA operação nos
+    dois: separar, conferir, cotar frete, emitir nota. O que muda é o significado
+    do que saiu:
+
+      venda direta  → a entrega cumpre o contrato (OV VENDA_NORMAL, fatura)
+      consignação   → a remessa só muda o material de lugar (OV CONSIGNADO, não
+                      fatura); quem cumpre o contrato é o comunicado de uso,
+                      depois, conforme o cliente usa
+
+    Antes daqui saía um 400 dizendo "consignação usa comunicado de uso", o que
+    confundia como FATURA com como SAI DA CASA. O efeito era o material de
+    consignado sair sem passar pela expedição — sem reserva de estoque, sem
+    conferência e sem registro de quanto material nosso está com o cliente."""
     from app.models.schemas import PedidoCreate
     from app.services import pedido_service
 
@@ -248,21 +315,31 @@ def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuari
     emp = db.table("empenhos").select("id, cliente_id, tipo").eq("id", empenho_id).single().execute().data
     if not emp:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
-    if (emp.get("tipo") or "CONSIGNACAO") != "VENDA_DIRETA":
-        raise HTTPException(status_code=400, detail="Entregas por OV só valem para contratos de venda direta. Consignação usa comunicado de uso.")
     if not payload.itens:
         raise HTTPException(status_code=422, detail="Informe ao menos um item da entrega")
 
-    # Valida saldo por item; herda o preço unitário do contrato para a OV
+    tipo_contrato = emp.get("tipo") or "CONSIGNACAO"
+    eh_consignacao = tipo_contrato == "CONSIGNACAO"
+
+    # Valida saldo por item; herda o preço unitário do contrato para a OV.
+    #
+    # O teto é diferente em cada tipo, e tem que ser: na consignação o limite é o
+    # que ainda não foi REMETIDO (o consumo vem depois, pelo comunicado de uso);
+    # na venda direta é o saldo do contrato mesmo. Usar o saldo de consumo na
+    # consignação deixaria remeter de novo o que já está com o cliente.
     detalhe = obter_empenho(empenho_id)
-    saldo = {i["produto_id"]: i["qtd_saldo"] for i in detalhe["itens"]}
+    campo_saldo = "qtd_a_remeter" if eh_consignacao else "qtd_saldo"
+    saldo = {i["produto_id"]: i[campo_saldo] for i in detalhe["itens"]}
     preco = {i["produto_id"]: float(i.get("valor_unitario") or 0) for i in detalhe["itens"]}
     for it in payload.itens:
         pid = str(it.produto_id)
         if pid not in saldo:
             raise HTTPException(status_code=422, detail="Item não pertence a este contrato")
         if it.qtd_solicitada > saldo[pid] + 0.001:
-            raise HTTPException(status_code=422, detail=f"Quantidade acima do saldo do item (saldo {saldo[pid]})")
+            rotulo = "que ainda falta remeter" if eh_consignacao else "saldo"
+            raise HTTPException(
+                status_code=422,
+                detail=f"Quantidade acima do {rotulo} neste item ({saldo[pid]}).")
         if it.valor_unitario is None and preco.get(pid):
             it.valor_unitario = preco[pid]
 
@@ -271,7 +348,7 @@ def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuari
             numero_pedido=payload.numero_pedido,
             cliente_id=emp["cliente_id"],
             tipo_frete=payload.tipo_frete or "FOB",
-            tipo_operacao="VENDA_NORMAL",
+            tipo_operacao="CONSIGNADO" if eh_consignacao else "VENDA_NORMAL",
             canal=payload.canal or detalhe.get("canal"),
             local_entrega=payload.local_entrega,
             data_prevista_entrega=payload.data_prevista_entrega,
@@ -291,7 +368,7 @@ def registrar_entrega(empenho_id: str, payload: EntregaVendaDiretaCreate, usuari
     try:
         from datetime import datetime, timezone
         db.table("licitacao_demandas").insert({
-            "tipo_operacao": "VENDA_DIRETA",
+            "tipo_operacao": tipo_contrato,
             "etapa": "OV_GERADA",
             "numero_pregao": detalhe.get("numero_pregao"),
             "numero": detalhe.get("numero"),

@@ -3,9 +3,15 @@ chegam por e-mail (venda direta, consignação, comunicado de uso).
 
 Cada demanda é um card que anda pelas etapas NOVO → ANALISE → PROCESSANDO →
 CONCLUIDO. Ao concluir, o app gera automaticamente o artefato correspondente:
-- VENDA_DIRETA  → cria a OV no fluxo logístico
-- CONSIGNACAO   → cria o empenho
+- VENDA_DIRETA  → cria o contrato e, no atalho de entrega única, já a OV
+- CONSIGNACAO   → cria o contrato e, no atalho, a OV de REMESSA (CONSIGNADO)
 - COMUNICADO_USO→ registra o comunicado de uso (baixando saldo de um empenho, se houver)
+
+A saída do material é a mesma operação nos dois primeiros: separar, conferir,
+cotar frete, emitir nota. O que muda é o significado. Na venda direta, entregar
+cumpre o contrato e fatura. Na consignação, remeter só muda o material de lugar
+— quem cumpre o contrato e fatura é o comunicado de uso, depois, conforme o
+cliente vai usando.
 """
 from datetime import date
 from typing import Optional
@@ -1030,9 +1036,13 @@ def concluir_demanda(demanda_id: str, payload: DemandaConcluir, usuario: Usuario
         )
         gerado_tipo, gerado_id, gerado_ref = "CONTRATO", emp.get("id"), emp.get("numero")
 
-        # Atalho de entrega única (venda direta): já gera a OV cheia baixando todo
-        # o saldo. A demanda segue no painel em "OV gerada" para cotar frete/enviar NF.
-        if getattr(payload, "gerar_ov", False) and tipo == "VENDA_DIRETA":
+        # Atalho de saída única: já gera a OV cheia com todo o contrato. A demanda
+        # segue no painel em "OV gerada" para cotar frete / enviar NF.
+        #
+        # Vale nos dois tipos porque a saída do material é a mesma operação. Na
+        # consignação a OV nasce CONSIGNADO (remessa, não fatura) e o contrato só
+        # é consumido depois, pelos comunicados de uso.
+        if getattr(payload, "gerar_ov", False):
             if not payload.numero_pedido or not payload.numero_pedido.strip():
                 raise HTTPException(status_code=422, detail="Informe o número da OV para gerar a entrega junto.")
             if not (payload.condicao_pagamento or "").strip():
