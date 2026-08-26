@@ -67,6 +67,12 @@ class TipoFrete(str, Enum):
     FOB = "FOB"
     CIF_COM_VALOR = "CIF_COM_VALOR"
     CIF_SEM_VALOR = "CIF_SEM_VALOR"
+    # Comunicado de uso nao tem logistica: o material saiu no envio do
+    # consignado, meses antes, e o cliente ja usou. FOB ali dizia "o cliente
+    # informa a transportadora da coleta" — dado que nunca vai existir. Este
+    # valor nao entra nos seletores de frete: quem escolhe frete esta montando
+    # uma expedicao, e comunicado de uso nao e uma.
+    NAO_UTILIZAR_TERCEIROS = "NAO_UTILIZAR_TERCEIROS"
 
 
 class TipoOperacao(str, Enum):

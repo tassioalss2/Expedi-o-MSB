@@ -10,6 +10,7 @@ from app.models.enums import (
     Prioridade,
     ResultadoConferencia,
     StatusPedido,
+    TipoFrete,
     TRANSICOES_PERMITIDAS,
 )
 from app.models.schemas import (
@@ -60,7 +61,8 @@ def _notificar_teams_nova_ov(pedido: dict, cliente_nome: str) -> None:
         return
 
     PRIORIDADE_LABEL = {"NORMAL": "Normal", "ALTA": "⚡ Alta", "CRITICA": "🔴 Crítica"}
-    FRETE_LABEL = {"FOB": "FOB", "CIF_COM_VALOR": "CIF com Valor NF", "CIF_SEM_VALOR": "CIF sem Valor NF"}
+    FRETE_LABEL = {"FOB": "FOB", "CIF_COM_VALOR": "CIF com Valor NF", "CIF_SEM_VALOR": "CIF sem Valor NF",
+                   "NAO_UTILIZAR_TERCEIROS": "Não utilizar - Frete terceiros"}
 
     data_entrega = pedido.get("data_prevista_entrega", "")
     try:
@@ -756,7 +758,8 @@ def _detalhes_venda_outbound(db, payload: "PedidoOutboundCreate", usuario: Usuar
     """Registro auditável de tudo que o comercial preencheu ao lançar a venda —
     para ficar visível no histórico da OV, não só nos campos atuais (que podem
     ser editados depois)."""
-    FRETE_LABEL = {"FOB": "FOB", "CIF_COM_VALOR": "CIF com Valor NF", "CIF_SEM_VALOR": "CIF sem Valor NF"}
+    FRETE_LABEL = {"FOB": "FOB", "CIF_COM_VALOR": "CIF com Valor NF", "CIF_SEM_VALOR": "CIF sem Valor NF",
+                   "NAO_UTILIZAR_TERCEIROS": "Não utilizar - Frete terceiros"}
 
     cliente_res = db.table("clientes").select("nome").eq("id", str(payload.cliente_id)).execute().data
     cliente_nome = cliente_res[0]["nome"] if cliente_res else "—"
@@ -952,7 +955,7 @@ def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     pedido_data = {
         "numero_pedido":         payload.numero_pedido,
         "cliente_id":            str(payload.cliente_id),
-        "tipo_frete":            "FOB",
+        "tipo_frete":            TipoFrete.NAO_UTILIZAR_TERCEIROS.value,
         "tipo_operacao":         "COMUNICADO_USO",
         "status":                StatusPedido.FATURADO.value,
         "prioridade":            "NORMAL",

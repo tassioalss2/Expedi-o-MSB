@@ -51,6 +51,8 @@ export const TIPO_FRETE_LABEL: Record<string, string> = {
   FOB: 'FOB',
   CIF_COM_VALOR: 'CIF com Valor NF',
   CIF_SEM_VALOR: 'CIF sem Valor NF',
+  // Automático no comunicado de uso; não aparece nos seletores de frete.
+  NAO_UTILIZAR_TERCEIROS: 'Não utilizar - Frete terceiros',
 }
 
 // Continua com TODAS as naturezas, inclusive as que saíram do formulário: há OVs

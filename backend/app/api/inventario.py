@@ -269,6 +269,7 @@ def alterar_tipo_frete(
         TipoFrete.FOB.value: "FOB",
         TipoFrete.CIF_COM_VALOR.value: "CIF com Valor NF",
         TipoFrete.CIF_SEM_VALOR.value: "CIF sem Valor NF",
+        TipoFrete.NAO_UTILIZAR_TERCEIROS.value: "Não utilizar - Frete terceiros",
     }
     agora = _agora()
 

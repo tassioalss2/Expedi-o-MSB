@@ -247,6 +247,7 @@ export function PainelComercial() {
   }
   const TIPO_FRETE_LABEL: Record<string, string> = {
     FOB: 'FOB', CIF_COM_VALOR: 'CIF c/ valor', CIF_SEM_VALOR: 'CIF s/ valor',
+    NAO_UTILIZAR_TERCEIROS: 'Não utilizar',
   }
   const fmtMoeda = (v: number) => `R$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 

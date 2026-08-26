@@ -8,7 +8,7 @@ export type StatusPedido =
   | 'AGUARD_FATURAMENTO' | 'FATURADO' | 'AGUARD_COLETA'
   | 'COLETADO' | 'EXPEDIDO' | 'BLOQUEADO' | 'CANCELADO'
 
-export type TipoFrete = 'FOB' | 'CIF_COM_VALOR' | 'CIF_SEM_VALOR'
+export type TipoFrete = 'FOB' | 'CIF_COM_VALOR' | 'CIF_SEM_VALOR' | 'NAO_UTILIZAR_TERCEIROS'
 
 export type Prioridade = 'NORMAL' | 'ALTA' | 'CRITICA'
 

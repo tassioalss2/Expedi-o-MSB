@@ -6,7 +6,7 @@
 -- ── 1. Novos campos na tabela pedidos ────────────────────────
 
 ALTER TABLE pedidos
-  ADD COLUMN IF NOT EXISTS tipo_frete VARCHAR(30) CHECK (tipo_frete IN ('FOB','CIF_COM_VALOR','CIF_SEM_VALOR')),
+  ADD COLUMN IF NOT EXISTS tipo_frete VARCHAR(30) CHECK (tipo_frete IN ('FOB','CIF_COM_VALOR','CIF_SEM_VALOR','NAO_UTILIZAR_TERCEIROS')),
   ADD COLUMN IF NOT EXISTS local_entrega VARCHAR(150);
 
 -- Atualiza os status permitidos
