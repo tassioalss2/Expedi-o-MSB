@@ -210,13 +210,23 @@ def entrada_de_itens_crm(itens_rows: list) -> list:
 def aplicar_escolha(analise: dict, escolhidos: dict) -> dict:
     """Reescreve a análise com a quantidade que o operador escolheu levar agora.
 
-    `escolhidos`: {produto_id: qtd}. Produto ausente do dicionário mantém o que o
-    estoque atendeu — quem não mexeu no campo leva o disponível, que é o
-    comportamento de sempre.
+    `escolhidos`: {produto_id: qtd}. A LISTA É EXAUSTIVA: quando ela vem, produto
+    AUSENTE vale ZERO — vai inteiro para a pendência.
 
-    CONTRATO COM QUEM CHAMA: mande TODOS os itens que quer controlar, zeros
-    inclusive. Omitir um item significa "leva tudo", nunca "leva nada" — o
-    frontend filtrava os zeros e o item zerado voltava cheio para a OV.
+    Essa regra já foi o contrário ("ausente = leva tudo") e custou dois bugs
+    iguais em produção: o operador zerava um item, o frontend filtrava os zeros
+    antes de enviar (convenção do modal de LIBERAR pendência, onde a regra é
+    outra), o item chegava como omissão e voltava cheio para a OV. Corrigir o
+    frontend nao bastou: enquanto uma versão antiga estivesse em cache no
+    navegador, o bug voltava — e voltou.
+
+    Com "ausente = zero" o servidor acerta independentemente da versão do
+    frontend, que é a garantia que importa. O frontend manda os zeros de todo
+    jeito, explícito.
+
+    Exceção: item `sem_dado` (código que o PCP não acompanha) ausente mantém a
+    quantidade. Não se pode afirmar que falta material por uma lacuna de dado
+    nossa — é a mesma razão pela qual `analisar` não o marca como falta.
 
     Só REDUZ: nunca acima do que o estoque atendeu, senão a OV desceria para a
     expedição prometendo material que não existe, que é justamente o que a regra
@@ -229,6 +239,12 @@ def aplicar_escolha(analise: dict, escolhidos: dict) -> dict:
     saldo ali não é falta de estoque esperando semiacabado, e anunciar a data do
     SA para material que está na prateleira seria informação errada.
     """
+    # Dicionário vazio significa "não houve escolha", NUNCA "zere tudo". Sem esta
+    # guarda, um chamador que esquecesse o `if escolha:` zeraria a OV inteira em
+    # silêncio — e a regra "ausente = zero" torna esse acidente plausível.
+    if not escolhidos:
+        return analise
+
     itens = []
     valor_pendente = 0.0
     qtd_pendente_total = 0.0
@@ -240,8 +256,12 @@ def aplicar_escolha(analise: dict, escolhidos: dict) -> dict:
         atendida_estoque = float(item.get("qtd_atendida") or 0)
         if pid is not None and pid in escolhidos:
             escolhida = max(0.0, min(atendida_estoque, float(escolhidos[pid] or 0)))
-        else:
+        elif item.get("sem_dado"):
+            # Lacuna de dado nossa não vira falta — mantém o que foi pedido.
             escolhida = atendida_estoque
+        else:
+            # Ausente da lista exaustiva = o operador não quer levar agora.
+            escolhida = 0.0
         segurou = escolhida < atendida_estoque - 0.001
         if segurou:
             algum_segurado = True
