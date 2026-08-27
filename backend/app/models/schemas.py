@@ -171,10 +171,6 @@ class ItemPedidoCreate(BaseModel):
         return v
 
 
-class EditarItensRequest(BaseModel):
-    itens: list[ItemPedidoCreate]
-
-
 class ReclassificarCanalRequest(BaseModel):
     """Reclassifica uma OV que ainda não tem canal definido (legado
     'LICITACAO' puro, ou sem canal nenhum) para o canal correto."""
@@ -281,6 +277,13 @@ class DecisaoEstoqueMixin(BaseModel):
     def previsao_pcp_iso(self) -> Optional[str]:
         """A pendência é gravada em jsonb, e `date` não serializa em JSON."""
         return self.previsao_pcp.isoformat() if self.previsao_pcp else None
+
+
+class EditarItensRequest(DecisaoEstoqueMixin):
+    """Editar itens passa pela MESMA regra de estoque da criação: a OV fica com o
+    que existe e o saldo vira pendência. Herda `decisao_estoque` para o operador
+    confirmar o parcial depois do 409, como em Nova OV."""
+    itens: list[ItemPedidoCreate]
 
 
 class PedidoCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):

@@ -161,8 +161,16 @@ def reclassificar_canal_licitacao(pedido_id: UUID, payload: ReclassificarCanalRe
 def editar_itens(pedido_id: UUID, payload: EditarItensRequest,
                  usuario: UsuarioOut = Depends(get_current_user)):
     """Substitui os itens da OV — ex.: item sem estoque trocado por outro.
-    Bloqueado depois de FATURADO (o item vira o que está na NF)."""
-    return pedido_service.editar_itens(str(pedido_id), payload.itens, usuario)
+    Bloqueado depois de FATURADO (o item vira o que está na NF).
+
+    Responde 409 ESTOQUE_INSUFICIENTE quando o AUMENTO pedido não cabe no
+    estoque; o operador confirma o parcial e reenvia com decisao_estoque."""
+    return pedido_service.editar_itens(
+        str(pedido_id), payload.itens, usuario,
+        decisao=payload.decisao_estoque,
+        observacao_estoque=payload.observacao_estoque,
+        previsao_pcp=payload.previsao_pcp_iso(),
+    )
 
 
 @router.patch("/{pedido_id}/status")

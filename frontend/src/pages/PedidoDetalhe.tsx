@@ -9,6 +9,7 @@ import { erroNumeroOv } from '../lib/crm'
 import type { InventarioItem, Pedido, Cubagem, Transportadora } from '../types'
 import { ClienteAutocomplete } from './NovoPedido'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
+import { ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
@@ -2064,16 +2065,44 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   const estoquePorCodigo: Record<string, any> = {}
   for (const i of (estoque?.itens || [])) estoquePorCodigo[i.codigo] = i
 
+  // Falta material para o aumento pedido: o servidor responde 409 com a análise
+  // e o operador decide, no mesmo modal que Nova OV usa. Sem isto a edição
+  // salvava por cima do estoque e a OV seguia liberada com material que não
+  // existe — foi o que motivou esta mudança.
+  const [faltaEstoque, setFaltaEstoque] = useState<any | null>(null)
+
+  const corpo = (d?: DecisaoEstoque | null) => ({
+    itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor || null })),
+    decisao_estoque: d?.decisao || null,
+    observacao_estoque: d?.observacao || null,
+    previsao_pcp: d?.previsao_pcp || null,
+  })
+
+  const aoSalvar = (parcial: boolean) => {
+    toast.success(parcial
+      ? 'Itens atualizados só com o disponível — o saldo ficou como pendência.'
+      : 'Itens atualizados', { duration: parcial ? 7000 : 4000 })
+    qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+    qc.invalidateQueries({ queryKey: ['pendencias'] })
+    qc.invalidateQueries({ queryKey: ['pendencias-count'] })
+    onClose()
+  }
+
   const mutation = useMutation({
-    mutationFn: () => api.patch(`/pedidos/${pedido.id}/itens`, {
-      itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor || null })),
-    }),
-    onSuccess: () => {
-      toast.success('Itens atualizados')
-      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
-      onClose()
+    mutationFn: () => api.patch(`/pedidos/${pedido.id}/itens`, corpo()),
+    onSuccess: () => aoSalvar(false),
+    onError: (e: any) => {
+      const detail = e?.response?.data?.detail
+      if (e?.response?.status === 409 && detail?.tipo === 'ESTOQUE_INSUFICIENTE' && detail.analise) {
+        setFaltaEstoque(detail.analise)
+        return
+      }
+      if (e?.response?.status === 409 && detail?.tipo === 'SEM_ESTOQUE') {
+        toast.error(detail.msg, { duration: 8000 })
+        return
+      }
+      toast.error(typeof detail === 'string' ? detail : detail?.msg || 'Erro ao editar itens')
     },
-    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao editar itens'),
   })
 
   const semEstoque = itens.filter(i => {
@@ -2109,9 +2138,10 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
             </div>
           )}
           {semEstoque.length > 0 && (
-            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              {semEstoque.length} item(ns) com estoque insuficiente para a quantidade pedida.
-              Dá para salvar assim mesmo (o estoque pode chegar), mas confira antes.
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              {semEstoque.length} item(ns) acima do estoque disponível. Ao salvar, a OV fica
+              com o que existe e o saldo vira <strong>pendência</strong> (2ª remessa quando o
+              material chegar) — o app vai pedir sua confirmação.
             </p>
           )}
         </div>
@@ -2123,6 +2153,26 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
           </button>
         </div>
       </div>
+
+      {/* A OV já existe no D365, então "aguardar produção" não se aplica aqui —
+          mesma razão de Nova OV: só a opção de seguir com o disponível. */}
+      {faltaEstoque && (
+        <ModalDecisaoEstoque
+          analise={faltaEstoque}
+          titulo="Não temos todo o material deste aumento"
+          pendente={mutation.isPending}
+          permiteAguardar={false}
+          onClose={() => setFaltaEstoque(null)}
+          onDecidir={(d) => {
+            setFaltaEstoque(null)
+            api.patch(`/pedidos/${pedido.id}/itens`, corpo(d))
+              .then(() => aoSalvar(true))
+              .catch((e: any) => {
+                const d2 = e?.response?.data?.detail
+                toast.error(typeof d2 === 'string' ? d2 : d2?.msg || 'Erro ao editar itens')
+              })
+          }} />
+      )}
     </div>
   )
 }

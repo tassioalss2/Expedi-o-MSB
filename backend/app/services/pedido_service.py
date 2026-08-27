@@ -889,11 +889,20 @@ def reclassificar_canal_licitacao(pedido_id: str, canal: str, usuario: UsuarioOu
     return obter_pedido(pedido_id)
 
 
-def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut) -> dict:
+def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
+                 decisao: Optional[str] = None,
+                 observacao_estoque: Optional[str] = None,
+                 previsao_pcp: Optional[str] = None) -> dict:
     """Substitui os itens de uma OV inteira — ex.: item sem estoque trocado por
-    outro antes de faturar. Depois de FATURADO os itens são o que está na NF."""
+    outro antes de faturar. Depois de FATURADO os itens são o que está na NF.
+
+    Passa pela MESMA regra de estoque da criação (ver pendencia_service): a OV
+    fica com o que a MSB tem e o saldo vira pendência. Antes não passava — dava
+    para aumentar a quantidade de uma OV já LIBERADA para além do estoque e ela
+    seguia liberada, mandando para a expedição material que não existe.
+    """
     db = get_service_db()
-    ped = db.table("pedidos").select("id, status, numero_pedido").eq("id", pedido_id).single().execute().data
+    ped = db.table("pedidos").select("id, status, numero_pedido, pendencia").eq("id", pedido_id).single().execute().data
     if not ped:
         raise HTTPException(status_code=404, detail="OV não encontrada")
     if ped["status"] in _STATUS_ITENS_TRAVADOS:
@@ -908,17 +917,106 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut) -> dict:
         .eq("pedido_id", pedido_id).execute().data
     ja_separado = any(float(i.get("qtd_separada") or 0) > 0 for i in antigos)
 
+    # ── Estoque: mede o DELTA, não a quantidade absoluta ───────────────────────
+    #
+    # `disponivel` do estoque é "foto do PCP − comprometido", e o comprometido
+    # varre TODA OV não cancelada (_comprometido_por_produto) — inclusive esta.
+    # Medir a quantidade cheia faria a OV competir com a própria reserva e acusar
+    # falta inexistente: OV de 5, estoque 10, disponível 5; editar para 8
+    # apareceria como falta de 3, quando há 10 em casa.
+    #
+    # Só o AUMENTO precisa de material novo. Reduzir devolve, e redução sempre
+    # cabe. Produto repetido em duas linhas consome a reserva na ordem.
+    reserva: dict = {}
+    for i in antigos:
+        pid = i.get("produto_id")
+        if pid:
+            reserva[pid] = reserva.get(pid, 0.0) + float(i.get("qtd_solicitada") or 0)
+
+    coberto_pela_reserva: dict = {}
+    delta_pedido: dict = {}
+    deltas = []
+    for idx, it in enumerate(itens):
+        pid = str(it.produto_id)
+        qtd = float(it.qtd_solicitada)
+        usa = min(reserva.get(pid, 0.0), qtd)
+        reserva[pid] = reserva.get(pid, 0.0) - usa
+        coberto_pela_reserva[idx] = usa
+        falta = qtd - usa
+        delta_pedido[idx] = falta
+        if falta > 0:
+            deltas.append({"ref": idx, "produto_id": pid, "qtd": falta,
+                           "valor_unitario": float(it.valor_unitario or 0)})
+
+    atendido_delta: dict = {}
+    pendencia = None
+    if deltas:
+        from app.services import disponibilidade_service, pendencia_service
+
+        analise = disponibilidade_service.analisar(deltas, sincronizar=True)
+        if analise.get("tem_falta") and (decisao or "").strip().upper() != "PARCIAL":
+            raise HTTPException(status_code=409, detail={
+                "tipo": "ESTOQUE_INSUFICIENTE",
+                "msg": "Não há material para todo o aumento pedido. A OV pode ficar só com "
+                       "o disponível — o saldo fica como pendência e vira 2ª remessa.",
+                "analise": analise,
+            })
+        pendentes = disponibilidade_service.itens_pendentes(analise)
+        if pendentes:
+            atendido_delta = {i.get("ref"): float(i.get("qtd_atendida") or 0)
+                              for i in (analise.get("itens") or []) if i.get("ref") is not None}
+            pendencia = pendencia_service.montar(
+                analise, "PARCIAL", str(usuario.id), origem="EDICAO_ITENS",
+                observacao=observacao_estoque, previsao_pcp=previsao_pcp)
+    # Sem SEM_ESTOQUE aqui, ao contrário da criação: se o aumento inteiro faltar, a
+    # OV continua com o que já tinha e o aumento vira pendência — há o que mandar
+    # para a expedição, então não há por que barrar a edição.
+
+    finais = []
+    for idx, it in enumerate(itens):
+        extra = atendido_delta.get(idx, delta_pedido[idx])
+        finais.append((it, coberto_pela_reserva[idx] + max(0.0, extra)))
+
+    if not any(q > 0 for _, q in finais):
+        raise HTTPException(status_code=409, detail={
+            "tipo": "SEM_ESTOQUE",
+            "msg": "Nenhuma unidade disponível para os itens informados — a edição deixaria "
+                   "a OV sem nada para separar. Os itens atuais foram preservados.",
+        })
+
+    # Só daqui para baixo escreve: um 409 acima não pode deixar a OV sem itens.
     db.table("itens_pedido").delete().eq("pedido_id", pedido_id).execute()
     db.table("itens_pedido").insert([{
         "pedido_id": pedido_id,
         "produto_id": str(it.produto_id),
         "lote_id": str(it.lote_id) if it.lote_id else None,
-        "qtd_solicitada": it.qtd_solicitada,
+        "qtd_solicitada": qtd,
         "valor_unitario": it.valor_unitario,
         "status_item": "PENDENTE",
-    } for it in itens]).execute()
+    } for it, qtd in finais if qtd > 0]).execute()
+
+    cortados = [(it, qtd) for it, qtd in finais if qtd < float(it.qtd_solicitada)]
+    if pendencia:
+        anterior = ped.get("pendencia") or None
+        try:
+            db.table("pedidos").update({"pendencia": pendencia}).eq("id", pedido_id).execute()
+        except Exception:
+            # Migration v29 pendente: a OV entra com o disponível de todo jeito; o
+            # registro do saldo se perde e fica só no histórico abaixo.
+            anterior = None
+        if anterior and not anterior.get("resolvido_em"):
+            # `pedidos.pendencia` guarda UMA pendência. A decisão nova substitui a
+            # anterior, então a antiga vai para o histórico em vez de desaparecer.
+            _registrar_movimentacao(
+                pedido_id, ped["status"], ped["status"], str(usuario.id),
+                f"Pendência anterior substituída pela edição de itens "
+                f"(valor {anterior.get('valor')}, decidida em {anterior.get('decidido_em')}).")
 
     obs = f"Itens da OV editados por {usuario.nome}"
+    if cortados:
+        detalhe = "; ".join(f"{float(it.qtd_solicitada):g} → {qtd:g}" for it, qtd in cortados)
+        obs += (f" — quantidade cortada ao estoque disponível ({detalhe}); "
+                "o saldo ficou como pendência.")
     if ja_separado:
         # A separação física que já existia ficou obsoleta — quem editou
         # precisa saber que tem que refazer, não é só trocar no sistema.
