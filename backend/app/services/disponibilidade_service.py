@@ -214,6 +214,10 @@ def aplicar_escolha(analise: dict, escolhidos: dict) -> dict:
     estoque atendeu — quem não mexeu no campo leva o disponível, que é o
     comportamento de sempre.
 
+    CONTRATO COM QUEM CHAMA: mande TODOS os itens que quer controlar, zeros
+    inclusive. Omitir um item significa "leva tudo", nunca "leva nada" — o
+    frontend filtrava os zeros e o item zerado voltava cheio para a OV.
+
     Só REDUZ: nunca acima do que o estoque atendeu, senão a OV desceria para a
     expedição prometendo material que não existe, que é justamente o que a regra
     do processo impede. O que o operador deixou para trás soma no pendente e vira

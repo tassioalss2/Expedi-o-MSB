@@ -163,10 +163,13 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
       .filter(i => i.produto_id && (i.qtd_atendida || 0) > 0)
       .map(i => [i.produto_id as string, String(i.qtd_atendida || 0)])))
 
+  // MANDA OS ZEROS. O servidor trata produto AUSENTE da lista como "não mexeu,
+  // leva todo o disponível" — filtrar os zeros aqui (como faz o modal de liberar
+  // pendência, onde a regra é outra) fazia o item zerado voltar cheio para a OV:
+  // o operador zerava o item, e ele entrava com o estoque todo.
   const escolha = analise.itens
     .filter(i => i.produto_id && (i.qtd_atendida || 0) > 0)
-    .map(i => ({ produto_id: i.produto_id as string, qtd: Number(qtds[i.produto_id as string] ?? 0) }))
-    .filter(i => i.qtd > 0)
+    .map(i => ({ produto_id: i.produto_id as string, qtd: Number(qtds[i.produto_id as string] || 0) }))
   const excedeuAlgum = analise.itens.some(i =>
     i.produto_id && Number(qtds[i.produto_id] ?? 0) > (i.qtd_atendida || 0) + 0.001)
   const totalEscolhido = escolha.reduce((a, i) => a + i.qtd, 0)
