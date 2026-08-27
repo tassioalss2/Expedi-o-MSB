@@ -65,7 +65,7 @@ const TIPOS: {
   },
   {
     key: 'CONSIGNACAO', label: 'Consignação', icone: Boxes,
-    desc: 'Envio de material em consignado. Vira um contrato; o comunicado de uso baixa o saldo conforme o cliente usa.',
+    desc: 'Remessa de material em consignado. Passa pela expedição como a venda direta (separa, frete, NF); não baixa o saldo do contrato — quem baixa é o comunicado de uso, conforme o cliente usa.',
     header: 'bg-amber-500', borda: 'border-l-amber-500', chip: 'bg-amber-100 text-amber-700',
   },
 ]
@@ -126,10 +126,26 @@ function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | nul
   if (e === 'AGUARDANDO_ESTOQUE') return { kind: 'liberarEstoque', label: 'Estoque chegou' }
   if (e === 'RECEBIDO') return { kind: 'avancar', to: 'PROCESSANDO', label: 'Avançar' }
   // Venda direta: Gerar OV já cria o contrato automático e mantém o card no kanban.
-  // Consignação: cria o contrato (baixa por comunicado de uso). Comunicado: fatura.
+  // Comunicado de uso: fatura (o material já saiu meses antes, não há logística).
+  //
+  // Consignação gera OV como a venda direta, e isso é uma CORREÇÃO: a ação aqui era
+  // "Criar contrato", que não tinha o que fazer — o card de consignação NASCE da
+  // criação do contrato (aba Contratos), então o contrato já existe quando o card
+  // aparece. Resultado: o card entrava no painel e morria em PROCESSANDO, sem
+  // caminho para gerar a OV da remessa. As 3 demandas de consignação do banco
+  // estavam todas com `ovs` vazio, duas paradas desde julho, e a remessa acabou
+  // lançada por fora — pelo botão "Registrar comunicado de uso" da tela do
+  // contrato, que criou uma OV de comunicado de uso para material que o cliente
+  // ainda não tinha usado.
+  //
+  // Remessa de consignado é envio físico: separa, cota frete, emite NF, expede —
+  // o mesmo fluxo da venda direta. A OV nasce com tipo_operacao CONSIGNADO, que
+  // está em _NAO_CONSOME_CONTRATO: a remessa não baixa o saldo do contrato, quem
+  // baixa é o comunicado de uso, conforme o cliente usa.
   if (e === 'PROCESSANDO') {
-    if (d.tipo_operacao === 'VENDA_DIRETA' || d.tipo_operacao === 'AMOSTRA') return { kind: 'gerarOv', label: 'Gerar OV' }
-    if (d.tipo_operacao === 'CONSIGNACAO') return { kind: 'faturar', label: 'Criar contrato' }
+    if (['VENDA_DIRETA', 'AMOSTRA', 'CONSIGNACAO'].includes(d.tipo_operacao)) {
+      return { kind: 'gerarOv', label: 'Gerar OV' }
+    }
     return { kind: 'faturar', label: 'Concluir e faturar' }
   }
   if (e === 'OV_GERADA') return { kind: 'frete', label: 'Cotar frete' }
