@@ -170,6 +170,7 @@ def editar_itens(pedido_id: UUID, payload: EditarItensRequest,
         decisao=payload.decisao_estoque,
         observacao_estoque=payload.observacao_estoque,
         previsao_pcp=payload.previsao_pcp_iso(),
+        escolha_estoque=payload.escolha_por_produto(),
     )
 
 

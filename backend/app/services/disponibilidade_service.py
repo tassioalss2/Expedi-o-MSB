@@ -207,6 +207,69 @@ def entrada_de_itens_crm(itens_rows: list) -> list:
     } for idx, i in enumerate(itens_rows)]
 
 
+def aplicar_escolha(analise: dict, escolhidos: dict) -> dict:
+    """Reescreve a análise com a quantidade que o operador escolheu levar agora.
+
+    `escolhidos`: {produto_id: qtd}. Produto ausente do dicionário mantém o que o
+    estoque atendeu — quem não mexeu no campo leva o disponível, que é o
+    comportamento de sempre.
+
+    Só REDUZ: nunca acima do que o estoque atendeu, senão a OV desceria para a
+    expedição prometendo material que não existe, que é justamente o que a regra
+    do processo impede. O que o operador deixou para trás soma no pendente e vira
+    pendência — pode ser material que a MSB TEM, segurado de propósito (mandar a
+    entrega junta, atender outro cliente antes), e nesse caso a pendência é
+    liberável na hora.
+
+    `cobre_com_sa` cai para False no item em que o operador segurou quantidade: o
+    saldo ali não é falta de estoque esperando semiacabado, e anunciar a data do
+    SA para material que está na prateleira seria informação errada.
+    """
+    itens = []
+    valor_pendente = 0.0
+    qtd_pendente_total = 0.0
+    algum_segurado = False
+
+    for i in (analise.get("itens") or []):
+        item = dict(i)
+        pid = item.get("produto_id")
+        atendida_estoque = float(item.get("qtd_atendida") or 0)
+        if pid is not None and pid in escolhidos:
+            escolhida = max(0.0, min(atendida_estoque, float(escolhidos[pid] or 0)))
+        else:
+            escolhida = atendida_estoque
+        segurou = escolhida < atendida_estoque - 0.001
+        if segurou:
+            algum_segurado = True
+
+        qtd = float(item.get("qtd_pedida") or 0)
+        vu = float(item.get("valor_unitario") or 0)
+        pendente = round(qtd - escolhida, 3)
+        item["qtd_atendida"] = escolhida
+        item["qtd_pendente"] = pendente
+        item["valor_pendente"] = round(pendente * vu, 2)
+        if segurou:
+            item["cobre_com_sa"] = False
+        if not item.get("sem_dado"):
+            item["status"] = "OK" if pendente <= 0 else ("SA" if item.get("cobre_com_sa") else "FALTA")
+
+        valor_pendente += item["valor_pendente"]
+        qtd_pendente_total += max(0.0, pendente)
+        itens.append(item)
+
+    tem_falta = qtd_pendente_total > 0
+    ajustada = dict(analise)
+    ajustada["itens"] = itens
+    ajustada["tem_falta"] = tem_falta
+    ajustada["tudo_disponivel"] = not tem_falta
+    ajustada["valor_pendente"] = round(valor_pendente, 2)
+    ajustada["qtd_pendente_total"] = round(qtd_pendente_total, 3)
+    if algum_segurado:
+        # Parte do saldo é material em estoque, não produção a esperar.
+        ajustada["cobre_com_sa"] = False
+    return ajustada
+
+
 def itens_pendentes(analise: dict) -> list:
     """Só o saldo — o que vira pendência e, depois, a 2ª remessa."""
     return [i for i in (analise.get("itens") or []) if float(i.get("qtd_pendente") or 0) > 0]

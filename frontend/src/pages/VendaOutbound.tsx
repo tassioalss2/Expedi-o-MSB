@@ -91,6 +91,7 @@ export function VendaOutbound() {
       forma_venda: 'DIRETA',
       itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
       decisao_estoque: decisao?.decisao || null,
+      itens_escolhidos: decisao?.itens || null,
       observacao_estoque: decisao?.observacao || null,
       previsao_pcp: decisao?.previsao_pcp || null,
     }),

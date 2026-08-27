@@ -2076,6 +2076,7 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
     decisao_estoque: d?.decisao || null,
     observacao_estoque: d?.observacao || null,
     previsao_pcp: d?.previsao_pcp || null,
+    itens_escolhidos: d?.itens || null,
   })
 
   const aoSalvar = (parcial: boolean) => {
@@ -2161,7 +2162,8 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
           analise={faltaEstoque}
           titulo="Não temos todo o material deste aumento"
           pendente={mutation.isPending}
-          permiteAguardar={false}
+          permiteAguardar
+          avisoAguardar="Nada desce para a expedição: o aumento inteiro fica na pendência."
           onClose={() => setFaltaEstoque(null)}
           onDecidir={(d) => {
             setFaltaEstoque(null)

@@ -717,6 +717,7 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
       api.post(`/crm/oportunidades/${id}/ganhar`, {
         repasse_nota: v.nota?.trim() || null,
         decisao_estoque: v.decisao?.decisao || null,
+        itens_escolhidos: v.decisao?.itens || null,
         observacao_estoque: v.decisao?.observacao || null,
         previsao_pcp: v.decisao?.previsao_pcp || null,
       }),

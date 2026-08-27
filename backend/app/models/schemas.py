@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, field_validator, model_validator, Field
 
 from app.models.enums import (
     DecisaoTratativa,
@@ -255,11 +255,24 @@ class CondicaoPagamentoMixin(BaseModel):
         return v.strip()
 
 
+class ItemEscolhidoEstoque(BaseModel):
+    """Quanto de um item o operador escolheu levar agora, quando falta material.
+
+    O servidor ainda limita ao disponível (ver aplicar_escolha): a escolha pode
+    reduzir, nunca aumentar.
+    """
+    produto_id: UUID
+    qtd: float = Field(ge=0)
+
+
 class DecisaoEstoqueMixin(BaseModel):
     """`decisao_estoque` só é exigida depois de o app responder 409 dizendo que
     falta material. Fora disso fica None e nada muda no fluxo."""
     decisao_estoque: Optional[str] = None
     observacao_estoque: Optional[str] = None
+    # Escolha item a item de quanto levar agora. Vazio = leva todo o disponível
+    # (comportamento anterior). O resto vira pendência.
+    itens_escolhidos: Optional[list[ItemEscolhidoEstoque]] = None
     # Data em que o PCP prevê ter o saldo. Preenchida à mão por quem acompanha a
     # produção — o app ainda não recebe plano de produção do PCP.
     previsao_pcp: Optional[date] = None
@@ -277,6 +290,10 @@ class DecisaoEstoqueMixin(BaseModel):
     def previsao_pcp_iso(self) -> Optional[str]:
         """A pendência é gravada em jsonb, e `date` não serializa em JSON."""
         return self.previsao_pcp.isoformat() if self.previsao_pcp else None
+
+    def escolha_por_produto(self) -> dict:
+        """{produto_id: qtd} para aplicar_escolha. Vazio quando não houve escolha."""
+        return {str(i.produto_id): float(i.qtd) for i in (self.itens_escolhidos or [])}
 
 
 class EditarItensRequest(DecisaoEstoqueMixin):

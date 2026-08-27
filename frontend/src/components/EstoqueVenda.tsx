@@ -134,6 +134,9 @@ export interface DecisaoEstoque {
   decisao: 'PARCIAL' | 'AGUARDAR'
   observacao?: string
   previsao_pcp?: string
+  /** Quanto levar de cada item agora. Ausente = leva todo o disponível.
+   *  O servidor limita ao disponível: a escolha reduz, nunca aumenta. */
+  itens?: { produto_id: string; qtd: number }[]
 }
 
 /** A decisão. Aparece quando o app respondeu 409 dizendo que falta material.
@@ -153,6 +156,23 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
 
   const nadaDisponivel = analise.itens.every(i => (i.qtd_atendida || 0) <= 0)
 
+  // Começa com o disponível de cada item — quem não mexer leva tudo o que temos,
+  // que era o comportamento anterior. Reduzir manda o resto para a pendência.
+  const [qtds, setQtds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(analise.itens
+      .filter(i => i.produto_id && (i.qtd_atendida || 0) > 0)
+      .map(i => [i.produto_id as string, String(i.qtd_atendida || 0)])))
+
+  const escolha = analise.itens
+    .filter(i => i.produto_id && (i.qtd_atendida || 0) > 0)
+    .map(i => ({ produto_id: i.produto_id as string, qtd: Number(qtds[i.produto_id as string] ?? 0) }))
+    .filter(i => i.qtd > 0)
+  const excedeuAlgum = analise.itens.some(i =>
+    i.produto_id && Number(qtds[i.produto_id] ?? 0) > (i.qtd_atendida || 0) + 0.001)
+  const totalEscolhido = escolha.reduce((a, i) => a + i.qtd, 0)
+  const totalDisponivel = analise.itens.reduce((a, i) => a + (i.qtd_atendida || 0), 0)
+  const segurouAlgo = totalEscolhido < totalDisponivel - 0.001
+
   return (
     <ModalBase titulo={titulo || 'Não temos todo o material'} onClose={onClose} max="max-w-2xl">
       <div className="p-5 space-y-4 overflow-y-auto flex-1">
@@ -164,7 +184,21 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
           </p>
         </div>
 
-        <TabelaDisponibilidade analise={analise} />
+        <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} mostrarSituacao
+          previsaoSa={analise.previsao_sa}
+          onQtd={(pid, v) => setQtds(q => ({ ...q, [pid]: v }))} />
+
+        {excedeuAlgum && (
+          <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            Há item acima do disponível. A OV só desce com o que temos de fato — reduza para seguir.
+          </p>
+        )}
+        {segurouAlgo && !excedeuAlgum && (
+          <p className="text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+            Você está segurando material que temos em estoque. Ele vai para a pendência junto
+            com o que falta — e essa parte fica liberável na hora, sem esperar produção.
+          </p>
+        )}
 
         {analise.cobre_com_sa && (
           <p className="text-xs text-amber-800 flex items-center gap-1.5">
@@ -187,16 +221,22 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
       </div>
 
       <div className="p-5 border-t space-y-2 shrink-0">
-        <button disabled={pendente || nadaDisponivel}
-          onClick={() => onDecidir({ decisao: 'PARCIAL', observacao, previsao_pcp: previsao || undefined })}
+        <button disabled={pendente || nadaDisponivel || totalEscolhido <= 0 || excedeuAlgum}
+          onClick={() => onDecidir({
+            decisao: 'PARCIAL', observacao, previsao_pcp: previsao || undefined, itens: escolha,
+          })}
           className="w-full flex items-start gap-3 text-left border-2 border-blue-200 hover:border-blue-400 bg-blue-50 rounded-xl px-4 py-3 disabled:opacity-40 disabled:cursor-not-allowed">
           <Check size={18} className="text-blue-600 mt-0.5 shrink-0" />
           <span>
-            <span className="block text-sm font-semibold text-blue-900">Seguir com o que temos</span>
+            <span className="block text-sm font-semibold text-blue-900">
+              {segurouAlgo ? 'Seguir com o que escolhi' : 'Seguir com o que temos'}
+            </span>
             <span className="block text-xs text-blue-700">
               {nadaDisponivel
                 ? 'Indisponível: não há nenhuma unidade em estoque agora.'
-                : 'A OV entra só com o disponível. O saldo vira pendência e entra depois como 2ª remessa, na mesma OV.'}
+                : totalEscolhido <= 0
+                ? 'Nenhuma quantidade escolhida — use a opção abaixo para jogar tudo na pendência.'
+                : `A OV entra com ${n(totalEscolhido)} unidade(s). O saldo vira pendência e entra depois como 2ª remessa, na mesma OV.`}
             </span>
           </span>
         </button>
@@ -207,7 +247,7 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
             className="w-full flex items-start gap-3 text-left border-2 border-gray-200 hover:border-gray-400 rounded-xl px-4 py-3 disabled:opacity-40">
             <Clock size={18} className="text-gray-500 mt-0.5 shrink-0" />
             <span>
-              <span className="block text-sm font-semibold text-gray-800">Aguardar a produção</span>
+              <span className="block text-sm font-semibold text-gray-800">Jogar tudo na pendência</span>
               <span className="block text-xs text-gray-500">
                 {avisoAguardar || 'Nenhuma OV é aberta. A venda fica na coluna de pendência até o material chegar.'}
               </span>
@@ -231,10 +271,17 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
  *
  *  Os itens COM estoque ficam no topo: são os únicos em que há o que decidir, e a
  *  lista costuma ser longa o bastante para eles sumirem no meio dos que faltam. */
-function EscolhaDeLiberacao({ itens, qtds, onQtd }: {
+function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao }: {
   itens: ItemDisponibilidade[]
   qtds: Record<string, string>
   onQtd: (produtoId: string, valor: string) => void
+  /** Data em que o semiacabado vira acabado — a situação de cada item depende dela. */
+  previsaoSa?: string | null
+  /** Mostra a coluna SITUAÇÃO (semiacabado com data, sem previsão). Vale na
+   *  DECISÃO, onde o operador escolhe quanto levar sabendo o que acontece com o
+   *  saldo; na liberação da pendência o material já chegou e a coluna só ocupa
+   *  espaço. */
+  mostrarSituacao?: boolean
 }) {
   const ordenados = [...itens].sort((a, b) => {
     const da = (a.qtd_atendida || 0) > 0 ? 0 : 1
@@ -251,6 +298,7 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd }: {
             <th className="py-2 px-3 font-medium">Item</th>
             <th className="py-2 px-2 font-medium text-right">Pedido</th>
             <th className="py-2 px-2 font-medium text-right">Temos</th>
+            {mostrarSituacao && <th className="py-2 px-2 font-medium">Situação</th>}
             <th className="py-2 px-3 font-medium text-right w-28">Liberar agora</th>
           </tr>
         </thead>
@@ -275,6 +323,11 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd }: {
                 <td className={`py-2 px-2 text-right tabular-nums font-medium ${tem ? 'text-emerald-700' : 'text-gray-300'}`}>
                   {n(disp)}
                 </td>
+                {mostrarSituacao && (
+                  <td className="py-2 px-2">
+                    <SituacaoItem item={i} previsaoSa={previsaoSa ?? null} />
+                  </td>
+                )}
                 <td className="py-2 px-3 text-right">
                   {tem ? (
                     <input type="number" min={0} max={disp} step="any" value={valor}

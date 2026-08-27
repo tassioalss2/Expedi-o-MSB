@@ -450,6 +450,9 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     analise = None
     pendencia = None
     qtd_por_ref: dict = {}
+    # Tudo na pendência (nada desce para a expedição). Fica False quando a análise
+    # não roda — criar_derivada e OV sem itens não passam por ela.
+    aguardando = False
     if not payload.criar_derivada and payload.itens:
         from app.services import disponibilidade_service, pendencia_service
 
@@ -461,7 +464,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         } for idx, item in enumerate(payload.itens)], sincronizar=True)
 
         decisao = (payload.decisao_estoque or "").strip().upper() or None
-        if analise.get("tem_falta") and decisao != "PARCIAL":
+        if analise.get("tem_falta") and decisao not in ("PARCIAL", "AGUARDAR"):
             raise HTTPException(status_code=409, detail={
                 "tipo": "ESTOQUE_INSUFICIENTE",
                 "msg": "Não há material para toda a quantidade desta OV. A OV pode entrar "
@@ -471,14 +474,43 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
 
         atendidos = disponibilidade_service.itens_atendidos(analise)
         pendentes = disponibilidade_service.itens_pendentes(analise)
-        if pendentes and not atendidos:
+        # Sem estoque nenhum: não há o que mandar para a expedição. Só barra quem
+        # NÃO pediu para aguardar — quem pediu já aceitou que a OV nasça vazia.
+        if pendentes and not atendidos and decisao != "AGUARDAR":
             raise HTTPException(status_code=409, detail={
                 "tipo": "SEM_ESTOQUE",
                 "msg": "Nenhuma unidade disponível para os itens desta OV — não há o que "
                        "mandar para a expedição ainda.",
                 "analise": analise,
             })
-        if pendentes:
+        # A escolha do operador entra ANTES de montar a pendência: ele pode levar
+        # menos do que o estoque atendeu, e o que ficou para trás é pendência.
+        escolha = payload.escolha_por_produto()
+        if escolha:
+            analise = disponibilidade_service.aplicar_escolha(analise, escolha)
+            atendidos = disponibilidade_service.itens_atendidos(analise)
+            pendentes = disponibilidade_service.itens_pendentes(analise)
+
+        # Jogar a OV INTEIRA na pendência, mesmo tendo material em estoque: pode
+        # ser decisão comercial (mandar a entrega junta, atender outro cliente
+        # antes) ou o operador ter zerado todos os itens na escolha. A OV é
+        # registrada e nada desce para a expedição — nasce em AGUARD_PRODUCAO,
+        # que não tem coluna no kanban operacional. Mesmo comportamento que a
+        # venda outbound já tinha.
+        aguardando = bool(pendentes) and (decisao == "AGUARDAR" or not atendidos)
+
+        if aguardando:
+            qtd_por_ref = {i.get("ref"): 0.0
+                           for i in (analise.get("itens") or []) if i.get("ref") is not None}
+            # A pendência guarda a venda INTEIRA: a OV ficou sem item nenhum, e
+            # ela é o único registro do que foi vendido. Gravar só o que faltava
+            # perderia os itens que tinham estoque.
+            pendencia = pendencia_service.montar(
+                pendencia_service.analise_venda_inteira(analise), "AGUARDAR",
+                str(usuario.id), origem="NOVA_OV",
+                observacao=payload.observacao_estoque,
+                previsao_pcp=payload.previsao_pcp_iso())
+        elif pendentes:
             qtd_por_ref = {i.get("ref"): float(i.get("qtd_atendida") or 0)
                            for i in (analise.get("itens") or []) if i.get("ref") is not None}
             pendencia = pendencia_service.montar(
@@ -487,7 +519,9 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
                 previsao_pcp=payload.previsao_pcp_iso())
 
     status_inicial = (
-        StatusPedido.AGUARD_CREDITO.value
+        StatusPedido.AGUARD_PRODUCAO.value
+        if aguardando
+        else StatusPedido.AGUARD_CREDITO.value
         if payload.em_gerenciamento_credito
         else StatusPedido.LIBERADO.value
     )
@@ -654,6 +688,11 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
                    "com o que temos ou aguardar a produção.",
             "analise": analise,
         })
+
+    # Escolha item a item, quando o operador reduziu o que leva agora.
+    escolha = payload.escolha_por_produto()
+    if escolha:
+        analise = disponibilidade_service.aplicar_escolha(analise, escolha)
 
     atendidos = disponibilidade_service.itens_atendidos(analise)
     pendentes = disponibilidade_service.itens_pendentes(analise)
@@ -892,7 +931,8 @@ def reclassificar_canal_licitacao(pedido_id: str, canal: str, usuario: UsuarioOu
 def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
                  decisao: Optional[str] = None,
                  observacao_estoque: Optional[str] = None,
-                 previsao_pcp: Optional[str] = None) -> dict:
+                 previsao_pcp: Optional[str] = None,
+                 escolha_estoque: Optional[dict] = None) -> dict:
     """Substitui os itens de uma OV inteira — ex.: item sem estoque trocado por
     outro antes de faturar. Depois de FATURADO os itens são o que está na NF.
 
@@ -961,6 +1001,10 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
                        "o disponível — o saldo fica como pendência e vira 2ª remessa.",
                 "analise": analise,
             })
+        # A escolha do operador vale aqui como na criação; a análise mede o
+        # aumento, então a escolha limita quanto DO AUMENTO entra agora.
+        if escolha_estoque:
+            analise = disponibilidade_service.aplicar_escolha(analise, escolha_estoque)
         pendentes = disponibilidade_service.itens_pendentes(analise)
         if pendentes:
             atendido_delta = {i.get("ref"): float(i.get("qtd_atendida") or 0)

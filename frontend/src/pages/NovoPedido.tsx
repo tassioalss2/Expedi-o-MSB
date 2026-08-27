@@ -177,6 +177,7 @@ export function NovoPedido() {
     decisao_estoque: decisao?.decisao || null,
     observacao_estoque: decisao?.observacao || null,
     previsao_pcp: decisao?.previsao_pcp || null,
+    itens_escolhidos: decisao?.itens || null,
     ...extra,
   })
 
@@ -461,7 +462,8 @@ export function NovoPedido() {
           analise={faltaEstoque}
           titulo="Não temos todo o material desta OV"
           pendente={mutation.isPending}
-          permiteAguardar={false}
+          permiteAguardar
+          avisoAguardar="A OV é registrada e nada desce para a expedição: tudo fica na pendência, inclusive o que temos em estoque."
           onClose={() => setFaltaEstoque(null)}
           onDecidir={(d) => {
             setDecisao(d)
@@ -473,6 +475,7 @@ export function NovoPedido() {
               decisao_estoque: d.decisao,
               observacao_estoque: d.observacao || null,
               previsao_pcp: d.previsao_pcp || null,
+              itens_escolhidos: d.itens || null,
             }).then(res => {
               toast.success('OV cadastrada só com o material disponível — o saldo ficou como pendência.',
                 { duration: 7000 })
