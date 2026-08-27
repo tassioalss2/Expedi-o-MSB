@@ -1070,6 +1070,116 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     return obter_pedido(pedido_id)
 
 
+def devolver_reserva(pedido_id: str, codigo: str, qtd: float, usuario: UsuarioOut,
+                     observacao: Optional[str] = None) -> dict:
+    """Tira de uma OV a quantidade de um item e joga na pendência dela, liberando
+    o estoque para outra venda.
+
+    O estoque não tem reserva para apagar: `comprometido` é recalculado das OVs
+    reais (docstring de estoque_service), então a reserva É o item na OV. Reduzir
+    o item aqui libera o disponível na hora, sem saldo mutável para auditar.
+
+    O material continua vendido: o saldo vai para a pendência da OV e volta como
+    2ª remessa quando houver material. Sem isso, liberar o estoque apagaria a
+    dívida com o cliente — a OV ficaria menor e ninguém saberia o que falta.
+    """
+    from app.services import pendencia_service
+
+    db = get_service_db()
+    ped = db.table("pedidos").select("id, status, numero_pedido, pendencia")\
+        .eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    # Depois de faturar, o material já saiu fisicamente — não há reserva a
+    # liberar, e mexer nos itens mudaria o que está na NF.
+    if ped["status"] in _STATUS_ITENS_TRAVADOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OV em '{ped['status']}' não tem reserva a liberar — o material já saiu "
+                   "(ou a OV está cancelada).")
+    if qtd is None or float(qtd) <= 0:
+        raise HTTPException(status_code=422, detail="Informe uma quantidade maior que zero.")
+
+    cod = (codigo or "").strip().upper()
+    produtos = db.table("produtos").select("id, codigo, descricao").ilike("codigo", cod).execute().data
+    if not produtos:
+        raise HTTPException(status_code=404, detail=f"Produto '{codigo}' não encontrado.")
+    por_id = {p["id"]: p for p in produtos}
+
+    linhas = [r for r in db.table("itens_pedido")
+              .select("id, produto_id, qtd_solicitada, qtd_separada, valor_unitario")
+              .eq("pedido_id", pedido_id).execute().data
+              if r.get("produto_id") in por_id]
+    if not linhas:
+        raise HTTPException(status_code=404,
+                            detail=f"A OV {ped['numero_pedido']} não tem o item {cod}.")
+
+    na_ov = sum(float(r.get("qtd_solicitada") or 0) for r in linhas)
+    devolver = float(qtd)
+    if devolver > na_ov + 0.001:
+        raise HTTPException(
+            status_code=422,
+            detail=f"A OV tem {na_ov:g} un de {cod} — não dá para liberar {devolver:g}.")
+
+    ja_separado = any(float(r.get("qtd_separada") or 0) > 0 for r in linhas)
+
+    # Baixa nas linhas em ordem; linha que zera é removida.
+    restante = devolver
+    devolvidos_por_produto: dict = {}
+    for r in linhas:
+        if restante <= 0.001:
+            break
+        atual = float(r.get("qtd_solicitada") or 0)
+        baixa = min(atual, restante)
+        restante -= baixa
+        nova = round(atual - baixa, 3)
+        pid = r["produto_id"]
+        agregado = devolvidos_por_produto.setdefault(pid, {
+            "produto_id": pid,
+            "codigo": por_id[pid].get("codigo"),
+            "descricao": por_id[pid].get("descricao"),
+            "qtd": 0.0,
+            "qtd_na_ov_antes": 0.0,
+            "valor_unitario": float(r.get("valor_unitario") or 0),
+        })
+        agregado["qtd"] += baixa
+        agregado["qtd_na_ov_antes"] += atual
+        if nova <= 0:
+            db.table("itens_pedido").delete().eq("id", r["id"]).execute()
+        else:
+            db.table("itens_pedido").update({"qtd_solicitada": nova}).eq("id", r["id"]).execute()
+
+    pendencia = pendencia_service.devolver_para_pendencia(
+        ped.get("pendencia"), list(devolvidos_por_produto.values()),
+        str(usuario.id), observacao=observacao)
+    try:
+        db.table("pedidos").update({"pendencia": pendencia}).eq("id", pedido_id).execute()
+    except Exception:
+        # Migration v29 pendente: o estoque libera de todo jeito (o item saiu da
+        # OV), mas o saldo devido fica só no histórico abaixo.
+        pass
+
+    obs = (f"{devolver:g} un de {cod} liberadas da OV para o estoque por {usuario.nome} "
+           f"— o saldo foi para a pendência desta OV.")
+    if observacao:
+        obs += f" Motivo: {observacao}"
+    if ja_separado:
+        obs += " ATENÇÃO: havia separação física deste item; ela precisa ser refeita."
+
+    sobrou = db.table("itens_pedido").select("id").eq("pedido_id", pedido_id).execute().data
+    destino = ped["status"]
+    if not sobrou:
+        # OV sem item nenhum não tem o que separar: sai do fluxo operacional e
+        # fica aguardando produção, como a venda que nasce toda em pendência.
+        destino = StatusPedido.AGUARD_PRODUCAO.value
+        db.table("pedidos").update({"status": destino, "atualizado_em": _agora()})\
+            .eq("id", pedido_id).execute()
+        obs += " A OV ficou sem itens e foi para 'Aguardando produção'."
+
+    _registrar_movimentacao(pedido_id, ped["status"], destino, str(usuario.id), obs)
+    return obter_pedido(pedido_id)
+
+
 def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     """Lança um faturamento de comunicado de uso (consignado utilizado).
 

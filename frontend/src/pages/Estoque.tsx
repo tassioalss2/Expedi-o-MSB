@@ -56,6 +56,8 @@ interface OvComprometida {
   qtd: number
   criado_em: string | null
   faturada_depois_da_foto: boolean
+  /** OV que já faturou não tem reserva a liberar — o material saiu de fato. */
+  pode_liberar?: boolean
 }
 interface HistoricoVendas {
   codigo: string
@@ -138,6 +140,33 @@ export function Estoque() {
     queryKey: ['estoque-historico-vendas', historicoCodigo],
     queryFn: () => api.get(`/estoque/${encodeURIComponent(historicoCodigo!)}/historico-vendas`).then(r => r.data),
     enabled: !!historicoCodigo,
+  })
+
+  // Liberar reserva: o estoque não guarda reserva para apagar (o comprometido é
+  // recalculado das OVs reais), então liberar = tirar a quantidade da OV. O saldo
+  // vai para a pendência dela, senão a dívida com o cliente desaparecia junto.
+  const [qtdLiberar, setQtdLiberar] = useState<Record<string, string>>({})
+  const [motivoLiberar, setMotivoLiberar] = useState('')
+
+  const liberarReserva = useMutation({
+    mutationFn: ({ pedidoId, qtd }: { pedidoId: string; qtd: number }) =>
+      api.post(`/pedidos/${pedidoId}/devolver-reserva`, {
+        codigo: detalheCodigo, qtd, observacao: motivoLiberar.trim() || null,
+      }),
+    onSuccess: (_r, v) => {
+      toast.success(`${v.qtd} un liberadas para o estoque — o saldo foi para a pendência da OV.`,
+        { duration: 7000 })
+      setQtdLiberar({})
+      setMotivoLiberar('')
+      qc.invalidateQueries({ queryKey: ['estoque'] })
+      qc.invalidateQueries({ queryKey: ['estoque-comprometido'] })
+      qc.invalidateQueries({ queryKey: ['pendencias'] })
+      qc.invalidateQueries({ queryKey: ['pendencias-count'] })
+    },
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : d?.msg || 'Erro ao liberar a reserva')
+    },
   })
 
   const sincronizar = useMutation({
@@ -548,10 +577,42 @@ export function Estoque() {
                         <div className="text-right shrink-0">
                           <div className="font-bold text-amber-600 tabular-nums">{fmtNum(ov.qtd)}</div>
                           <div className="text-[11px] text-gray-400">{fmtQuando(ov.criado_em)}</div>
+                          {ov.pode_liberar !== false && (
+                            <div className="flex items-center gap-1 mt-1.5">
+                              <input type="number" min={0} max={ov.qtd} step="any"
+                                value={qtdLiberar[ov.pedido_id] ?? ''}
+                                onChange={e => setQtdLiberar(q => ({ ...q, [ov.pedido_id]: e.target.value }))}
+                                placeholder={String(ov.qtd)}
+                                className="w-16 border border-gray-300 rounded-md px-1.5 py-0.5 text-xs text-right tabular-nums" />
+                              <button
+                                disabled={liberarReserva.isPending
+                                  || !(Number(qtdLiberar[ov.pedido_id]) > 0)
+                                  || Number(qtdLiberar[ov.pedido_id]) > ov.qtd + 0.001}
+                                onClick={() => liberarReserva.mutate({
+                                  pedidoId: ov.pedido_id, qtd: Number(qtdLiberar[ov.pedido_id]),
+                                })}
+                                title="Tira esta quantidade da OV e joga na pendência dela, liberando o estoque"
+                                className="text-[11px] px-2 py-0.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                                Liberar
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )
                   })}
+
+                  <div className="pt-1">
+                    <input value={motivoLiberar} onChange={e => setMotivoLiberar(e.target.value)}
+                      placeholder="Motivo da liberação (opcional) — vai para o histórico da OV"
+                      className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs" />
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    O estoque não guarda reserva: o comprometido é recalculado das OVs, então a
+                    reserva <strong>é</strong> o item na OV. Liberar tira a quantidade da OV e joga
+                    na <strong>pendência dela</strong> — o material continua vendido e volta como 2ª
+                    remessa quando houver estoque. OV que já faturou não aparece com o botão.
+                  </p>
                 </div>
               )}
             </div>

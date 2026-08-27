@@ -496,6 +496,9 @@ def comprometido_detalhe(codigo: str) -> dict:
         "qtd": round(qtd_por_pedido.get(p["id"], 0.0)),
         "criado_em": p.get("criado_em"),
         "faturada_depois_da_foto": p.get("status") not in _STATUS_ABERTOS,
+        # OV que já faturou não tem reserva a liberar: o material saiu de fato.
+        # A tela usa isto para não oferecer a ação onde ela seria recusada.
+        "pode_liberar": p.get("status") in _STATUS_ABERTOS,
     } for p in pedidos]
     ovs.sort(key=lambda o: o["criado_em"] or "", reverse=True)
     return {"codigo": codigo, "ovs": ovs}

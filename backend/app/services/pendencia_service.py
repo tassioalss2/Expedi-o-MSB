@@ -118,6 +118,86 @@ def analise_venda_inteira(analise: dict) -> dict:
     }
 
 
+def devolver_para_pendencia(pend: Optional[dict], devolvidos: list,
+                            usuario_id: str, observacao: Optional[str] = None) -> dict:
+    """Soma na pendência da OV o material que ela devolveu ao estoque.
+
+    `devolvidos`: [{produto_id, codigo, descricao, qtd, qtd_na_ov_antes,
+    valor_unitario}] — `qtd` é o que saiu da OV agora.
+
+    Por que somar aqui em vez de baixar um saldo de estoque: o comprometido é
+    recalculado das OVs reais (ver docstring de estoque_service), então tirar o
+    item da OV JÁ libera o estoque sozinho. O que não pode se perder é a dívida
+    com o cliente — o material continua vendido. A pendência é onde ela mora, e
+    daí sai como 2ª remessa quando houver material.
+
+    Mantém o invariante do item: qtd_atendida + qtd_pendente == qtd_pedida. A
+    quantidade VENDIDA não muda ao devolver — muda só onde ela está.
+    """
+    base = dict(pend) if pend else {
+        "decisao": "PARCIAL",
+        "origem": "DEVOLUCAO_ESTOQUE",
+        "decidido_em": _agora(),
+        "decidido_por": usuario_id,
+        "observacao": None,
+        "valor": 0.0,
+        "itens": [],
+        "previsao_sa": None,
+        "cobre_com_sa": False,
+        "previsao_pcp": None,
+        "resolvido_em": None,
+        "resolucao": None,
+    }
+    itens = [dict(i) for i in (base.get("itens") or [])]
+    por_produto = {i.get("produto_id"): i for i in itens if i.get("produto_id")}
+
+    for d in devolvidos:
+        pid = str(d["produto_id"])
+        qtd = float(d["qtd"])
+        vu = float(d.get("valor_unitario") or 0)
+        alvo = por_produto.get(pid)
+        if alvo is not None:
+            # Já havia saldo deste item: o devolvido sai do atendido e entra no
+            # pendente. qtd_pedida não muda — a venda é a mesma.
+            alvo["qtd_atendida"] = max(0.0, float(alvo.get("qtd_atendida") or 0) - qtd)
+            alvo["qtd_pendente"] = round(float(alvo.get("qtd_pendente") or 0) + qtd, 3)
+            alvo["valor_pendente"] = round(float(alvo["qtd_pendente"]) * vu, 2)
+            alvo["status"] = "FALTA"
+            # Parte do saldo agora é material que EXISTE (foi devolvido de
+            # propósito), então não é falta esperando semiacabado.
+            alvo["cobre_com_sa"] = False
+        else:
+            # Item que estava inteiro na OV, sem saldo nenhum: o que foi vendido
+            # é o que estava na OV antes desta devolução.
+            vendida = float(d.get("qtd_na_ov_antes") or qtd)
+            itens.append({
+                "produto_id": pid,
+                "codigo": d.get("codigo"),
+                "descricao": d.get("descricao"),
+                "qtd_pedida": vendida,
+                "qtd_atendida": max(0.0, vendida - qtd),
+                "qtd_pendente": qtd,
+                "valor_unitario": vu,
+                "valor_pendente": round(qtd * vu, 2),
+                "disponivel": None,
+                "estoque_sa": None,
+                "reservado_antes": 0.0,
+                "sem_dado": False,
+                "cobre_com_sa": False,
+                "status": "FALTA",
+            })
+
+    base["itens"] = itens
+    base["valor"] = round(sum(float(i.get("valor_pendente") or 0) for i in itens), 2)
+    # Reabre a pendência: material voltou a ser devido.
+    base["resolvido_em"] = None
+    base["resolucao"] = None
+    if observacao:
+        anterior = (base.get("observacao") or "").strip()
+        base["observacao"] = f"{anterior} | {observacao}".strip(" |") if anterior else observacao
+    return base
+
+
 def _dias(iso: Optional[str]) -> Optional[int]:
     if not iso:
         return None

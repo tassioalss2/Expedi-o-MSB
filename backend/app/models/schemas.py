@@ -171,6 +171,14 @@ class ItemPedidoCreate(BaseModel):
         return v
 
 
+class DevolverReservaRequest(BaseModel):
+    """Libera para o estoque parte do que uma OV reservou. O saldo vai para a
+    pendência da OV — o material continua vendido."""
+    codigo: str
+    qtd: float = Field(gt=0)
+    observacao: Optional[str] = None
+
+
 class ReclassificarCanalRequest(BaseModel):
     """Reclassifica uma OV que ainda não tem canal definido (legado
     'LICITACAO' puro, ou sem canal nenhum) para o canal correto."""

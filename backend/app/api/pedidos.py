@@ -30,6 +30,7 @@ from app.models.schemas import (
     ReclassificarCanalRequest,
     TratativaRequest,
     UsuarioOut,
+    DevolverReservaRequest,
 )
 from app.services import importacao_service, pedido_service
 
@@ -172,6 +173,15 @@ def editar_itens(pedido_id: UUID, payload: EditarItensRequest,
         previsao_pcp=payload.previsao_pcp_iso(),
         escolha_estoque=payload.escolha_por_produto(),
     )
+
+
+@router.post("/{pedido_id}/devolver-reserva")
+def devolver_reserva(pedido_id: UUID, payload: DevolverReservaRequest,
+                     usuario: UsuarioOut = Depends(get_current_user)):
+    """Libera para o estoque parte do que esta OV reservou, jogando o saldo na
+    pendência dela. Usado na tela de Estoque, no detalhe do comprometido."""
+    return pedido_service.devolver_reserva(
+        str(pedido_id), payload.codigo, payload.qtd, usuario, payload.observacao)
 
 
 @router.patch("/{pedido_id}/status")
