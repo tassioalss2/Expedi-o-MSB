@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
   LayoutGrid, Layers, ChevronDown, ChevronRight, ExternalLink, Flag, Clock, Search,
-  ChevronRight as Arrow, Truck, Send, Package, PackageCheck, BarChart3, Download, Pencil,
+  ChevronRight as Arrow, Truck, Send, Package, PackageCheck, BarChart3, Download, Pencil, FlaskConical,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -43,7 +43,7 @@ function vigenciaEmRisco(vigencia?: string | null, saldoUn?: number) {
 }
 
 // ── Config dos 3 tipos de demanda (ordem de importância) ────────────────────────
-type TipoKey = 'VENDA_DIRETA' | 'COMUNICADO_USO' | 'CONSIGNACAO'
+type TipoKey = 'VENDA_DIRETA' | 'COMUNICADO_USO' | 'CONSIGNACAO' | 'AMOSTRA'
 const TIPOS: {
   key: TipoKey; label: string; icone: any; desc: string
   header: string; borda: string; chip: string
@@ -59,6 +59,11 @@ const TIPOS: {
     header: 'bg-emerald-600', borda: 'border-l-emerald-500', chip: 'bg-emerald-100 text-emerald-700',
   },
   {
+    key: 'AMOSTRA', label: 'Amostra', icone: FlaskConical,
+    desc: 'Material enviado para o órgão avaliar ANTES da disputa. Passa pela expedição (separa, NF, envia), mas não entra no faturamento — ainda não há contrato.',
+    header: 'bg-purple-600', borda: 'border-l-purple-500', chip: 'bg-purple-100 text-purple-700',
+  },
+  {
     key: 'CONSIGNACAO', label: 'Consignação', icone: Boxes,
     desc: 'Envio de material em consignado. Vira um contrato; o comunicado de uso baixa o saldo conforme o cliente usa.',
     header: 'bg-amber-500', borda: 'border-l-amber-500', chip: 'bg-amber-100 text-amber-700',
@@ -66,11 +71,12 @@ const TIPOS: {
 ]
 const TIPO_MAP = Object.fromEntries(TIPOS.map(t => [t.key, t]))
 // Criar e acompanhar são coisas diferentes aqui:
-// - o kanban mostra os 3 tipos, porque é neste painel que a operação acompanha o
+// - o kanban mostra os 4 tipos, porque é neste painel que a operação acompanha o
 //   andamento de tudo (inclusive as entregas de venda direta, que espelham a OV);
-// - lançar, só comunicado de uso. Venda direta e consignação nascem na aba
-//   Contratos (pregão → NE → entregas que baixam o saldo).
-const TIPOS_NOVO = TIPOS.filter(t => t.key === 'COMUNICADO_USO')
+// - lançar, só comunicado de uso e amostra. Venda direta e consignação nascem na
+//   aba Contratos (pregão → NE → entregas que baixam o saldo); amostra não nasce
+//   lá porque não tem contrato nenhum — ela é anterior à disputa.
+const TIPOS_NOVO = TIPOS.filter(t => t.key === 'COMUNICADO_USO' || t.key === 'AMOSTRA')
 
 const ETAPA_LABEL: Record<string, string> = {
   RECEBIDO: 'Recebido',
@@ -122,7 +128,7 @@ function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | nul
   // Venda direta: Gerar OV já cria o contrato automático e mantém o card no kanban.
   // Consignação: cria o contrato (baixa por comunicado de uso). Comunicado: fatura.
   if (e === 'PROCESSANDO') {
-    if (d.tipo_operacao === 'VENDA_DIRETA') return { kind: 'gerarOv', label: 'Gerar OV' }
+    if (d.tipo_operacao === 'VENDA_DIRETA' || d.tipo_operacao === 'AMOSTRA') return { kind: 'gerarOv', label: 'Gerar OV' }
     if (d.tipo_operacao === 'CONSIGNACAO') return { kind: 'faturar', label: 'Criar contrato' }
     return { kind: 'faturar', label: 'Concluir e faturar' }
   }
@@ -673,6 +679,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
 
   const cfg = TIPO_MAP[tipo]
   const ehComunicado = tipo === 'COMUNICADO_USO'
+  const ehAmostra = tipo === 'AMOSTRA'
   const comValor = true
 
   // Sinaliza se o pregão digitado já existe — a demanda vira mais uma NE
@@ -680,10 +687,10 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const { data: pregoesExistentes = [], isLoading: carregandoPregoes } = useQuery<any[]>({
     queryKey: ['pregoes'],
     queryFn: () => api.get('/licitacoes/pregoes').then(r => r.data),
-    enabled: !ehComunicado,
+    enabled: !ehComunicado && !ehAmostra,
     staleTime: 60000,
   })
-  const pregaoEncontrado = !ehComunicado && numeroPregao.trim()
+  const pregaoEncontrado = !ehComunicado && !ehAmostra && numeroPregao.trim()
     ? pregoesExistentes.find(p => p.numero.trim().toLowerCase() === numeroPregao.trim().toLowerCase())
     : null
   // Se o pregão já existe, os itens (com preço) já estão cadastrados nele —
@@ -701,7 +708,8 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
   const pregaoNaoEncontrado = tipo === 'VENDA_DIRETA' && !ehComunicado && !!numeroPregao.trim() && !carregandoPregoes && !pregaoEncontrado
   // Venda direta / consignação viram contrato regido pelo PREGÃO + NE → ambos obrigatórios.
   // Na venda direta os itens também são: é o que vira a linha (NE) do contrato.
-  const pregaoObrigatorio = !ehComunicado
+  // Amostra é anterior à disputa: não há pregão ganho nem NE para exigir.
+  const pregaoObrigatorio = !ehComunicado && !ehAmostra
   const itensVdOk = tipo !== 'VENDA_DIRETA' ? true : usaItensDoPregao ? itensPregaoComQtd.length > 0 : false
   const pregaoOk = !pregaoObrigatorio || (!!numeroPregao.trim() && !!numero.trim() && itensVdOk)
   // Comunicado de uso é regido pela AF + paciente + prontuário + NF + data do procedimento + itens com valor.
@@ -711,6 +719,9 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
     .map(n => n.nf.trim())
     .filter((nf, idx, arr) => nf && arr.indexOf(nf) !== idx)
   const notasOk = notas.length > 0 && notas.every(notaOk) && nfsRepetidas.length === 0
+  // Amostra: itens são o que a expedição separa; o prazo é a data limite de
+  // entrega/retirada, e perdê-la elimina a MSB do item do pregão.
+  const amostraOk = !ehAmostra || (itens.length > 0 && itens.every(i => i.qtd > 0) && !!prazo)
   const comunicadoOk = !ehComunicado || (!!numero.trim() && !!nomePaciente.trim() && !!prontuario.trim() && !!dataProcedimento && !!canal && notasOk)
 
   const criar = useMutation({
@@ -740,7 +751,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
     <ModalBase titulo={TIPOS_NOVO.length > 1 ? 'Nova demanda de licitação' : `Novo ${cfg.label.toLowerCase()}`} onClose={onClose}>
       <div className="p-5 space-y-3 overflow-y-auto">
         {/* Com um tipo só no painel, o seletor não tem o que escolher. */}
-        <div className={`grid gap-2 ${TIPOS_NOVO.length > 1 ? 'grid-cols-3' : 'hidden'}`}>
+        <div className={`grid gap-2 ${TIPOS_NOVO.length < 2 ? 'hidden' : TIPOS_NOVO.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
           {TIPOS_NOVO.map(t => {
             const Icone = t.icone
             const ativo = tipo === t.key
@@ -761,7 +772,15 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
           {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
         </Campo>
 
-        {tipo !== 'COMUNICADO_USO' ? (
+        {ehAmostra ? (
+          <Campo label="Processo / pregão de referência">
+            <input value={numeroPregao} onChange={e => setNumeroPregao(e.target.value.toUpperCase())}
+              className={`${inputCls} font-mono`} placeholder="Ex: PR 90.049/2026 item 04" />
+            <p className="text-xs text-gray-400 mt-1">
+              Opcional — a amostra vem antes da disputa, então ainda não há pregão ganho nem nota de empenho.
+            </p>
+          </Campo>
+        ) : tipo !== 'COMUNICADO_USO' ? (
           <div className="grid grid-cols-2 gap-3">
             <Campo label="Nº do Pregão *">
               <input value={numeroPregao} onChange={e => setNumeroPregao(e.target.value.toUpperCase())} className={`${inputCls} font-mono`} placeholder="Ex: 90051/2025" />
@@ -808,8 +827,11 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
             {ehComunicado && !canal && <p className="text-xs text-red-500 mt-1">Obrigatório.</p>}
           </Campo>
           {!ehComunicado && (
-            <Campo label="Prazo / vigência">
+            <Campo label={ehAmostra ? 'Prazo de entrega / retirada *' : 'Prazo / vigência'}>
               <input type="date" value={prazo} onChange={e => setPrazo(e.target.value)} className={inputCls} />
+              {ehAmostra && !prazo && (
+                <p className="text-xs text-red-500 mt-1">Obrigatório — perder a data elimina a MSB do item.</p>
+              )}
             </Campo>
           )}
           <Campo label="Prioridade">
@@ -828,6 +850,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
         <div>
           <label className="text-sm text-gray-600">
             {ehComunicado ? 'Notas fiscais deste comunicado *'
+              : ehAmostra ? 'Itens da amostra *'
               : tipo === 'VENDA_DIRETA' ? 'Itens (quantidades desta NE, com valor) *'
               : 'Itens (quantidades TOTAIS do contrato, com valor)'}
           </label>
@@ -836,8 +859,13 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
               ? usaItensDoPregao
                 ? 'Os itens já estão cadastrados neste pregão — informe só a quantidade desta NE por item.'
                 : 'Quantidades desta NE. As entregas parciais você lança depois, na aba Contratos.'
-              : ehComunicado ? 'Uma AF pode ter várias notas. Em cada uma, informe o que aquela nota cobre — o valor sai dos itens.' : 'Opcional agora — pode completar ao processar.'}
+              : ehComunicado ? 'Uma AF pode ter várias notas. Em cada uma, informe o que aquela nota cobre — o valor sai dos itens.'
+              : ehAmostra ? 'O que a expedição vai separar e o que a OV da amostra vai levar. Obrigatório.'
+              : 'Opcional agora — pode completar ao processar.'}
           </p>
+          {ehAmostra && itens.length === 0 && (
+            <p className="text-xs text-red-500 mb-1.5">Obrigatório — sem itens não há o que separar nem o que gerar na OV.</p>
+          )}
           {tipo === 'VENDA_DIRETA' && !itensVdOk && (
             <p className="text-xs text-red-500 mb-1.5">Obrigatório — sem itens a NE não vira linha do contrato do pregão.</p>
           )}
@@ -895,7 +923,7 @@ function ModalNovaDemanda({ tipoInicial, onClose, onSaved }: { tipoInicial: Tipo
       )}
       <div className="p-4 border-t flex justify-end gap-2">
         <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
-        <button onClick={() => criar.mutate()} disabled={!clienteId || !pregaoOk || !comunicadoOk || criar.isPending}
+        <button onClick={() => criar.mutate()} disabled={!clienteId || !pregaoOk || !comunicadoOk || !amostraOk || criar.isPending}
           className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
           {criar.isPending ? 'Salvando…' : 'Adicionar ao painel'}
         </button>

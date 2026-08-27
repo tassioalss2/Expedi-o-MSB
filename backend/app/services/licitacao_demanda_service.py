@@ -37,7 +37,7 @@ ETAPAS = ["RECEBIDO", "PROCESSANDO", "AGUARDANDO_ESTOQUE", "COTACAO_FRETE", "OV_
 _ETAPA_LEGADA = {"NOVO": "RECEBIDO", "ANALISE": "RECEBIDO"}
 # Etapas terminais (saem do painel do dia seguinte, vão para o histórico)
 ETAPAS_FINAIS = {"NF_ENVIADA", "CONCLUIDO"}
-TIPOS = ["VENDA_DIRETA", "CONSIGNACAO", "COMUNICADO_USO"]
+TIPOS = ["VENDA_DIRETA", "CONSIGNACAO", "COMUNICADO_USO", "AMOSTRA"]
 _PRIORIDADE_PESO = {"CRITICA": 0, "ALTA": 1, "NORMAL": 2}
 
 
@@ -505,6 +505,27 @@ def criar_demanda(payload: DemandaCreate) -> dict:
         # NF 20480, referente ao comunicado de uso 57048".
         notas = _notas_normalizadas(payload)
         _validar_notas_comunicado(notas)
+    elif payload.tipo_operacao == "AMOSTRA":
+        # Amostra não tem pregão ganho nem NE: é material enviado para o órgão
+        # avaliar ANTES da disputa. Por isso o número (processo/pregão) é
+        # opcional aqui — muitas chegam só com "Pr 90.049/2026 item 04".
+        #
+        # Itens são obrigatórios: são eles que a expedição separa e o que vira o
+        # saldo da OV. Sem itens a demanda nasce sem nada a gerar.
+        if not [it for it in (payload.itens or []) if it.produto_id and float(it.qtd or 0) > 0]:
+            raise HTTPException(
+                status_code=422,
+                detail="Informe os itens da amostra — é o que a expedição separa e o que a OV vai levar.",
+            )
+        # Prazo obrigatório: amostra de licitação vem quase sempre com data
+        # marcada de entrega ou retirada ("retirar até 21/08, das 07h às 15h").
+        # Perder a data elimina a empresa do item — o painel já pinta prazo
+        # vencido em vermelho e conta no KPI, mas só se a data existir.
+        if not payload.prazo:
+            raise HTTPException(
+                status_code=422,
+                detail="Informe o prazo de entrega/retirada da amostra — perder essa data elimina a MSB do item.",
+            )
     elif payload.tipo_operacao in ("VENDA_DIRETA", "CONSIGNACAO"):
         if not num:
             raise HTTPException(status_code=422, detail="Informe a Nota de Empenho (NE).")
@@ -670,7 +691,14 @@ def _itens_do_pregao(db, numero_pregao: str) -> dict:
 
 
 # tipo_operacao da OV no fluxo logístico conforme o tipo da demanda
-_TIPO_OP_OV = {"VENDA_DIRETA": "VENDA_NORMAL", "CONSIGNACAO": "CONSIGNADO"}
+#
+# AMOSTRA gera OV como as outras — separa material, cota frete, emite NF e sai
+# pela expedição. O que muda é só a natureza: TipoOperacao.AMOSTRA fica de fora
+# de OPERACOES_FATURAMENTO, então a amostra movimenta estoque e gera nota sem
+# entrar na receita. O saldo dela é o que foi pedido na triagem (_saldo_demanda
+# já calcula por itens da própria demanda), sem contrato nem empenho: amostra de
+# licitação é avaliação para disputar o pregão, ainda não há contrato.
+_TIPO_OP_OV = {"VENDA_DIRETA": "VENDA_NORMAL", "CONSIGNACAO": "CONSIGNADO", "AMOSTRA": "AMOSTRA"}
 
 
 def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
@@ -686,7 +714,7 @@ def gerar_ov_saldo(demanda_id: str, payload, usuario: UsuarioOut) -> dict:
         raise HTTPException(status_code=404, detail="Demanda não encontrada")
     tipo_demanda = d.get("tipo_operacao")
     if tipo_demanda not in _TIPO_OP_OV:
-        raise HTTPException(status_code=400, detail="Gerar OV vale só para venda direta e consignação.")
+        raise HTTPException(status_code=400, detail="Gerar OV vale só para venda direta, consignação e amostra.")
     if not payload.itens:
         raise HTTPException(status_code=422, detail="Informe ao menos um item para a OV.")
 
