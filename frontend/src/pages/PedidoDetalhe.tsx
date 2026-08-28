@@ -8,6 +8,10 @@ import api from '../lib/api'
 import { erroNumeroOv } from '../lib/crm'
 import type { InventarioItem, Pedido, Cubagem, Transportadora } from '../types'
 import { ClienteAutocomplete } from './NovoPedido'
+
+// Espelha _STATUS_ITENS_TRAVADOS do backend (pedido_service): depois de faturar,
+// itens e dados cadastrais da OV são o que está na NF.
+const STATUS_ITENS_TRAVADOS = ['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO']
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
 import { StatusBadge } from '../components/StatusBadge'
@@ -2038,6 +2042,176 @@ function ModalTratativaDivergencia({ pedido, onClose }: { pedido: Pedido; onClos
 }
 
 // ── Página Principal ──────────────────────────────────────────────────────────
+// ── Corrigir os dados cadastrais da OV ────────────────────────────────────────
+/** A OV que nasce do CRM vem com buracos: condição de pagamento e local de
+ *  entrega em branco. O formulário que os preenchia (FormCompletarDadosOV) só
+ *  aparece enquanto o status é AGUARD_DADOS_OV — assim que a operadora informa o
+ *  número do D365 a OV sai desse status, o formulário some e não sobra caminho
+ *  nenhum, nem para esses campos nem para o cliente.
+ *
+ *  Vale até faturar: mesmo limite dos itens. Depois da NF esses dados são o que
+ *  está no documento fiscal, e mudá-los aqui só criaria divergência com ele.
+ *
+ *  Frete e Transportadora ficam de fora porque já têm botão próprio, que
+ *  registra ocorrência. */
+function ModalCorrigirDados({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const clienteOriginal = pedido.cliente_id || ''
+  const [form, setForm] = useState({
+    cliente_id: clienteOriginal,
+    cliente_nome: pedido.cliente?.nome || (pedido as any).cliente_nome || '',
+    tipo_operacao: pedido.tipo_operacao || '',
+    forma_venda: (pedido as any).forma_venda || '',
+    prioridade: (pedido.prioridade || 'NORMAL') as string,
+    condicao_pagamento: (pedido as any).condicao_pagamento || '',
+    local_entrega: pedido.local_entrega || '',
+    data_prevista_entrega: pedido.data_prevista_entrega || '',
+    observacoes: (pedido as any).observacoes || '',
+  })
+
+  const trocouCliente = form.cliente_id !== clienteOriginal
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/pedidos/${pedido.id}/dados`, {
+      cliente_id: form.cliente_id || null,
+      tipo_operacao: form.tipo_operacao || null,
+      forma_venda: form.forma_venda || null,
+      prioridade: form.prioridade || null,
+      condicao_pagamento: form.condicao_pagamento.trim() || null,
+      local_entrega: form.local_entrega.trim() || null,
+      data_prevista_entrega: form.data_prevista_entrega || null,
+      observacoes: form.observacoes.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success('Dados corrigidos — as alterações estão no histórico da OV.')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['movimentacoes', pedido.id] })
+      onClose()
+    },
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : d?.msg || 'Erro ao corrigir os dados')
+    },
+  })
+
+  const cls = 'w-full border rounded-lg px-3 py-2 text-sm mt-1'
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="p-5 border-b flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">Corrigir dados — {pedido.numero_pedido}</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Vale enquanto a OV não faturou. Cada alteração vai para o histórico, com o valor
+              de antes e o de depois.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><XCircle size={20} /></button>
+        </div>
+
+        <div className="p-5 grid grid-cols-2 gap-3 overflow-y-auto">
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-gray-600">Cliente</label>
+            <div className="mt-1">
+              <ClienteAutocomplete value={form.cliente_id}
+                onChange={(id, nome) => setForm({ ...form, cliente_id: id, cliente_nome: nome })} />
+            </div>
+            {form.cliente_nome && <p className="text-xs text-green-600 mt-1">✅ {form.cliente_nome}</p>}
+            {trocouCliente && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-1.5">
+                ⚠️ Trocar o cliente não refaz a <strong>análise de crédito</strong>: a aprovação no
+                D365 é do cliente anterior. Confira também local de entrega e condição de pagamento,
+                que costumam mudar junto.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Tipo de Operação</label>
+            <select value={form.tipo_operacao} onChange={e => setForm({ ...form, tipo_operacao: e.target.value })}
+              className={cls}>
+              <option value="" disabled>Selecione…</option>
+              <option value="VENDA_NORMAL">Venda normal</option>
+              <option value="EXPORTACAO">Exportação</option>
+              {/* Natureza fora de uso continua na lista: sem isso o select abriria
+                  vazio e salvar mudaria a natureza de uma OV antiga sem ninguém pedir. */}
+              {!['VENDA_NORMAL', 'EXPORTACAO'].includes(form.tipo_operacao) && form.tipo_operacao && (
+                <option value={form.tipo_operacao}>
+                  {OPERACAO_LABEL[form.tipo_operacao] || form.tipo_operacao} (não usar em OV nova)
+                </option>
+              )}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Prioridade</label>
+            <select value={form.prioridade} onChange={e => setForm({ ...form, prioridade: e.target.value })}
+              className={cls}>
+              <option value="NORMAL">Normal</option>
+              <option value="ALTA">⚡ Alta</option>
+              <option value="CRITICA">🔴 Crítica</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Forma de Venda</label>
+            <select value={form.forma_venda} onChange={e => setForm({ ...form, forma_venda: e.target.value })}
+              className={cls}>
+              <option value="">—</option>
+              <option value="DIRETA">Venda direta</option>
+              <option value="LICITACAO">Licitação</option>
+            </select>
+            <p className="text-[11px] text-gray-400 mt-1">
+              A <strong>Linha (meta)</strong> não se digita: ela é recalculada da linha dos itens.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Condição de Pagamento</label>
+            <input value={form.condicao_pagamento}
+              onChange={e => setForm({ ...form, condicao_pagamento: e.target.value })}
+              placeholder="Ex: 30/60/90" className={cls} />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-gray-600">Entrega Prevista</label>
+            <input type="date" value={form.data_prevista_entrega}
+              onChange={e => setForm({ ...form, data_prevista_entrega: e.target.value })} className={cls} />
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-gray-600">Local de Entrega</label>
+            <div className="mt-1">
+              <LocalEntregaInput value={form.local_entrega}
+                onChange={v => setForm({ ...form, local_entrega: v })} />
+            </div>
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-gray-600">Observações</label>
+            <textarea rows={2} value={form.observacoes}
+              onChange={e => setForm({ ...form, observacoes: e.target.value })} className={cls} />
+          </div>
+
+          <p className="col-span-2 text-[11px] text-gray-400">
+            <strong>Tipo de frete</strong> e <strong>Transportadora</strong> têm botão próprio na
+            coluna de ações — eles registram ocorrência, por isso ficam fora daqui.
+          </p>
+        </div>
+
+        <div className="p-4 border-t flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+          <button onClick={() => mutation.mutate()} disabled={mutation.isPending}
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium rounded-lg">
+            {mutation.isPending ? 'Salvando…' : 'Salvar correções'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Adicionar itens a uma OV existente ────────────────────────────────────────
 /** A mesma OV acumula pedidos do cliente e vai sendo faturada em NFs diferentes
  *  conforme o material chega — então somar item é rotina, não exceção.
@@ -2403,7 +2577,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'devolver-crm' | 'credito' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'devolver-crm' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -2733,7 +2907,19 @@ export function PedidoDetalhe() {
         <div className="lg:col-span-2 space-y-5">
           {/* Dados do pedido */}
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
-            <h2 className="font-semibold text-gray-800 mb-3">Dados da OV</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold text-gray-800">Dados da OV</h2>
+              {/* A OV vinda do CRM nasce com buracos (condição de pagamento e
+                  local de entrega em branco) e o formulário que os preenchia só
+                  existe enquanto o status é AGUARD_DADOS_OV. Depois disso não
+                  havia caminho nenhum — nem para esses campos nem para o cliente. */}
+              {!STATUS_ITENS_TRAVADOS.includes(status) && (
+                <button onClick={() => setModal('corrigir_dados')}
+                  className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                  <Pencil size={12} /> Corrigir dados
+                </button>
+              )}
+            </div>
             <Linha label="Cliente" valor={pedido.cliente?.nome || pedido.cliente_nome} />
             {pedido.cliente?.cnpj && <Linha label="CNPJ" valor={formatarCnpjExibicao(pedido.cliente.cnpj)} />}
             <Linha label="Tipo de Operação" valor={pedido.tipo_operacao ? (OPERACAO_LABEL[pedido.tipo_operacao] || pedido.tipo_operacao) : null} />
@@ -2813,7 +2999,6 @@ export function PedidoDetalhe() {
             const comValor = itensOV.some(it => Number(it.valor_unitario) > 0)
             const totalValor = itensOV.reduce((a, it) => a + (Number(it.qtd_solicitada) || 0) * (Number(it.valor_unitario) || 0), 0)
             const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-            const STATUS_ITENS_TRAVADOS = ['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO']
             const editavel = !STATUS_ITENS_TRAVADOS.includes(status)
             return (
               <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
@@ -3261,6 +3446,7 @@ export function PedidoDetalhe() {
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'editar_itens' && <ModalEditarItens pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'adicionar_itens' && <ModalAdicionarItens pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'corrigir_dados' && <ModalCorrigirDados pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (

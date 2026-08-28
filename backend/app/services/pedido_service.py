@@ -1199,6 +1199,86 @@ def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     return obter_pedido(pedido_id)
 
 
+# Campos que a operadora corrige no card "Dados da OV" enquanto a OV nao faturou.
+#
+# Fora daqui de proposito:
+#   numero_pedido      tem fluxo proprio (completar dados do CRM) e checagem de
+#                      duplicidade; trocar no meio do caminho e outra conversa;
+#   canal              e a "Linha (meta)", RECALCULADA dos itens por
+#                      _sincronizar_linha — editar aqui seria sobrescrito na
+#                      proxima mexida nos itens. Licitacao tem
+#                      reclassificar_canal_licitacao para o caso legado;
+#   numero_nf          nasce no faturamento, nao se digita antes.
+_CAMPOS_EDITAVEIS_DADOS = {
+    "cliente_id", "tipo_operacao", "forma_venda", "prioridade",
+    "condicao_pagamento", "local_entrega", "data_prevista_entrega", "observacoes",
+}
+
+
+def _rotulo_valor(db, campo: str, valor):
+    """Valor legivel para o historico: id de cliente vira nome."""
+    if valor in (None, ""):
+        return "vazio"
+    if campo == "cliente_id":
+        r = db.table("clientes").select("nome").eq("id", str(valor)).execute().data
+        return (r[0].get("nome") if r else None) or str(valor)
+    return str(valor)
+
+
+def atualizar_dados(pedido_id: str, dados: dict, usuario: UsuarioOut) -> dict:
+    """Corrige os dados cadastrais da OV enquanto ela ainda nao faturou.
+
+    A OV que nasce do CRM vem com buracos (condicao de pagamento e local de
+    entrega em branco), e o formulario que os preenchia so aparece enquanto o
+    status e AGUARD_DADOS_OV. Depois que a operadora informa o numero do D365 a
+    OV sai desse status, o formulario some e nao havia mais nenhum caminho —
+    nem para esses campos nem para o cliente.
+
+    Limite: os mesmos status que travam os itens. Depois da NF esses dados estao
+    no documento fiscal, e corrigi-los aqui so criaria divergencia com ele.
+    """
+    db = get_service_db()
+    ped = db.table("pedidos").select("*").eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    if ped["status"] in _STATUS_ITENS_TRAVADOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OV em '{ped['status']}' não aceita correção destes dados — depois da NF "
+                   "eles são o que está no documento fiscal.")
+
+    campos = {k: v for k, v in (dados or {}).items() if k in _CAMPOS_EDITAVEIS_DADOS}
+    if not campos:
+        raise HTTPException(status_code=422, detail="Nada para alterar.")
+
+    mudancas = []
+    update: dict = {}
+    for campo, novo in campos.items():
+        antigo = ped.get(campo)
+        # Compara como texto: o payload traz str/date e o banco pode trazer outro
+        # tipo para o mesmo valor — sem isso o historico registraria mudanca que
+        # nao houve.
+        if str(antigo or "") == str(novo or ""):
+            continue
+        update[campo] = novo
+        mudancas.append(f"{_CAMPOS_LABEL_REATIVAR.get(campo, campo)}: "
+                        f"{_rotulo_valor(db, campo, antigo)} → {_rotulo_valor(db, campo, novo)}")
+    if not update:
+        return obter_pedido(pedido_id)
+
+    update["atualizado_em"] = _agora()
+    db.table("pedidos").update(update).eq("id", pedido_id).execute()
+
+    # Forma de venda mexe no canal (a "Linha (meta)"), que sai dos itens.
+    if "forma_venda" in update:
+        _sincronizar_linha(db, pedido_id, update["forma_venda"])
+
+    _registrar_movimentacao(
+        pedido_id, ped["status"], ped["status"], str(usuario.id),
+        f"Dados da OV corrigidos por {usuario.nome} — " + "; ".join(mudancas))
+    return obter_pedido(pedido_id)
+
+
 def devolver_reserva(pedido_id: str, codigo: str, qtd: float, usuario: UsuarioOut,
                      observacao: Optional[str] = None) -> dict:
     """Tira de uma OV a quantidade de um item e joga na pendência dela, liberando
@@ -1471,6 +1551,7 @@ _CAMPOS_LABEL_REATIVAR = {
     "tipo_frete": "Tipo de frete", "valor_frete": "Valor do frete", "tipo_operacao": "Tipo de operação",
     "canal": "Canal de venda", "local_entrega": "Local de entrega", "data_prevista_entrega": "Data prevista de entrega",
     "data_prevista_coleta": "Data prevista de coleta", "prioridade": "Prioridade", "observacoes": "Observações",
+    "condicao_pagamento": "Condição de pagamento", "forma_venda": "Forma de venda",
 }
 
 

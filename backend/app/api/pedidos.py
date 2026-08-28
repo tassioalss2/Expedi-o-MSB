@@ -31,6 +31,7 @@ from app.models.schemas import (
     TratativaRequest,
     UsuarioOut,
     DevolverReservaRequest,
+    DadosOVUpdate,
     AdicionarItensRequest,
 )
 from app.services import importacao_service, pedido_service
@@ -150,6 +151,15 @@ def completar_dados_ov(pedido_id: UUID, payload: GerarOVRequest,
         str(pedido_id), payload.numero_pedido, payload.data_prevista_entrega,
         payload.tipo_frete, payload.local_entrega, usuario,
         payload.condicao_pagamento)
+
+
+@router.patch("/{pedido_id}/dados")
+def atualizar_dados_ov(pedido_id: UUID, payload: DadosOVUpdate,
+                       usuario: UsuarioOut = Depends(get_current_user)):
+    """Corrige os dados cadastrais da OV (cliente, condição de pagamento, local
+    de entrega, etc.) enquanto ela não faturou. Cada alteração vai para o
+    histórico com o valor de antes e o de depois."""
+    return pedido_service.atualizar_dados(str(pedido_id), payload.alteracoes(), usuario)
 
 
 @router.patch("/{pedido_id}/canal-licitacao")

@@ -171,6 +171,27 @@ class ItemPedidoCreate(BaseModel):
         return v
 
 
+class DadosOVUpdate(BaseModel):
+    """Correção dos dados cadastrais da OV antes do faturamento. Só os campos
+    enviados mudam — o resto fica como está."""
+    cliente_id: Optional[UUID] = None
+    tipo_operacao: Optional[str] = None
+    forma_venda: Optional[str] = None
+    prioridade: Optional[str] = None
+    condicao_pagamento: Optional[str] = None
+    local_entrega: Optional[str] = None
+    data_prevista_entrega: Optional[date] = None
+    observacoes: Optional[str] = None
+
+    def alteracoes(self) -> dict:
+        """Só o que veio no corpo — distingue "não mandou" de "mandou vazio"."""
+        d = self.model_dump(exclude_unset=True)
+        for k in ("cliente_id", "data_prevista_entrega"):
+            if d.get(k) is not None:
+                d[k] = str(d[k])
+        return d
+
+
 class DevolverReservaRequest(BaseModel):
     """Libera para o estoque parte do que uma OV reservou. O saldo vai para a
     pendência da OV — o material continua vendido."""
