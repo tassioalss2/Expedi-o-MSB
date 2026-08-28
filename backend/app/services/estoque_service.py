@@ -24,6 +24,36 @@ saiu do estoque, mas a foto da manhã ainda o continha.
 
 O que NÃO conta: OV cancelada, e OV que já havia faturado ANTES da foto — essa
 o PCP já descontou, contar de novo seria baixa dupla.
+
+E TAMBÉM não conta: OV JÁ LIBERADA antes da foto
+-------------------------------------------------
+Isto corrige a premissa acima. Liberar a OV faz o D365 gerar o trabalho de
+separação, e o trabalho reserva o material — some da visão do PCP a partir da
+foto seguinte, MESMO SEM FATURAR. A leitura antiga ("o D365 só baixa no
+faturamento") vinha de cruzar saídas FÍSICAS, que de fato só ocorrem ao faturar;
+o número que o PCP exporta, porém, já vem líquido de reserva.
+
+Medido em 28/08/2026, com três OVs liberadas na véspera e não faturadas:
+
+    UFGH-035150RHS   PA 1039 -> 735   (-304)   reservado nas OVs: 302
+    55005            PA  461 -> 310   (-151)   reservado nas OVs: 150
+    55004            PA  253 -> 192   ( -61)   reservado nas OVs:  60
+
+Contar essas OVs de novo descontava duas vezes: 53030 chegou a exibir
+disponível -26, quantidade fisicamente impossível e sintoma do erro.
+
+A regra é a mesma já usada para o faturamento, aplicada à LIBERAÇÃO: conta quem
+foi liberado DEPOIS da foto (a foto ainda tinha o material); não conta quem foi
+liberado antes (a foto já veio sem ele).
+
+Vale o status ATUAL, não o histórico: OV liberada que VOLTOU de etapa tem a
+reserva desfeita no D365 e o material reaparece na foto — confirmado na OV016449,
+que voltou para Ger. Crédito e cujas 50 un de USDJ-6026TK1 seguiam no PA do dia
+seguinte.
+
+PREMISSA: liberar no app corresponde a liberar no D365. Se alguém liberar aqui
+sem liberar lá, o material será contado como disponível sem estar reservado de
+fato — e aí a venda promete material que a separação não vai achar.
 """
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -404,6 +434,48 @@ def ajustes_do_codigo(codigo: str, limite: int = 20) -> list:
         return []
 
 
+# Etapas em que a OV já foi liberada para separação — é a liberação que faz o
+# D365 criar o trabalho e reservar o material.
+_STATUS_POS_LIBERACAO = [
+    "LIBERADO", "EM_INVENTARIO", "AGUARD_VERIFICACAO", "DIVERGENCIA",
+    "AGUARD_TRATATIVA", "EM_PROCESSO_SISTEMICO", "EM_COTACAO_FRETE",
+    "AGUARD_TRANSPORTADORA", "AGUARD_FATURAMENTO",
+]
+
+
+def _ovs_reservadas_na_foto(db, sincronizado_em: Optional[str]) -> set:
+    """OVs cuja reserva no D365 JÁ está descontada na foto do PCP.
+
+    São as que estão AGORA em etapa pós-liberação e entraram nela ANTES da foto.
+    Contá-las de novo no comprometido é baixa dupla (ver docstring do módulo).
+
+    Status atual e não histórico: OV que voltou de etapa tem a reserva desfeita e
+    o material volta para a foto — ela precisa voltar a contar.
+    """
+    if not sincronizado_em:
+        return set()
+
+    atuais = []
+    for i in range(0, len(_STATUS_POS_LIBERACAO), 10):
+        lote = _STATUS_POS_LIBERACAO[i:i + 10]
+        atuais += db.table("pedidos").select("id").in_("status", lote).execute().data
+    ids = [p["id"] for p in atuais]
+    if not ids:
+        return set()
+
+    # Quando cada uma entrou em etapa pós-liberação (a primeira vez).
+    entrada: dict = {}
+    for i in range(0, len(ids), 40):
+        for m in db.table("movimentacoes").select("pedido_id, status_novo, criado_em")\
+                .in_("pedido_id", ids[i:i + 40]).execute().data:
+            if m.get("status_novo") in _STATUS_POS_LIBERACAO:
+                k = m["pedido_id"]
+                quando = m.get("criado_em") or ""
+                if k not in entrada or quando < entrada[k]:
+                    entrada[k] = quando
+    return {pid for pid, quando in entrada.items() if quando and quando < sincronizado_em}
+
+
 def _comprometido_por_produto(db, sincronizado_em: str) -> dict:
     """produto_id -> qtd comprometida (ver regra no docstring do módulo)."""
     ids = set()
@@ -412,6 +484,8 @@ def _comprometido_por_produto(db, sincronizado_em: str) -> dict:
         for p in db.table("pedidos").select("id").in_("status", lote).execute().data:
             ids.add(p["id"])
     ids.update(_ovs_faturadas_apos(db, sincronizado_em))
+    # Reserva do D365 já embutida na foto: descontar de novo é baixa dupla.
+    ids -= _ovs_reservadas_na_foto(db, sincronizado_em)
     if not ids:
         return {}
 
@@ -459,7 +533,9 @@ def comprometido_detalhe(codigo: str) -> dict:
         for p in db.table("pedidos").select("id").in_("status", lote).execute().data:
             ids_abertos.add(p["id"])
     ids_faturados_depois = set(_ovs_faturadas_apos(db, sincronizado_em))
-    ids_relevantes = ids_abertos | ids_faturados_depois
+    # Mesma exclusão do cálculo — senão o detalhe somaria diferente do número.
+    ids_na_foto = _ovs_reservadas_na_foto(db, sincronizado_em)
+    ids_relevantes = (ids_abertos | ids_faturados_depois) - ids_na_foto
     if not ids_relevantes:
         return {"codigo": codigo, "ovs": []}
 
