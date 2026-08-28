@@ -175,6 +175,9 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
   const totalEscolhido = escolha.reduce((a, i) => a + i.qtd, 0)
   const totalDisponivel = analise.itens.reduce((a, i) => a + (i.qtd_atendida || 0), 0)
   const segurouAlgo = totalEscolhido < totalDisponivel - 0.001
+  // Item com estoque que o operador decidiu NÃO bloquear para esta OV.
+  const temLivre = analise.itens.some(i =>
+    i.produto_id && (i.qtd_atendida || 0) > 0 && !(Number(qtds[i.produto_id] ?? 0) > 0))
 
   return (
     <ModalBase titulo={titulo || 'Não temos todo o material'} onClose={onClose} max="max-w-2xl">
@@ -187,13 +190,19 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
           </p>
         </div>
 
-        <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} mostrarSituacao
+        <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} mostrarSituacao comBloqueio
           previsaoSa={analise.previsao_sa}
           onQtd={(pid, v) => setQtds(q => ({ ...q, [pid]: v }))} />
 
         {excedeuAlgum && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
             Há item acima do disponível. A OV só desce com o que temos de fato — reduza para seguir.
+          </p>
+        )}
+        {temLivre && (
+          <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+            Item <strong>deixado livre</strong>: o que temos dele NÃO fica preso nesta OV — segue
+            disponível para outra venda, e a quantidade inteira do item vai para a pendência.
           </p>
         )}
         {segurouAlgo && !excedeuAlgum && (
@@ -274,7 +283,7 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
  *
  *  Os itens COM estoque ficam no topo: são os únicos em que há o que decidir, e a
  *  lista costuma ser longa o bastante para eles sumirem no meio dos que faltam. */
-function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao }: {
+function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, comBloqueio }: {
   itens: ItemDisponibilidade[]
   qtds: Record<string, string>
   onQtd: (produtoId: string, valor: string) => void
@@ -285,6 +294,12 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao }:
    *  saldo; na liberação da pendência o material já chegou e a coluna só ocupa
    *  espaço. */
   mostrarSituacao?: boolean
+  /** Oferece, por item, a escolha explícita de BLOQUEAR ou não o parcial para
+   *  esta OV. Digitar 0 na quantidade sempre teve esse efeito, mas não dizia o
+   *  que significava: quem lê "0" não pensa "vou deixar essas 5 livres para
+   *  outro cliente". Vale na decisão; na liberação da pendência não faz sentido,
+   *  porque ali o ato É pegar o material. */
+  comBloqueio?: boolean
 }) {
   const ordenados = [...itens].sort((a, b) => {
     const da = (a.qtd_atendida || 0) > 0 ? 0 : 1
@@ -302,6 +317,7 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao }:
             <th className="py-2 px-2 font-medium text-right">Pedido</th>
             <th className="py-2 px-2 font-medium text-right">Temos</th>
             {mostrarSituacao && <th className="py-2 px-2 font-medium">Situação</th>}
+            {comBloqueio && <th className="py-2 px-2 font-medium text-center w-32">Bloquear p/ esta OV</th>}
             <th className="py-2 px-3 font-medium text-right w-28">Liberar agora</th>
           </tr>
         </thead>
@@ -329,6 +345,23 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao }:
                 {mostrarSituacao && (
                   <td className="py-2 px-2">
                     <SituacaoItem item={i} previsaoSa={previsaoSa ?? null} />
+                  </td>
+                )}
+                {comBloqueio && (
+                  <td className="py-2 px-2 text-center">
+                    {tem ? (
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer"
+                        title="Desmarcado, o parcial deste item fica livre para outra venda e o item inteiro vai para a pendência">
+                        <input type="checkbox" checked={Number(valor) > 0}
+                          onChange={e => onQtd(pid, e.target.checked ? String(disp) : '0')}
+                          className="rounded border-gray-300" />
+                        <span className={`text-[11px] ${Number(valor) > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
+                          {Number(valor) > 0 ? 'bloquear' : 'deixar livre'}
+                        </span>
+                      </label>
+                    ) : (
+                      <span className="text-[11px] text-gray-300">—</span>
+                    )}
                   </td>
                 )}
                 <td className="py-2 px-3 text-right">

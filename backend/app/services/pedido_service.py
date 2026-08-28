@@ -730,7 +730,26 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
         "criado_em": agora,
         "atualizado_em": agora,
     }
-    resultado = db.table("pedidos").insert(pedido_data).execute()
+    # A mensagem do banco precisa chegar a quem esta na tela. Um CHECK recusando
+    # o status virava "Erro ao lancar a venda", sem dizer o que aconteceu — foi
+    # assim que AGUARD_PRODUCAO ficou quebrado sem ninguem saber (ver
+    # migracao_status_producao_v33.sql).
+    try:
+        resultado = db.table("pedidos").insert(pedido_data).execute()
+    except Exception as exc:
+        msg = str(exc)
+        resp = getattr(exc, "response", None)
+        if resp is not None:
+            try:
+                msg = (resp.json() or {}).get("message") or resp.text
+            except Exception:
+                msg = resp.text
+        if "pedidos_status_check" in msg:
+            raise HTTPException(
+                status_code=500,
+                detail=f"O banco recusou o status '{pedido_data.get('status')}' desta OV. "
+                       "Falta rodar a migration migracao_status_producao_v33.sql no Supabase.")
+        raise HTTPException(status_code=500, detail=f"Erro ao criar a OV no banco: {msg}")
     pedido = resultado.data[0]
 
     itens = []
