@@ -304,6 +304,12 @@ class DecisaoEstoqueMixin(BaseModel):
         return {str(i.produto_id): float(i.qtd) for i in (self.itens_escolhidos or [])}
 
 
+class AdicionarItensRequest(DecisaoEstoqueMixin):
+    """Acrescenta itens a uma OV existente, conferindo estoque. Aditivo: não
+    substitui os itens que já estão lá, e SOMA na pendência em vez de trocá-la."""
+    itens: list[ItemPedidoCreate]
+
+
 class EditarItensRequest(DecisaoEstoqueMixin):
     """Editar itens passa pela MESMA regra de estoque da criação: a OV fica com o
     que existe e o saldo vira pendência. Herda `decisao_estoque` para o operador

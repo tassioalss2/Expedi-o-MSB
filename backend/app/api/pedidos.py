@@ -31,6 +31,7 @@ from app.models.schemas import (
     TratativaRequest,
     UsuarioOut,
     DevolverReservaRequest,
+    AdicionarItensRequest,
 )
 from app.services import importacao_service, pedido_service
 
@@ -172,6 +173,23 @@ def editar_itens(pedido_id: UUID, payload: EditarItensRequest,
         observacao_estoque=payload.observacao_estoque,
         previsao_pcp=payload.previsao_pcp_iso(),
         escolha_estoque=payload.escolha_por_produto(),
+    )
+
+
+@router.post("/{pedido_id}/adicionar-itens")
+def adicionar_itens(pedido_id: UUID, payload: AdicionarItensRequest,
+                    usuario: UsuarioOut = Depends(get_current_user)):
+    """Acrescenta itens a uma OV existente. O que tem estoque entra na OV; o que
+    falta vira saldo na pendência dela (2ª remessa, mesma OV, NF própria).
+
+    Responde 409 ESTOQUE_INSUFICIENTE quando falta material; o operador escolhe
+    quanto levar e reenvia com decisao_estoque."""
+    return pedido_service.adicionar_itens(
+        str(pedido_id), payload.itens, usuario,
+        decisao=payload.decisao_estoque,
+        observacao_estoque=payload.observacao_estoque,
+        previsao_pcp=payload.previsao_pcp_iso(),
+        escolha=payload.escolha_por_produto(),
     )
 
 

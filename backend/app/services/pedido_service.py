@@ -1070,6 +1070,135 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     return obter_pedido(pedido_id)
 
 
+def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
+                    decisao: Optional[str] = None,
+                    observacao_estoque: Optional[str] = None,
+                    previsao_pcp: Optional[str] = None,
+                    escolha: Optional[dict] = None) -> dict:
+    """Acrescenta itens a uma OV que já existe, conferindo o estoque.
+
+    O processo que isto atende: a mesma OV acumula pedidos do cliente e vai sendo
+    faturada em NFs diferentes conforme o material chega. Então adicionar item é
+    rotina, não exceção.
+
+    ADITIVO de propósito, ao contrário de `editar_itens`, que substitui a lista
+    inteira. Duas razões: quem só quer somar um item não deveria ter que redigitar
+    os que já estão lá, e — mais grave — a pendência da OV é UMA só: um replace
+    montaria uma pendência nova por cima da que existe, apagando saldo já
+    prometido ao cliente. Aqui a pendência é SOMADA (pendencia_service.somar_venda).
+
+    O que tem estoque entra na OV agora; o que falta vira saldo na pendência da
+    própria OV e volta como 2ª remessa — mesma OV, NF própria.
+    """
+    from app.services import disponibilidade_service, pendencia_service
+
+    db = get_service_db()
+    ped = db.table("pedidos").select("id, status, numero_pedido, pendencia")\
+        .eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    # OV já faturada não recebe item novo: a NF está fechada. O caminho para
+    # material novo depois do faturamento é a 2ª remessa, pela liberação da
+    # pendência — que o app já faz.
+    if ped["status"] in _STATUS_ITENS_TRAVADOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OV em '{ped['status']}' não aceita itens novos — a NF já está fechada. "
+                   "Material novo entra pela pendência, como 2ª remessa.")
+    limpos = [it for it in (itens or []) if float(it.qtd_solicitada or 0) > 0]
+    if not limpos:
+        raise HTTPException(status_code=422, detail="Informe ao menos um item com quantidade.")
+
+    analise = disponibilidade_service.analisar([{
+        "ref": idx,
+        "produto_id": str(it.produto_id),
+        "qtd": float(it.qtd_solicitada),
+        "valor_unitario": float(it.valor_unitario or 0),
+    } for idx, it in enumerate(limpos)], sincronizar=True)
+
+    dec = (decisao or "").strip().upper() or None
+    if analise.get("tem_falta") and dec not in ("PARCIAL", "AGUARDAR"):
+        raise HTTPException(status_code=409, detail={
+            "tipo": "ESTOQUE_INSUFICIENTE",
+            "msg": "Não há material para tudo o que está sendo adicionado. Os itens podem "
+                   "entrar só com o disponível — o saldo fica na pendência desta OV.",
+            "analise": analise,
+        })
+    if escolha:
+        analise = disponibilidade_service.aplicar_escolha(analise, escolha)
+    # AGUARDAR: nada entra na OV agora, tudo vira saldo.
+    if dec == "AGUARDAR":
+        analise = pendencia_service.analise_venda_inteira(analise)
+
+    por_ref = {i.get("ref"): i for i in (analise.get("itens") or []) if i.get("ref") is not None}
+
+    # Linhas que já existem na OV para o mesmo produto: soma nelas em vez de criar
+    # linha repetida — a OV mostraria o mesmo código duas vezes.
+    existentes = {}
+    for r in db.table("itens_pedido").select("id, produto_id, qtd_solicitada")\
+            .eq("pedido_id", pedido_id).execute().data:
+        existentes.setdefault(r["produto_id"], r)
+
+    vendidos = []
+    entraram = []
+    for idx, it in enumerate(limpos):
+        info = por_ref.get(idx) or {}
+        pid = str(it.produto_id)
+        vendida = float(it.qtd_solicitada)
+        atendida = float(info.get("qtd_atendida", vendida) or 0)
+        vendidos.append({
+            "produto_id": pid,
+            "codigo": info.get("codigo"),
+            "descricao": info.get("descricao"),
+            "qtd_vendida": vendida,
+            "qtd_atendida": atendida,
+            "valor_unitario": float(it.valor_unitario or info.get("valor_unitario") or 0),
+            "disponivel": info.get("disponivel"),
+            "estoque_sa": info.get("estoque_sa"),
+            "cobre_com_sa": info.get("cobre_com_sa"),
+        })
+        if atendida <= 0:
+            continue
+        entraram.append(f"{info.get('codigo') or pid[:8]} {atendida:g}")
+        linha = existentes.get(pid)
+        if linha:
+            nova = round(float(linha.get("qtd_solicitada") or 0) + atendida, 3)
+            db.table("itens_pedido").update({"qtd_solicitada": nova}).eq("id", linha["id"]).execute()
+        else:
+            db.table("itens_pedido").insert({
+                "pedido_id": pedido_id,
+                "produto_id": pid,
+                "lote_id": str(it.lote_id) if getattr(it, "lote_id", None) else None,
+                "qtd_solicitada": atendida,
+                "valor_unitario": it.valor_unitario,
+                "status_item": "PENDENTE",
+            }).execute()
+
+    pendencia = pendencia_service.somar_venda(
+        ped.get("pendencia"), vendidos, str(usuario.id),
+        observacao=observacao_estoque, previsao_pcp=previsao_pcp)
+    if pendencia is not None and pendencia is not ped.get("pendencia"):
+        try:
+            db.table("pedidos").update({"pendencia": pendencia}).eq("id", pedido_id).execute()
+        except Exception:
+            # Migration v29 pendente: os itens entram na OV de todo jeito; o saldo
+            # fica só no histórico abaixo.
+            pass
+
+    faltou = [f"{v['codigo'] or ''} {v['qtd_vendida'] - v['qtd_atendida']:g}"
+              for v in vendidos if v["qtd_vendida"] - v["qtd_atendida"] > 0.001]
+    obs = f"Itens adicionados à OV por {usuario.nome}."
+    if entraram:
+        obs += f" Entraram na OV: {'; '.join(entraram)}."
+    if faltou:
+        obs += f" Sem estoque, foram para a pendência desta OV: {'; '.join(faltou)}."
+    if observacao_estoque:
+        obs += f" Obs.: {observacao_estoque}"
+    _registrar_movimentacao(pedido_id, ped["status"], ped["status"], str(usuario.id), obs)
+
+    return obter_pedido(pedido_id)
+
+
 def devolver_reserva(pedido_id: str, codigo: str, qtd: float, usuario: UsuarioOut,
                      observacao: Optional[str] = None) -> dict:
     """Tira de uma OV a quantidade de um item e joga na pendência dela, liberando

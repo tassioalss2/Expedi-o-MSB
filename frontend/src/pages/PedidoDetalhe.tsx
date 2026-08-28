@@ -2038,6 +2038,104 @@ function ModalTratativaDivergencia({ pedido, onClose }: { pedido: Pedido; onClos
 }
 
 // ── Página Principal ──────────────────────────────────────────────────────────
+// ── Adicionar itens a uma OV existente ────────────────────────────────────────
+/** A mesma OV acumula pedidos do cliente e vai sendo faturada em NFs diferentes
+ *  conforme o material chega — então somar item é rotina, não exceção.
+ *
+ *  ADITIVO, ao contrário de "Editar itens", que substitui a lista inteira. Quem
+ *  só quer somar não deveria redigitar o que já está lá; e a pendência da OV é
+ *  UMA só, então um replace montaria uma pendência nova por cima da que existe,
+ *  apagando saldo já prometido ao cliente. Aqui ela é somada. */
+function ModalAdicionarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [itens, setItens] = useState<ItemLinha[]>([])
+  const [faltaEstoque, setFaltaEstoque] = useState<any | null>(null)
+
+  const corpo = (d?: DecisaoEstoque | null) => ({
+    itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor || null })),
+    decisao_estoque: d?.decisao || null,
+    observacao_estoque: d?.observacao || null,
+    previsao_pcp: d?.previsao_pcp || null,
+    itens_escolhidos: d?.itens || null,
+  })
+
+  const aoSalvar = (parcial: boolean) => {
+    toast.success(parcial
+      ? 'Itens adicionados só com o disponível — o saldo entrou na pendência desta OV.'
+      : 'Itens adicionados à OV', { duration: parcial ? 7000 : 4000 })
+    qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+    qc.invalidateQueries({ queryKey: ['pendencias'] })
+    qc.invalidateQueries({ queryKey: ['pendencias-count'] })
+    qc.invalidateQueries({ queryKey: ['estoque'] })
+    onClose()
+  }
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/adicionar-itens`, corpo()),
+    onSuccess: () => aoSalvar(false),
+    onError: (e: any) => {
+      const detail = e?.response?.data?.detail
+      if (e?.response?.status === 409 && detail?.tipo === 'ESTOQUE_INSUFICIENTE' && detail.analise) {
+        setFaltaEstoque(detail.analise)
+        return
+      }
+      toast.error(typeof detail === 'string' ? detail : detail?.msg || 'Erro ao adicionar itens')
+    },
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="p-5 border-b flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-800">Adicionar itens — {pedido.numero_pedido}</h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Some ao que já está na OV. O que tiver estoque entra agora; o que faltar vira
+              saldo na pendência desta OV e volta como 2ª remessa, com NF própria.
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><XCircle size={20} /></button>
+        </div>
+        <div className="p-5 space-y-3 overflow-y-auto">
+          <ItensPedido value={itens} onChange={setItens} comValor />
+          {itens.length === 0 && (
+            <p className="text-xs text-gray-400">Escolha ao menos um item para adicionar.</p>
+          )}
+        </div>
+        <div className="p-4 border-t flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600">Cancelar</button>
+          <button onClick={() => mutation.mutate()}
+            disabled={itens.length === 0 || itens.some(i => !(i.qtd > 0)) || mutation.isPending}
+            className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium rounded-lg">
+            {mutation.isPending ? 'Adicionando…' : 'Adicionar à OV'}
+          </button>
+        </div>
+      </div>
+
+      {/* Mesma decisão de estoque das outras telas. "Jogar tudo na pendência"
+          faz sentido aqui: o item entra na OV como saldo, sem ir à expedição. */}
+      {faltaEstoque && (
+        <ModalDecisaoEstoque
+          analise={faltaEstoque}
+          titulo="Não temos todo o material que você está adicionando"
+          pendente={mutation.isPending}
+          permiteAguardar
+          avisoAguardar="Nada entra na OV agora: o que você está adicionando fica todo na pendência desta OV."
+          onClose={() => setFaltaEstoque(null)}
+          onDecidir={(d) => {
+            setFaltaEstoque(null)
+            api.post(`/pedidos/${pedido.id}/adicionar-itens`, corpo(d))
+              .then(() => aoSalvar(true))
+              .catch((e: any) => {
+                const d2 = e?.response?.data?.detail
+                toast.error(typeof d2 === 'string' ? d2 : d2?.msg || 'Erro ao adicionar itens')
+              })
+          }} />
+      )}
+    </div>
+  )
+}
+
 // ── Editar itens da OV ────────────────────────────────────────────────────────
 /** Substitui os itens da OV inteira — o caso concreto que motivou isto: um item
  *  sem estoque que o comercial trocou por outro. Mostra o estoque disponível
@@ -2303,7 +2401,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'devolver-crm' | 'credito' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'devolver-crm' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -2722,10 +2820,16 @@ export function PedidoDetalhe() {
                   <div className="flex items-center gap-3">
                     <BotaoGerarOrcamento pedido={pedido} />
                     {editavel ? (
-                      <button onClick={() => setModal('editar_itens')}
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                        <Pencil size={12} /> Editar itens
-                      </button>
+                      <>
+                        <button onClick={() => setModal('adicionar_itens')}
+                          className="flex items-center gap-1 text-xs text-emerald-700 hover:underline">
+                          <Plus size={12} /> Adicionar itens
+                        </button>
+                        <button onClick={() => setModal('editar_itens')}
+                          className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                          <Pencil size={12} /> Editar itens
+                        </button>
+                      </>
                     ) : (
                       <span className="text-[11px] text-gray-400" title="Depois de faturada, o item é o que está na NF">
                         🔒 travado (faturada)
@@ -3154,6 +3258,7 @@ export function PedidoDetalhe() {
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'confirmar_coleta' && <ModalConfirmarColeta pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'editar_itens' && <ModalEditarItens pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'adicionar_itens' && <ModalAdicionarItens pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (
