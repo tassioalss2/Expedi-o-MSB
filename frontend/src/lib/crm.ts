@@ -86,6 +86,10 @@ export interface Pendencia {
   ov_provisoria: boolean
   decisao: 'PARCIAL' | 'AGUARDAR' | null
   origem: string | null
+  /** Por que este saldo existe: FALTA = o estoque não tinha; LIBERADO = o
+   *  material existia e alguém escolheu não prendê-lo nesta OV. Muda o que se
+   *  faz — LIBERADO não se cobra do PCP. */
+  natureza?: 'FALTA' | 'LIBERADO' | null
   valor: number
   qtd_total: number
   itens: ItemDisponibilidade[]

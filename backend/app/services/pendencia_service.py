@@ -281,6 +281,40 @@ def devolver_para_pendencia(pend: Optional[dict], devolvidos: list,
     return base
 
 
+# Como o saldo NASCEU. O titulo dizia "Venda outbound" para toda pendencia de
+# pedido, o que passou a ser mentira: hoje elas vem de cinco caminhos, e so um e
+# outbound. Quem le o card precisa saber de onde aquilo veio.
+_TITULO_POR_ORIGEM = {
+    "NOVA_OV": "Nova OV",
+    "OUTBOUND": "Venda outbound",
+    "EDICAO_ITENS": "Itens editados na OV",
+    "ITEM_ADICIONADO": "Itens adicionados a OV",
+    "DEVOLUCAO_ESTOQUE": "Material liberado da OV",
+}
+
+# Duas naturezas muito diferentes de saldo, que a tela tratava como uma so:
+#
+#   FALTA     o estoque nao tinha. Depende da producao — cobrar o PCP e esperar.
+#   LIBERADO  o material EXISTIA e alguem escolheu nao prender nesta OV (liberou
+#             a reserva, ou marcou "deixar livre" na decisao). Nao ha o que
+#             cobrar do PCP: e decisao comercial, e pode voltar a qualquer hora.
+#
+# Misturar as duas faz o operador cobrar producao de material que esta na
+# prateleira, e esperar por algo que so depende de decisao.
+_MOTIVO_POR_ORIGEM = {"DEVOLUCAO_ESTOQUE": "LIBERADO"}
+
+
+def natureza_do_saldo(origem: Optional[str]) -> str:
+    """FALTA (o estoque nao tinha) ou LIBERADO (existia e foi solto de proposito)."""
+    return _MOTIVO_POR_ORIGEM.get((origem or "").upper(), "FALTA")
+
+
+def titulo_da_pendencia(origem: Optional[str], numero: Optional[str]) -> str:
+    """So a origem, sem o numero: o card ja mostra a OV como link logo acima, e
+    repetir dava "Nova OV OV016456"."""
+    return _TITULO_POR_ORIGEM.get((origem or "").upper(), "Saldo da OV")
+
+
 def _dias(iso: Optional[str]) -> Optional[int]:
     if not iso:
         return None
@@ -496,7 +530,8 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         acao, bloqueio = _acao(p, "pedido")
         saida.append(_serializar(
             fonte="pedido", registro_id=p["id"],
-            titulo=f"Venda outbound {p.get('numero_pedido')}",
+            titulo=titulo_da_pendencia((p.get("pendencia") or {}).get("origem"),
+                                       p.get("numero_pedido")),
             cliente=clientes.get(p.get("cliente_id")), cliente_id=p.get("cliente_id"),
             canal=p.get("canal"), ov=p, pend=pend, acao=acao, bloqueio=bloqueio,
             extra={"oportunidade_id": None}))
@@ -671,6 +706,9 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "ov_provisoria": _provisorio((ov or {}).get("numero_pedido")),
         "decisao": pend.get("decisao"),
         "origem": pend.get("origem"),
+        # FALTA (o estoque nao tinha) x LIBERADO (existia e foi solto de
+        # proposito). Muda o que o operador faz: LIBERADO nao se cobra do PCP.
+        "natureza": natureza_do_saldo(pend.get("origem")),
         "valor": valor_parado,
         "qtd_total": round(qtd_parada, 3),
         "itens": itens,

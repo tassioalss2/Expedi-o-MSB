@@ -104,7 +104,7 @@ export default function Pendencias() {
       if (linha && LINHA_DO_CANAL[p.canal || ''] !== LINHA_DO_CANAL[linha]) return false
       if (!b) return true
       const itens = (p.itens || []).map(i => `${i.codigo || ''} ${i.descricao || ''}`).join(' ')
-      return `${p.cliente || ''} ${p.titulo || ''} ${p.ov_ref || ''} ${itens}`
+      return `${p.cliente || ''} ${p.titulo || ''} ${p.origem || ''} ${p.ov_ref || ''} ${itens}`
         .toLowerCase().includes(b)
     }
     const f = todas.filter(passa)
@@ -133,7 +133,8 @@ export default function Pendencias() {
       <div>
         <h1 className="text-xl font-bold text-gray-800">Pendências de OV</h1>
         <p className="text-sm text-gray-500">
-          Venda fechada esperando material. Organizado pelo que dá para fazer agora.
+          Venda fechada com saldo a entregar. Organizado pelo que dá para fazer agora —
+          o que está só esperando material e o que já existe e foi deixado livre.
         </p>
       </div>
 
@@ -355,7 +356,18 @@ function Card({ p, onLiberar, onAcompanhar }: {
                 className="font-mono text-xs text-indigo-700 hover:underline">{p.ov_ref}</Link>
             ) : null}
           </div>
-          <p className="text-[11px] text-gray-400 truncate">{p.titulo}</p>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="text-[11px] text-gray-400 truncate">{p.titulo}</span>
+            {/* Saldo que existe fisicamente e foi solto de propósito não se
+                cobra do PCP — sem isto o operador cobra produção de material
+                que está na prateleira. */}
+            {p.natureza === 'LIBERADO' && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 shrink-0"
+                title="O material existe: alguém escolheu não prendê-lo nesta OV. Não depende da produção — dá para liberar assim que quiser.">
+                material existe
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="text-xs text-gray-500 whitespace-nowrap">
