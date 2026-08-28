@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { ehTransferPrice } from '../lib/meta'
 import { useQuery } from '@tanstack/react-query'
 import { Search, Plus, Trash2, Package } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -93,8 +94,11 @@ function SeloEstoque({ e, pedido }: { e: EstoqueItem | null; pedido?: number }) 
   )
 }
 
-export function ItensPedido({ value, onChange, comValor = false }: {
+export function ItensPedido({ value, onChange, comValor = false, clienteNome }: {
   value: ItemLinha[]; onChange: (itens: ItemLinha[]) => void; comValor?: boolean
+  /** Nome do cliente. Serve para o rodapé não prometer meta numa venda de
+   *  transfer price (Biomedical), que não conta para meta nenhuma. */
+  clienteNome?: string | null
 }) {
   const [busca, setBusca] = useState('')
   const [aberto, setAberto] = useState(false)
@@ -294,7 +298,8 @@ export function ItensPedido({ value, onChange, comValor = false }: {
               </button>
             </div>
           ))}
-          <ResumoLinhas itens={value} comValor={comValor} estoque={estoque} />
+          <ResumoLinhas itens={value} comValor={comValor} estoque={estoque}
+            clienteNome={clienteNome} />
           <div className="flex justify-between px-3 py-2 bg-gray-50 text-xs text-gray-500">
             <span>{value.length} item(ns)</span>
             <span>
@@ -314,8 +319,8 @@ export function ItensPedido({ value, onChange, comValor = false }: {
  *  fechamento). Sem preço, mostra só quais linhas foram tocadas: melhor dizer
  *  "duas linhas" do que inventar uma divisão que o painel não vai reproduzir.
  */
-function ResumoLinhas({ itens, comValor, estoque }: {
-  itens: ItemLinha[]; comValor: boolean; estoque?: EstoqueMapa
+function ResumoLinhas({ itens, comValor, estoque, clienteNome }: {
+  itens: ItemLinha[]; comValor: boolean; estoque?: EstoqueMapa; clienteNome?: string | null
 }) {
   const porLinha: Record<string, number> = {}
   let semLinha = 0
@@ -334,9 +339,12 @@ function ResumoLinhas({ itens, comValor, estoque }: {
   const mostrarValor = comValor && temPreco && total > 0
 
   return (
-    <div className="px-3 py-2 bg-blue-50/60 border-t border-blue-100 text-xs">
+    <div className={`px-3 py-2 border-t text-xs ${ehTransferPrice(clienteNome)
+      ? 'bg-gray-50 border-gray-200' : 'bg-blue-50/60 border-blue-100'}`}>
       <span className="text-gray-500">
-        {linhas.length > 1 ? 'Esta OV conta para mais de uma meta:' : 'Conta para a meta:'}
+        {ehTransferPrice(clienteNome)
+          ? 'Transfer price (Biomedical) — não conta para meta:'
+          : linhas.length > 1 ? 'Esta OV conta para mais de uma meta:' : 'Conta para a meta:'}
       </span>
       <span className="inline-flex flex-wrap items-center gap-2 ml-1.5">
         {linhas

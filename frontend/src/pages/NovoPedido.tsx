@@ -391,7 +391,7 @@ export function NovoPedido() {
           <div className="col-span-2">
             <label className="text-sm font-medium text-gray-700">Itens da OV *</label>
             <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade. Adicione ao menos um item.</p>
-            <ItensPedido value={itens} onChange={setItens} comValor />
+            <ItensPedido value={itens} onChange={setItens} comValor clienteNome={form.cliente_nome} />
             {itens.length === 0 && (
               <p className="text-xs text-amber-600 mt-1">Adicione pelo menos um item para cadastrar a OV.</p>
             )}
