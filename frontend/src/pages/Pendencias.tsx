@@ -16,7 +16,7 @@
  * hoje. Uma lista única ordenada por data enterra elas no meio de pendências que
  * ninguém pode resolver ainda.
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useState, Fragment } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { format } from 'date-fns'
@@ -34,6 +34,10 @@ import { LINHA_DO_CANAL } from '../lib/statusConfig'
 import { hojeLocal } from '../lib/dataLocal'
 
 /** Dias parada a partir dos quais a espera deixa de ser normal. */
+// Quantidade sem casas decimais quando é inteira — 100 un, não 100,000.
+const n = (v?: number | null) =>
+  (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })
+
 const DIAS_ATENCAO = 7
 const DIAS_CRITICO = 15
 
@@ -96,6 +100,7 @@ export default function Pendencias() {
     qc.invalidateQueries({ queryKey: ['home-pendencias'] })
   }
 
+  const [aba, setAba] = useState<'ov' | 'produto'>('ov')
   const todas = data?.pendencias || []
 
   const { abertas, resolvidas } = useMemo(() => {
@@ -137,6 +142,22 @@ export default function Pendencias() {
           o que está só esperando material e o que já existe e foi deixado livre.
         </p>
       </div>
+
+      {/* Duas perguntas diferentes sobre o mesmo saldo: "o que faço com esta
+          venda" (por OV) e "qual item está segurando mais dinheiro" (por
+          produto) — a segunda é a de quem produz e de quem prioriza. */}
+      <div className="flex items-center gap-1 border-b border-gray-200">
+        {([['ov', 'Por OV'], ['produto', 'Por produto']] as const).map(([k, rot]) => (
+          <button key={k} onClick={() => setAba(k)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition ${aba === k
+              ? 'border-indigo-600 text-indigo-700'
+              : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            {rot}
+          </button>
+        ))}
+      </div>
+
+      {aba === 'produto' ? <PorProduto /> : <>
 
       {/* Os três números que decidem o dia */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -276,6 +297,8 @@ export default function Pendencias() {
         </section>
       )}
 
+      </>}
+
       {liberando && (
         <ModalLiberarPendencia
           pendencia={liberando}
@@ -290,6 +313,160 @@ export default function Pendencias() {
           onSalvo={invalidar}
         />
       )}
+    </div>
+  )
+}
+
+interface OvDoProduto {
+  pendencia_id: string; ov_ref: string | null; cliente: string | null
+  qtd: number; valor: number; coberta_agora: number; dias_parada: number
+  posicao_fila: number | null; natureza?: string | null
+}
+interface ProdutoPendente {
+  codigo: string; descricao: string | null
+  qtd_pendente: number; valor_pendente: number
+  qtd_coberta_agora: number; qtd_a_produzir: number
+  disponivel: number | null; estoque_sa: number | null; cobre_com_sa: boolean
+  dias_maior_espera: number; previsao_pcp: string | null
+  qtd_ovs: number; qtd_clientes: number; ovs: OvDoProduto[]
+}
+
+/** O saldo virado do avesso: por produto, não por OV.
+ *
+ *  Responde a pergunta de quem produz e de quem prioriza — qual item segura
+ *  mais dinheiro e quantos clientes esperam pela mesma coisa. Na visão por OV
+ *  isso fica espalhado: o mesmo código aparece em cinco cartões e ninguém soma.
+ *
+ *  Os números vêm do MESMO rateio da outra aba (o servidor reaproveita `listar`),
+ *  senão "dá para liberar" diria uma coisa aqui e outra lá. */
+function PorProduto() {
+  const [aberto, setAberto] = useState<string | null>(null)
+  const { data, isLoading } = useQuery<{
+    produtos: ProdutoPendente[]; total_valor: number; total_itens: number
+    valor_coberto_agora: number
+  }>({
+    queryKey: ['pendencias-por-produto'],
+    queryFn: () => api.get('/crm/pendencias/por-produto').then(r => r.data),
+    staleTime: 30000,
+  })
+
+  const produtos = data?.produtos || []
+
+  if (isLoading) return <p className="text-sm text-gray-400 py-8 text-center">Carregando…</p>
+  if (!produtos.length) {
+    return (
+      <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-8 text-center">
+        <CheckCircle2 size={28} className="mx-auto text-emerald-600 mb-2" />
+        <p className="text-sm font-medium text-emerald-800">Nenhum item com saldo a entregar.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Kpi rotulo="Itens com saldo" valor={String(data?.total_itens ?? 0)}
+          detalhe="códigos distintos esperando" cor="text-gray-800" />
+        <Kpi rotulo="Valor parado" valor={fmtBRL(data?.total_valor || 0)}
+          detalhe="somando todas as OVs" cor="text-red-700" />
+        <Kpi rotulo="Já coberto pelo estoque" valor={fmtBRL(data?.valor_coberto_agora || 0)}
+          detalhe="dá para liberar sem esperar produção" cor="text-emerald-700" />
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase text-gray-400 text-left bg-gray-50">
+                <th className="py-2 px-3 font-medium">Item</th>
+                <th className="py-2 px-2 font-medium text-right">Falta</th>
+                <th className="py-2 px-2 font-medium text-right">Temos</th>
+                <th className="py-2 px-2 font-medium text-right">A produzir</th>
+                <th className="py-2 px-2 font-medium text-right">Valor parado</th>
+                <th className="py-2 px-2 font-medium text-center">Esperando</th>
+                <th className="py-2 px-2 font-medium text-right">Espera</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {produtos.map(pr => {
+                const coberto = pr.qtd_a_produzir <= 0.001
+                const expandido = aberto === pr.codigo
+                return (
+                  <Fragment key={pr.codigo}>
+                    <tr
+                      onClick={() => setAberto(expandido ? null : pr.codigo)}
+                      className={`cursor-pointer hover:bg-gray-50 ${coberto ? 'bg-emerald-50/40' : ''}`}>
+                      <td className="py-2 px-3">
+                        <span className="font-mono font-medium text-gray-800">{pr.codigo}</span>
+                        {pr.descricao && (
+                          <span className="block text-[11px] text-gray-400 truncate max-w-[280px]">
+                            {pr.descricao}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-2 text-right tabular-nums text-gray-700">{n(pr.qtd_pendente)}</td>
+                      <td className={`py-2 px-2 text-right tabular-nums font-medium ${
+                        pr.qtd_coberta_agora > 0 ? 'text-emerald-700' : 'text-gray-300'}`}>
+                        {n(pr.qtd_coberta_agora)}
+                      </td>
+                      <td className={`py-2 px-2 text-right tabular-nums font-medium ${
+                        coberto ? 'text-emerald-700' : 'text-red-600'}`}>
+                        {coberto ? '—' : n(pr.qtd_a_produzir)}
+                      </td>
+                      <td className="py-2 px-2 text-right tabular-nums font-semibold text-gray-800">
+                        {fmtBRL(pr.valor_pendente)}
+                      </td>
+                      <td className="py-2 px-2 text-center text-[11px] text-gray-600">
+                        {pr.qtd_ovs} OV{pr.qtd_ovs > 1 ? 's' : ''}
+                        <span className="text-gray-400"> · {pr.qtd_clientes} cliente{pr.qtd_clientes > 1 ? 's' : ''}</span>
+                      </td>
+                      <td className="py-2 px-2 text-right text-[11px] text-gray-500">
+                        {pr.dias_maior_espera > 0 ? `${pr.dias_maior_espera}d` : 'hoje'}
+                      </td>
+                    </tr>
+                    {expandido && (
+                      <tr className="bg-gray-50/60">
+                        <td colSpan={7} className="px-3 py-2">
+                          <p className="text-[11px] text-gray-500 mb-1.5">
+                            Quem espera por este item, na ordem da fila — o mesmo rateio que a aba
+                            Por OV usa, então as duas contam a mesma verdade:
+                          </p>
+                          <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100">
+                            {pr.ovs.map(o => (
+                              <div key={o.pendencia_id + (o.ov_ref || '')}
+                                className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
+                                <div className="min-w-0">
+                                  <span className="font-mono text-indigo-700">{o.ov_ref || '—'}</span>
+                                  <span className="text-gray-500 ml-2 truncate">{o.cliente || '—'}</span>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0 tabular-nums">
+                                  <span className="text-gray-600">{n(o.qtd)} un</span>
+                                  {o.coberta_agora > 0 && (
+                                    <span className="text-emerald-700" title="Já reservado para esta OV pelo rateio">
+                                      {n(o.coberta_agora)} pronta(s)
+                                    </span>
+                                  )}
+                                  <span className="text-gray-400">{o.dias_parada}d</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-gray-400">
+        <strong>Temos</strong> é o que o rateio já separou para este item respeitando a fila —
+        a mesma unidade não é prometida a duas OVs. <strong>A produzir</strong> é o que sobra
+        para o PCP entregar de fato.
+      </p>
     </div>
   )
 }

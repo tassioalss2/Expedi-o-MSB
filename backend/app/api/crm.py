@@ -156,6 +156,16 @@ def listar_pendencias(incluir_resolvidas: bool = Query(False),
     return pendencia_service.listar(incluir_resolvidas=incluir_resolvidas)
 
 
+@router.get("/pendencias/por-produto")
+def pendencias_por_produto(_: UsuarioOut = Depends(get_current_user)):
+    """As pendências agregadas por PRODUTO: qual item segura mais dinheiro e
+    quantos clientes esperam pelo mesmo material.
+
+    Declarada antes das rotas com {fonte} para o caminho fixo não ser capturado
+    como parâmetro."""
+    return pendencia_service.por_produto()
+
+
 @router.post("/pendencias/{fonte}/{registro_id}/liberar")
 def liberar_pendencia(fonte: str, registro_id: UUID,
                       payload: Optional[LiberarPendenciaRequest] = None,

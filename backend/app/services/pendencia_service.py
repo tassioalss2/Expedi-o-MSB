@@ -570,6 +570,106 @@ def listar(incluir_resolvidas: bool = False) -> dict:
     }
 
 
+def por_produto(incluir_resolvidas: bool = False) -> dict:
+    """As pendências viradas do avesso: por PRODUTO, não por OV.
+
+    A tela por OV responde "o que faço com esta venda". Esta responde outra
+    pergunta, que é de quem produz e de quem prioriza: QUAL ITEM está segurando
+    mais dinheiro, e quantos clientes esperam pela mesma coisa.
+
+    Reaproveita `listar` inteiro em vez de recalcular. O rateio do estoque entre
+    as pendências (_estoque_agora) respeita a fila e promete cada unidade uma vez
+    só; refazer a conta aqui daria dois números diferentes para a mesma verdade,
+    e o operador não teria como saber qual seguir.
+    """
+    base = listar(incluir_resolvidas=incluir_resolvidas)
+    pendencias = [p for p in (base.get("pendencias") or []) if not p.get("resolvido_em")]
+
+    # qtd_atendida do rateio, por pendência e código: é o que JÁ dá para mandar.
+    coberto: dict = {}
+    for p in pendencias:
+        for i in ((p.get("estoque_agora") or {}).get("itens") or []):
+            coberto[(p["id"], i.get("codigo"))] = float(i.get("qtd_atendida") or 0)
+
+    produtos: dict = {}
+    for p in pendencias:
+        # Mesma escolha de campo do rateio: "nada entregue" significa que a venda
+        # inteira está parada, não só o que faltava no dia da decisão.
+        campo = "qtd_pedida" if p.get("nada_entregue") else "qtd_pendente"
+        for i in (p.get("itens") or []):
+            cod = i.get("codigo")
+            if not cod:
+                continue
+            qtd = float(i.get(campo) or 0)
+            if qtd <= 0:
+                continue
+            vu = float(i.get("valor_unitario") or 0)
+            reg = produtos.setdefault(cod, {
+                "codigo": cod,
+                "descricao": i.get("descricao"),
+                "produto_id": i.get("produto_id"),
+                "qtd_pendente": 0.0,
+                "valor_pendente": 0.0,
+                "qtd_coberta_agora": 0.0,
+                "disponivel": i.get("disponivel"),
+                "estoque_sa": i.get("estoque_sa"),
+                "cobre_com_sa": bool(i.get("cobre_com_sa")),
+                "dias_maior_espera": 0,
+                "previsao_pcp": None,
+                "ovs": [],
+            })
+            reg["qtd_pendente"] += qtd
+            reg["valor_pendente"] += qtd * vu
+            reg["qtd_coberta_agora"] += coberto.get((p["id"], cod), 0.0)
+            reg["dias_maior_espera"] = max(reg["dias_maior_espera"], int(p.get("dias_parada") or 0))
+            # A previsão mais próxima entre as OVs que esperam este item: se
+            # alguém já cobrou o PCP, vale para todo mundo na fila.
+            prev = p.get("previsao_pcp")
+            if prev and (not reg["previsao_pcp"] or str(prev) < str(reg["previsao_pcp"])):
+                reg["previsao_pcp"] = prev
+            reg["ovs"].append({
+                "pendencia_id": p.get("id"),
+                "fonte": p.get("fonte"),
+                "ov_ref": p.get("ov_ref"),
+                "ov_id": p.get("ov_id"),
+                "cliente": p.get("cliente"),
+                "canal": p.get("canal"),
+                "qtd": qtd,
+                "valor": round(qtd * vu, 2),
+                "coberta_agora": coberto.get((p["id"], cod), 0.0),
+                "dias_parada": p.get("dias_parada") or 0,
+                "posicao_fila": p.get("posicao_fila"),
+                "natureza": p.get("natureza"),
+            })
+
+    saida = []
+    for reg in produtos.values():
+        reg["qtd_pendente"] = round(reg["qtd_pendente"], 3)
+        reg["valor_pendente"] = round(reg["valor_pendente"], 2)
+        reg["qtd_coberta_agora"] = round(reg["qtd_coberta_agora"], 3)
+        # O que a produção precisa entregar de fato: o que falta menos o que já
+        # existe e está reservado para a fila deste item.
+        reg["qtd_a_produzir"] = round(max(0.0, reg["qtd_pendente"] - reg["qtd_coberta_agora"]), 3)
+        reg["ovs"].sort(key=lambda o: (o.get("posicao_fila") or 999))
+        reg["qtd_ovs"] = len(reg["ovs"])
+        reg["qtd_clientes"] = len({o.get("cliente") for o in reg["ovs"] if o.get("cliente")})
+        saida.append(reg)
+
+    # Mais dinheiro parado primeiro: é a ordem em que a decisão importa.
+    saida.sort(key=lambda r: -r["valor_pendente"])
+
+    return {
+        "produtos": saida,
+        "total_valor": round(sum(r["valor_pendente"] for r in saida), 2),
+        "total_itens": len(saida),
+        "valor_coberto_agora": round(
+            sum(sum(o["coberta_agora"] * (o["valor"] / o["qtd"] if o["qtd"] else 0)
+                    for o in r["ovs"]) for r in saida), 2),
+        "estoque_desatualizado": base.get("estoque_desatualizado"),
+        "estoque_data_ref": base.get("estoque_data_ref"),
+    }
+
+
 def _estoque_agora(pendencias: list) -> dict:
     """Marca em cada pendência quanto do que falta JÁ existe em estoque hoje.
 
