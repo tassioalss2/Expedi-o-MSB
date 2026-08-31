@@ -712,6 +712,7 @@ function Card({ p, onLiberar, onAcompanhar }: {
                   <th className="font-medium py-1">Item</th>
                   <th className="font-medium py-1 text-right">Falta</th>
                   <th className="font-medium py-1 text-right">Em estoque hoje</th>
+                  <th className="font-medium py-1 text-right">Valor un.</th>
                   <th className="font-medium py-1 text-right">Valor</th>
                   <th className="w-5" />
                 </tr>
@@ -760,6 +761,9 @@ function Card({ p, onLiberar, onAcompanhar }: {
                             <PencilLine size={10} /> corrigir
                           </button>
                         )}
+                      </td>
+                      <td className="py-1 text-right tabular-nums text-gray-500">
+                        {fmtBRL(i.valor_unitario)}
                       </td>
                       <td className="py-1 text-right tabular-nums text-gray-600">
                         {fmtBRL(i.valor_pendente)}
