@@ -968,6 +968,20 @@ class ItemAjustePendencia(BaseModel):
     valor_unitario: float = 0
 
 
+class ItemCorrecaoPendencia(BaseModel):
+    """Correção de item que já está na pendência.
+
+    `qtd` é o que FALTA entregar (o "Qtd. Pendente" da planilha do comercial), não
+    o total vendido: o que já foi entregue não se apaga por correção.
+
+    Preço é por cliente — o mesmo código custa diferente em cada um —, então
+    corrigir aqui vale só para esta pendência.
+    """
+    produto_id: UUID
+    qtd: Optional[float] = None
+    valor_unitario: Optional[float] = None
+
+
 class AjustarItensPendenciaRequest(BaseModel):
     """Corrige o que está prometido numa pendência: inclui o que faltou no
     lançamento, remove o que entrou por engano.
@@ -977,6 +991,7 @@ class AjustarItensPendenciaRequest(BaseModel):
     """
     adicionar: Optional[list[ItemAjustePendencia]] = None
     remover: Optional[list[UUID]] = None
+    atualizar: Optional[list[ItemCorrecaoPendencia]] = None
     observacao: Optional[str] = None
 
 

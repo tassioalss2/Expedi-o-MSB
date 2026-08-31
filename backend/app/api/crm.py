@@ -224,6 +224,11 @@ def ajustar_itens_pendencia(fonte: str, registro_id: UUID,
             "valor_unitario": i.valor_unitario,
         } for i in (payload.adicionar or [])],
         remover=[str(r) for r in (payload.remover or [])],
+        atualizar=[{
+            "produto_id": str(i.produto_id),
+            "qtd": i.qtd,
+            "valor_unitario": i.valor_unitario,
+        } for i in (payload.atualizar or [])],
         observacao=payload.observacao)
 
 

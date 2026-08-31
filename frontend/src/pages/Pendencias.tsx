@@ -23,7 +23,7 @@ import { format } from 'date-fns'
 import {
   AlertTriangle, CalendarClock, CheckCircle2, ChevronDown, ChevronRight,
   ArrowDown, ArrowUp, ChevronsUp, Clock, History, ListOrdered, PackageCheck,
-  PackageX, PencilLine, Plus, RotateCcw, Search, Send, Trash2, X,
+  Check, PackageX, PencilLine, Plus, RotateCcw, Search, Send, Trash2, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -575,15 +575,22 @@ function Card({ p, onLiberar, onAcompanhar }: {
   // Remoção mexe no valor da venda, então pede dois cliques: o primeiro abre a
   // confirmação na própria linha, o segundo remove.
   const [confirmaRemover, setConfirmaRemover] = useState<string | null>(null)
+  // Correção de quantidade e preço do item que já está na pendência. O comercial
+  // manda planilha revisada todo mês, e preço é POR CLIENTE — corrigir aqui não
+  // toca nenhum outro cliente.
+  const [editando, setEditando] = useState<string | null>(null)
+  const [edit, setEdit] = useState<{ qtd: string; vu: string }>({ qtd: '', vu: '' })
   const qcCard = useQueryClient()
 
   const ajustarItens = useMutation({
     mutationFn: (corpo: any) =>
       api.post(`/crm/pendencias/${p.fonte}/${p.id}/itens`, corpo).then(r => r.data),
     onSuccess: (_d, corpo: any) => {
-      toast.success(corpo?.remover?.length ? 'Item removido da venda.' : 'Item incluído na venda.')
+      toast.success(corpo?.remover?.length ? 'Item removido da venda.'
+        : corpo?.atualizar?.length ? 'Item corrigido.' : 'Item incluído na venda.')
       setIncluindo(false)
       setConfirmaRemover(null)
+      setEditando(null)
       qcCard.invalidateQueries({ queryKey: ['crm-pendencias'] })
       qcCard.invalidateQueries({ queryKey: ['crm-opps'] })
       qcCard.invalidateQueries({ queryKey: ['pedidos'] })
@@ -752,7 +759,12 @@ function Card({ p, onLiberar, onAcompanhar }: {
                         )}
                       </td>
                       <td className="py-1 text-right tabular-nums text-gray-700 font-medium">
-                        {n(i.qtd_pendente)}
+                        {editando === i.produto_id ? (
+                          <input autoFocus value={edit.qtd}
+                            onChange={e => setEdit({ ...edit, qtd: e.target.value })}
+                            className="w-16 px-1 py-0.5 border border-violet-300 rounded text-right
+                                       text-xs focus:ring-1 focus:ring-violet-400" />
+                        ) : n(i.qtd_pendente)}
                       </td>
                       <td className="py-1 text-right tabular-nums whitespace-nowrap">
                         {!agora ? (
@@ -775,13 +787,38 @@ function Card({ p, onLiberar, onAcompanhar }: {
                         )}
                       </td>
                       <td className="py-1 text-right tabular-nums text-gray-500">
-                        {fmtBRL(i.valor_unitario)}
+                        {editando === i.produto_id ? (
+                          <input value={edit.vu}
+                            onChange={e => setEdit({ ...edit, vu: e.target.value })}
+                            className="w-20 px-1 py-0.5 border border-violet-300 rounded text-right
+                                       text-xs focus:ring-1 focus:ring-violet-400" />
+                        ) : fmtBRL(i.valor_unitario)}
                       </td>
                       <td className="py-1 text-right tabular-nums text-gray-600">
                         {fmtBRL(i.valor_pendente)}
                       </td>
                       <td className="py-1 pl-1 text-right whitespace-nowrap">
-                        {confirmaRemover === i.produto_id ? (
+                        {editando === i.produto_id ? (
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              disabled={ajustarItens.isPending}
+                              title="Salvar a correção"
+                              onClick={() => {
+                                const q = Number(String(edit.qtd).replace(',', '.'))
+                                const v = Number(String(edit.vu).replace(',', '.'))
+                                if (!(q > 0)) { toast.error('Quantidade tem de ser maior que zero — para zerar, remova o item.'); return }
+                                if (!(v >= 0)) { toast.error('Preço inválido.'); return }
+                                ajustarItens.mutate({ atualizar: [{ produto_id: i.produto_id, qtd: q, valor_unitario: v }] })
+                              }}
+                              className="p-0.5 rounded text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+                              <Check size={13} />
+                            </button>
+                            <button onClick={() => setEditando(null)}
+                              className="p-0.5 rounded text-gray-400 hover:text-gray-600">
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ) : confirmaRemover === i.produto_id ? (
                           <span className="inline-flex items-center gap-1">
                             <button
                               disabled={ajustarItens.isPending}
@@ -796,12 +833,25 @@ function Card({ p, onLiberar, onAcompanhar }: {
                             </button>
                           </span>
                         ) : (
-                          <button
-                            onClick={() => setConfirmaRemover(i.produto_id || null)}
-                            title="Tirar este item da venda — o valor da venda diminui"
-                            className="p-0.5 rounded text-gray-300 hover:text-red-600 hover:bg-red-50">
-                            <Trash2 size={12} />
-                          </button>
+                          <span className="inline-flex items-center gap-0.5">
+                            <button
+                              onClick={() => {
+                                setConfirmaRemover(null)
+                                setEditando(i.produto_id || null)
+                                setEdit({ qtd: String(Number(i.qtd_pendente) || 0),
+                                          vu: String(Number(i.valor_unitario) || 0) })
+                              }}
+                              title="Corrigir a quantidade que falta ou o preço deste item"
+                              className="p-0.5 rounded text-gray-300 hover:text-violet-700 hover:bg-violet-50">
+                              <PencilLine size={12} />
+                            </button>
+                            <button
+                              onClick={() => { setEditando(null); setConfirmaRemover(i.produto_id || null) }}
+                              title="Tirar este item da venda — o valor da venda diminui"
+                              className="p-0.5 rounded text-gray-300 hover:text-red-600 hover:bg-red-50">
+                              <Trash2 size={12} />
+                            </button>
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -831,7 +881,9 @@ function Card({ p, onLiberar, onAcompanhar }: {
             <p className="text-[11px] text-gray-400 mt-1">
               Incluir ou remover item aqui muda a <strong>venda</strong>: o valor
               acompanha os itens. Item que já teve entrega parcial não sai por aqui —
-              nesse caso a correção é na OV.
+              nesse caso a correção é na OV. O lápis corrige a quantidade que falta e
+              o preço; <strong>preço é por cliente</strong>, então a correção vale só
+              para esta venda.
             </p>
           </div>
 

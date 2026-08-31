@@ -927,6 +927,7 @@ def _registrar_acompanhamento(db, fonte: str, registro_id: str, reg: dict,
 # ── Ajuste de itens ───────────────────────────────────────────────────────────
 def ajustar_itens(fonte: str, registro_id: str, usuario: UsuarioOut,
                   adicionar: Optional[list] = None, remover: Optional[list] = None,
+                  atualizar: Optional[list] = None,
                   observacao: Optional[str] = None) -> dict:
     """Corrige O QUE está prometido numa pendência aberta: inclui item que faltou
     no lançamento, retira item que entrou por engano.
@@ -957,10 +958,12 @@ def ajustar_itens(fonte: str, registro_id: str, usuario: UsuarioOut,
     if fonte not in ("oportunidade", "pedido"):
         raise HTTPException(status_code=400, detail="Origem de pendência inválida.")
     adicionar = adicionar or []
+    atualizar = atualizar or []
     remover = [str(r) for r in (remover or [])]
-    if not adicionar and not remover:
-        raise HTTPException(status_code=422,
-                            detail="Nada a ajustar: informe um item para incluir ou remover.")
+    if not adicionar and not remover and not atualizar:
+        raise HTTPException(
+            status_code=422,
+            detail="Nada a ajustar: informe um item para incluir, corrigir ou remover.")
 
     db = get_service_db()
     reg, pend = _ler(db, fonte, registro_id)
@@ -997,20 +1000,62 @@ def ajustar_itens(fonte: str, registro_id: str, usuario: UsuarioOut,
             "valor_unitario": float(a.get("valor_unitario") or 0),
         })
 
+    # Correcao de item que ja esta na pendencia: quantidade devida e/ou preco.
+    # `qtd` aqui e o que FALTA (o que a planilha do comercial chama de "Qtd.
+    # Pendente"), nao o total vendido — o que ja foi entregue nao se apaga.
+    correcoes = []
+    for c in atualizar:
+        pid = str(c.get("produto_id") or "").strip()
+        item = por_pid.get(pid)
+        if not item:
+            raise HTTPException(status_code=422,
+                                detail="Item a corrigir não está nesta pendência.")
+        nova_qtd = c.get("qtd")
+        novo_vu = c.get("valor_unitario")
+        if nova_qtd is None and novo_vu is None:
+            continue
+        if nova_qtd is not None and float(nova_qtd) <= 0:
+            raise HTTPException(status_code=422, detail=(
+                f"Para zerar o item {item.get('codigo') or ''}, remova-o — "
+                "quantidade zero deixaria uma linha sem sentido na pendência."))
+        if novo_vu is not None and float(novo_vu) < 0:
+            raise HTTPException(status_code=422, detail="Preço não pode ser negativo.")
+        correcoes.append({
+            "produto_id": pid,
+            "codigo": item.get("codigo"),
+            "qtd": None if nova_qtd is None else float(nova_qtd),
+            "valor_unitario": None if novo_vu is None else float(novo_vu),
+            "qtd_atendida": float(item.get("qtd_atendida") or 0),
+        })
+
     agora = _agora()
     if fonte == "oportunidade":
-        nova_pend = _ajustar_no_crm(db, registro_id, usuario, novos, remover)
+        nova_pend = _ajustar_no_crm(db, registro_id, usuario, novos, remover, correcoes)
     else:
-        nova_pend = _ajustar_no_pedido(db, registro_id, reg, pend, usuario, novos, remover, agora)
+        nova_pend = _ajustar_no_pedido(db, registro_id, reg, pend, usuario, novos,
+                                       remover, correcoes, agora)
 
-    _log_ajuste(db, fonte, registro_id, reg, usuario, novos, remover, observacao)
+    _log_ajuste(db, fonte, registro_id, reg, usuario, novos, remover, correcoes, observacao)
     return {"ok": True, "pendencia": nova_pend}
 
 
 def _ajustar_no_crm(db, oportunidade_id: str, usuario: UsuarioOut,
-                    novos: list, remover: list) -> Optional[dict]:
+                    novos: list, remover: list, correcoes: list) -> Optional[dict]:
     """Mexe nos itens da oportunidade e deixa o CRM refazer a pendência."""
     from app.services import crm_service
+
+    for c in correcoes:
+        update: dict = {}
+        if c["valor_unitario"] is not None:
+            update["valor_unitario"] = c["valor_unitario"]
+        if c["qtd"] is not None:
+            # Na oportunidade, `qtd` e o VENDIDO. O comercial informa o que falta,
+            # entao o vendido passa a ser o entregue + o que falta — senao a
+            # correcao apagaria a entrega que ja aconteceu.
+            update["qtd"] = round(c["qtd_atendida"] + c["qtd"], 3)
+        if update:
+            db.table("crm_oportunidade_itens").update(update)\
+                .eq("oportunidade_id", oportunidade_id).eq("produto_id", c["produto_id"]).execute()
 
     for pid in remover:
         db.table("crm_oportunidade_itens").delete()\
@@ -1041,9 +1086,31 @@ def _ajustar_no_crm(db, oportunidade_id: str, usuario: UsuarioOut,
 
 
 def _ajustar_no_pedido(db, pedido_id: str, reg: dict, pend: dict, usuario: UsuarioOut,
-                       novos: list, remover: list, agora: str) -> dict:
+                       novos: list, remover: list, correcoes: list, agora: str) -> dict:
     """Edita o jsonb: na venda outbound a pendência é o registro do que se deve."""
     base = dict(pend)
+
+    if correcoes:
+        por_cor = {c["produto_id"]: c for c in correcoes}
+        itens = []
+        for i in (base.get("itens") or []):
+            c = por_cor.get(str(i.get("produto_id")))
+            if not c:
+                itens.append(i)
+                continue
+            novo = dict(i)
+            if c["valor_unitario"] is not None:
+                novo["valor_unitario"] = c["valor_unitario"]
+            if c["qtd"] is not None:
+                atendida = float(novo.get("qtd_atendida") or 0)
+                novo["qtd_pendente"] = c["qtd"]
+                # O pedido cresce ou encolhe junto: pedida = entregue + a entregar.
+                novo["qtd_pedida"] = round(atendida + c["qtd"], 3)
+            novo["valor_pendente"] = round(
+                float(novo.get("qtd_pendente") or 0) * float(novo.get("valor_unitario") or 0), 2)
+            itens.append(novo)
+        base["itens"] = itens
+
     if remover:
         base["itens"] = [i for i in (base.get("itens") or [])
                          if str(i.get("produto_id")) not in remover]
@@ -1074,12 +1141,25 @@ def _ajustar_no_pedido(db, pedido_id: str, reg: dict, pend: dict, usuario: Usuar
 
 
 def _log_ajuste(db, fonte: str, registro_id: str, reg: dict, usuario: UsuarioOut,
-                novos: list, remover: list, observacao: Optional[str]) -> None:
+                novos: list, remover: list, correcoes: list,
+                observacao: Optional[str]) -> None:
     """Deixa o ajuste no histórico que a pessoa já lê. Best-effort: anotar não
     pode derrubar a correção."""
     partes = []
     if novos:
         partes.append("incluído " + ", ".join("%s x%g" % (n["codigo"], n["qtd"]) for n in novos))
+    if correcoes:
+        # O que mudou, item por item: "preco X" nao diz de quanto para quanto, e
+        # correcao de dinheiro sem o antes no historico e impossivel de auditar.
+        detalhe = []
+        for c in correcoes:
+            mudou = []
+            if c["qtd"] is not None:
+                mudou.append("qtd %g" % c["qtd"])
+            if c["valor_unitario"] is not None:
+                mudou.append("preco R$ %.2f" % c["valor_unitario"])
+            detalhe.append("%s -> %s" % (c["codigo"], ", ".join(mudou)))
+        partes.append("corrigido " + " · ".join(detalhe))
     if remover:
         partes.append("removido(s) %d item(ns)" % len(remover))
     if observacao and observacao.strip():
