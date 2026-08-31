@@ -710,6 +710,8 @@ function Card({ p, onLiberar, onAcompanhar }: {
               <thead>
                 <tr className="text-gray-400 text-left">
                   <th className="font-medium py-1">Item</th>
+                  <th className="font-medium py-1 text-right">Pedido</th>
+                  <th className="font-medium py-1 text-right">Já entregue</th>
                   <th className="font-medium py-1 text-right">Falta</th>
                   <th className="font-medium py-1 text-right">Em estoque hoje</th>
                   <th className="font-medium py-1 text-right">Valor un.</th>
@@ -739,8 +741,18 @@ function Card({ p, onLiberar, onAcompanhar }: {
                           </span>
                         )}
                       </td>
-                      <td className="py-1 text-right tabular-nums text-gray-700">
-                        {Number(i.qtd_pendente) || 0}
+                      <td className="py-1 text-right tabular-nums text-gray-400">
+                        {n(i.qtd_pedida)}
+                      </td>
+                      <td className="py-1 text-right tabular-nums">
+                        {Number(i.qtd_atendida) > 0 ? (
+                          <span className="text-emerald-700">{n(i.qtd_atendida)}</span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                      <td className="py-1 text-right tabular-nums text-gray-700 font-medium">
+                        {n(i.qtd_pendente)}
                       </td>
                       <td className="py-1 text-right tabular-nums whitespace-nowrap">
                         {!agora ? (
