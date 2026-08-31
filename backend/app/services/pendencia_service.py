@@ -924,6 +924,181 @@ def _registrar_acompanhamento(db, fonte: str, registro_id: str, reg: dict,
         pass
 
 
+# ── Ajuste de itens ───────────────────────────────────────────────────────────
+def ajustar_itens(fonte: str, registro_id: str, usuario: UsuarioOut,
+                  adicionar: Optional[list] = None, remover: Optional[list] = None,
+                  observacao: Optional[str] = None) -> dict:
+    """Corrige O QUE está prometido numa pendência aberta: inclui item que faltou
+    no lançamento, retira item que entrou por engano.
+
+    Isto só existia longe daqui — na oportunidade do CRM ou na OV. Quem estava na
+    tela de Pendências, olhando a lista errada, tinha de sair, achar o registro,
+    corrigir lá e voltar. Na prática não se fazia: a pendência seguia cobrando
+    material que o cliente não quer mais, ou calada sobre o que ele espera.
+
+    O ajuste é venda, não maquiagem de lista: incluir faz o valor da venda subir,
+    retirar faz descer. É o que mantém pendência e venda contando a mesma
+    história — uma lista "arrumada" sobre uma venda intacta seria pior que o
+    problema, porque ninguém saberia mais qual das duas é verdade.
+
+    Cada fluxo é corrigido onde o dado dele vive, reusando o que já havia:
+
+        oportunidade  mexe em crm_oportunidade_itens e deixa
+                      crm_service._reavaliar_pendencia refazer o retrato — ela
+                      preserva a decisão e a autoria originais.
+        pedido        a pendência é o próprio registro da venda outbound, então o
+                      jsonb é editado aqui: somar_venda para incluir (mesma regra
+                      da venda nova), e a remoção tira do saldo.
+
+    Item que já desceu em parte para a expedição não se remove por aqui: o
+    material saiu, e apagar a linha faria a pendência mentir sobre uma entrega
+    que existe. Nesse caso a correção é na OV.
+    """
+    if fonte not in ("oportunidade", "pedido"):
+        raise HTTPException(status_code=400, detail="Origem de pendência inválida.")
+    adicionar = adicionar or []
+    remover = [str(r) for r in (remover or [])]
+    if not adicionar and not remover:
+        raise HTTPException(status_code=422,
+                            detail="Nada a ajustar: informe um item para incluir ou remover.")
+
+    db = get_service_db()
+    reg, pend = _ler(db, fonte, registro_id)
+
+    # Quem já recebeu material não sai da lista por aqui.
+    por_pid = {str(i.get("produto_id")): i for i in (pend.get("itens") or []) if i.get("produto_id")}
+    for pid in remover:
+        item = por_pid.get(pid) or {}
+        atendida = float(item.get("qtd_atendida") or 0)
+        if atendida > 0.001:
+            raise HTTPException(status_code=409, detail=(
+                f"O item {item.get('codigo') or ''} já teve {atendida:g} un entregues nesta "
+                "venda. Remover aqui apagaria o registro de uma entrega que aconteceu — "
+                "ajuste a quantidade na própria OV."))
+
+    # Código e descrição vêm do cadastro, não do que a tela mandou: dois nomes
+    # para o mesmo produto é o tipo de sujeira que depois ninguém consegue cruzar.
+    novos = []
+    for a in adicionar:
+        pid = str(a.get("produto_id") or "").strip()
+        qtd = float(a.get("qtd") or 0)
+        if not pid or qtd <= 0:
+            raise HTTPException(status_code=422,
+                                detail="Item a incluir precisa de produto e quantidade.")
+        rows = db.table("produtos").select("id, codigo, descricao").eq("id", pid).execute().data
+        if not rows:
+            raise HTTPException(status_code=404, detail="Produto não encontrado no cadastro.")
+        prod = rows[0]
+        novos.append({
+            "produto_id": pid,
+            "codigo": prod["codigo"],
+            "descricao": prod["descricao"],
+            "qtd": qtd,
+            "valor_unitario": float(a.get("valor_unitario") or 0),
+        })
+
+    agora = _agora()
+    if fonte == "oportunidade":
+        nova_pend = _ajustar_no_crm(db, registro_id, usuario, novos, remover)
+    else:
+        nova_pend = _ajustar_no_pedido(db, registro_id, reg, pend, usuario, novos, remover, agora)
+
+    _log_ajuste(db, fonte, registro_id, reg, usuario, novos, remover, observacao)
+    return {"ok": True, "pendencia": nova_pend}
+
+
+def _ajustar_no_crm(db, oportunidade_id: str, usuario: UsuarioOut,
+                    novos: list, remover: list) -> Optional[dict]:
+    """Mexe nos itens da oportunidade e deixa o CRM refazer a pendência."""
+    from app.services import crm_service
+
+    for pid in remover:
+        db.table("crm_oportunidade_itens").delete()\
+            .eq("oportunidade_id", oportunidade_id).eq("produto_id", pid).execute()
+    if novos:
+        db.table("crm_oportunidade_itens").insert([{
+            "oportunidade_id": oportunidade_id,
+            "produto_id": n["produto_id"],
+            "codigo": n["codigo"],
+            "descricao": n["descricao"],
+            "qtd": n["qtd"],
+            "valor_unitario": n["valor_unitario"],
+        } for n in novos]).execute()
+
+    # O valor da venda acompanha os itens — incluir sobe, remover desce. Sem isto
+    # a oportunidade continuaria valendo o que valia antes, e a pendência
+    # divergiria dela outra vez (foi o que criou o caso dos R$ 55 mil x R$ 50 mil).
+    itens = db.table("crm_oportunidade_itens").select("qtd, valor_unitario")\
+        .eq("oportunidade_id", oportunidade_id).execute().data
+    valor = round(sum(float(i.get("qtd") or 0) * float(i.get("valor_unitario") or 0)
+                      for i in itens), 2)
+    db.table("crm_oportunidades").update({"valor_estimado": valor, "atualizado_em": _agora()})\
+        .eq("id", oportunidade_id).execute()
+
+    crm_service._reavaliar_pendencia(db, oportunidade_id, usuario)
+    rows = db.table("crm_oportunidades").select("pendencia").eq("id", oportunidade_id).execute().data
+    return (rows[0].get("pendencia") if rows else None)
+
+
+def _ajustar_no_pedido(db, pedido_id: str, reg: dict, pend: dict, usuario: UsuarioOut,
+                       novos: list, remover: list, agora: str) -> dict:
+    """Edita o jsonb: na venda outbound a pendência é o registro do que se deve."""
+    base = dict(pend)
+    if remover:
+        base["itens"] = [i for i in (base.get("itens") or [])
+                         if str(i.get("produto_id")) not in remover]
+
+    if novos:
+        base = somar_venda(base, [{
+            "produto_id": n["produto_id"],
+            "codigo": n["codigo"],
+            "descricao": n["descricao"],
+            "qtd_vendida": n["qtd"],
+            "qtd_atendida": 0.0,
+            "valor_unitario": n["valor_unitario"],
+        } for n in novos], str(usuario.id)) or base
+
+    base["valor"] = round(sum(float(i.get("valor_pendente") or 0)
+                              for i in (base.get("itens") or [])), 2)
+
+    # Sem item nenhum não há mais o que esperar. Encerrar (em vez de apagar)
+    # preserva a história: houve uma promessa, e alguém a desfez.
+    if not (base.get("itens") or []):
+        base["resolvido_em"] = agora
+        base["resolucao"] = "AJUSTE_MANUAL"
+        base["resolvido_por"] = str(usuario.id)
+
+    db.table("pedidos").update({"pendencia": base, "atualizado_em": agora})\
+        .eq("id", pedido_id).execute()
+    return base
+
+
+def _log_ajuste(db, fonte: str, registro_id: str, reg: dict, usuario: UsuarioOut,
+                novos: list, remover: list, observacao: Optional[str]) -> None:
+    """Deixa o ajuste no histórico que a pessoa já lê. Best-effort: anotar não
+    pode derrubar a correção."""
+    partes = []
+    if novos:
+        partes.append("incluído " + ", ".join("%s x%g" % (n["codigo"], n["qtd"]) for n in novos))
+    if remover:
+        partes.append("removido(s) %d item(ns)" % len(remover))
+    if observacao and observacao.strip():
+        partes.append(observacao.strip())
+    texto = "📦 Pendência de estoque — itens ajustados: " + " · ".join(partes)
+
+    try:
+        if fonte == "oportunidade":
+            from app.services import crm_service
+            crm_service._log_evento(db, registro_id, texto, str(usuario.id))
+        else:
+            from app.services import pedido_service
+            status = reg.get("status")
+            pedido_service._registrar_movimentacao(registro_id, status, status,
+                                                   str(usuario.id), texto)
+    except Exception:
+        pass
+
+
 # ── Liberação ─────────────────────────────────────────────────────────────────
 def _ler(db, fonte: str, registro_id: str) -> tuple:
     """(registro, pendencia). Erra alto se não houver pendência aberta."""

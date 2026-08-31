@@ -23,7 +23,7 @@ import { format } from 'date-fns'
 import {
   AlertTriangle, CalendarClock, CheckCircle2, ChevronDown, ChevronRight,
   ArrowDown, ArrowUp, ChevronsUp, Clock, History, ListOrdered, PackageCheck,
-  PackageX, PencilLine, RotateCcw, Search, Send, X,
+  PackageX, PencilLine, Plus, RotateCcw, Search, Send, Trash2, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -485,11 +485,112 @@ function Kpi({ rotulo, valor, detalhe, cor }: {
 
 /** Uma venda parada. Fechado mostra o essencial; aberto, item a item e o que já
  *  foi cobrado do PCP. */
+type ProdutoBusca = { id: string; codigo: string; descricao: string }
+
+/** Escolha do item que faltou no lançamento: produto do cadastro, quantidade e
+ *  preço. O produto vem da busca e não do texto digitado — código e descrição
+ *  são relidos do cadastro no servidor, então aqui só o id importa. */
+function IncluirItemPendencia({ onIncluir, onCancelar, salvando }: {
+  onIncluir: (item: { produto_id: string; qtd: number; valor_unitario: number }) => void
+  onCancelar: () => void
+  salvando: boolean
+}) {
+  const [busca, setBusca] = useState('')
+  const [sel, setSel] = useState<ProdutoBusca | null>(null)
+  const [qtd, setQtd] = useState('')
+  const [valor, setValor] = useState('')
+
+  const { data: produtos = [] } = useQuery<ProdutoBusca[]>({
+    queryKey: ['produtos-busca', busca],
+    queryFn: () => api.get('/produtos/busca', { params: { q: busca } }).then(r => r.data),
+    enabled: busca.length >= 2 && !sel,
+  })
+
+  const qtdN = Number(String(qtd).replace(',', '.')) || 0
+  const valorN = Number(String(valor).replace(',', '.')) || 0
+  const pode = !!sel && qtdN > 0
+
+  return (
+    <div className="mt-2 p-2 rounded-lg border border-violet-200 bg-violet-50/50 space-y-2">
+      {sel ? (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-mono text-gray-700">{sel.codigo}</span>
+          <span className="text-gray-500 truncate flex-1">{sel.descricao}</span>
+          <button onClick={() => { setSel(null); setBusca('') }}
+            className="text-[11px] text-violet-700 hover:underline">trocar</button>
+        </div>
+      ) : (
+        <div className="relative">
+          <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
+            placeholder="Código ou descrição do item (2+ letras)"
+            className="w-full px-2 py-1 text-xs border border-gray-200 rounded-md
+                       focus:ring-1 focus:ring-violet-400 focus:border-violet-400" />
+          {produtos.length > 0 && (
+            <ul className="absolute z-20 mt-0.5 w-full max-h-40 overflow-auto bg-white
+                           border border-gray-200 rounded-md shadow-lg">
+              {produtos.slice(0, 8).map(pr => (
+                <li key={pr.id}>
+                  <button onClick={() => { setSel(pr); setBusca('') }}
+                    className="w-full text-left px-2 py-1 text-xs hover:bg-violet-50">
+                    <span className="font-mono text-gray-700">{pr.codigo}</span>
+                    <span className="text-gray-500 ml-1.5">{pr.descricao}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input value={qtd} onChange={e => setQtd(e.target.value)} placeholder="Qtd"
+          className="w-16 px-2 py-1 text-xs border border-gray-200 rounded-md text-right
+                     focus:ring-1 focus:ring-violet-400 focus:border-violet-400" />
+        <input value={valor} onChange={e => setValor(e.target.value)} placeholder="Valor un."
+          className="w-24 px-2 py-1 text-xs border border-gray-200 rounded-md text-right
+                     focus:ring-1 focus:ring-violet-400 focus:border-violet-400" />
+        <span className="text-[11px] text-gray-500 flex-1">
+          {pode ? fmtBRL(qtdN * valorN) : 'escolha o item e a quantidade'}
+        </span>
+        <button onClick={onCancelar}
+          className="px-2 py-1 text-[11px] text-gray-500 hover:text-gray-700">cancelar</button>
+        <button disabled={!pode || salvando}
+          onClick={() => sel && onIncluir({ produto_id: sel.id, qtd: qtdN, valor_unitario: valorN })}
+          className="px-2.5 py-1 rounded-md bg-violet-600 text-white text-[11px] font-medium
+                     hover:bg-violet-700 disabled:opacity-40">
+          {salvando ? 'incluindo...' : 'incluir'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+
 function Card({ p, onLiberar, onAcompanhar }: {
   p: Pendencia; onLiberar: () => void; onAcompanhar: () => void
 }) {
   const [aberto, setAberto] = useState(false)
   const [ajustando, setAjustando] = useState<{ codigo: string; descricao?: string | null } | null>(null)
+  const [incluindo, setIncluindo] = useState(false)
+  // Remoção mexe no valor da venda, então pede dois cliques: o primeiro abre a
+  // confirmação na própria linha, o segundo remove.
+  const [confirmaRemover, setConfirmaRemover] = useState<string | null>(null)
+  const qcCard = useQueryClient()
+
+  const ajustarItens = useMutation({
+    mutationFn: (corpo: any) =>
+      api.post(`/crm/pendencias/${p.fonte}/${p.id}/itens`, corpo).then(r => r.data),
+    onSuccess: (_d, corpo: any) => {
+      toast.success(corpo?.remover?.length ? 'Item removido da venda.' : 'Item incluído na venda.')
+      setIncluindo(false)
+      setConfirmaRemover(null)
+      qcCard.invalidateQueries({ queryKey: ['crm-pendencias'] })
+      qcCard.invalidateQueries({ queryKey: ['crm-opps'] })
+      qcCard.invalidateQueries({ queryKey: ['pedidos'] })
+      qcCard.invalidateQueries({ queryKey: ['home-pendencias'] })
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não foi possível ajustar os itens.'), { duration: 7000 }),
+  })
   const dias = p.dias_parada || 0
   const corDias = dias >= DIAS_CRITICO ? 'text-red-600 font-semibold'
     : dias >= DIAS_ATENCAO ? 'text-amber-700' : 'text-gray-500'
@@ -612,6 +713,7 @@ function Card({ p, onLiberar, onAcompanhar }: {
                   <th className="font-medium py-1 text-right">Falta</th>
                   <th className="font-medium py-1 text-right">Em estoque hoje</th>
                   <th className="font-medium py-1 text-right">Valor</th>
+                  <th className="w-5" />
                 </tr>
               </thead>
               <tbody>
@@ -662,6 +764,30 @@ function Card({ p, onLiberar, onAcompanhar }: {
                       <td className="py-1 text-right tabular-nums text-gray-600">
                         {fmtBRL(i.valor_pendente)}
                       </td>
+                      <td className="py-1 pl-1 text-right whitespace-nowrap">
+                        {confirmaRemover === i.produto_id ? (
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              disabled={ajustarItens.isPending}
+                              onClick={() => ajustarItens.mutate({ remover: [i.produto_id] })}
+                              className="px-1.5 py-0.5 rounded-md bg-red-600 text-white text-[10px]
+                                         font-medium hover:bg-red-700 disabled:opacity-50">
+                              remover
+                            </button>
+                            <button onClick={() => setConfirmaRemover(null)}
+                              className="px-1 py-0.5 text-[10px] text-gray-500 hover:text-gray-700">
+                              não
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmaRemover(i.produto_id || null)}
+                            title="Tirar este item da venda — o valor da venda diminui"
+                            className="p-0.5 rounded text-gray-300 hover:text-red-600 hover:bg-red-50">
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   )
                 })}
@@ -672,6 +798,24 @@ function Card({ p, onLiberar, onAcompanhar }: {
               duas vendas querem o mesmo item, quem espera há mais tempo recebe primeiro.
               O botão <strong>corrigir</strong> ajusta o estoque quando a prateleira não bate
               com a foto do PCP — vale só para hoje.
+            </p>
+
+            {incluindo ? (
+              <IncluirItemPendencia
+                onCancelar={() => setIncluindo(false)}
+                salvando={ajustarItens.isPending}
+                onIncluir={(item) => ajustarItens.mutate({ adicionar: [item] })} />
+            ) : (
+              <button onClick={() => setIncluindo(true)}
+                className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-medium
+                           text-violet-700 hover:text-violet-900">
+                <Plus size={12} /> incluir item que faltou nesta venda
+              </button>
+            )}
+            <p className="text-[11px] text-gray-400 mt-1">
+              Incluir ou remover item aqui muda a <strong>venda</strong>: o valor
+              acompanha os itens. Item que já teve entrega parcial não sai por aqui —
+              nesse caso a correção é na OV.
             </p>
           </div>
 

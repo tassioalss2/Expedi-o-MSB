@@ -22,7 +22,7 @@ from app.models.schemas import (
     DisponibilidadeRequest,
     AcompanharPendenciaRequest,
     ReordenarFilaRequest,
-    LiberarPendenciaRequest,
+    AjustarItensPendenciaRequest, LiberarPendenciaRequest,
     NotaCreate,
     OportunidadeCreate,
     OportunidadeUpdate,
@@ -200,6 +200,31 @@ def reordenar_fila(payload: ReordenarFilaRequest,
 def fila_automatica(usuario: UsuarioOut = Depends(get_current_user)):
     """Devolve a fila ao critério automático: quem espera há mais tempo primeiro."""
     return pendencia_service.ordem_automatica(usuario)
+
+
+@router.post("/pendencias/{fonte}/{registro_id}/itens")
+def ajustar_itens_pendencia(fonte: str, registro_id: UUID,
+                            payload: AjustarItensPendenciaRequest,
+                            usuario: UsuarioOut = Depends(get_current_user)):
+    """Inclui ou remove item de uma pendência aberta, direto da tela de Pendências.
+
+    Antes só dava para corrigir isto no registro de origem — a oportunidade do
+    CRM ou a OV. Quem estava olhando a lista errada tinha de sair da tela, achar
+    o registro e voltar; na prática ficava como estava.
+
+    Mexer aqui mexe na VENDA: incluir sobe o valor, remover desce. Item que já
+    teve entrega parcial é recusado com 409 — ali a correção é na OV, porque o
+    material saiu de verdade.
+    """
+    return pendencia_service.ajustar_itens(
+        fonte, str(registro_id), usuario,
+        adicionar=[{
+            "produto_id": str(i.produto_id),
+            "qtd": i.qtd,
+            "valor_unitario": i.valor_unitario,
+        } for i in (payload.adicionar or [])],
+        remover=[str(r) for r in (payload.remover or [])],
+        observacao=payload.observacao)
 
 
 @router.patch("/pendencias/{fonte}/{registro_id}")

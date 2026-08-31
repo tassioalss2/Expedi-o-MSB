@@ -944,6 +944,27 @@ class AcompanharPendenciaRequest(BaseModel):
     limpar_previsao: bool = False
 
 
+class ItemAjustePendencia(BaseModel):
+    """Item que entra numa pendência aberta. Código e descrição NÃO vêm daqui —
+    o serviço lê do cadastro pelo produto_id, para não gravar dois nomes do
+    mesmo produto."""
+    produto_id: UUID
+    qtd: float
+    valor_unitario: float = 0
+
+
+class AjustarItensPendenciaRequest(BaseModel):
+    """Corrige o que está prometido numa pendência: inclui o que faltou no
+    lançamento, remove o que entrou por engano.
+
+    `remover` são produto_id, não índices de linha: índice muda quando a lista
+    se reordena, e remover o item errado de uma venda é caro.
+    """
+    adicionar: Optional[list[ItemAjustePendencia]] = None
+    remover: Optional[list[UUID]] = None
+    observacao: Optional[str] = None
+
+
 class LiberarPendenciaRequest(BaseModel):
     # Libera só o que já chegou e mantém o resto pendente. Sem isso, uma
     # pendência de 8 unidades com 5 prontas ficaria travada esperando as 3.
