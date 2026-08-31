@@ -285,6 +285,13 @@ export function Layout() {
             </button>
           </div>
         </div>
+        {/* Versao do bundle: sem isto nao ha como saber, olhando a tela, se o
+            navegador esta servindo o build novo ou um antigo em cache. */}
+        <p className="px-4 py-2 text-[10px] text-gray-400 border-t border-gray-100"
+          title="Quando esta versao do app foi publicada. Se estiver velha, recarregue com Ctrl+Shift+R.">
+          build {new Date(__BUILD__).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+        </p>
+
       </aside>
 
       {/* Conteúdo principal. O overflow fica só no container da página (abaixo),
