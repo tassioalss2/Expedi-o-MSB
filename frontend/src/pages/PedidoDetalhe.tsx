@@ -1118,6 +1118,147 @@ function ModalDevolverAoCrm({ pedido, onClose }: { pedido: Pedido; onClose: () =
   )
 }
 
+/** Etapas em que o material ja saiu (ou a OV morreu): nao ha reserva a
+ *  desfazer. Espelha _STATUS_ITENS_TRAVADOS no pedido_service — se divergir, o
+ *  botao aparece e o backend recusa, que e pior que nao aparecer. */
+const STATUS_SEM_RESERVA = ['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO']
+
+/** Devolve a OV para a pendencia do comercial — inteira ou em parte.
+ *
+ *  O contrario do "liberar". Existia so item por item, e so na tela de Estoque:
+ *  para desmontar uma OV era preciso repetir a operacao item a item, de uma tela
+ *  que nao e a da OV. Quem precisa fazer isso esta olhando a OV. */
+function ModalDevolverPendencia({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [modo, setModo] = useState<'tudo' | 'parte'>('tudo')
+  const [obs, setObs] = useState('')
+
+  const linhas: { codigo: string; descricao: string; naOv: number }[] = []
+  for (const it of (((pedido as any).itens || []) as any[])) {
+    const codigo = it.produtos?.codigo || it.produto?.codigo || ''
+    if (!codigo) continue
+    const naOv = Number(it.qtd_solicitada) || 0
+    const achado = linhas.find(l => l.codigo === codigo)
+    if (achado) achado.naOv += naOv
+    else linhas.push({ codigo, descricao: it.produtos?.descricao || it.produto?.descricao || '', naOv })
+  }
+
+  // Pre-preenchido com a quantidade inteira: no parcial se ajusta para menos, que
+  // e o movimento normal — ninguem devolve 1 de 300 com mais frequencia do que
+  // devolve quase tudo.
+  const [qtds, setQtds] = useState<Record<string, string>>(
+    Object.fromEntries(linhas.map(l => [l.codigo, String(l.naOv)])))
+
+  const escolhidas = linhas
+    .map(l => ({ codigo: l.codigo, qtd: Number(String(qtds[l.codigo] ?? '').replace(',', '.')) || 0, naOv: l.naOv }))
+    .filter(x => x.qtd > 0)
+  const excede = escolhidas.find(x => x.qtd > x.naOv + 0.001)
+  const pode = modo === 'tudo' || (escolhidas.length > 0 && !excede)
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/devolver-pendencia`, {
+      itens: modo === 'tudo' ? null : escolhidas.map(x => ({ codigo: x.codigo, qtd: x.qtd })),
+      observacao: obs.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.success(modo === 'tudo'
+        ? 'OV devolvida por inteiro — o saldo esta na pendencia do comercial.'
+        : 'Quantidades devolvidas — o saldo esta na pendencia do comercial.',
+        { duration: 7000 })
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
+      qc.invalidateQueries({ queryKey: ['home-pendencias'] })
+      qc.invalidateQueries({ queryKey: ['estoque-listar'] })
+      onClose()
+    },
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      toast.error(typeof d === 'string' ? d : 'Erro ao devolver para a pendencia', { duration: 7000 })
+    },
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="p-5 border-b bg-violet-50 rounded-t-2xl shrink-0">
+          <h2 className="text-lg font-bold text-violet-800">
+            ↩ Voltar para a pendência do comercial — {pedido.numero_pedido}
+          </h2>
+          <p className="text-sm text-violet-600 mt-0.5">
+            O material volta a ficar disponível para outra venda
+          </p>
+        </div>
+
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          <div className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-xl p-3">
+            A venda <strong>continua valendo</strong>: o saldo vai para a pendência desta OV e
+            volta como <strong>2ª remessa</strong> quando houver material. Devolver não é
+            desistir da venda — é dizer que ela ainda não pode sair.
+          </div>
+
+          <div className="flex gap-2">
+            {([['tudo', 'A OV inteira'], ['parte', 'Só uma parte']] as const).map(([v, rot]) => (
+              <button key={v} onClick={() => setModo(v)}
+                className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-colors ${
+                  modo === v ? 'border-violet-500 bg-violet-50 text-violet-800'
+                             : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                {rot}
+              </button>
+            ))}
+          </div>
+
+          {modo === 'tudo' ? (
+            <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-3">
+              Todos os {linhas.length} item(ns) saem da OV por inteiro. Sem item nenhum, a OV
+              vai para <strong>Aguardando produção</strong> — como uma venda que nasce toda
+              em pendência.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <p className="text-xs text-gray-500">Quanto de cada item volta para a pendência:</p>
+              {linhas.map(l => (
+                <div key={l.codigo} className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-gray-700 w-24 shrink-0">{l.codigo}</span>
+                  <span className="text-gray-400 truncate flex-1 text-xs">{l.descricao}</span>
+                  <span className="text-xs text-gray-400 shrink-0">de {l.naOv}</span>
+                  <input value={qtds[l.codigo] ?? ''}
+                    onChange={e => setQtds({ ...qtds, [l.codigo]: e.target.value })}
+                    className="w-20 px-2 py-1 border border-gray-200 rounded-lg text-right
+                               focus:ring-1 focus:ring-violet-400 focus:border-violet-400" />
+                </div>
+              ))}
+              {excede && (
+                <p className="text-xs text-red-600">
+                  {excede.codigo}: a OV tem {excede.naOv} un, não dá para devolver {excede.qtd}.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Motivo (opcional)</label>
+            <input value={obs} onChange={e => setObs(e.target.value)}
+              placeholder="Ex.: cliente pediu para segurar a entrega"
+              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm
+                         focus:ring-1 focus:ring-violet-400 focus:border-violet-400" />
+          </div>
+        </div>
+
+        <div className="p-5 border-t flex gap-2 shrink-0">
+          <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Cancelar</button>
+          <button onClick={() => mutation.mutate()} disabled={!pode || mutation.isPending}
+            className="flex-1 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white
+                       rounded-xl py-2.5 text-sm font-medium">
+            {mutation.isPending ? 'Devolvendo…'
+              : modo === 'tudo' ? 'Devolver a OV inteira' : 'Devolver as quantidades'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Modal Cancelar OV ────────────────────────────────────────────────────────
 const MOTIVOS_CANCELAMENTO = [
   'Cliente desistiu do pedido',
@@ -2577,7 +2718,7 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'devolver-crm' | 'credito' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -3404,6 +3545,17 @@ export function PedidoDetalhe() {
             )
           )}
 
+          {/* Devolver para a pendência: enquanto o material não saiu, a OV pode
+              voltar a ser saldo devido. Vale para OV do CRM e outbound. */}
+          {!STATUS_SEM_RESERVA.includes(pedido.status) && (((pedido as any).itens || []).length > 0) && (
+            <button
+              onClick={() => setModal('devolver-pendencia')}
+              className="w-full py-2.5 border-2 border-violet-200 text-violet-700 rounded-lg text-sm font-medium hover:bg-violet-50 hover:border-violet-400 transition-colors"
+            >
+              ↩ Voltar para a pendência do comercial
+            </button>
+          )}
+
           {/* Cancelar OV — disponível em qualquer status antes de expedir */}
           {!['EXPEDIDO', 'CANCELADO'].includes(status) && (
             <button
@@ -3440,6 +3592,7 @@ export function PedidoDetalhe() {
       {modal === 'tipo_frete' && <ModalAlterarTipoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cancelar' && <ModalCancelarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'devolver-crm' && <ModalDevolverAoCrm pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'devolver-pendencia' && <ModalDevolverPendencia pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'credito' && <ModalEnviarCredito pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'reativar' && <ModalReativarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'retornar' && <ModalRetornarEtapa pedido={pedido} onClose={() => setModal(null)} />}

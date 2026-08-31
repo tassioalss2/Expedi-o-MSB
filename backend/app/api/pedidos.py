@@ -30,7 +30,7 @@ from app.models.schemas import (
     ReclassificarCanalRequest,
     TratativaRequest,
     UsuarioOut,
-    DevolverReservaRequest,
+    DevolverPendenciaRequest, DevolverReservaRequest,
     DadosOVUpdate,
     AdicionarItensRequest,
 )
@@ -304,6 +304,24 @@ def retornar_etapa(
 
 class CancelarRequest(BaseModel):
     motivo: str
+
+
+@router.post("/{pedido_id}/devolver-pendencia")
+def devolver_para_pendencia_comercial(pedido_id: UUID, payload: DevolverPendenciaRequest,
+                                      usuario: UsuarioOut = Depends(get_current_user)):
+    """Joga a OV de volta para a pendência do comercial — inteira ou em parte.
+
+    Sem `itens` devolve a OV toda; com lista, só as quantidades escolhidas. O
+    estoque volta a ficar disponível na hora e o saldo continua devido ao
+    cliente, para sair como 2a remessa quando houver material.
+
+    Recusado depois de faturar: ali o material já saiu.
+    """
+    return pedido_service.devolver_ov_para_pendencia(
+        str(pedido_id), usuario,
+        itens=([{"codigo": i.codigo, "qtd": i.qtd} for i in payload.itens]
+               if payload.itens is not None else None),
+        observacao=payload.observacao)
 
 
 @router.post("/{pedido_id}/devolver-crm")

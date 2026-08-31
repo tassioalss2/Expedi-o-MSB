@@ -1408,6 +1408,88 @@ def devolver_reserva(pedido_id: str, codigo: str, qtd: float, usuario: UsuarioOu
     return obter_pedido(pedido_id)
 
 
+def devolver_ov_para_pendencia(pedido_id: str, usuario: UsuarioOut,
+                               itens: Optional[list] = None,
+                               observacao: Optional[str] = None) -> dict:
+    """Joga a OV — inteira ou em parte — para a pendência do comercial.
+
+    O caminho inverso do "liberar". Existia só item por item, e só na tela de
+    Estoque: para desmontar uma OV liberada era preciso repetir a operação para
+    cada item, de uma tela que não é a da OV. Quem precisa fazer isso está
+    olhando a OV, não a prateleira.
+
+    `itens=None` devolve a OV INTEIRA: toda a quantidade de todo item. Com lista
+    ([{codigo, qtd}]) devolve só o que se pediu — o parcial.
+
+    Orquestra devolver_reserva em vez de reimplementar: ali estão as regras
+    difíceis (o estoque libera porque o item saiu da OV, o aviso de separação
+    física já feita, a OV sem item nenhum indo para AGUARD_PRODUCAO) e duas
+    cópias delas divergiriam na primeira mudança.
+
+    O material continua vendido. O saldo vai para a pendência da OV e volta como
+    2ª remessa quando houver material — devolver não é desistir da venda, é
+    dizer que ela ainda não pode sair.
+    """
+    from app.services import pendencia_service  # noqa: F401  (usado por devolver_reserva)
+
+    db = get_service_db()
+    # Sem .single(): ele estoura com erro cru do supabase (406) quando nao ha
+    # linha, e o 404 abaixo nunca seria alcancado — a tela mostraria uma URL de
+    # API em vez de "OV nao encontrada".
+    achado = db.table("pedidos").select("id, status, numero_pedido")\
+        .eq("id", pedido_id).execute().data
+    if not achado:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    ped = achado[0]
+    # Conferido aqui também, e não só dentro de devolver_reserva: sem isto o
+    # primeiro item devolveria e o segundo estouraria, deixando a OV pela metade.
+    if ped["status"] in _STATUS_ITENS_TRAVADOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OV em '{ped['status']}' não pode voltar para a pendência — o material "
+                   "já saiu (ou a OV está cancelada).")
+
+    linhas = db.table("itens_pedido").select("produto_id, qtd_solicitada")\
+        .eq("pedido_id", pedido_id).execute().data
+    if not linhas:
+        raise HTTPException(status_code=422, detail="Esta OV não tem itens para devolver.")
+
+    ids = list({r["produto_id"] for r in linhas if r.get("produto_id")})
+    prods = db.table("produtos").select("id, codigo").in_("id", ids).execute().data
+    cod_de = {p["id"]: (p.get("codigo") or "") for p in prods}
+
+    na_ov: dict = {}
+    for r in linhas:
+        cod = (cod_de.get(r.get("produto_id")) or "").upper()
+        if cod:
+            na_ov[cod] = round(na_ov.get(cod, 0.0) + float(r.get("qtd_solicitada") or 0), 3)
+
+    if itens is None:
+        pedidos_devolver = [{"codigo": c, "qtd": q} for c, q in sorted(na_ov.items()) if q > 0]
+    else:
+        pedidos_devolver = []
+        for i in itens:
+            cod = str(i.get("codigo") or "").strip().upper()
+            qtd = float(i.get("qtd") or 0)
+            if qtd <= 0:
+                continue
+            if cod not in na_ov:
+                raise HTTPException(status_code=422,
+                                    detail=f"O item {cod} não está nesta OV.")
+            if qtd > na_ov[cod] + 0.001:
+                raise HTTPException(status_code=422, detail=(
+                    f"A OV tem {na_ov[cod]:g} un de {cod}; não é possível devolver {qtd:g}."))
+            pedidos_devolver.append({"codigo": cod, "qtd": qtd})
+        if not pedidos_devolver:
+            raise HTTPException(status_code=422,
+                                detail="Escolha ao menos um item e uma quantidade para devolver.")
+
+    for d in pedidos_devolver:
+        devolver_reserva(pedido_id, d["codigo"], d["qtd"], usuario, observacao=observacao)
+
+    return obter_pedido(pedido_id)
+
+
 def criar_comunicado_uso(payload, usuario: UsuarioOut) -> dict:
     """Lança um faturamento de comunicado de uso (consignado utilizado).
 

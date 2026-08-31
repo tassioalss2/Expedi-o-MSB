@@ -944,6 +944,21 @@ class AcompanharPendenciaRequest(BaseModel):
     limpar_previsao: bool = False
 
 
+class ItemDevolverPendencia(BaseModel):
+    codigo: str
+    qtd: float
+
+
+class DevolverPendenciaRequest(BaseModel):
+    """Manda a OV de volta para a pendência do comercial.
+
+    `itens` ausente devolve a OV INTEIRA — é o caso "total". Uma lista devolve
+    só as quantidades escolhidas.
+    """
+    itens: Optional[list[ItemDevolverPendencia]] = None
+    observacao: Optional[str] = None
+
+
 class ItemAjustePendencia(BaseModel):
     """Item que entra numa pendência aberta. Código e descrição NÃO vêm daqui —
     o serviço lê do cadastro pelo produto_id, para não gravar dois nomes do
