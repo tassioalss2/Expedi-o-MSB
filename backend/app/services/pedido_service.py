@@ -959,6 +959,17 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     fica com o que a MSB tem e o saldo vira pendência. Antes não passava — dava
     para aumentar a quantidade de uma OV já LIBERADA para além do estoque e ela
     seguia liberada, mandando para a expedição material que não existe.
+
+    REDUZIR TAMBÉM DEVOLVE. Só o aumento era tratado: tirar item daqui liberava o
+    estoque e a dívida com o cliente simplesmente sumia — não estava na OV e não
+    voltava para a pendência. Caso real (ENDOTECH, OV016535, 31/08/2026): 15 un
+    de 53053 foram somadas à OV quando o material chegou, o item foi retirado
+    depois no kanban, e as 15 evaporaram — a pendência seguia dizendo "atendida
+    15" sobre material que não estava em lugar nenhum.
+
+    O material continua vendido; muda só onde ele está. Por isso a redução passa
+    por `devolver_para_pendencia`, a mesma função que `devolver_reserva` usa —
+    ela mantém o invariante do item (atendida + pendente == pedida).
     """
     db = get_service_db()
     ped = db.table("pedidos").select("id, status, numero_pedido, pendencia").eq("id", pedido_id).single().execute().data
@@ -972,7 +983,8 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     if not itens:
         raise HTTPException(status_code=422, detail="A OV precisa ter ao menos um item.")
 
-    antigos = db.table("itens_pedido").select("produto_id, qtd_solicitada, qtd_separada")\
+    antigos = db.table("itens_pedido")\
+        .select("produto_id, qtd_solicitada, qtd_separada, valor_unitario")\
         .eq("pedido_id", pedido_id).execute().data
     ja_separado = any(float(i.get("qtd_separada") or 0) > 0 for i in antigos)
 
@@ -1059,15 +1071,71 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     } for it, qtd in finais if qtd > 0]).execute()
 
     cortados = [(it, qtd) for it, qtd in finais if qtd < float(it.qtd_solicitada)]
-    if pendencia:
+
+    # ── O que SAIU da OV volta a ser dívida ───────────────────────────────────
+    # Comparado por produto, e não linha a linha: o mesmo produto pode estar em
+    # duas linhas, e o que importa para o cliente é o total que a OV deixou de
+    # levar.
+    antes_por_produto: dict = {}
+    for i in antigos:
+        pid = i.get("produto_id")
+        if pid:
+            antes_por_produto[pid] = antes_por_produto.get(pid, 0.0) + float(i.get("qtd_solicitada") or 0)
+    depois_por_produto: dict = {}
+    valor_por_produto: dict = {}
+    for it, qtd in finais:
+        if qtd <= 0:
+            continue
+        pid = str(it.produto_id)
+        depois_por_produto[pid] = depois_por_produto.get(pid, 0.0) + qtd
+        valor_por_produto[pid] = float(it.valor_unitario or 0)
+    for i in antigos:  # preço de item que sumiu da lista nova
+        pid = i.get("produto_id")
+        if pid and pid not in valor_por_produto:
+            valor_por_produto[pid] = float(i.get("valor_unitario") or 0)
+
+    saiu = {pid: round(antes - depois_por_produto.get(pid, 0.0), 3)
+            for pid, antes in antes_por_produto.items()
+            if antes - depois_por_produto.get(pid, 0.0) > 0.001}
+
+    devolvidos_por_edicao = []
+    if saiu:
+        # Import aqui, e nao so no bloco do aumento: reducao pura nao tem delta,
+        # entao naquele caminho `pendencia_service` nem existe — e reducao pura e
+        # justamente o caso que este trecho conserta.
+        from app.services import pendencia_service
+        rotulos = {r["id"]: r for r in db.table("produtos")
+                   .select("id, codigo, descricao").in_("id", list(saiu)).execute().data}
+        for pid, qtd in saiu.items():
+            rot = rotulos.get(pid) or {}
+            devolvidos_por_edicao.append({
+                "produto_id": pid,
+                "codigo": rot.get("codigo"),
+                "descricao": rot.get("descricao"),
+                "qtd": qtd,
+                "qtd_na_ov_antes": antes_por_produto.get(pid, 0.0),
+                "valor_unitario": valor_por_produto.get(pid, 0.0),
+            })
+
+    # A pendência escrita é a nova (quando o aumento não coube) ou a que já
+    # existia; sobre ela entra o que saiu da OV agora.
+    pendencia_final = pendencia or (ped.get("pendencia") or None)
+    if devolvidos_por_edicao:
+        pendencia_final = pendencia_service.devolver_para_pendencia(
+            pendencia_final, devolvidos_por_edicao, str(usuario.id),
+            observacao=observacao_estoque)
+
+    if pendencia_final:
         anterior = ped.get("pendencia") or None
         try:
-            db.table("pedidos").update({"pendencia": pendencia}).eq("id", pedido_id).execute()
+            db.table("pedidos").update({"pendencia": pendencia_final}).eq("id", pedido_id).execute()
         except Exception:
             # Migration v29 pendente: a OV entra com o disponível de todo jeito; o
             # registro do saldo se perde e fica só no histórico abaixo.
             anterior = None
-        if anterior and not anterior.get("resolvido_em"):
+        # Substituição só quando a pendência NOVA tomou o lugar da antiga. Numa
+        # devolução a anterior não foi jogada fora: ela cresceu.
+        if pendencia and anterior and not anterior.get("resolvido_em"):
             # `pedidos.pendencia` guarda UMA pendência. A decisão nova substitui a
             # anterior, então a antiga vai para o histórico em vez de desaparecer.
             _registrar_movimentacao(
@@ -1076,6 +1144,13 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
                 f"(valor {anterior.get('valor')}, decidida em {anterior.get('decidido_em')}).")
 
     obs = f"Itens da OV editados por {usuario.nome}"
+    if devolvidos_por_edicao:
+        # Sem isto o histórico não contava para onde foi o material retirado, e
+        # ninguém conseguia auditar uma quantidade que "sumiu" da OV.
+        volta = "; ".join("%g un de %s" % (d["qtd"], d.get("codigo") or "item")
+                          for d in devolvidos_por_edicao)
+        obs += (f" — saiu da OV e voltou para a pendência desta venda: {volta}. "
+                "O material continua vendido ao cliente.")
     if cortados:
         detalhe = "; ".join(f"{float(it.qtd_solicitada):g} → {qtd:g}" for it, qtd in cortados)
         obs += (f" — quantidade cortada ao estoque disponível ({detalhe}); "
