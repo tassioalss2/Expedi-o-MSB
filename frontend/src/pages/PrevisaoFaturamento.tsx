@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { TrendingUp, CalendarDays, Plus, Trash2, Check, X, CircleDollarSign, Package, Handshake, Target, Info, Layers, Activity } from 'lucide-react'
@@ -49,6 +49,10 @@ interface Resumo {
     sai_hoje: number; no_kanban: number; realizado_hoje: number; ovs_kanban: number; quase_nf: number; negociacao_hoje: number
     dias_uteis_restantes: number; falta_meta: number | null; ritmo_necessario: number | null
     no_ritmo: boolean | null
+  }
+  pendencias: {
+    total: number; liberavel_hoje: number; previsto_no_mes: number
+    sem_horizonte: number; quantidade: number; transfer: number
   }
   transfer: BlocoTransfer
   com_transfer: BlocoTransfer
@@ -107,7 +111,7 @@ export function PrevisaoFaturamento() {
     return <div className="p-6 text-gray-400 text-sm">Carregando previsão…</div>
   }
 
-  const { mes, dia, pipeline, negocios, transfer, com_transfer, estatistica } = data
+  const { mes, dia, pipeline, negocios, transfer, com_transfer, estatistica, pendencias } = data
   const contratosComSaldo = data.contratos.filter(c => !c.transfer).length
 
   return (
@@ -176,6 +180,80 @@ export function PrevisaoFaturamento() {
               <p className="text-lg font-bold text-amber-700 tabular-nums">{fmtBRL(mes.negociacao_ponderado)}</p>
               <p className="text-[11px] text-amber-600/70">bruto {fmtBRL(mes.negociacao_bruto)} × chance</p>
             </button>
+          </div>
+
+          {/* Pendência de estoque — venda JÁ fechada que não pode sair por falta de
+              material. Não entra em nenhum total acima de propósito: somar material
+              que não existe transformaria previsão em desejo. Mas sem isto a resposta
+              a "quanto vamos fechar?" ficava incompleta, porque parte da pendência TEM
+              material hoje e sai neste mês se alguém liberar. */}
+          {pendencias && pendencias.total > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="flex items-baseline justify-between">
+                <p className="text-[11px] text-gray-500 font-semibold uppercase">
+                  Pendência de estoque · {pendencias.quantidade} venda(s)
+                </p>
+                <span className="text-sm font-bold text-gray-700 tabular-nums">
+                  {fmtBRL(pendencias.total)}
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-400 mb-2">
+                venda fechada esperando material — fora dos totais acima
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                <Link to="/pendencias"
+                  className="bg-violet-50 rounded-xl p-2.5 hover:ring-2 hover:ring-violet-200">
+                  <p className="text-[10px] text-violet-700 font-semibold uppercase">Dá para liberar hoje</p>
+                  <p className="text-base font-bold text-violet-700 tabular-nums">
+                    {fmtBRL(pendencias.liberavel_hoje)}
+                  </p>
+                  <p className="text-[10px] text-violet-600/70">tem material — falta liberar</p>
+                </Link>
+                <div className="bg-sky-50 rounded-xl p-2.5">
+                  <p className="text-[10px] text-sky-700 font-semibold uppercase">PCP prometeu no mês</p>
+                  <p className="text-base font-bold text-sky-700 tabular-nums">
+                    {fmtBRL(pendencias.previsto_no_mes)}
+                  </p>
+                  <p className="text-[10px] text-sky-600/70">pode entrar</p>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-2.5">
+                  <p className="text-[10px] text-gray-500 font-semibold uppercase">Sem data</p>
+                  <p className="text-base font-bold text-gray-500 tabular-nums">
+                    {fmtBRL(pendencias.sem_horizonte)}
+                  </p>
+                  <p className="text-[10px] text-gray-400">não conte com isto</p>
+                </div>
+              </div>
+              {pendencias.liberavel_hoje > 0 && (
+                <p className="text-[11px] text-violet-700 mt-1.5">
+                  Se liberar hoje o que tem material, o mês fecha em{' '}
+                  <strong>{fmtBRL(mes.previsao + pendencias.liberavel_hoje)}</strong>
+                  {mes.meta ? ` — ${((mes.previsao + pendencias.liberavel_hoje) / mes.meta * 100).toFixed(1)}% da meta` : ''}.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Consolidado com transfer price: informativo. A meta não contempla
+              transfer, então ele nunca entra nos números comparados com ela —
+              mas quem pergunta o volume total da operação pergunta por este. */}
+          <div className="mt-3 pt-3 border-t border-gray-100 flex items-baseline justify-between gap-2">
+            <div>
+              <p className="text-[11px] text-gray-500 font-semibold uppercase">
+                Total com transfer price
+              </p>
+              <p className="text-[11px] text-gray-400">
+                informativo — inclui Biomedical, que não entra na meta
+              </p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-base font-bold text-gray-700 tabular-nums">
+                {fmtBRL(com_transfer.previsao)}
+              </p>
+              <p className="text-[11px] text-gray-400 tabular-nums">
+                realizado {fmtBRL(com_transfer.realizado)}
+              </p>
+            </div>
           </div>
         </div>
 

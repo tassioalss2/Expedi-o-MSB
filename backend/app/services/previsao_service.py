@@ -5,10 +5,18 @@ Junta três fontes para estimar o fechamento do mês e do dia:
   2. Em processo — OVs no pipeline ainda não faturadas (valor estimado pelos itens).
   3. Saldo de contratos ganhos — empenhos com saldo a entregar.
   4. Em negociação — negócios lançados na entrada rápida, ponderados pela chance (%).
+  5. Pendência de estoque — venda JÁ FECHADA que não pode sair por falta de
+     material. Não é chance de vender: é venda feita, parada.
 
 Garantido = realizado + em processo (o que vai faturar de fato).
 Saldo de contratos é "a realizar" — o órgão pede quando quer, sem data garantida.
 Previsão do mês = garantido + saldo de contratos + negociação ponderada.
+
+Pendência não entra em nenhum total, pelo mesmo motivo do saldo de contratos:
+somar dinheiro que depende de material que não existe transformaria a previsão
+em desejo. Mas ela aparece na tela, em três faixas, porque sem isso a resposta a
+"quanto vamos fechar?" fica incompleta — e era o que faltava: parte da pendência
+TEM material hoje e sai neste mês se alguém liberar.
 """
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
@@ -16,12 +24,16 @@ from typing import Optional
 from fastapi import HTTPException
 
 from app.core.database import get_service_db
-from app.models.enums import StatusPedido
+from app.models.enums import OPERACOES_FATURAMENTO, StatusPedido
 from app.models.schemas import PrevisaoNegocioCreate, PrevisaoNegocioUpdate
 from app.services import pedido_service
 
-# OVs que já contam como faturamento por natureza (mesma regra do dashboard).
-_OPERACOES_FATURAMENTO = {"VENDA_NORMAL", "COMUNICADO_USO"}
+# OVs que já contam como faturamento por natureza. VEM DE enums, e não de uma
+# cópia local: havia três definições disto no projeto (enums, api/pedidos e uma
+# aqui) e a daqui tinha perdido EXPORTACAO. O efeito era silencioso e grande — em
+# ago/2026, R$ 77.154,16 de uma nota de exportação sumiam da previsão enquanto
+# apareciam no Painel Comercial, e ninguém sabia qual das duas telas acreditar.
+_OPERACOES_FATURAMENTO = OPERACOES_FATURAMENTO
 
 # Pipeline: OVs ativas que ainda vão faturar (não inclui finalizadas/canceladas).
 _STATUS_PIPELINE = [
@@ -58,6 +70,19 @@ def _valor_liquido_nf(p: dict) -> float:
     """Faturamento fiscal da NF: tira o CIF sem valor (não está na nota)."""
     nf = float(p.get("valor_nf") or 0)
     if p.get("tipo_frete") == "CIF_SEM_VALOR":
+        nf -= float(p.get("valor_frete") or 0)
+    return round(nf, 2)
+
+
+def _valor_sem_frete(p: dict) -> float:
+    """Venda pura: sem frete de nenhum tipo — o número que o Painel exibe.
+
+    CIF_SEM_VALOR nao esta na NF (foi digitado dentro do valor por habito) e
+    CIF_COM_VALOR esta, mas e frete ressarcido pelo cliente, nao venda. Nenhum
+    dos dois e faturamento de produto, e a meta e de produto.
+    """
+    nf = float(p.get("valor_nf") or 0)
+    if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
         nf -= float(p.get("valor_frete") or 0)
     return round(nf, 2)
 
@@ -166,63 +191,72 @@ def _dias_uteis(inicio: date, fim: date) -> int:
 
 
 def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, float, list]:
-    """NFs faturadas no mês (BRT), líquidas, só operações de faturamento.
-    Devolve (total_geral, total_transfer, itens) — geral exclui transfer price
-    (a meta não o contempla); itens detalham cada OV que gerou o número."""
-    janela_ini = (inicio - timedelta(days=1)).isoformat()
-    janela_fim = (fim + timedelta(days=1)).isoformat()
-    movs = db.table("movimentacoes").select("pedido_id, criado_em")\
-        .eq("status_novo", "FATURADO")\
-        .gte("criado_em", f"{janela_ini}T00:00:00")\
-        .lte("criado_em", f"{janela_fim}T23:59:59").execute().data
-    dia_por_ped: dict = {}
-    for m in movs:
-        ts_str, pid = m.get("criado_em"), m.get("pedido_id")
-        if not ts_str or not pid:
-            continue
-        try:
-            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            dia = (ts.astimezone(timezone.utc) - timedelta(hours=3)).date()
-        except Exception:
-            continue
-        if inicio <= dia <= fim:
-            atual = dia_por_ped.get(pid)
-            if atual is None or dia.isoformat() < atual:
-                dia_por_ped[pid] = dia.isoformat()
+    """NFs faturadas no mês, na MESMA definição do Painel Comercial.
+
+    Antes esta função tinha regra própria e as duas telas discordavam em
+    R$ 69.930,30 (ago/2026) — o time perguntava "quanto vamos fechar?" e recebia
+    duas respostas. As quatro causas, todas corrigidas aqui:
+
+      R$ 77.154,16  EXPORTACAO fora da lista de operações (constante duplicada
+                    que perdeu o item; agora vem de enums).
+      R$  4.939,84  três OVs de julho contadas de novo em agosto. A atribuição
+                    era pela movimentação de FATURADO, e correção em OV faturada
+                    grava outra movimentação. Agora vale `data_faturamento`, que
+                    é a fonte da verdade (v31) — mesmo caminho do painel.
+      R$  1.612,06  frete CIF com valor: está na NF, mas é frete, não venda.
+      R$    671,96  devoluções, que abatem o líquido.
+
+    Reusa _faturados_no_periodo do painel em vez de repetir a heurística de
+    data: aquela função carrega o histórico de dois casos que se contradizem
+    (correção x refaturamento) e uma segunda cópia voltaria a divergir — foi
+    exatamente o que aconteceu.
+
+    Devolve (total_geral, total_transfer, itens); geral exclui transfer price,
+    que a meta não contempla.
+    """
+    # Import tardio: _faturados_no_periodo vive na camada de API, e importá-la no
+    # topo fecharia um ciclo. O certo seria ela morar num serviço; enquanto não
+    # mora, reusar daqui é melhor que ter duas verdades sobre o que é faturado.
+    from app.api.pedidos import _faturados_no_periodo
+
+    dia_por_ped = _faturados_no_periodo(inicio, fim)
     if not dia_por_ped:
         return 0.0, 0.0, []
+
     total = 0.0
     total_transfer = 0.0
     itens: list = []
     ids = list(dia_por_ped)
     for i in range(0, len(ids), 40):
         rows = db.table("pedidos").select(
-            "id, numero_pedido, valor_nf, valor_frete, tipo_frete, tipo_operacao, numero_nf, status, clientes(nome)"
+            "id, numero_pedido, valor_nf, valor_frete, tipo_frete, tipo_operacao, "
+            "numero_nf, status, clientes(nome)"
         ).in_("id", ids[i:i + 40]).execute().data
         for p in rows:
             # OV faturada e depois CANCELADA não é receita: a NF foi desfeita.
-            # Contá-la inflava o realizado do mês e, por consequência, fazia o
-            # "ritmo p/ bater a meta" parecer menor do que realmente é.
             if p.get("status") == "CANCELADO":
                 continue
-            if _conta_faturamento(p.get("tipo_operacao")):
-                v = _valor_liquido_nf(p)
-                transfer = _eh_transfer(p)
-                if transfer:
-                    total_transfer += v
-                else:
-                    total += v
-                itens.append({
-                    "numero_pedido": p.get("numero_pedido"),
-                    "cliente": (p.get("clientes") or {}).get("nome"),
-                    "numero_nf": p.get("numero_nf"),
-                    "data": dia_por_ped.get(p["id"]),
-                    "valor": v,
-                    "transfer": transfer,
-                })
-    itens.sort(key=lambda x: x.get("data") or "", reverse=True)
+            op = p.get("tipo_operacao") or "VENDA_NORMAL"
+            devolucao = op == "DEVOLUCAO"
+            if not (_conta_faturamento(op) or devolucao):
+                continue
+            v = _valor_sem_frete(p)
+            transfer = _eh_transfer(p)
+            if transfer:
+                total_transfer += v
+            else:
+                total += v
+            itens.append({
+                "numero_pedido": p.get("numero_pedido"),
+                "cliente": (p.get("clientes") or {}).get("nome"),
+                "numero_nf": p.get("numero_nf"),
+                "valor": v,
+                "data": dia_por_ped.get(p["id"]),
+                "transfer": transfer,
+                "devolucao": devolucao,
+            })
+    itens.sort(key=lambda x: (x.get("data") or "", x.get("numero_pedido") or ""))
     return round(total, 2), round(total_transfer, 2), itens
-
 
 def _itens_por_pedido(db, ids: list) -> dict:
     """pedido_id -> valor estimado (Σ qtd_solicitada × valor_unitario)."""
@@ -309,6 +343,61 @@ def _saldo_contratos(db) -> tuple[float, float, list]:
             })
     contratos.sort(key=lambda x: x["saldo"], reverse=True)
     return round(saldo_total, 2), round(saldo_transfer, 2), contratos
+
+
+def _pendencias(fim: date) -> dict:
+    """Venda fechada esperando material, em tres faixas que somam o total.
+
+    A pergunta que isto responde e "quanto ainda pode virar nota neste mes?", e
+    a resposta nao e o total da pendencia — a maior parte dele depende de
+    producao. Por isso as faixas:
+
+        liberavel_hoje   ja TEM material. Falta alguem clicar em liberar, e o
+                         dinheiro entra neste mes. E a faixa que importa.
+        previsto_no_mes  o PCP prometeu data dentro do mes. Pode entrar.
+        sem_horizonte    sem material e sem data. Nao conte com isto.
+
+    Transfer price fica separado, como no resto do arquivo: a meta nao o
+    contempla, e somar Biomedical aqui inflaria a comparacao com a meta.
+
+    Best-effort: previsao de faturamento nao pode cair porque a pendencia falhou.
+    """
+    from app.services import pendencia_service
+
+    vazio = {"total": 0.0, "liberavel_hoje": 0.0, "previsto_no_mes": 0.0,
+             "sem_horizonte": 0.0, "quantidade": 0, "transfer": 0.0}
+    try:
+        lista = (pendencia_service.listar() or {}).get("pendencias") or []
+    except Exception:
+        return vazio
+
+    fim_iso = fim.isoformat()
+    fora = dict(vazio)
+    for x in lista:
+        valor = float(x.get("valor") or 0)
+        if valor <= 0:
+            continue
+        if _eh_transfer(x):
+            fora["transfer"] = round(fora["transfer"] + valor, 2)
+            continue
+
+        fora["total"] = round(fora["total"] + valor, 2)
+        fora["quantidade"] += 1
+
+        # O disponivel nunca passa do devido: estoque de sobra nao aumenta a
+        # divida, e sem o teto a soma das faixas estouraria o total.
+        liberavel = min(float((x.get("estoque_agora") or {}).get("valor_disponivel") or 0), valor)
+        fora["liberavel_hoje"] = round(fora["liberavel_hoje"] + liberavel, 2)
+
+        resto = round(valor - liberavel, 2)
+        if resto <= 0:
+            continue
+        prev = str(x.get("previsao_pcp") or "")[:10]
+        if prev and prev <= fim_iso:
+            fora["previsto_no_mes"] = round(fora["previsto_no_mes"] + resto, 2)
+        else:
+            fora["sem_horizonte"] = round(fora["sem_horizonte"] + resto, 2)
+    return fora
 
 
 def _dias_uteis_do_mes(inicio: date, fim: date) -> list:
@@ -546,6 +635,7 @@ def resumo() -> dict:
     em_processo_total = round(sum(p["valor_estimado"] for p in pipeline if not p["transfer"]), 2)
     em_processo_transfer = round(sum(p["valor_estimado"] for p in pipeline if p["transfer"]), 2)
     saldo_contratos, saldo_contratos_transfer, contratos = _saldo_contratos(db)
+    pendencias = _pendencias(fim)
     # Garantido = só o que vai faturar de fato: NFs do mês + OVs no pipeline.
     # Saldo de contratos NÃO entra (o órgão pede quando quer — sem data garantida).
     garantido = round(realizado + em_processo_total, 2)
@@ -632,6 +722,9 @@ def resumo() -> dict:
         },
         "estatistica": estatistica,
         "serie_mensal": serie_mensal,
+        # Venda fechada esperando material. Fora de todos os totais de propósito
+        # (ver docstring do módulo): entra na tela como analise, não como receita.
+        "pendencias": pendencias,
         # Transfer price (vendas para a Biomedical) — fora da meta, isolado aqui.
         "transfer": {
             "realizado": realizado_transfer,
