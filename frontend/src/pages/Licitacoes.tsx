@@ -2334,6 +2334,13 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
             <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(emp.percentual, 100)}%` }} />
           </div>
           <p className="text-[11px] text-gray-400 mt-1">{emp.percentual}% {ehVendaDireta ? 'entregue' : 'consumido'}</p>
+          {!ehVendaDireta && !emp.percentual && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-2">
+              Nada foi remetido ainda neste contrato. O primeiro passo é
+              <strong> Registrar remessa</strong> — o comunicado de uso vem depois, quando o
+              cliente usar o material que está com ele.
+            </p>
+          )}
         </div>
 
         <div className="p-5">
@@ -2385,17 +2392,33 @@ function ModalContrato({ id, onClose, onChanged }: { id: string; onClose: () => 
           className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600">
           <Trash2 size={15} /> Excluir
         </button>
-        {ehVendaDireta ? (
+        {/* Consignação tem DOIS momentos, e a tela só oferecia o segundo:
+              1. a REMESSA do material — envio físico, mesmo fluxo da venda
+                 direta (separa, frete, NF). É por aqui que se começa.
+              2. o COMUNICADO DE USO — depois, quando o cliente usa o que está
+                 consignado com ele. Só existe se algo foi remetido antes.
+
+            Com só o comunicado à mão, quem precisava remeter lançava comunicado
+            de uso: foi assim que a OV016445 (8x 58041, R$ 4.000) nasceu como
+            comunicado de uso de material que nunca tinha saído. O serviço sempre
+            soube remeter consignado (registrar_entrega usa `qtd_a_remeter` e
+            cria a OV com tipo_operacao CONSIGNADO) — faltava o botão. */}
+        <div className="flex items-center gap-2">
+          {!ehVendaDireta && (
+            <button onClick={() => setAcao('consumo')} disabled={emp.saldo_un <= 0}
+              title="O cliente usou o que estava consignado com ele. Só faz sentido para material já remetido."
+              className="flex items-center gap-2 px-4 py-2 text-sm border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40 font-medium rounded-lg">
+              <FileText size={16} /> Registrar comunicado de uso
+            </button>
+          )}
           <button onClick={() => setAcao('entrega')} disabled={emp.saldo_un <= 0}
+            title={ehVendaDireta
+              ? 'Gera a OV da entrega e manda para a expedição'
+              : 'Remessa do material consignado: gera a OV e passa pela expedição, como a venda direta'}
             className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-medium rounded-lg">
-            <Truck size={16} /> Registrar entrega (gera OV)
+            <Truck size={16} /> {ehVendaDireta ? 'Registrar entrega (gera OV)' : 'Registrar remessa (gera OV)'}
           </button>
-        ) : (
-          <button onClick={() => setAcao('consumo')} disabled={emp.saldo_un <= 0}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-medium rounded-lg">
-            <FileText size={16} /> Registrar comunicado de uso
-          </button>
-        )}
+        </div>
       </div>
 
       {acao === 'consumo' && <ModalConsumo emp={emp} onClose={() => setAcao(null)} onSaved={() => { qc.invalidateQueries({ queryKey: ['empenho', id] }); onChanged() }} />}
@@ -2843,7 +2866,19 @@ function ModalEnviarNF({ demanda, onClose, onSaved }: { demanda: any; onClose: (
 function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void; onSaved: () => void }) {
   const navigate = useNavigate()
   const hoje = hojeLocal()
-  const comSaldo = emp.itens.filter((i: any) => i.qtd_saldo > 0)
+  // Qual saldo limita o envio depende do tipo do contrato, e os dois campos
+  // divergem depois da primeira remessa:
+  //   venda direta   qtd_saldo      = empenhada - faturada  (falta entregar)
+  //   consignacao    qtd_a_remeter  = empenhada - remetida  (falta ENVIAR)
+  //
+  // Num consignado com 8 remetidas e 0 faturadas, qtd_saldo ainda e 8 — usar
+  // esse campo aqui ofereceria remeter as mesmas 8 de novo. O backend recusa
+  // (registrar_entrega valida contra qtd_a_remeter), mas o operador so
+  // descobriria depois de preencher tudo e levar erro.
+  const ehConsignacaoContrato = (emp.tipo || 'CONSIGNACAO') !== 'VENDA_DIRETA'
+  const saldoDe = (i: any) => Number(
+    (ehConsignacaoContrato ? i.qtd_a_remeter : i.qtd_saldo) ?? i.qtd_saldo ?? 0)
+  const comSaldo = emp.itens.filter((i: any) => saldoDe(i) > 0)
   const [numero, setNumero] = useState('')
   const [tipoFrete, setTipoFrete] = useState('FOB')
   const [canal, setCanal] = useState(emp.canal || '')
@@ -2865,7 +2900,9 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
         .map((i: any) => ({ produto_id: i.produto_id, qtd_solicitada: Number(qtds[i.produto_id]) })),
     }),
     onSuccess: (res) => {
-      toast.success('Entrega registrada — OV criada e saldo atualizado')
+      toast.success(ehConsignacaoContrato
+        ? 'Remessa registrada — OV criada e saldo a remeter atualizado'
+        : 'Entrega registrada — OV criada e saldo atualizado')
       onSaved(); onClose()
       const ov = res.data?.ov_gerada_id
       if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
@@ -2910,9 +2947,11 @@ function ModalEntrega({ emp, onClose, onSaved }: { emp: any; onClose: () => void
                 <div className="flex-1 min-w-0">
                   <span className="font-mono font-medium text-gray-800">{i.codigo}</span>
                   <span className="text-gray-500 ml-2">{i.descricao}</span>
-                  <span className="block text-[11px] text-gray-400">saldo {i.qtd_saldo}</span>
+                  <span className="block text-[11px] text-gray-400">
+                    {ehConsignacaoContrato ? 'a remeter' : 'saldo'} {saldoDe(i)}
+                  </span>
                 </div>
-                <input type="number" min="0" max={i.qtd_saldo} step="1"
+                <input type="number" min="0" max={saldoDe(i)} step="1"
                   value={qtds[i.produto_id] || ''}
                   onChange={e => setQtds(q => ({ ...q, [i.produto_id]: e.target.value }))}
                   placeholder="0" className="w-24 border rounded-lg px-2 py-1 text-sm text-right" />
