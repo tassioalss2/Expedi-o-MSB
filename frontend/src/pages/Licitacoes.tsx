@@ -11,6 +11,7 @@ import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
 import { ItensPedido, type ItemLinha } from '../components/ItensPedido'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
+import { ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
 import { CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { hojeLocal } from '../lib/dataLocal'
 import { msgErro } from '../lib/crm'
@@ -2462,26 +2463,44 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
     () => semItens ? {} : Object.fromEntries(
       mesclarItens(demanda.itens || [], demanda.ov_itens || []).filter(l => l.saldo > 0).map(l => [l.produto_id, String(l.saldo)])))
 
+  // Falta estoque para o que está sendo gerado. Antes o 409 do servidor virava
+  // um toast de erro e a tela não oferecia saída nenhuma — o operador tinha que
+  // adivinhar quanto havia e digitar na mão.
+  const [faltaEstoque, setFaltaEstoque] = useState<any | null>(null)
+
+  const corpo = (qtdsUsadas: Record<string, string>) => ({
+    numero_pedido: numero.trim(),
+    tipo_frete: tipoFrete,
+    canal: canal || null,
+    data_prevista_entrega: dataEntrega || null,
+    local_entrega: local || null,
+    condicao_pagamento: condPagamento.trim(),
+    transportadora_id: frete.transportadora_id || null,
+    valor_frete: frete.valor ?? null,
+    itens: saldoLinhas.filter(l => Number(qtdsUsadas[l.produto_id]) > 0)
+      .map(l => ({ produto_id: l.produto_id, qtd_solicitada: Number(qtdsUsadas[l.produto_id]) })),
+  })
+
+  const aoGerar = (res: any, parcial: boolean) => {
+    toast.success(parcial
+      ? 'OV gerada com o que temos — o que faltou continua no saldo do contrato.'
+      : 'OV gerada no fluxo logístico', { duration: parcial ? 7000 : 4000 })
+    onSaved(); onClose()
+    const ov = res.data?.ov_gerada_id
+    if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
+  }
+
   const gerar = useMutation({
-    mutationFn: () => api.post(`/licitacoes/demandas/${demanda.id}/gerar-ov`, {
-      numero_pedido: numero.trim(),
-      tipo_frete: tipoFrete,
-      canal: canal || null,
-      data_prevista_entrega: dataEntrega || null,
-      local_entrega: local || null,
-      condicao_pagamento: condPagamento.trim(),
-      transportadora_id: frete.transportadora_id || null,
-      valor_frete: frete.valor ?? null,
-      itens: saldoLinhas.filter(l => Number(qtds[l.produto_id]) > 0)
-        .map(l => ({ produto_id: l.produto_id, qtd_solicitada: Number(qtds[l.produto_id]) })),
-    }),
-    onSuccess: (res) => {
-      toast.success('OV gerada no fluxo logístico')
-      onSaved(); onClose()
-      const ov = res.data?.ov_gerada_id
-      if (ov) setTimeout(() => navigate(`/expedicao/${ov}`), 300)
+    mutationFn: () => api.post(`/licitacoes/demandas/${demanda.id}/gerar-ov`, corpo(qtds)),
+    onSuccess: (res) => aoGerar(res, false),
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      if (e?.response?.status === 409 && d?.tipo === 'ESTOQUE_INSUFICIENTE' && d.analise) {
+        setFaltaEstoque(d.analise)
+        return
+      }
+      toast.error(msgErro(e, 'Erro ao gerar OV'), { duration: 6000 })
     },
-    onError: (e: any) => toast.error(msgErro(e, 'Erro ao gerar OV'), { duration: 6000 }),
   })
 
   const algum = saldoLinhas.some(l => Number(qtds[l.produto_id]) > 0)
@@ -2554,6 +2573,29 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
           {gerar.isPending ? 'Gerando OV...' : 'Gerar OV'}
         </button>
       </div>
+      {/* Na licitação NÃO existe "jogar tudo na pendência": o que não sai nesta
+          OV continua no SALDO DO CONTRATO, que é o registro de quanto ainda se
+          deve entregar. Criar pendência aqui contaria a mesma dívida duas vezes.
+          Por isso a decisão aqui só reduz as quantidades desta OV. */}
+      {faltaEstoque && (
+        <ModalDecisaoEstoque
+          analise={faltaEstoque}
+          titulo="Não temos todo o material desta OV"
+          pendente={gerar.isPending}
+          permiteAguardar={false}
+          onClose={() => setFaltaEstoque(null)}
+          onDecidir={(d: DecisaoEstoque) => {
+            const escolhido = Object.fromEntries((d.itens || []).map(i => [i.produto_id, String(i.qtd)]))
+            const novas = { ...qtds, ...escolhido }
+            setQtds(novas)
+            setFaltaEstoque(null)
+            // Reenvia com as quantidades escolhidas: o estado ainda não chegou
+            // ao corpo neste tick.
+            api.post(`/licitacoes/demandas/${demanda.id}/gerar-ov`, corpo(novas))
+              .then(res => aoGerar(res, true))
+              .catch((e: any) => toast.error(msgErro(e, 'Erro ao gerar OV'), { duration: 6000 }))
+          }} />
+      )}
     </ModalBase>
   )
 }
