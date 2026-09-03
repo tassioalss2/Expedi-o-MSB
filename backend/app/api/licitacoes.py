@@ -1,3 +1,5 @@
+from datetime import date
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -19,7 +21,12 @@ from app.models.schemas import (
     PregaoCreate,
     UsuarioOut,
 )
-from app.services import licitacao_demanda_service, licitacao_service, pregao_service
+from app.services import (
+    licitacao_demanda_service,
+    licitacao_entrada_service,
+    licitacao_service,
+    pregao_service,
+)
 
 router = APIRouter(prefix="/licitacoes", tags=["licitacoes"])
 
@@ -203,3 +210,104 @@ def liberar_estoque(demanda_id: UUID, payload: DemandaEstoqueLiberar, _: Usuario
 @router.delete("/demandas/{demanda_id}")
 def excluir_demanda(demanda_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_demanda_service.excluir_demanda(str(demanda_id))
+
+
+# ── Caixa de entrada da licitação (a triagem que saiu do Excel) ─────────────────
+class EntradaTriar(BaseModel):
+    """O que uma pessoa decide sobre um caso.
+
+    PARCIAL não é enfeite: na triagem de 03/09/2026 o time escreveu "Parcial" à
+    mão em 3 das 218 linhas de uma planilha que só oferecia Sim/Nao.
+    """
+    situacao: Optional[str] = None        # NAO | PARCIAL | SIM
+    observacao: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+
+
+class EntradaPromover(BaseModel):
+    """O que a tela preenche e o anexo não tinha.
+
+    O comunicado de uso exige paciente, prontuário e data do procedimento —
+    nada disso está no anexo do pedido, então quem promove informa.
+    """
+    tipo_operacao: Optional[str] = None
+    cliente_id: Optional[UUID] = None
+    numero: Optional[str] = None
+    numero_pregao: Optional[str] = None
+    canal: Optional[str] = None
+    prazo: Optional[date] = None
+    prioridade: Optional[str] = None
+    observacao: Optional[str] = None
+    nome_paciente: Optional[str] = None
+    prontuario: Optional[str] = None
+    numero_nf: Optional[str] = None
+    data_procedimento: Optional[date] = None
+    # Segunda demanda para a mesma NE só quando alguém pede de propósito: duas
+    # demandas para o mesmo empenho é o pedido duplicado que o processo evita.
+    permitir_segunda: bool = False
+
+
+class OrgaoMapear(BaseModel):
+    cnpj: str
+    cliente_id: UUID
+    nome_documento: Optional[str] = None
+
+
+@router.get("/entrada")
+def listar_entrada(situacao: Optional[str] = None, dias: int = 60,
+                   _: UsuarioOut = Depends(get_current_user)):
+    return licitacao_entrada_service.listar(situacao, dias)
+
+
+@router.get("/entrada/painel")
+def painel_entrada(dias: int = 30, _: UsuarioOut = Depends(get_current_user)):
+    """Visão de fluxo do setor. É o que o conselho acompanha."""
+    return licitacao_entrada_service.painel(dias)
+
+
+@router.get("/entrada/orgaos")
+def listar_orgaos(_: UsuarioOut = Depends(get_current_user)):
+    return licitacao_entrada_service.listar_orgaos()
+
+
+@router.get("/entrada/orgaos/pendentes")
+def orgaos_pendentes(_: UsuarioOut = Depends(get_current_user)):
+    """Órgãos vistos nos e-mails que ainda não têm cliente definido.
+
+    Enquanto um órgão está aqui, os pedidos dele não podem virar demanda: a
+    demanda exige cliente, e adivinhar o cliente errado é pior que travar.
+    """
+    return licitacao_entrada_service.orgaos_pendentes()
+
+
+@router.post("/entrada/orgaos")
+def mapear_orgao(payload: OrgaoMapear, usuario: UsuarioOut = Depends(get_current_user)):
+    return licitacao_entrada_service.mapear_orgao(
+        payload.cnpj, str(payload.cliente_id), usuario, payload.nome_documento)
+
+
+@router.patch("/entrada/{entrada_id}")
+def triar_entrada(entrada_id: UUID, payload: EntradaTriar,
+                  usuario: UsuarioOut = Depends(get_current_user)):
+    return licitacao_entrada_service.triar(
+        str(entrada_id), usuario, payload.situacao, payload.observacao,
+        str(payload.cliente_id) if payload.cliente_id else None)
+
+
+@router.post("/entrada/grupo/triar")
+def triar_grupo(chave: str, payload: EntradaTriar,
+                usuario: UsuarioOut = Depends(get_current_user)):
+    """Decide a nota de empenho inteira — é como o time trabalha."""
+    return licitacao_entrada_service.triar_grupo(
+        chave, usuario, payload.situacao, payload.observacao,
+        str(payload.cliente_id) if payload.cliente_id else None)
+
+
+@router.post("/entrada/grupo/promover")
+def promover_grupo(chave: str, payload: EntradaPromover,
+                   usuario: UsuarioOut = Depends(get_current_user)):
+    """Transforma o pedido recebido na demanda que a operação vai executar."""
+    extra = payload.model_dump(exclude_none=True)
+    if payload.cliente_id:
+        extra["cliente_id"] = str(payload.cliente_id)
+    return licitacao_entrada_service.promover(chave, usuario, extra)
