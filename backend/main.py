@@ -34,6 +34,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def somente_leitura_para_o_conselho(request, call_next):
+    """O perfil CONSELHO acompanha e não opera.
+
+    O bloqueio é aqui, e não em cada rota, por um motivo prático: das ~136
+    rotas de escrita do app, 15 passam pela dependência de permissão. Gatear
+    por dependência protegeria 11% e daria a sensação de estar protegido — e a
+    próxima rota que alguém criar nasceria desprotegida de novo. Um método que
+    não é GET simplesmente não passa, e não há como esquecer.
+
+    Lê o perfil do próprio token para não ir ao banco em toda requisição; o
+    token é assinado, então o perfil que vem nele é confiável para NEGAR. Quem
+    autoriza de verdade continua sendo `get_current_user`, que carrega o
+    usuário do banco.
+    """
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        cabecalho = request.headers.get("authorization") or ""
+        if cabecalho.lower().startswith("bearer "):
+            try:
+                from app.core.security import decode_token
+                dados = decode_token(cabecalho.split(" ", 1)[1]) or {}
+            except Exception:
+                dados = {}
+            # str(...) e o split: o perfil vai para o token como enum de string
+            # e serializa como "CONSELHO", mas comparar com o valor cru
+            # quebraria em silencio se um dia virasse "PerfilUsuario.CONSELHO"
+            # — e quebrar em silencio aqui significa liberar escrita.
+            perfil = str(dados.get("perfil") or "").split(".")[-1]
+            if perfil == "CONSELHO":
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "Seu acesso é de acompanhamento: "
+                                       "esta ação altera dados e não está liberada."},
+                )
+    return await call_next(request)
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(pedidos_router, prefix="/api/v1")
 app.include_router(cadastros_router, prefix="/api/v1")

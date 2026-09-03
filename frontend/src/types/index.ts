@@ -13,7 +13,7 @@ export type TipoFrete = 'FOB' | 'CIF_COM_VALOR' | 'CIF_SEM_VALOR' | 'NAO_UTILIZA
 export type Prioridade = 'NORMAL' | 'ALTA' | 'CRITICA'
 
 export type PerfilUsuario =
-  | 'LOGISTICA' | 'OPERACOES_VENDAS' | 'COMERCIAL' | 'DIRETORIA' | 'ADMIN'
+  | 'LOGISTICA' | 'OPERACOES_VENDAS' | 'COMERCIAL' | 'DIRETORIA' | 'ADMIN' | 'CONSELHO'
 
 export const PERFIL_LABELS: Record<PerfilUsuario, string> = {
   LOGISTICA: 'Logística',
@@ -21,6 +21,7 @@ export const PERFIL_LABELS: Record<PerfilUsuario, string> = {
   COMERCIAL: 'Comercial',
   DIRETORIA: 'Diretoria',
   ADMIN: 'Admin / TI',
+  CONSELHO: 'Conselho (acompanhamento)',
 }
 
 export interface Usuario {

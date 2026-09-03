@@ -145,10 +145,16 @@ class PerfilUsuario(str, Enum):
     COMERCIAL = "COMERCIAL"
     DIRETORIA = "DIRETORIA"
     ADMIN = "ADMIN"
+    # Acompanhamento sem operacao: o conselho pediu para seguir de perto o
+    # processo da licitacao. Ve os numeros e nao mexe em nada — o bloqueio e
+    # feito uma vez so, no middleware (main.py), e nao rota a rota, porque
+    # rota a rota alguem esquece na proxima que criar.
+    CONSELHO = "CONSELHO"
 
 
 # Rótulos amigáveis para exibição
 PERFIL_LABELS = {
+    PerfilUsuario.CONSELHO.value: "Conselho (acompanhamento)",
     PerfilUsuario.LOGISTICA.value: "Logística",
     PerfilUsuario.OPERACOES_VENDAS.value: "Operações de Vendas",
     PerfilUsuario.COMERCIAL.value: "Comercial",

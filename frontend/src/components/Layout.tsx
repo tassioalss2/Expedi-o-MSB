@@ -101,6 +101,12 @@ export function Layout() {
     navigate('/login')
   }
 
+  // O conselho entra para acompanhar, nao para operar. Mostrar a navegacao
+  // inteira convidaria a clicar em tela que o middleware vai recusar — e um 403
+  // no meio da reuniao parece defeito do app, nao permissao. Melhor a sidebar
+  // ja chegar do tamanho do acesso.
+  const soAcompanha = usuario?.perfil === 'CONSELHO'
+
   const navGeralFiltrado: NavItem[] = [
     ...navGeral,
     ...(usuario?.perfil === 'ADMIN'
@@ -253,10 +259,18 @@ export function Layout() {
             <Item item={{ to: '/', label: 'Início', icone: Home }} />
           </div>
 
-          <Grupo titulo="Operações" itens={navOperacoes} />
-          <Grupo titulo="Comercial" itens={navComercial} />
-          <Grupo titulo="Licitações" itens={navLicitacoes} />
-          {navGeralFiltrado.length > 0 && <Grupo titulo="Geral" itens={navGeralFiltrado} />}
+          {soAcompanha ? (
+            <Grupo titulo="Acompanhamento" itens={[
+              { to: '/licitacoes?aba=acompanhamento', label: 'Licitações', icone: Gavel },
+            ]} />
+          ) : (
+            <>
+              <Grupo titulo="Operações" itens={navOperacoes} />
+              <Grupo titulo="Comercial" itens={navComercial} />
+              <Grupo titulo="Licitações" itens={navLicitacoes} />
+              {navGeralFiltrado.length > 0 && <Grupo titulo="Geral" itens={navGeralFiltrado} />}
+            </>
+          )}
         </nav>
 
         {/* Rodapé: identidade + sair. */}
