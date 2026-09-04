@@ -2515,7 +2515,11 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
   })
 
   const algum = saldoLinhas.some(l => Number(qtds[l.produto_id]) > 0)
-  const valido = numero.trim() && dataEntrega && condPagamento.trim() && algum
+  // Amostra e doacao: nao ha o que pagar, entao nao ha condicao de pagamento.
+  // O botao ficava desabilitado esperando um campo que nao existe nesse fluxo, e
+  // o operador nao tinha como concluir a amostra.
+  const ehAmostra = demanda.tipo_operacao === 'AMOSTRA'
+  const valido = numero.trim() && dataEntrega && (ehAmostra || condPagamento.trim()) && algum
 
   return (
     <ModalBase titulo={`Gerar OV · ${demanda.cliente || ''}`} onClose={onClose}>
@@ -2542,7 +2546,10 @@ function ModalGerarOVSaldo({ demanda, onClose, onSaved }: { demanda: any; onClos
               {CANAIS.map(c => <option key={c} value={c}>{CANAL_LABEL[c] || c}</option>)}
             </select>
           </Campo>
-          <Campo label="Condição de pagamento *"><input value={condPagamento} onChange={e => setCondPagamento(e.target.value)} className={inputCls} placeholder="Ex: 30 dias, 28/56/84, à vista" /></Campo>
+          <Campo label={ehAmostra ? 'Condição de pagamento' : 'Condição de pagamento *'}>
+            <input value={condPagamento} onChange={e => setCondPagamento(e.target.value)} className={inputCls}
+              placeholder={ehAmostra ? 'amostra é doação — não se aplica' : 'Ex: 30 dias, 28/56/84, à vista'} />
+          </Campo>
         </div>
         <Campo label="Local de entrega"><LocalEntregaInput value={local} onChange={setLocal} /></Campo>
         <div>

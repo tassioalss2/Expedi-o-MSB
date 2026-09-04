@@ -283,6 +283,17 @@ def _especifico(numero: str) -> bool:
         or bool(re.fullmatch(r"\d{7,9}", numero))
 
 
+def _escopo_do_orgao(reg: dict) -> str:
+    """Quem é o órgão, para separar documentos de número genérico.
+
+    O cliente resolvido vem primeiro: é a entidade canônica do app, enquanto o
+    CNPJ é o que o documento por acaso trouxe. Vazio quando não se sabe — e
+    "não se sabe" é tratado como compatível em `agrupar`, não como um órgão
+    próprio.
+    """
+    return str(reg.get("cliente_id") or reg.get("cnpj_orgao") or "").strip()
+
+
 def chave_do_grupo(reg: dict) -> str:
     """A chave que decide quais e-mails são o mesmo caso.
 
@@ -296,10 +307,53 @@ def chave_do_grupo(reg: dict) -> str:
     if numero:
         if _especifico(numero):
             return "DOC:%s" % numero
-        cnpj = (reg.get("cnpj_orgao") or "").strip()
-        if cnpj:
-            return "DOC:%s:%s" % (cnpj, numero)
+        escopo = _escopo_do_orgao(reg)
+        if escopo:
+            return "DOC:%s:%s" % (escopo, numero)
+        # Número genérico e órgão desconhecido: fica isolado aqui e `agrupar`
+        # decide se dá para encaixá-lo num grupo conhecido do mesmo documento.
+        return "DOC?:%s:%s" % (numero, reg["chave"])
     return "EM:%s" % reg["chave"]
+
+
+def agrupar(regs: list[dict]) -> dict[str, list[dict]]:
+    """Os e-mails divididos em casos. Fonte única — a listagem e as ações de
+    grupo usam esta mesma função, senão triar um card afetaria outro conjunto.
+
+    Duas passadas. A primeira aplica `chave_do_grupo`. A segunda encaixa os
+    e-mails de órgão desconhecido: quando o número do documento bate com UM
+    único grupo conhecido, é o mesmo caso — o órgão só não foi lido naquele
+    e-mail. Caso real: dois "Solicitacao de faturamento | AF 1925/2026 - PE
+    90037/2025", com assunto idêntico, um com CNPJ e outro sem.
+
+    "Um único" é a trava que importa. Se dois órgãos tiverem a AF 1925 na mesma
+    janela, o desconhecido fica sozinho — fundir dois pedidos de verdade
+    esconderia trabalho, que é o erro mais caro deste módulo.
+    """
+    grupos: dict[str, list[dict]] = {}
+    for r in regs:
+        nes = r.get("empenhos") or []
+        if nes:
+            # Cita duas NEs: entra nos dois grupos. Não dá para escolher qual é
+            # a certa por conta própria.
+            for ne in nes:
+                grupos.setdefault("NE:%s" % ne, []).append(r)
+        else:
+            grupos.setdefault(chave_do_grupo(r), []).append(r)
+
+    # Por número de documento, quais grupos de órgão CONHECIDO existem.
+    conhecidos: dict[str, set] = {}
+    for chave in grupos:
+        if chave.startswith("DOC:") and chave.count(":") == 2:
+            _, _escopo, numero = chave.split(":", 2)
+            conhecidos.setdefault(numero, set()).add(chave)
+
+    for chave in [k for k in grupos if k.startswith("DOC?:")]:
+        numero = chave.split(":", 2)[1]
+        destinos = conhecidos.get(numero) or set()
+        if len(destinos) == 1:
+            grupos[next(iter(destinos))].extend(grupos.pop(chave))
+    return grupos
 
 
 def _entrega_prevista(membros: list[dict]) -> Optional[str]:
@@ -372,16 +426,7 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
     # Um e-mail que cita duas NEs entra nos dois grupos: não dá para escolher
     # qual é a certa por conta própria (há um caso real de erro de digitação do
     # órgão, "2026NE001167 / 2026NE01167").
-    grupos: dict[str, list[dict]] = {}
-    for r in regs:
-        nes = r.get("empenhos") or []
-        if nes:
-            # Cita duas NEs: entra nos dois grupos. Não dá para escolher qual é
-            # a certa por conta própria.
-            for ne in nes:
-                grupos.setdefault("NE:%s" % ne, []).append(r)
-        else:
-            grupos.setdefault(chave_do_grupo(r), []).append(r)
+    grupos = agrupar(regs)
 
     cards = []
     for chave, membros in grupos.items():
@@ -427,6 +472,11 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             "demanda_id": primeiro_com("demanda_id"),
             "demanda": andamento.get(primeiro_com("demanda_id")),
             "entrega_prevista": _entrega_prevista(membros),
+            # Basta UM e-mail do grupo estar assumido: o caso e um so, e
+            # quem assumiu marcou onde estava olhando.
+            "em_tratativa": any(m.get("em_tratativa") for m in membros),
+            "tratativa_por": next((m.get("tratativa_por") for m in membros
+                                   if m.get("em_tratativa")), None),
             # "Sim" só quando TODOS os e-mails da NE estão resolvidos. Um card
             # verde com um e-mail em aberto dentro é pior que nenhum card.
             "situacao": ("SIM" if situacoes == {"SIM"}
@@ -464,7 +514,7 @@ def _emails_do_grupo(chave: str, colunas: str = "*") -> list[dict]:
     db = get_service_db()
     if chave.startswith("EM:"):
         return db.table("licitacao_entrada").select(colunas).eq("chave", chave[3:]).execute().data
-    if not (chave.startswith("NE:") or chave.startswith("DOC:")):
+    if not (chave.startswith("NE:") or chave.startswith("DOC")):
         raise HTTPException(400, "chave de grupo inválida: %s" % chave)
     # Os campos de que a chave depende vêm junto mesmo quando o chamador não
     # pediu: é por eles que se filtra.
@@ -472,14 +522,14 @@ def _emails_do_grupo(chave: str, colunas: str = "*") -> list[dict]:
     pedido = colunas if colunas == "*" else "%s, %s" % (colunas, extras)
     todos = db.table("licitacao_entrada").select(pedido).eq("ativo", True)\
         .limit(5000).execute().data
-    if chave.startswith("NE:"):
-        ne = chave[3:]
-        return [r for r in todos if ne in (r.get("empenhos") or [])]
-    return [r for r in todos if chave_do_grupo(r) == chave]
+    # Reagrupa tudo e devolve o grupo pedido: a mesma funcao da listagem, para
+    # triar um card nunca afetar um conjunto diferente do que a tela mostrou.
+    return agrupar(todos).get(chave, [])
 
 
 def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
-          observacao: Optional[str] = None, cliente_id: Optional[str] = None) -> dict:
+          observacao: Optional[str] = None, cliente_id: Optional[str] = None,
+          em_tratativa: Optional[bool] = None) -> dict:
     """O que uma pessoa decide sobre um e-mail. É o campo humano do registro."""
     db = get_service_db()
     reg = db.table("licitacao_entrada").select("*").eq("id", entrada_id).execute().data
@@ -498,12 +548,19 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
         campos["observacao"] = observacao.strip() or None
     if cliente_id is not None:
         campos["cliente_id"] = cliente_id
+    if em_tratativa is not None:
+        campos["em_tratativa"] = bool(em_tratativa)
+        # Quem assumiu e quando. Ao desmarcar, limpa — senao fica parecendo que
+        # alguem ainda esta com o caso.
+        campos["tratativa_por"] = str(usuario.id) if em_tratativa else None
+        campos["tratativa_em"] = _agora() if em_tratativa else None
     db.table("licitacao_entrada").update(campos).eq("id", entrada_id).execute()
     return db.table("licitacao_entrada").select("*").eq("id", entrada_id).execute().data[0]
 
 
 def triar_grupo(chave: str, usuario: UsuarioOut, situacao: Optional[str] = None,
-                observacao: Optional[str] = None, cliente_id: Optional[str] = None) -> dict:
+                observacao: Optional[str] = None, cliente_id: Optional[str] = None,
+                em_tratativa: Optional[bool] = None) -> dict:
     """A mesma decisão, aplicada à nota de empenho inteira.
 
     É como o time trabalha: resolve a NE, não o e-mail. A observação fica no
@@ -516,6 +573,7 @@ def triar_grupo(chave: str, usuario: UsuarioOut, situacao: Optional[str] = None,
     regs.sort(key=lambda x: x.get("recebido_em") or "")
     for pos, r in enumerate(regs):
         triar(r["id"], usuario, situacao=situacao, cliente_id=cliente_id,
+              em_tratativa=em_tratativa,
               observacao=observacao if pos == 0 else None)
     return {"chave": chave, "afetados": len(regs)}
 
@@ -832,6 +890,7 @@ def painel(dias: int = 30) -> dict:
         "resolvidos": len(resolvidos),
         "criticos": sum(1 for c in abertos if c["prioridade"] <= 1),
         "sem_cliente": sum(1 for c in abertos if not c["cliente_id"]),
+        "em_tratativa": sum(1 for c in abertos if c.get("em_tratativa")),
         "parados_por_faixa": faixas,
         "mais_antigo_dias": max((c["dias_parados"] for c in abertos), default=0),
         "valor_parado": round(sum(c["valor_total"] for c in com_valor), 2),

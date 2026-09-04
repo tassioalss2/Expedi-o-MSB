@@ -15,7 +15,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, CircleDot, Clock, Inbox, Link2, Loader2, Mail,
-  MinusCircle, Package, Search, ShieldQuestion, X, CalendarClock,
+  MinusCircle, Package, Search, ShieldQuestion, X, CalendarClock, Hand,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -93,6 +93,8 @@ type Card = {
   chave: string
   empenho: string | null
   documento: string | null
+  em_tratativa: boolean
+  tratativa_por: string | null
   assunto: string
   recebido_em: string
   ultimo_em: string
@@ -188,6 +190,11 @@ function DetalheNumero({ metrica, dias, onFechar }: {
                       </span>
                     ) : null}
                     <span className="text-[11px] text-gray-500">{TIPO_LABEL[c.tipo || 'OUTRO']}</span>
+            {c.em_tratativa && (
+              <span className="flex items-center gap-1 rounded border border-violet-200 bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800">
+                <Hand className="h-3 w-3" /> em tratativa
+              </span>
+            )}
                     <span className={`text-[11px] ${c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-500'}`}>
                       {c.dias_parados} d
                     </span>
@@ -510,10 +517,11 @@ function ItensDoPedido({ itens }: { itens: any[] }) {
   )
 }
 
-function CardEntrada({ c, onTriar, onNota, onPromover, salvando }: {
+function CardEntrada({ c, onTriar, onNota, onTratativa, onPromover, salvando }: {
   c: Card
   onTriar: (situacao: string) => void
   onNota: (texto: string) => void
+  onTratativa: (v: boolean) => void
   onPromover: () => void
   salvando: boolean
 }) {
@@ -553,10 +561,24 @@ function CardEntrada({ c, onTriar, onNota, onPromover, salvando }: {
           </div>
           <h4 className="mt-1.5 truncate text-sm font-medium text-gray-900">{c.assunto}</h4>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
+            {/* Data E dias parados juntos: a planilha tinha as duas colunas, e
+                elas respondem coisas diferentes — "quando chegou" e "ha quanto
+                tempo espera". Num caso agrupado a data e a do PRIMEIRO e-mail. */}
+            <span className="tabular-nums">{fmtDia(c.recebido_em)}</span>
             <span className={`flex items-center gap-1 ${c.dias_parados > 15 ? 'font-semibold text-red-700' : ''}`}>
               <Clock className="h-3 w-3" />
               {c.dias_parados === 0 ? 'hoje' : `${c.dias_parados} dia${c.dias_parados > 1 ? 's' : ''}`}
             </span>
+            {c.contrato && (
+              <span title="contrato MSB">
+                contrato <span className="font-medium text-gray-900">{c.contrato}</span>
+              </span>
+            )}
+            {c.pregao && (
+              <span title="pregão citado no documento">
+                pregão <span className="font-medium text-gray-900">{c.pregao}</span>
+              </span>
+            )}
             {c.cliente_nome ? (
               <span>{c.cliente_nome}</span>
             ) : (
@@ -643,6 +665,16 @@ function CardEntrada({ c, onTriar, onNota, onPromover, salvando }: {
             <Icone className="h-3.5 w-3.5" /> {label}
           </button>
         ))}
+        {/* Eixo separado da situacao: um caso que voce assumiu continua em
+            aberto ate ser atendido. Marcar PARCIAL para dizer "estou nisso"
+            mentiria sobre o atendimento. */}
+        <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
+          className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
+            c.em_tratativa
+              ? 'border-violet-300 bg-violet-100 text-violet-800'
+              : 'border-gray-200 bg-white text-gray-600 hover:border-violet-400'}`}>
+          <Hand className="h-3.5 w-3.5" /> {c.em_tratativa ? 'tratando' : 'assumir'}
+        </button>
         <button onClick={() => setAberto(v => !v)}
           className="ml-auto text-xs font-medium text-blue-600 hover:underline">
           {aberto ? 'esconder' : `histórico e nota${c.emails.length > 1 ? ` (${c.emails.length})` : ''}`}
@@ -683,6 +715,7 @@ export function AbaCaixaEntrada() {
   const qc = useQueryClient()
   const [filtro, setFiltro] = useState<'NAO' | 'PARCIAL' | 'SIM' | ''>('NAO')
   const [tipo, setTipo] = useState('')
+  const [soTratativa, setSoTratativa] = useState(false)
   const [busca, setBusca] = useState('')
 
   const { data: cards = [], isLoading } = useQuery<Card[]>({
@@ -697,9 +730,10 @@ export function AbaCaixaEntrada() {
   })
 
   const triar = useMutation({
-    mutationFn: ({ chave, situacao, observacao }: { chave: string; situacao?: string; observacao?: string }) =>
+    mutationFn: ({ chave, situacao, observacao, em_tratativa }:
+      { chave: string; situacao?: string; observacao?: string; em_tratativa?: boolean }) =>
       api.post(`/licitacoes/entrada/grupo/triar?chave=${encodeURIComponent(chave)}`,
-        { situacao: situacao || undefined, observacao }),
+        { situacao: situacao || undefined, observacao, em_tratativa }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
       qc.invalidateQueries({ queryKey: ['licitacao-painel'] })
@@ -720,11 +754,12 @@ export function AbaCaixaEntrada() {
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase()
-    if (!q) return cards
-    return cards.filter(c =>
+    const base = soTratativa ? cards.filter(c => c.em_tratativa) : cards
+    if (!q) return base
+    return base.filter(c =>
       [c.assunto, c.empenho, c.cliente_nome, c.orgao_texto, c.contrato]
         .some(v => (v || '').toLowerCase().includes(q)))
-  }, [cards, busca])
+  }, [cards, busca, soTratativa])
 
   return (
     <div className="space-y-4">
@@ -754,6 +789,13 @@ export function AbaCaixaEntrada() {
             placeholder="nota de empenho, órgão, assunto…"
             className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm" />
         </div>
+        <button onClick={() => setSoTratativa(v => !v)}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+            soTratativa
+              ? 'border-violet-300 bg-violet-100 text-violet-800'
+              : 'border-gray-200 bg-white text-gray-600 hover:border-violet-400'}`}>
+          <Hand className="h-4 w-4" /> em tratativa
+        </button>
         <span className="text-sm text-gray-500">{filtrados.length} casos</span>
       </div>
 
@@ -773,6 +815,7 @@ export function AbaCaixaEntrada() {
               salvando={triar.isPending || promover.isPending}
               onTriar={s => triar.mutate({ chave: c.chave, situacao: s })}
               onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
+              onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
               onPromover={() => promover.mutate(c.chave)} />
           ))}
         </div>

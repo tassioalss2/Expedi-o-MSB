@@ -222,6 +222,10 @@ class EntradaTriar(BaseModel):
     situacao: Optional[str] = None        # NAO | PARCIAL | SIM
     observacao: Optional[str] = None
     cliente_id: Optional[UUID] = None
+    # Eixo separado da situacao: um caso em tratativa continua "em aberto" ate
+    # ser atendido. Marcar PARCIAL para sinalizar que alguem pegou o caso seria
+    # mentir sobre o atendimento, que e o numero que o conselho acompanha.
+    em_tratativa: Optional[bool] = None
 
 
 class EntradaPromover(BaseModel):
@@ -304,7 +308,8 @@ def triar_entrada(entrada_id: UUID, payload: EntradaTriar,
                   usuario: UsuarioOut = Depends(get_current_user)):
     return licitacao_entrada_service.triar(
         str(entrada_id), usuario, payload.situacao, payload.observacao,
-        str(payload.cliente_id) if payload.cliente_id else None)
+        str(payload.cliente_id) if payload.cliente_id else None,
+        payload.em_tratativa)
 
 
 @router.post("/entrada/grupo/triar")
@@ -313,7 +318,8 @@ def triar_grupo(chave: str, payload: EntradaTriar,
     """Decide a nota de empenho inteira — é como o time trabalha."""
     return licitacao_entrada_service.triar_grupo(
         chave, usuario, payload.situacao, payload.observacao,
-        str(payload.cliente_id) if payload.cliente_id else None)
+        str(payload.cliente_id) if payload.cliente_id else None,
+        payload.em_tratativa)
 
 
 @router.post("/entrada/grupo/promover")
