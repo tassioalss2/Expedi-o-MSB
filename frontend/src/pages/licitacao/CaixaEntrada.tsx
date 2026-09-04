@@ -15,7 +15,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, CircleDot, Clock, Inbox, Link2, Loader2, Mail,
-  MinusCircle, Package, Search, ShieldQuestion, X,
+  MinusCircle, Package, Search, ShieldQuestion, X, CalendarClock,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -106,6 +106,7 @@ type Card = {
   orgao_texto: string | null
   cnpj_orgao: string | null
   demanda_id: string | null
+  entrega_prevista: string | null
   demanda: { etapa: string; ovs: any[] | null; numero_nf: string | null
              gerado_ref: string | null; tipo_operacao: string } | null
   situacao: 'NAO' | 'PARCIAL' | 'SIM'
@@ -551,6 +552,20 @@ function CardEntrada({ c, onTriar, onNota, onPromover, salvando }: {
               </span>
             )}
             {c.valor_total > 0 && <span className="font-medium text-gray-900">{fmtBRL(c.valor_total)}</span>}
+            {/* O prazo que o ORGAO exige, lido do anexo. Diferente de "dias
+                parados": um e idade, o outro e compromisso. */}
+            {c.entrega_prevista && (() => {
+              const hoje = new Date().toISOString().slice(0, 10)
+              const vencido = c.entrega_prevista < hoje
+              return (
+                <span className={`flex items-center gap-1 ${
+                  vencido ? 'font-semibold text-red-700' : 'text-gray-600'}`}>
+                  <CalendarClock className="h-3 w-3" />
+                  {vencido ? 'entrega venceu ' : 'entregar até '}
+                  {new Date(c.entrega_prevista + 'T12:00:00').toLocaleDateString('pt-BR')}
+                </span>
+              )
+            })()}
           </div>
         </div>
         {c.demanda_id ? (

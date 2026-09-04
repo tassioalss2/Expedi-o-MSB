@@ -227,6 +227,35 @@ def _dias_parados(recebido_em) -> int:
         return 0
 
 
+def _entrega_prevista(membros: list[dict]) -> Optional[str]:
+    """A data em que o órgão exige a entrega, lida do anexo. ISO, ou None.
+
+    É o único compromisso real do caso, e hoje 63% das demandas nascem sem
+    prazo — o que faz "atrasado" ser medido por idade de e-mail em vez de
+    promessa assumida. A ordem do SEI e a autorização do HCPA trazem essa data;
+    quando mais de um anexo traz, vence a MAIS CEDO: é a que aperta.
+
+    Vem em dd/mm/aaaa do documento. Data que não converte é descartada em
+    silêncio — prazo errado é pior que prazo ausente, porque viraria atraso
+    inventado no painel que o conselho olha.
+    """
+    achadas = []
+    for m in membros:
+        for a in (m.get("anexos") or []):
+            bruta = str(a.get("entrega_prevista") or "").strip()
+            if not re.match(r"^\d{2}/\d{2}/\d{4}$", bruta):
+                continue
+            try:
+                d = datetime.strptime(bruta, "%d/%m/%Y").date()
+            except ValueError:
+                continue
+            # Documento de licitação com data de entrega em 2019 ou em 2040 é
+            # erro de leitura, não prazo.
+            if 2020 <= d.year <= _hoje_brt().year + 2:
+                achadas.append(d)
+    return min(achadas).isoformat() if achadas else None
+
+
 def listar(situacao: Optional[str] = None, dias: int = 60,
            tipo: Optional[str] = None) -> list[dict]:
     """A caixa de entrada, um card por nota de empenho.
@@ -314,6 +343,7 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             "cnpj_orgao": primeiro_com("cnpj_orgao"),
             "demanda_id": primeiro_com("demanda_id"),
             "demanda": andamento.get(primeiro_com("demanda_id")),
+            "entrega_prevista": _entrega_prevista(membros),
             # "Sim" só quando TODOS os e-mails da NE estão resolvidos. Um card
             # verde com um e-mail em aberto dentro é pior que nenhum card.
             "situacao": ("SIM" if situacoes == {"SIM"}
@@ -595,7 +625,10 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
         numero=extra.get("numero") or (base.get("empenhos") or [None])[0],
         cliente_id=cliente_id,
         canal=extra.get("canal"),
-        prazo=extra.get("prazo"),
+        # O prazo do documento entra sozinho quando a tela nao informou: e o
+        # compromisso que o orgao exige, e deixar a demanda nascer sem prazo foi
+        # o que criou 63% de demandas em que "atrasado" nao pode ser medido.
+        prazo=extra.get("prazo") or _entrega_prevista(regs),
         # A prioridade da entrada é 1..5 (planilha); a demanda fala em nomes.
         prioridade=extra.get("prioridade") or (
             "CRITICA" if (base.get("prioridade") or 5) <= 1
