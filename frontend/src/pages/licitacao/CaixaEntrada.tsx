@@ -765,35 +765,35 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromo
                       reescreve o id a cada rodada, então o link fica no máximo
                       meio dia velho; quando ele falhar, o "buscar" ao lado acha
                       pelo assunto e nunca envelhece. */}
-                  {/* Sempre há uma ação visível. Quando o EntryID existe, o link
-                      abre o item exato no Outlook do computador; quando não
-                      existe (ou quando ele falha, porque o e-mail mudou de
-                      pasta), o de busca abre o Outlook web procurando pelo
-                      assunto. Deixar só o de busca em cinza pequeno escondia a
-                      ação — o Tassio olhou a tela e perguntou onde clicar. */}
+                  {/* `ace-email:` e não `outlook:`. O esquema `outlook:` NÃO está
+                      registrado no Windows desta instalação do Office — só o
+                      `mailto:` —, então o link não fazia nada ao ser clicado.
+                      `ace-email:` é um handler próprio (Licitacao/_motor/
+                      abre_email.py) que resolve o EntryID pelo COM e manda o
+                      Outlook mostrar o item; testado ponta a ponta.
+
+                      A saída é copiar o assunto, e não um link de busca do
+                      Outlook web: aquele link ignorava a consulta e abria a
+                      caixa de entrada, o que é pior que não ter saída — parece
+                      que funcionou e não levou a lugar nenhum. */}
                   <span className="ml-auto flex items-center gap-2">
-                    {e.entry_id ? (
-                      <>
-                        <a href={`outlook:${e.entry_id}`}
-                          className="flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100"
-                          title="abrir este e-mail no Outlook do computador">
-                          <ExternalLink className="h-3 w-3" /> abrir no Outlook
-                        </a>
-                        <a href={`https://outlook.office.com/mail/search?q=${encodeURIComponent(e.assunto || '')}`}
-                          target="_blank" rel="noreferrer"
-                          className="text-gray-500 hover:text-blue-600 hover:underline"
-                          title="se o link acima não abrir (o e-mail pode ter mudado de pasta), procure pelo assunto no Outlook web">
-                          não abriu?
-                        </a>
-                      </>
-                    ) : (
-                      <a href={`https://outlook.office.com/mail/search?q=${encodeURIComponent(e.assunto || '')}`}
-                        target="_blank" rel="noreferrer"
+                    {e.entry_id && (
+                      <a href={`ace-email:${e.entry_id}`}
                         className="flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100"
-                        title="procurar este assunto no Outlook web">
-                        <ExternalLink className="h-3 w-3" /> procurar no Outlook
+                        title="abrir este e-mail no Outlook do computador">
+                        <ExternalLink className="h-3 w-3" /> abrir no Outlook
                       </a>
                     )}
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(e.assunto || '')
+                          .then(() => toast.success('Assunto copiado — cole na busca do Outlook'))
+                          .catch(() => toast.error('Não consegui copiar'))
+                      }}
+                      className="text-gray-500 hover:text-blue-600 hover:underline"
+                      title="copiar o assunto para colar na busca do Outlook">
+                      copiar assunto
+                    </button>
                   </span>
                 </div>
                 {e.assunto !== c.assunto && (
@@ -807,7 +807,10 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromo
           </div>
           <p className="mt-1.5 text-[11px] text-gray-400">
             O corpo é guardado até 1.400 caracteres — o suficiente para o pedido, sem a
-            thread inteira citada abaixo.
+            thread inteira citada abaixo. Se “abrir no Outlook” não fizer nada, o atalho
+            não está registrado nesta máquina: rode uma vez{' '}
+            <code className="rounded bg-gray-100 px-1">instala_protocolo.py</code> na pasta
+            do motor.
           </p>
         </Secao>
 
