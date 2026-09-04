@@ -255,8 +255,21 @@ class OrgaoMapear(BaseModel):
 
 @router.get("/entrada")
 def listar_entrada(situacao: Optional[str] = None, dias: int = 60,
+                   tipo: Optional[str] = None,
                    _: UsuarioOut = Depends(get_current_user)):
-    return licitacao_entrada_service.listar(situacao, dias)
+    return licitacao_entrada_service.listar(situacao, dias, tipo)
+
+
+@router.get("/entrada/detalhe")
+def detalhe_do_numero(metrica: str, dias: int = 30,
+                      _: UsuarioOut = Depends(get_current_user)):
+    """Os casos por tras de um numero do painel, e de onde ele vem.
+
+    Existe porque numero que nao se explica vira discussao sobre o numero, e
+    nao sobre o processo — foi o que aconteceu com o faturamento do app contra
+    o D365. Devolve o filtro em palavras, a origem do dado e a lista de casos.
+    """
+    return licitacao_entrada_service.detalhe(metrica, dias)
 
 
 @router.get("/entrada/painel")

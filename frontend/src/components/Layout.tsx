@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, Home, Users, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX,
+  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -51,6 +51,9 @@ const navComercial: NavItem[] = [
 ]
 
 const navLicitacoes: NavItem[] = [
+  // Solicitacoes vem primeiro: e por onde o trabalho entra. Licitacoes e a
+  // execucao do que ja entrou.
+  { to: '/solicitacoes', label: 'Solicitações', icone: Inbox },
   { to: '/licitacoes', label: 'Licitações', icone: Gavel },
 ]
 
@@ -261,7 +264,7 @@ export function Layout() {
 
           {soAcompanha ? (
             <Grupo titulo="Acompanhamento" itens={[
-              { to: '/licitacoes?aba=acompanhamento', label: 'Licitações', icone: Gavel },
+              { to: '/solicitacoes', label: 'Solicitações', icone: Inbox },
             ]} />
           ) : (
             <>

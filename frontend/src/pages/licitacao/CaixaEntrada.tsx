@@ -63,6 +63,14 @@ const TIPO_LABEL: Record<string, string> = {
   OUTRO: 'A classificar',
 }
 
+const TIPO_PONTO: Record<string, string> = {
+  VENDA_DIRETA: 'bg-blue-500',
+  CONSIGNACAO: 'bg-amber-500',
+  COMUNICADO_USO: 'bg-emerald-500',
+  AMOSTRA: 'bg-violet-500',
+  OUTRO: 'bg-gray-400',
+}
+
 const SITUACAO = {
   NAO: { label: 'Em aberto', cor: 'bg-white border-gray-200', ponto: 'text-gray-400' },
   PARCIAL: { label: 'Parcial', cor: 'bg-amber-50 border-amber-200', ponto: 'text-amber-500' },
@@ -95,6 +103,106 @@ type Card = {
   emails: any[]
 }
 
+
+// ── De onde vem o número ─────────────────────────────────────────────────────
+
+/**
+ * O painel inteiro é clicável, e cada número abre isto: a conta que o produziu,
+ * a origem do dado e a lista de casos que entraram nele.
+ *
+ * Existe por uma lição cara. Quando o faturamento do app não batia com o D365,
+ * semanas se foram discutindo QUAL número estava certo, porque nenhum dos dois
+ * dizia de onde vinha. Um painel que o conselho acompanha não pode ter esse
+ * defeito: se alguém perguntar "de onde saiu esse valor?", a resposta tem que
+ * ser um clique, não uma investigação.
+ */
+function DetalheNumero({ metrica, dias, onFechar }: {
+  metrica: string; dias: number; onFechar: () => void
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['licitacao-detalhe', metrica, dias],
+    queryFn: () => api.get(`/licitacoes/entrada/detalhe?metrica=${encodeURIComponent(metrica)}&dias=${dias}`)
+      .then(r => r.data),
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onFechar}>
+      <div className="w-full max-w-3xl rounded-xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-4">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">
+              {isLoading ? 'Carregando…' : data?.titulo}
+            </h3>
+            {data && (
+              <p className="mt-0.5 text-sm text-gray-500">
+                {data.quantidade} caso{data.quantidade === 1 ? '' : 's'}
+                {data.valor > 0 && <> · {fmtBRL(data.valor)}</>}
+                {' · '}últimos {data.periodo_dias} dias
+              </p>
+            )}
+          </div>
+          <button onClick={onFechar} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="py-16 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-gray-400" /></div>
+        ) : !data ? null : (
+          <>
+            <div className="space-y-2 border-b border-gray-100 bg-gray-50 p-4 text-xs leading-relaxed text-gray-700">
+              <p><b className="text-gray-900">Como este número é calculado.</b> {data.conta}</p>
+              <p><b className="text-gray-900">De onde vem o dado.</b> {data.origem}</p>
+            </div>
+            <div className="max-h-[55vh] divide-y divide-gray-100 overflow-y-auto">
+              {data.casos.length === 0 && (
+                <p className="p-6 text-center text-sm text-gray-500">Nenhum caso compõe este número.</p>
+              )}
+              {data.casos.map((c: Card) => (
+                <div key={c.chave} className="p-3 hover:bg-gray-50">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {c.empenho && (
+                      <span className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[11px] text-white">
+                        {c.empenho}
+                      </span>
+                    )}
+                    <span className="text-[11px] text-gray-500">{TIPO_LABEL[c.tipo || 'OUTRO']}</span>
+                    <span className={`text-[11px] ${c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-500'}`}>
+                      {c.dias_parados} d
+                    </span>
+                    {c.valor_total > 0 && (
+                      <span className="text-[11px] font-medium text-gray-900">{fmtBRL(c.valor_total)}</span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 truncate text-sm text-gray-900">{c.assunto}</div>
+                  <div className="text-xs text-gray-500">
+                    {c.cliente_nome || c.orgao_texto || 'sem cliente definido'}
+                    {c.itens.length > 0 && <> · {c.itens.length} item(ns) do anexo</>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Envolve qualquer número do painel e o torna clicável. */
+function Abrivel({ metrica, onAbrir, children }: {
+  metrica: string; onAbrir: (m: string) => void; children: any
+}) {
+  return (
+    <button onClick={() => onAbrir(metrica)}
+      className="w-full rounded-xl text-left transition hover:ring-2 hover:ring-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      title="ver de onde vem este número">
+      {children}
+    </button>
+  )
+}
+
 // ── Acompanhamento (a tela do conselho) ──────────────────────────────────────
 
 /** Número grande com rótulo. Um número não precisa de gráfico. */
@@ -114,6 +222,8 @@ function Tile({ titulo, valor, sub, alerta }: {
 
 export function AbaAcompanhamento() {
   const [dias, setDias] = useState(30)
+  // Qual número o usuário abriu. null = nenhum.
+  const [aberto, setAberto] = useState<string | null>(null)
   const { data, isLoading } = useQuery({
     queryKey: ['licitacao-painel', dias],
     queryFn: () => api.get(`/licitacoes/entrada/painel?dias=${dias}`).then(r => r.data),
@@ -153,14 +263,56 @@ export function AbaAcompanhamento() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile titulo="Em aberto" valor={String(data.abertos)}
-          sub={`de ${data.casos} casos no período`} />
-        <Tile titulo="Críticos" valor={String(data.criticos)}
-          sub="prioridade máxima, em aberto" alerta={data.criticos > 0} />
-        <Tile titulo="Espera mais longa" valor={`${data.mais_antigo_dias} d`}
-          sub="o caso aberto mais antigo" alerta={data.mais_antigo_dias > 15} />
-        <Tile titulo="Valor em aberto" valor={fmtBRL(data.valor_parado)}
-          sub={`piso — lido em ${cob.casos_com_valor} de ${cob.casos_abertos} casos`} />
+        <Abrivel metrica="abertos" onAbrir={setAberto}>
+          <Tile titulo="Em aberto" valor={String(data.abertos)}
+            sub={`de ${data.casos} casos no período`} />
+        </Abrivel>
+        <Abrivel metrica="criticos" onAbrir={setAberto}>
+          <Tile titulo="Críticos" valor={String(data.criticos)}
+            sub="prioridade máxima, em aberto" alerta={data.criticos > 0} />
+        </Abrivel>
+        <Abrivel metrica="mais_antigo" onAbrir={setAberto}>
+          <Tile titulo="Espera mais longa" valor={`${data.mais_antigo_dias} d`}
+            sub="o caso aberto mais antigo" alerta={data.mais_antigo_dias > 15} />
+        </Abrivel>
+        <Abrivel metrica="valor_parado" onAbrir={setAberto}>
+          <Tile titulo="Valor em aberto" valor={fmtBRL(data.valor_parado)}
+            sub={`piso — lido em ${cob.casos_com_valor} de ${cob.casos_abertos} casos`} />
+        </Abrivel>
+      </div>
+
+      {/* Demanda por tipo de solicitação. Venda direta, consignação e comunicado
+          de uso são operações diferentes, com esforço diferente: 50 comunicados
+          e 5 vendas diretas não é o mesmo mês que o inverso, ainda que o total
+          de casos seja parecido. */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900">Em aberto por tipo de solicitação</h3>
+        <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {(data.por_tipo || []).map((t: any) => (
+            <Abrivel key={t.tipo} metrica={`tipo:${t.tipo}`} onAbrir={setAberto}>
+              <div className="h-full rounded-xl border border-gray-200 bg-white p-3">
+                <div className="flex items-center gap-1.5">
+                  <span className={`h-2 w-2 rounded-full ${TIPO_PONTO[t.tipo] || 'bg-gray-300'}`} />
+                  <span className="truncate text-xs font-medium text-gray-700">
+                    {TIPO_LABEL[t.tipo] || t.tipo}
+                  </span>
+                </div>
+                <div className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">{t.casos}</div>
+                <div className="mt-0.5 text-[11px] text-gray-500">
+                  {t.valor > 0 ? fmtBRL(t.valor) : 'sem valor lido'}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-2 text-[11px]">
+                  {t.criticos > 0 && <span className="font-medium text-red-700">{t.criticos} crítico(s)</span>}
+                  {t.mais_antigo > 0 && (
+                    <span className={t.mais_antigo > 15 ? 'font-medium text-red-700' : 'text-gray-500'}>
+                      espera {t.mais_antigo} d
+                    </span>
+                  )}
+                </div>
+              </div>
+            </Abrivel>
+          ))}
+        </div>
       </div>
 
       {/* Composição por tempo de espera. É a resposta a "está dando conta?":
@@ -182,14 +334,15 @@ export function AbaAcompanhamento() {
                 if (!n) return null
                 const pct = (n / totalFaixas) * 100
                 return (
-                  <div key={f.chave} style={{ width: `${pct}%`, background: f.cor }}
-                    title={`${f.label}: ${n} caso(s)`}
-                    className="flex items-center justify-center first:rounded-l last:rounded-r">
+                  <button key={f.chave} style={{ width: `${pct}%`, background: f.cor }}
+                    onClick={() => setAberto(`faixa:${f.chave}`)}
+                    title={`${f.label}: ${n} caso(s) — clique para ver de onde vem`}
+                    className="flex items-center justify-center transition first:rounded-l last:rounded-r hover:brightness-110">
                     {pct > 8 && (
                       <span className={`text-xs font-semibold tabular-nums ${
                         f.chave === 'de_3_a_7' ? 'text-amber-950' : 'text-white'}`}>{n}</span>
                     )}
-                  </div>
+                  </button>
                 )
               })}
             </div>
@@ -265,7 +418,8 @@ export function AbaAcompanhamento() {
           </thead>
           <tbody className="divide-y divide-gray-100">
             {(data.por_cliente || []).map((c: any) => (
-              <tr key={c.cliente}>
+              <tr key={c.cliente} onClick={() => setAberto(`cliente:${c.cliente}`)}
+                className="cursor-pointer hover:bg-gray-50" title="ver de onde vem este número">
                 <td className="px-4 py-2.5 text-gray-900">{c.cliente}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{c.casos}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">
@@ -296,6 +450,8 @@ export function AbaAcompanhamento() {
           eles não podem virar demanda até alguém preencher o de-para na aba Órgãos.</>
         )}
       </div>
+
+      {aberto && <DetalheNumero metrica={aberto} dias={dias} onFechar={() => setAberto(null)} />}
     </div>
   )
 }
@@ -468,11 +624,18 @@ function CardEntrada({ c, onTriar, onNota, onPromover, salvando }: {
 export function AbaCaixaEntrada() {
   const qc = useQueryClient()
   const [filtro, setFiltro] = useState<'NAO' | 'PARCIAL' | 'SIM' | ''>('NAO')
+  const [tipo, setTipo] = useState('')
   const [busca, setBusca] = useState('')
 
   const { data: cards = [], isLoading } = useQuery<Card[]>({
-    queryKey: ['licitacao-entrada', filtro],
-    queryFn: () => api.get(`/licitacoes/entrada${filtro ? `?situacao=${filtro}` : ''}`).then(r => r.data),
+    queryKey: ['licitacao-entrada', filtro, tipo],
+    queryFn: () => {
+      const p = new URLSearchParams()
+      if (filtro) p.set('situacao', filtro)
+      if (tipo) p.set('tipo', tipo)
+      const q = p.toString()
+      return api.get(`/licitacoes/entrada${q ? `?${q}` : ''}`).then(r => r.data)
+    },
   })
 
   const triar = useMutation({
@@ -518,7 +681,16 @@ export function AbaCaixaEntrada() {
               </button>
             ))}
         </div>
-        <div className="relative min-w-[220px] flex-1">
+        {/* Tipo de solicitação. São operações diferentes: quem está tratando
+            comunicado de uso não quer venda direta no meio. */}
+        <select value={tipo} onChange={e => setTipo(e.target.value)}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+          <option value="">Todos os tipos</option>
+          {['VENDA_DIRETA', 'CONSIGNACAO', 'COMUNICADO_USO', 'AMOSTRA', 'OUTRO'].map(t => (
+            <option key={t} value={t}>{TIPO_LABEL[t]}</option>
+          ))}
+        </select>
+        <div className="relative min-w-[200px] flex-1">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
           <input value={busca} onChange={e => setBusca(e.target.value)}
             placeholder="nota de empenho, órgão, assunto…"

@@ -5,7 +5,6 @@ import {
   Plus, X, Gavel, FileText, AlertTriangle, Trash2, ShoppingCart, Boxes,
   LayoutGrid, Layers, ChevronDown, ChevronRight, ExternalLink, Flag, Clock, Search,
   ChevronRight as Arrow, Truck, Send, Package, PackageCheck, BarChart3, Download, Pencil, FlaskConical,
-  Activity, Inbox, Building2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -16,8 +15,6 @@ import { ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueV
 import { CANAL_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { hojeLocal } from '../lib/dataLocal'
 import { msgErro } from '../lib/crm'
-import { AbaAcompanhamento, AbaCaixaEntrada, AbaOrgaos } from './licitacao/CaixaEntrada'
-import { useAuthStore } from '../store/authStore'
 
 const CANAIS = ['LICITACAO_URO', 'LICITACAO_VASCULAR', 'URO', 'VASCULAR', 'REALCLOSURE']
 
@@ -206,10 +203,12 @@ function prazoCor(prazo?: string | null): string {
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
-type AbaLicitacao = 'acompanhamento' | 'entrada' | 'painel' | 'contratos' | 'orgaos' | 'relatorio'
-// 'acompanhamento' e a primeira porque e a pergunta que o conselho faz; a
-// operacao entra pela 'entrada', que e a triagem que saiu do Excel.
-const ABAS_VALIDAS: AbaLicitacao[] = ['acompanhamento', 'entrada', 'painel', 'contratos', 'orgaos', 'relatorio']
+type AbaLicitacao = 'painel' | 'contratos' | 'relatorio'
+// A caixa de entrada, o acompanhamento e o de-para de orgaos moraram aqui por
+// um dia e foram para /solicitacoes: esta tela e do operador que EXECUTA a
+// demanda, e aquela e sobre o que chega e ainda nao virou trabalho — com um
+// publico que nao usa esta (o conselho).
+const ABAS_VALIDAS: AbaLicitacao[] = ['painel', 'contratos', 'relatorio']
 
 export function Licitacoes() {
   // A aba vem da URL para poder ser linkada de fora (a tela de início aponta
@@ -217,12 +216,8 @@ export function Licitacoes() {
   // compartilhar o link cai na mesma aba.
   const [params, setParams] = useSearchParams()
   const abaUrl = params.get('aba')
-  // O conselho so tem a aba de acompanhamento. Ele nao consegue escrever (o
-  // middleware recusa), mas ver as telas de operacao sem poder agir so gera
-  // duvida sobre o que esta quebrado.
-  const soAcompanha = useAuthStore((e: any) => e.usuario?.perfil) === 'CONSELHO'
-  const abaPedida = ABAS_VALIDAS.includes(abaUrl as AbaLicitacao) ? (abaUrl as AbaLicitacao) : 'painel'
-  const aba: AbaLicitacao = soAcompanha ? 'acompanhamento' : abaPedida
+  const aba: AbaLicitacao =
+    ABAS_VALIDAS.includes(abaUrl as AbaLicitacao) ? (abaUrl as AbaLicitacao) : 'painel'
   const setAba = (k: AbaLicitacao) => {
     const p = new URLSearchParams(params)
     if (k === 'painel') p.delete('aba')
@@ -238,11 +233,8 @@ export function Licitacoes() {
       </div>
 
       <div className="flex gap-1 border-b">
-        {([['acompanhamento', 'Acompanhamento', Activity], ['entrada', 'Caixa de entrada', Inbox],
-           ['painel', 'Painel de demandas', LayoutGrid], ['contratos', 'Contratos', Layers],
-           ['orgaos', 'Órgãos', Building2], ['relatorio', 'Relatório', BarChart3]] as const)
-          .filter(([k]) => !soAcompanha || k === 'acompanhamento')
-          .map(([k, label, Icone]) => (
+        {([['painel', 'Painel de demandas', LayoutGrid], ['contratos', 'Contratos', Layers],
+           ['relatorio', 'Relatório', BarChart3]] as const).map(([k, label, Icone]) => (
           <button key={k} onClick={() => setAba(k)}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
               aba === k ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -252,12 +244,7 @@ export function Licitacoes() {
         ))}
       </div>
 
-      {aba === 'acompanhamento' ? <AbaAcompanhamento />
-        : aba === 'entrada' ? <AbaCaixaEntrada />
-        : aba === 'orgaos' ? <AbaOrgaos />
-        : aba === 'painel' ? <PainelDemandas />
-        : aba === 'contratos' ? <AbaContratos />
-        : <AbaRelatorio />}
+      {aba === 'painel' ? <PainelDemandas /> : aba === 'contratos' ? <AbaContratos /> : <AbaRelatorio />}
     </div>
   )
 }

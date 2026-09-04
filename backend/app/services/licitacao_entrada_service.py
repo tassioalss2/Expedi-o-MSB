@@ -17,18 +17,27 @@ eles. Casar por nome erra feio — ligou "HOSPITAL UNIVERSITÁRIO LAURO WANDERLE
 a uma pessoa física chamada Wanderley, então isso nunca é aplicado sozinho.
 
 Medido nas 250 solicitações reais de julho a setembro/2026, agrupadas em 218
-casos, na ordem em que `resolve()` tenta:
+casos:
 
-    CNPJ lido no anexo, via de-para de órgãos   81 casos (37%)
-    a NE já tem demanda no app                 130 casos (60%)
-    nenhuma chave                                7 casos ( 3%)  — 5 sem anexo
+    cliente veio da NE que já tinha demanda      31 casos (14%)
+    resolvem com o de-para de órgãos preenchido  66 casos (30%)  — 26 órgãos
+    nenhuma chave                               121 casos (56%)
 
-Ou seja, 97% resolvem sem ninguém digitar nada, e a chave que mais rende não é
-o CNPJ: é a nota de empenho que JÁ virou demanda. Isso também revelou o custo
-real da planilha — 130 casos estavam sendo trabalhados nos dois lugares, o
-Excel e o painel, sem nenhuma ligação entre eles. Por isso `sincronizar` liga a
-entrada à demanda existente em vez de convidar a criar outra: criar seria o
-pedido duplicado que este processo existe para evitar.
+Um aviso para quem for refazer essa conta: a primeira medição deu 97% e estava
+errada. O mapa de NE→demanda foi montado sem descartar demandas com `numero`
+vazio, e a chave `''` resultante casava com todo caso SEM nota de empenho —
+inflando 30 para 130. `_demandas_por_empenho` descarta o vazio de propósito.
+
+Os 56% sem chave assustam menos do que parece: dos que estão em aberto, só UM
+tem item de anexo. O resto é comunicado de uso e e-mail administrativo
+("SOLIC. DE NOTA: <paciente>", carta de correção) — mail que nunca teve anexo
+de pedido e onde o cliente sempre seria digitado. Onde existe pedido de
+verdade, a cadeia resolve.
+
+Medir isso revelou o custo real da planilha: as NEs apareciam nos dois lugares,
+o Excel e o painel, sem nenhuma ligação. Por isso `sincronizar` liga a entrada
+à demanda existente em vez de convidar a criar outra — criar seria o pedido
+duplicado que este processo existe para evitar.
 """
 import re
 import unicodedata
@@ -218,7 +227,8 @@ def _dias_parados(recebido_em) -> int:
         return 0
 
 
-def listar(situacao: Optional[str] = None, dias: int = 60) -> list[dict]:
+def listar(situacao: Optional[str] = None, dias: int = 60,
+           tipo: Optional[str] = None) -> list[dict]:
     """A caixa de entrada, um card por nota de empenho.
 
     O card herda dos e-mails o pior caso, que é o que precisa de atenção: a
@@ -232,6 +242,14 @@ def listar(situacao: Optional[str] = None, dias: int = 60) -> list[dict]:
     if situacao:
         q = q.eq("situacao", situacao)
     regs = q.limit(2000).execute().data
+    if tipo:
+        # Filtra DEPOIS de trazer, e nao no banco: o tipo do caso e o do
+        # primeiro e-mail que tem tipo, e filtrar no banco cortaria os irmaos
+        # sem tipo e quebraria o agrupamento da NE.
+        alvos = {r["chave"] for r in regs if (r.get("tipo") or "OUTRO") == tipo}
+        nes = {ne for r in regs if r["chave"] in alvos for ne in (r.get("empenhos") or [])}
+        regs = [r for r in regs
+                if r["chave"] in alvos or (set(r.get("empenhos") or []) & nes)]
 
     # Um e-mail que cita duas NEs entra nos dois grupos: não dá para escolher
     # qual é a certa por conta própria (há um caso real de erro de digitação do
@@ -653,6 +671,23 @@ def painel(dias: int = 30) -> dict:
     for d in etapas:
         por_etapa[d["etapa"]] = por_etapa.get(d["etapa"], 0) + 1
 
+    # Demanda por tipo de solicitacao: e a leitura que diz QUE trabalho e este.
+    # Venda direta, consignacao e comunicado de uso sao operacoes diferentes,
+    # com esforco diferente — 50 comunicados de uso e 5 vendas diretas nao e o
+    # mesmo mes que o contrario, ainda que o total de casos seja parecido.
+    por_tipo = []
+    for t in TIPOS_SOLICITACAO:
+        do_tipo = [c for c in abertos if (c["tipo"] or "OUTRO") == t]
+        if not do_tipo and t == "OUTRO":
+            continue
+        por_tipo.append({
+            "tipo": t,
+            "casos": len(do_tipo),
+            "valor": round(sum(c["valor_total"] for c in do_tipo), 2),
+            "criticos": sum(1 for c in do_tipo if c["prioridade"] <= 1),
+            "mais_antigo": max((c["dias_parados"] for c in do_tipo), default=0),
+        })
+
     resolvidos = [c for c in cards if c["situacao"] == "SIM"]
     return {
         "periodo_dias": dias,
@@ -670,7 +705,141 @@ def painel(dias: int = 30) -> dict:
             "casos_abertos": len(abertos),
             "casos_sem_valor_lido": len(abertos) - len(com_valor),
         },
+        "por_tipo": por_tipo,
         "por_cliente": ranking,
         "entrada_por_dia": [{"dia": d, "emails": n} for d, n in sorted(por_dia.items())],
         "demandas_por_etapa": por_etapa,
+    }
+
+
+# ── de onde vem cada número do painel ───────────────────────────────────────
+# Um painel que o conselho acompanha precisa poder ser aberto. Numero que nao
+# se explica vira discussao sobre o numero, e nao sobre o processo — e foi
+# exatamente isso que aconteceu com o faturamento do app contra o D365.
+#
+# Cada metrica declara TRES coisas: o filtro que a produz, a frase que diz de
+# onde o dado sai, e a conta. A tela mostra as tres junto com a lista de casos,
+# entao a resposta a "de onde veio isso?" e sempre um clique.
+TIPOS_SOLICITACAO = ("VENDA_DIRETA", "CONSIGNACAO", "COMUNICADO_USO", "AMOSTRA", "OUTRO")
+
+_ORIGEM_COMUM = (
+    "Cada caso é uma nota de empenho (ou um e-mail sem NE) da caixa de entrada "
+    "`licitacao_entrada`, alimentada 2x/dia pelo motor que lê a caixa "
+    "licitacao@msbbrasil.com pelo Outlook. Um caso agrupa todos os e-mails que "
+    "citam a mesma NE."
+)
+
+
+def _explica(metrica: str, dias: int) -> dict:
+    """Filtro, origem e conta de uma métrica do painel."""
+    faixas = {
+        "faixa:ate_2": ("Esperando até 2 dias", lambda c: c["dias_parados"] <= 2),
+        "faixa:de_3_a_7": ("Esperando de 3 a 7 dias", lambda c: 3 <= c["dias_parados"] <= 7),
+        "faixa:de_8_a_15": ("Esperando de 8 a 15 dias", lambda c: 8 <= c["dias_parados"] <= 15),
+        "faixa:mais_de_15": ("Esperando mais de 15 dias", lambda c: c["dias_parados"] > 15),
+    }
+    if metrica in faixas:
+        titulo, teste = faixas[metrica]
+        return {
+            "titulo": titulo,
+            "filtro": lambda c: c["situacao"] != "SIM" and teste(c),
+            "origem": _ORIGEM_COMUM + " A espera é contada do PRIMEIRO e-mail do "
+                      "caso até hoje, no fuso de Brasília — um pedido cobrado três "
+                      "vezes está parado desde a primeira cobrança, não desde a última.",
+            "conta": "Contagem de casos em aberto na faixa.",
+        }
+
+    if metrica.startswith("tipo:"):
+        tipo = metrica[5:]
+        return {
+            "titulo": "Solicitações do tipo %s" % tipo.replace("_", " ").lower(),
+            "filtro": lambda c: c["situacao"] != "SIM" and (c["tipo"] or "OUTRO") == tipo,
+            "origem": _ORIGEM_COMUM + " O tipo é classificado pelo motor a partir do "
+                      "assunto e do corpo do e-mail. Quando o e-mail não deixa claro, "
+                      "fica como 'a classificar' — o motor não escolhe um tipo no "
+                      "chute, porque isso faria a demanda nascer errada.",
+            "conta": "Contagem de casos em aberto do tipo.",
+        }
+
+    if metrica.startswith("cliente:"):
+        nome = metrica[8:]
+        return {
+            "titulo": "Casos de %s" % nome,
+            "filtro": lambda c: c["situacao"] != "SIM" and (
+                c["cliente_nome"] or c["orgao_texto"] or "(órgão não identificado)") == nome,
+            "origem": _ORIGEM_COMUM + " O cliente vem, nesta ordem: do de-para de "
+                      "órgãos (CNPJ lido no anexo), da demanda que já existia para "
+                      "aquela NE, ou de alguém que escolheu à mão na triagem. Sem "
+                      "nenhum dos três, aparece o nome do órgão como está no documento.",
+            "conta": "Contagem e soma dos casos em aberto do cliente.",
+        }
+
+    registro = {
+        "abertos": {
+            "titulo": "Casos em aberto",
+            "filtro": lambda c: c["situacao"] != "SIM",
+            "origem": _ORIGEM_COMUM,
+            "conta": "Casos cuja situação não é 'Resolvido'. Um caso só conta como "
+                     "resolvido quando TODOS os e-mails dele estão resolvidos.",
+        },
+        "resolvidos": {
+            "titulo": "Casos resolvidos",
+            "filtro": lambda c: c["situacao"] == "SIM",
+            "origem": _ORIGEM_COMUM + " A situação é marcada por gente, na triagem. "
+                      "O motor nunca a altera.",
+            "conta": "Casos em que todos os e-mails estão marcados como resolvidos.",
+        },
+        "criticos": {
+            "titulo": "Casos críticos em aberto",
+            "filtro": lambda c: c["situacao"] != "SIM" and c["prioridade"] <= 1,
+            "origem": _ORIGEM_COMUM + " A prioridade é calculada pelo motor a partir "
+                      "do assunto, do texto, do tipo e de quantos dias o caso está "
+                      "parado. O caso herda a prioridade mais crítica entre seus e-mails.",
+            "conta": "Casos em aberto com prioridade 1 (crítica).",
+        },
+        "sem_cliente": {
+            "titulo": "Casos sem cliente definido",
+            "filtro": lambda c: c["situacao"] != "SIM" and not c["cliente_id"],
+            "origem": _ORIGEM_COMUM + " Sem cliente, o caso não pode virar demanda: "
+                      "a demanda exige cliente, e adivinhar o errado é pior que travar.",
+            "conta": "Casos em aberto em que nem o de-para nem a NE resolveram o cliente.",
+        },
+        "valor_parado": {
+            "titulo": "Valor em aberto",
+            "filtro": lambda c: c["situacao"] != "SIM" and c["valor_total"] > 0,
+            "origem": "A soma sai dos ITENS extraídos do anexo do PEDIDO — nunca da "
+                      "nota fiscal. O extrator só aceita um item quando a conta fecha "
+                      "(quantidade × unitário = total) ou quando a coluna tem nome no "
+                      "cabeçalho do documento; fora disso não emite nada.",
+            "conta": "Soma de quantidade × valor unitário dos itens dos casos em "
+                     "aberto. É um PISO, não o total: casos cujo anexo não rendeu "
+                     "valor entram com zero.",
+        },
+        "mais_antigo": {
+            "titulo": "O caso que espera há mais tempo",
+            "filtro": lambda c: c["situacao"] != "SIM",
+            "origem": _ORIGEM_COMUM,
+            "conta": "Ordenado pela espera, do mais antigo para o mais recente.",
+        },
+    }
+    if metrica not in registro:
+        raise HTTPException(404, "não sei explicar a métrica '%s'" % metrica)
+    return registro[metrica]
+
+
+def detalhe(metrica: str, dias: int = 30) -> dict:
+    """Os casos por trás de um número do painel, e de onde ele vem."""
+    e = _explica(metrica, dias)
+    casos = [c for c in listar(dias=dias) if e["filtro"](c)]
+    if metrica == "mais_antigo":
+        casos.sort(key=lambda c: -c["dias_parados"])
+    return {
+        "metrica": metrica,
+        "titulo": e["titulo"],
+        "origem": e["origem"],
+        "conta": e["conta"],
+        "periodo_dias": dias,
+        "quantidade": len(casos),
+        "valor": round(sum(c["valor_total"] for c in casos), 2),
+        "casos": casos,
     }
