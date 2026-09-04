@@ -118,7 +118,7 @@ type Card = {
   situacao: 'NAO' | 'PARCIAL' | 'SIM'
   itens: any[]
   valor_total: number
-  observacoes: string[]
+  notas: { texto: string; autor: string | null; quando: string | null }[]
   sugestoes: string[]
   anexos_com_problema: any[]
   anexos: any[]
@@ -725,15 +725,27 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromo
           </Secao>
         )}
 
-        {(c.observacoes.length > 0 || c.sugestoes.length > 0) && (
-          <Secao titulo="Anotações">
+        {(c.notas.length > 0 || c.sugestoes.length > 0) && (
+          <Secao titulo={`Anotações${c.notas.length > 1 ? ` (${c.notas.length})` : ''}`}>
             {c.sugestoes.map((s, n) => (
               <p key={`s${n}`} className="mb-1 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs text-sky-900">
                 {s}
               </p>
             ))}
-            {c.observacoes.map((o, n) => (
-              <p key={`o${n}`} className="mb-1 rounded-lg bg-gray-50 px-2.5 py-1.5 text-sm italic text-gray-700">“{o}”</p>
+            {/* Histórico, da mais nova para a mais antiga. Nota nova não apaga a
+                anterior — antes apagava, e num caso que passa por mais de uma
+                pessoa era o histórico que explicava por que ele estava parado. */}
+            {c.notas.map((n, i) => (
+              <div key={i} className="mb-1 rounded-lg bg-gray-50 px-2.5 py-1.5">
+                <p className="text-sm italic text-gray-700">“{n.texto}”</p>
+                {(n.autor || n.quando) && (
+                  <p className="mt-0.5 text-[11px] text-gray-400">
+                    {n.autor || 'autor não registrado'}
+                    {n.quando && ` · ${new Date(n.quando).toLocaleString('pt-BR',
+                      { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`}
+                  </p>
+                )}
+              </div>
             ))}
           </Secao>
         )}
@@ -948,9 +960,16 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
         </div>
       )}
 
-      {c.observacoes.map((o, n) => (
-        <p key={n} className="mt-2 rounded bg-white/70 px-2 py-1 text-xs italic text-gray-600">“{o}”</p>
-      ))}
+      {/* No card, so a nota mais recente: o resto fica no detalhe. Empilhar
+          cinco anotacoes aqui afogaria o que decide a proxima acao. */}
+      {c.notas.length > 0 && (
+        <p className="mt-2 rounded bg-white/70 px-2 py-1 text-xs italic text-gray-600">
+          “{c.notas[0].texto}”
+          {c.notas.length > 1 && (
+            <span className="ml-1 not-italic text-gray-400">+{c.notas.length - 1} anterior(es)</span>
+          )}
+        </p>
+      )}
 
       {/* Os três estados. PARCIAL está aqui porque o time precisou dele: na
           triagem de 03/09 escreveram "Parcial" à mão numa planilha que só

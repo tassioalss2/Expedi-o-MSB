@@ -460,6 +460,20 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
                     .in_("contrato", lista[i:i + 100]).execute().data:
                 contratos[ct["contrato"]] = ct
 
+    # As anotacoes, uma consulta para toda a janela. O nome do autor entra junto:
+    # nota sem autor num caso que passou por tres pessoas nao diz a quem
+    # perguntar.
+    notas: dict = {}
+    ids_entrada = [r["id"] for r in regs]
+    for i in range(0, len(ids_entrada), 100):
+        for n in db.table("licitacao_entrada_notas")                .select("entrada_id, texto, autor_id, criado_em")                .in_("entrada_id", ids_entrada[i:i + 100]).limit(5000).execute().data:
+            notas.setdefault(n["entrada_id"], []).append(n)
+    ids_autor = {n["autor_id"] for v in notas.values() for n in v if n.get("autor_id")}
+    autores: dict = {}
+    if ids_autor:
+        for u in db.table("usuarios").select("id, nome")                .in_("id", sorted(ids_autor)).execute().data:
+            autores[u["id"]] = u["nome"]
+
     grupos = agrupar(regs)
 
     cards = []
@@ -534,7 +548,13 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
                          else "PARCIAL" if situacoes & {"SIM", "PARCIAL"} else "NAO"),
             "itens": itens,
             "valor_total": round(sum(float(i.get("valor_total") or 0) for i in itens), 2),
-            "observacoes": [m["observacao"] for m in membros if (m.get("observacao") or "").strip()],
+            # Historico de anotacoes do caso — de todos os e-mails do grupo,
+            # do mais recente para o mais antigo.
+            "notas": sorted(
+                [{"texto": n["texto"], "autor": autores.get(n.get("autor_id")),
+                  "quando": n.get("criado_em")}
+                 for m in membros for n in notas.get(m["id"], [])],
+                key=lambda n: n["quando"] or "", reverse=True),
             "sugestoes": [m["sugestao"] for m in membros
                           if (m.get("sugestao") or "").strip() and not m.get("sugestao_lida")],
             "anexos_com_problema": [a for m in membros for a in (m.get("anexos") or [])
@@ -603,8 +623,16 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
         # A sugestão já cumpriu o papel de avisar; continuar aparecendo depois
         # de tratada vira ruído.
         campos["sugestao_lida"] = True
-    if observacao is not None:
-        campos["observacao"] = observacao.strip() or None
+    if observacao is not None and observacao.strip():
+        # Nota ACUMULA. A versao anterior gravava numa coluna de texto so e
+        # apagava a anterior em silencio — num caso que fica 30 dias aberto e
+        # passa por mais de uma pessoa, o historico e o que explica por que ele
+        # esta parado.
+        db.table("licitacao_entrada_notas").insert({
+            "entrada_id": entrada_id,
+            "texto": observacao.strip(),
+            "autor_id": str(usuario.id),
+        }).execute()
     if cliente_id is not None:
         campos["cliente_id"] = cliente_id
     if em_tratativa is not None:
@@ -864,9 +892,16 @@ def _observacao_da_entrada(regs: list[dict]) -> str:
     partes = ["Da caixa de entrada da licitação: %s" % (base.get("assunto") or "")[:120]]
     if len(regs) > 1:
         partes.append("%d e-mails sobre esta nota de empenho" % len(regs))
-    notas = [r["observacao"] for r in regs if (r.get("observacao") or "").strip()]
-    if notas:
-        partes.append("Triagem: %s" % " | ".join(notas)[:240])
+    # As anotações vêm da tabela de notas (v37), não mais da coluna antiga.
+    db = get_service_db()
+    ids = [r["id"] for r in regs]
+    escritas: list[str] = []
+    for i in range(0, len(ids), 100):
+        escritas += [n["texto"] for n in db.table("licitacao_entrada_notas")
+                     .select("texto, criado_em").in_("entrada_id", ids[i:i + 100])
+                     .execute().data]
+    if escritas:
+        partes.append("Triagem: %s" % " | ".join(escritas)[:240])
     return ". ".join(partes)
 
 
