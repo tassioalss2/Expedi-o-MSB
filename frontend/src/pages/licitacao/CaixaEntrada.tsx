@@ -12,6 +12,7 @@
  * motor traz, e o motor não sobrescreve o que se decide aqui.
  */
 import { useState, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, CircleDot, Clock, Inbox, Link2, Loader2, Mail,
@@ -257,6 +258,16 @@ export function AbaAcompanhamento() {
   const [dias, setDias] = useState(30)
   // Qual número o usuário abriu. null = nenhum.
   const [aberto, setAberto] = useState<string | null>(null)
+  const [params, setParams] = useSearchParams()
+
+  /** Vai para a caixa de entrada já filtrada por tipo. As duas coisas viajam
+   *  pela URL — a aba e o tipo —, então isto é só trocar os parâmetros. */
+  const irParaEntrada = (tipo: string) => {
+    const p = new URLSearchParams(params)
+    p.set('aba', 'entrada')
+    p.set('tipo', tipo)
+    setParams(p)
+  }
   const { data, isLoading } = useQuery({
     queryKey: ['licitacao-painel', dias],
     queryFn: () => api.get(`/licitacoes/entrada/painel?dias=${dias}`).then(r => r.data),
@@ -321,9 +332,17 @@ export function AbaAcompanhamento() {
       <div>
         <h3 className="text-sm font-semibold text-gray-900">Em aberto por tipo de solicitação</h3>
         <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {/* O card de tipo LEVA PARA O TRABALHO, e não abre um modal: quem olha
+              "51 comunicados de uso em aberto" quer tratá-los, não ler de onde
+              veio o número. A origem continua a um clique, no "de onde vem?" do
+              rodapé do card — e os tiles de cima seguem abrindo o detalhe,
+              porque ali a pergunta é mesmo sobre o número. */}
           {(data.por_tipo || []).map((t: any) => (
-            <Abrivel key={t.tipo} metrica={`tipo:${t.tipo}`} onAbrir={setAberto}>
-              <div className="h-full rounded-xl border border-gray-200 bg-white p-3">
+            <div key={t.tipo}
+              className="flex h-full flex-col rounded-xl border border-gray-200 bg-white transition hover:border-blue-400 hover:shadow-sm">
+              <button onClick={() => irParaEntrada(t.tipo)}
+                className="flex-1 p-3 text-left"
+                title={`ver as solicitações de ${(TIPO_LABEL[t.tipo] || t.tipo).toLowerCase()} na caixa de entrada`}>
                 <div className="flex items-center gap-1.5">
                   <span className={`h-2 w-2 rounded-full ${TIPO_PONTO[t.tipo] || 'bg-gray-300'}`} />
                   <span className="truncate text-xs font-medium text-gray-700">
@@ -342,8 +361,12 @@ export function AbaAcompanhamento() {
                     </span>
                   )}
                 </div>
-              </div>
-            </Abrivel>
+              </button>
+              <button onClick={() => setAberto(`tipo:${t.tipo}`)}
+                className="border-t border-gray-100 px-3 py-1 text-left text-[11px] text-gray-400 hover:text-blue-600">
+                de onde vem?
+              </button>
+            </div>
           ))}
         </div>
       </div>
@@ -1065,7 +1088,18 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
 export function AbaCaixaEntrada() {
   const qc = useQueryClient()
   const [filtro, setFiltro] = useState<'NAO' | 'PARCIAL' | 'SIM' | ''>('NAO')
-  const [tipo, setTipo] = useState('')
+  // O tipo vive na URL, e nao em estado local: e o que permite o painel de
+  // Acompanhamento mandar para ca ja filtrado ("clico em Venda direta e caio na
+  // caixa de entrada mostrando so venda direta"). De graca, o filtro tambem
+  // passa a ser linkavel.
+  const [params, setParams] = useSearchParams()
+  const tipo = params.get('tipo') || ''
+  const setTipo = (t: string) => {
+    const p = new URLSearchParams(params)
+    if (t) p.set('tipo', t)
+    else p.delete('tipo')
+    setParams(p, { replace: true })
+  }
   // Qual solicitacao esta com o detalhe aberto (a chave do caso).
   const [detalhe, setDetalhe] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
