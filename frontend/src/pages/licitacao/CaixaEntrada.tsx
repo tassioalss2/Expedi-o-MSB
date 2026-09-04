@@ -92,6 +92,7 @@ const SITUACAO = {
 type Card = {
   chave: string
   empenho: string | null
+  documento: string | null
   assunto: string
   recebido_em: string
   ultimo_em: string
@@ -177,11 +178,15 @@ function DetalheNumero({ metrica, dias, onFechar }: {
               {data.casos.map((c: Card) => (
                 <div key={c.chave} className="p-3 hover:bg-gray-50">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {c.empenho && (
+                    {c.empenho ? (
                       <span className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[11px] text-white">
                         {c.empenho}
                       </span>
-                    )}
+                    ) : c.documento ? (
+                      <span className="rounded bg-gray-200 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">
+                        doc {c.documento}
+                      </span>
+                    ) : null}
                     <span className="text-[11px] text-gray-500">{TIPO_LABEL[c.tipo || 'OUTRO']}</span>
                     <span className={`text-[11px] ${c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-500'}`}>
                       {c.dias_parados} d
@@ -528,6 +533,15 @@ function CardEntrada({ c, onTriar, onNota, onPromover, salvando }: {
             {c.empenho && (
               <span className="rounded bg-gray-900 px-2 py-0.5 font-mono text-[11px] text-white">
                 {c.empenho}
+              </span>
+            )}
+            {/* Sem nota de empenho, o numero do documento e o que identifica o
+                caso. Quatro cards escritos "Ordem de fornecimento - MSB" sao
+                indistinguiveis sem isto. */}
+            {!c.empenho && c.documento && (
+              <span className="rounded bg-gray-200 px-2 py-0.5 font-mono text-[11px] text-gray-700"
+                title="numero do documento citado no anexo ou no assunto">
+                doc {c.documento}
               </span>
             )}
             <span className="text-[11px] text-gray-500">{TIPO_LABEL[c.tipo || 'OUTRO']}</span>

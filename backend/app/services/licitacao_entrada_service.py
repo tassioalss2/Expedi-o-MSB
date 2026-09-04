@@ -227,6 +227,81 @@ def _dias_parados(recebido_em) -> int:
         return 0
 
 
+# ── agrupamento: a segunda chave, quando não há nota de empenho ─────────────
+# A regra original era só a NE, herdada da planilha. Ela deixa passar o caso
+# mais irritante: o órgão reenvia a MESMA ordem de fornecimento quatro vezes,
+# nenhuma delas cita NE, e o painel mostra quatro cards idênticos — 5 un ×
+# R$ 398,00 para o mesmo hospital, com 24, 23, 17 e 14 dias. Foi o que o Tassio
+# viu na tela.
+#
+# A chave que resolve NÃO é semelhança (assunto parecido, cliente igual, valor
+# igual) — isso juntaria dois pedidos legítimos iguais do mesmo hospital, que
+# acontece. É a IDENTIDADE DO DOCUMENTO: os quatro e-mails traziam o mesmo
+# anexo, `SEI_63643428_Ordem_de_Servico...`, o mesmo número de documento. Mesmo
+# papel é o mesmo pedido, e isso é fato, não estimativa.
+_DOCUMENTO = (
+    # SEI: 'SEI_63643428_...', 'SEI_SEDE - 64301571 - ...', 'Despacho___SEI_63907164'
+    re.compile(r'SEI[_\s]*(?:SEDE)?[_\s-]*(\d{7,9})', re.I),
+    # 'ORDEM DE FORNECIMENTO Nº 1911.26.0112/2026.03', 'OF 3785-2026'
+    re.compile(r'(?:ordem\s+de\s+fornecimento|\bOF)\s*(?:n?[º°.:]?\s*)?'
+               r'([\d][\d./-]{5,24}\d)', re.I),
+    # 'AFP_160168 - 7', 'AF 29621.2026', 'AFC 493-2026'
+    re.compile(r'\bAF[PC]?[_\s]*(?:n?[º°.:]?\s*)?([\d][\d./-]{4,20}\d)', re.I),
+)
+
+
+def _numero_do_documento(reg: dict) -> Optional[str]:
+    """O número do documento citado, do nome do anexo ou do assunto.
+
+    O anexo tem prioridade: o nome do arquivo é o que o sistema do órgão gerou,
+    enquanto o assunto é digitado por gente e varia ("Ordem de fornecimento -
+    MSB" quatro vezes, sem número nenhum).
+    """
+    fontes = [str(a.get("arquivo") or "") for a in (reg.get("anexos") or [])]
+    fontes.append(str(reg.get("assunto") or ""))
+    for texto in fontes:
+        for rx in _DOCUMENTO:
+            m = rx.search(texto)
+            if m:
+                bruto = m.group(1).strip(" .-/")
+                # Normaliza separador: o mesmo documento chega como
+                # '1911.26.0112/2026.03' no assunto e '1911.26.0112.2026.03' no
+                # nome do arquivo.
+                return re.sub(r"[^0-9]", ".", bruto).strip(".")
+    return None
+
+
+def _especifico(numero: str) -> bool:
+    """Se o número identifica o documento sozinho, sem precisar do órgão.
+
+    Um id do SEI ('63643428') e um número composto ('1911.26.0112.2026.03') não
+    colidem entre órgãos. Já 'OF 3785/2026' é sequencial simples: dois hospitais
+    podem ter a sua ordem 3785 no mesmo ano, e juntá-las esconderia trabalho.
+    Números simples só agrupam quando o CNPJ do órgão também bate.
+    """
+    return len(re.sub(r"\D", "", numero)) >= 8 and numero.count(".") >= 3 \
+        or bool(re.fullmatch(r"\d{7,9}", numero))
+
+
+def chave_do_grupo(reg: dict) -> str:
+    """A chave que decide quais e-mails são o mesmo caso.
+
+    Ordem: nota de empenho, número do documento, e por último o próprio e-mail.
+    A NE vem primeiro porque é o que a operação usa para falar do caso.
+    """
+    nes = reg.get("empenhos") or []
+    if nes:
+        return "NE:%s" % nes[0]
+    numero = _numero_do_documento(reg)
+    if numero:
+        if _especifico(numero):
+            return "DOC:%s" % numero
+        cnpj = (reg.get("cnpj_orgao") or "").strip()
+        if cnpj:
+            return "DOC:%s:%s" % (cnpj, numero)
+    return "EM:%s" % reg["chave"]
+
+
 def _entrega_prevista(membros: list[dict]) -> Optional[str]:
     """A data em que o órgão exige a entrega, lida do anexo. ISO, ou None.
 
@@ -299,9 +374,14 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
     # órgão, "2026NE001167 / 2026NE01167").
     grupos: dict[str, list[dict]] = {}
     for r in regs:
-        for ne in (r.get("empenhos") or [None]):
-            chave = "NE:%s" % ne if ne else "EM:%s" % r["chave"]
-            grupos.setdefault(chave, []).append(r)
+        nes = r.get("empenhos") or []
+        if nes:
+            # Cita duas NEs: entra nos dois grupos. Não dá para escolher qual é
+            # a certa por conta própria.
+            for ne in nes:
+                grupos.setdefault("NE:%s" % ne, []).append(r)
+        else:
+            grupos.setdefault(chave_do_grupo(r), []).append(r)
 
     cards = []
     for chave, membros in grupos.items():
@@ -328,6 +408,9 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
         cards.append({
             "chave": chave,
             "empenho": chave[3:] if chave.startswith("NE:") else None,
+            # Sem NE, o card precisa dizer QUAL documento e — quatro cards
+            # escritos "Ordem de fornecimento - MSB" sao indistinguiveis.
+            "documento": _numero_do_documento(primeiro) if not chave.startswith("NE:") else None,
             "assunto": primeiro.get("assunto"),
             "recebido_em": primeiro.get("recebido_em"),
             "ultimo_em": ultimo.get("recebido_em"),
@@ -381,14 +464,18 @@ def _emails_do_grupo(chave: str, colunas: str = "*") -> list[dict]:
     db = get_service_db()
     if chave.startswith("EM:"):
         return db.table("licitacao_entrada").select(colunas).eq("chave", chave[3:]).execute().data
-    if not chave.startswith("NE:"):
+    if not (chave.startswith("NE:") or chave.startswith("DOC:")):
         raise HTTPException(400, "chave de grupo inválida: %s" % chave)
-    ne = chave[3:]
-    # `empenhos` vem junto mesmo quando o chamador não pediu: é por ele que se filtra.
-    pedido = colunas if colunas == "*" else "%s, empenhos" % colunas
+    # Os campos de que a chave depende vêm junto mesmo quando o chamador não
+    # pediu: é por eles que se filtra.
+    extras = "empenhos, chave, anexos, assunto, cnpj_orgao"
+    pedido = colunas if colunas == "*" else "%s, %s" % (colunas, extras)
     todos = db.table("licitacao_entrada").select(pedido).eq("ativo", True)\
         .limit(5000).execute().data
-    return [r for r in todos if ne in (r.get("empenhos") or [])]
+    if chave.startswith("NE:"):
+        ne = chave[3:]
+        return [r for r in todos if ne in (r.get("empenhos") or [])]
+    return [r for r in todos if chave_do_grupo(r) == chave]
 
 
 def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
