@@ -817,9 +817,8 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
             ))}
           </div>
           <p className="mt-1.5 text-[11px] text-gray-400">
-            O corpo é guardado até 1.400 caracteres — o suficiente para o pedido, sem a
-            thread inteira citada abaixo. Se “abrir no Outlook” não fizer nada, o atalho
-            não está registrado nesta máquina: rode uma vez{' '}
+            Se “abrir no Outlook” não fizer nada, o atalho não está registrado nesta
+            máquina: rode uma vez{' '}
             <code className="rounded bg-gray-100 px-1">instala_protocolo.py</code> na pasta
             do motor.
           </p>
