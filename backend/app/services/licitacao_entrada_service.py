@@ -499,10 +499,18 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
                           if (m.get("sugestao") or "").strip() and not m.get("sugestao_lida")],
             "anexos_com_problema": [a for m in membros for a in (m.get("anexos") or [])
                                     if a.get("escaneado") or a.get("erro")],
+            # Todos os anexos lidos, para a tela de detalhe. Sem repetir: o
+            # orgao reenvia o mesmo documento e cada reenvio traz o arquivo de
+            # novo — quatro linhas iguais nao informam nada.
+            "anexos": list({(a.get("arquivo"), a.get("familia")): a
+                            for m in membros for a in (m.get("anexos") or [])}.values()),
             "emails": [{
                 "id": m["id"], "chave": m["chave"], "recebido_em": m.get("recebido_em"),
                 "assunto": m.get("assunto"), "corpo": m.get("corpo"), "pasta": m.get("pasta"),
                 "situacao": m.get("situacao"), "observacao": m.get("observacao"),
+                "em_tratativa": m.get("em_tratativa"),
+                "anexos": m.get("anexos") or [],
+                "itens": m.get("itens") or [],
             } for m in membros],
         })
 

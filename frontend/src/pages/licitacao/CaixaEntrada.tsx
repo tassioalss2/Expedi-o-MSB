@@ -15,7 +15,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, CircleDot, Clock, Inbox, Link2, Loader2, Mail,
-  MinusCircle, Package, Search, ShieldQuestion, X, CalendarClock, Hand,
+  MinusCircle, Paperclip, Package, Search, ShieldQuestion, X, CalendarClock, Hand,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -119,6 +119,7 @@ type Card = {
   observacoes: string[]
   sugestoes: string[]
   anexos_com_problema: any[]
+  anexos: any[]
   emails: any[]
 }
 
@@ -519,16 +520,286 @@ function ItensDoPedido({ itens }: { itens: any[] }) {
   )
 }
 
-function CardEntrada({ c, onTriar, onNota, onTratativa, onPromover, salvando }: {
+// ── A solicitação inteira ────────────────────────────────────────────────────
+
+function Linha({ rotulo, children }: { rotulo: string; children: any }) {
+  if (children === null || children === undefined || children === '') return null
+  return (
+    <div className="flex gap-2 py-1 text-sm">
+      <span className="w-40 shrink-0 text-gray-500">{rotulo}</span>
+      <span className="min-w-0 flex-1 text-gray-900">{children}</span>
+    </div>
+  )
+}
+
+function Secao({ titulo, children }: { titulo: string; children: any }) {
+  return (
+    <div className="border-t border-gray-100 px-5 py-3">
+      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">{titulo}</h4>
+      {children}
+    </div>
+  )
+}
+
+/**
+ * Tudo o que se sabe sobre uma solicitação, num lugar só.
+ *
+ * O card mostra o que decide a próxima ação; isto mostra o resto — o texto
+ * completo de cada e-mail, os anexos com o que saiu (ou não saiu) de cada um,
+ * a demanda ligada e o que o time anotou. Sem esta tela, responder "por que
+ * este caso está aberto há 30 dias?" exigia abrir o Outlook.
+ */
+function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromover, salvando }: {
   c: Card
+  onFechar: () => void
   onTriar: (situacao: string) => void
   onNota: (texto: string) => void
   onTratativa: (v: boolean) => void
   onPromover: () => void
   salvando: boolean
 }) {
-  const [aberto, setAberto] = useState(false)
   const [nota, setNota] = useState('')
+  const prio = PRIORIDADE[c.prioridade] || PRIORIDADE[5]!
+  const hoje = new Date().toISOString().slice(0, 10)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-3 sm:p-8"
+      onClick={onFechar}>
+      <div className="w-full max-w-3xl rounded-xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        {/* Cabeçalho: identidade e estado. */}
+        <div className="flex items-start justify-between gap-4 p-5 pb-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold ${prio.cor}`}>
+                {prio.label}
+              </span>
+              {c.empenho ? (
+                <span className="rounded bg-gray-900 px-2 py-0.5 font-mono text-[11px] text-white">{c.empenho}</span>
+              ) : c.documento ? (
+                <span className="rounded bg-gray-200 px-2 py-0.5 font-mono text-[11px] text-gray-700">doc {c.documento}</span>
+              ) : null}
+              <span className="text-xs text-gray-500">{TIPO_LABEL[c.tipo || 'OUTRO']}</span>
+              <span className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${
+                c.situacao === 'SIM' ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : c.situacao === 'PARCIAL' ? 'border-amber-200 bg-amber-50 text-amber-700'
+                  : 'border-gray-200 bg-gray-50 text-gray-600'}`}>
+                {SITUACAO[c.situacao].label}
+              </span>
+              {c.em_tratativa && (
+                <span className="flex items-center gap-1 rounded border border-violet-200 bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800">
+                  <Hand className="h-3 w-3" />
+                  {c.tratativa_nome ? `em tratativa · ${c.tratativa_nome}` : 'em tratativa'}
+                </span>
+              )}
+            </div>
+            <h3 className="mt-2 text-base font-semibold leading-snug text-gray-900">{c.assunto}</h3>
+          </div>
+          <button onClick={onFechar} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <Secao titulo="Quem pediu">
+          <Linha rotulo="Cliente">{c.cliente_nome}</Linha>
+          {!c.cliente_nome && (
+            <Linha rotulo="Órgão no documento">
+              <span className="text-amber-700">
+                {c.orgao_texto || '(o documento não trouxe o nome)'} — sem cliente definido
+              </span>
+            </Linha>
+          )}
+          <Linha rotulo="CNPJ do órgão">
+            {c.cnpj_orgao ? <span className="font-mono text-xs">{c.cnpj_orgao}</span> : null}
+          </Linha>
+          <Linha rotulo="Contrato MSB">{c.contrato}</Linha>
+          <Linha rotulo="Pregão">{c.pregao}</Linha>
+        </Secao>
+
+        <Secao titulo="Prazos">
+          <Linha rotulo="Primeiro e-mail">{fmtDia(c.recebido_em)}</Linha>
+          {c.emails.length > 1 && <Linha rotulo="Último e-mail">{fmtDia(c.ultimo_em)}</Linha>}
+          <Linha rotulo="Esperando">
+            <span className={c.dias_parados > 15 ? 'font-semibold text-red-700' : ''}>
+              {c.dias_parados === 0 ? 'chegou hoje' : `${c.dias_parados} dias`}
+            </span>
+          </Linha>
+          {c.entrega_prevista && (
+            <Linha rotulo="Entrega exigida">
+              <span className={c.entrega_prevista < hoje ? 'font-semibold text-red-700' : ''}>
+                {new Date(c.entrega_prevista + 'T12:00:00').toLocaleDateString('pt-BR')}
+                {c.entrega_prevista < hoje && ' — venceu'}
+              </span>
+            </Linha>
+          )}
+          <Linha rotulo="Por que a prioridade">{c.motivo}</Linha>
+        </Secao>
+
+        <Secao titulo={`O que estão pedindo${c.valor_total > 0 ? ` · ${fmtBRL(c.valor_total)}` : ''}`}>
+          {c.itens.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              Nenhum item foi extraído dos anexos.
+              {c.anexos_com_problema.length > 0 && ' O anexo veio escaneado — abra o e-mail original.'}
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {c.itens.map((i, n) => (
+                <div key={n} className="rounded-lg bg-gray-50 p-2 text-sm">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-medium tabular-nums text-gray-900">
+                      {i.qtd} un{i.valor_unitario ? ` × ${fmtBRL(i.valor_unitario)}` : ''}
+                    </span>
+                    {i.valor_total ? <span className="tabular-nums text-gray-700">= {fmtBRL(i.valor_total)}</span> : null}
+                    {i.codigo_msb && (
+                      <span className="rounded bg-blue-50 px-1.5 py-0.5 font-mono text-[11px] text-blue-700">
+                        {i.codigo_msb}
+                      </span>
+                    )}
+                    {i.via_ocr && (
+                      <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[11px] text-gray-700"
+                        title="o anexo era imagem; estes números foram lidos por OCR">
+                        lido por OCR
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs leading-relaxed text-gray-600">
+                    {i.descricao || '(descrição não identificada no documento)'}
+                  </p>
+                  {i.conta_nao_fecha && (
+                    <p className="mt-1 flex items-center gap-1 text-xs font-medium text-amber-700">
+                      <AlertTriangle className="h-3 w-3" /> a conta não fecha no documento — confira o anexo
+                    </p>
+                  )}
+                  {i.fonte && <p className="text-[11px] text-gray-400">de {i.fonte}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </Secao>
+
+        {c.anexos.length > 0 && (
+          <Secao titulo={`Anexos lidos (${c.anexos.length})`}>
+            <div className="space-y-1">
+              {c.anexos.map((a: any, n: number) => (
+                <div key={n} className="flex items-start gap-2 text-xs">
+                  <Paperclip className="mt-0.5 h-3 w-3 shrink-0 text-gray-400" />
+                  <span className="min-w-0 flex-1 break-all text-gray-800">{a.arquivo}</span>
+                  <span className="shrink-0 text-gray-500">
+                    {a.escaneado ? 'imagem (OCR)' : a.erro ? 'não lido' : `${a.itens || 0} item(ns)`}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-gray-400">
+              Nota fiscal não é lida aqui — só o documento do pedido.
+            </p>
+          </Secao>
+        )}
+
+        {c.demanda && (
+          <Secao titulo="Já virou trabalho">
+            <Linha rotulo="Etapa">{ETAPA_CURTA[c.demanda.etapa] || c.demanda.etapa}</Linha>
+            <Linha rotulo="OV">
+              {c.demanda.ovs?.length
+                ? <span className="font-mono">{c.demanda.ovs.map((o: any) => o.numero).filter(Boolean).join(' · ')}</span>
+                : null}
+            </Linha>
+            <Linha rotulo="Nota fiscal">{c.demanda.numero_nf}</Linha>
+            <a href={`/licitacoes?demanda=${c.demanda_id}`}
+              className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline">
+              <Link2 className="h-3.5 w-3.5" /> abrir a demanda no painel
+            </a>
+          </Secao>
+        )}
+
+        {(c.observacoes.length > 0 || c.sugestoes.length > 0) && (
+          <Secao titulo="Anotações">
+            {c.sugestoes.map((s, n) => (
+              <p key={`s${n}`} className="mb-1 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs text-sky-900">
+                {s}
+              </p>
+            ))}
+            {c.observacoes.map((o, n) => (
+              <p key={`o${n}`} className="mb-1 rounded-lg bg-gray-50 px-2.5 py-1.5 text-sm italic text-gray-700">“{o}”</p>
+            ))}
+          </Secao>
+        )}
+
+        <Secao titulo={`Histórico — ${c.emails.length} e-mail${c.emails.length > 1 ? 's' : ''}`}>
+          <div className="space-y-2">
+            {c.emails.map(e => (
+              <div key={e.id} className="rounded-lg border border-gray-100 p-2.5">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                  <span className="font-medium tabular-nums text-gray-700">{fmtDia(e.recebido_em)}</span>
+                  {e.pasta && <span className="rounded bg-gray-100 px-1.5 py-0.5">{e.pasta}</span>}
+                  {(e.anexos || []).length > 0 && <span>{e.anexos.length} anexo(s)</span>}
+                </div>
+                {e.assunto !== c.assunto && (
+                  <p className="mt-1 text-xs font-medium text-gray-800">{e.assunto}</p>
+                )}
+                <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-gray-600">
+                  {e.corpo || '(sem texto no corpo)'}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-gray-400">
+            O corpo é guardado até 1.400 caracteres — o suficiente para o pedido, sem a
+            thread inteira citada abaixo.
+          </p>
+        </Secao>
+
+        {/* Ações: as mesmas do card, para não obrigar a fechar e voltar. */}
+        <div className="sticky bottom-0 space-y-2 border-t border-gray-200 bg-white p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {([['NAO', 'Em aberto', MinusCircle], ['PARCIAL', 'Parcial', CircleDot],
+               ['SIM', 'Resolvido', Check]] as const).map(([valor, label, Icone]) => (
+              <button key={valor} onClick={() => onTriar(valor)} disabled={salvando}
+                className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+                  c.situacao === valor
+                    ? 'border-gray-900 bg-gray-900 text-white'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'}`}>
+                <Icone className="h-3.5 w-3.5" /> {label}
+              </button>
+            ))}
+            <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
+              className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+                c.em_tratativa
+                  ? 'border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200'
+                  : 'border-gray-200 bg-white text-gray-600 hover:border-violet-400'}`}>
+              <Hand className="h-3.5 w-3.5" /> {c.em_tratativa ? 'liberar' : 'assumir'}
+            </button>
+            {!c.demanda_id && (
+              <button onClick={onPromover} disabled={salvando}
+                className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
+                Gerar demanda
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input value={nota} onChange={e => setNota(e.target.value)}
+              placeholder="anotar algo sobre este caso…"
+              className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs" />
+            <button disabled={!nota.trim() || salvando}
+              onClick={() => { onNota(nota.trim()); setNota('') }}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40">
+              salvar nota
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, salvando }: {
+  c: Card
+  onTriar: (situacao: string) => void
+  onNota: (texto: string) => void
+  onTratativa: (v: boolean) => void
+  onAbrir: () => void
+  onPromover: () => void
+  salvando: boolean
+}) {
   const sit = SITUACAO[c.situacao]
   const prio = PRIORIDADE[c.prioridade] || PRIORIDADE[5]!
 
@@ -561,7 +832,13 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onPromover, salvando }: 
               </span>
             )}
           </div>
-          <h4 className="mt-1.5 truncate text-sm font-medium text-gray-900">{c.assunto}</h4>
+          {/* O assunto e o alvo natural do clique: e o que identifica o caso.
+              O antigo "historico e nota" expandia so os e-mails no proprio
+              card; a tela de detalhe mostra tudo o que se sabe. */}
+          <button onClick={onAbrir}
+            className="mt-1.5 block w-full truncate text-left text-sm font-medium text-gray-900 hover:text-blue-700 hover:underline">
+            {c.assunto}
+          </button>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
             {/* Data E dias parados juntos: a planilha tinha as duas colunas, e
                 elas respondem coisas diferentes — "quando chegou" e "ha quanto
@@ -684,38 +961,12 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onPromover, salvando }: 
               : 'border-gray-200 bg-white text-gray-600 hover:border-violet-400'}`}>
           <Hand className="h-3.5 w-3.5" /> {c.em_tratativa ? 'liberar' : 'assumir'}
         </button>
-        <button onClick={() => setAberto(v => !v)}
+        <button onClick={onAbrir}
           className="ml-auto text-xs font-medium text-blue-600 hover:underline">
-          {aberto ? 'esconder' : `histórico e nota${c.emails.length > 1 ? ` (${c.emails.length})` : ''}`}
+          ver tudo{c.emails.length > 1 ? ` (${c.emails.length} e-mails)` : ''}
         </button>
       </div>
 
-      {aberto && (
-        <div className="mt-3 space-y-2 border-t border-black/5 pt-3">
-          {c.emails.map(e => (
-            <div key={e.id} className="rounded-lg bg-white/60 p-2 text-xs">
-              <div className="flex items-center gap-2 text-gray-500">
-                <span className="tabular-nums">{fmtDia(e.recebido_em)}</span>
-                {e.pasta && <span className="rounded bg-gray-100 px-1.5">{e.pasta}</span>}
-              </div>
-              <p className="mt-1 whitespace-pre-wrap text-gray-700">
-                {(e.corpo || '').slice(0, 400) || e.assunto}
-              </p>
-            </div>
-          ))}
-          <div className="flex gap-2">
-            <input value={nota} onChange={ev => setNota(ev.target.value)}
-              placeholder="anotar algo sobre este caso…"
-              className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs" />
-            <button
-              disabled={!nota.trim() || salvando}
-              onClick={() => { onNota(nota.trim()); setNota('') }}
-              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40">
-              salvar nota
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -725,6 +976,8 @@ export function AbaCaixaEntrada() {
   const [filtro, setFiltro] = useState<'NAO' | 'PARCIAL' | 'SIM' | ''>('NAO')
   const [tipo, setTipo] = useState('')
   const [soTratativa, setSoTratativa] = useState(false)
+  // Qual solicitacao esta com o detalhe aberto (a chave do caso).
+  const [detalhe, setDetalhe] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
 
   const { data: cards = [], isLoading } = useQuery<Card[]>({
@@ -825,10 +1078,29 @@ export function AbaCaixaEntrada() {
               onTriar={s => triar.mutate({ chave: c.chave, situacao: s })}
               onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
               onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
+              onAbrir={() => setDetalhe(c.chave)}
               onPromover={() => promover.mutate(c.chave)} />
           ))}
         </div>
       )}
+
+      {/* O detalhe le do MESMO array ja carregado: abrir uma solicitacao nao
+          dispara consulta nova, e o card e o detalhe nunca mostram estados
+          diferentes do mesmo caso. Se a solicitacao sair do filtro depois de
+          uma acao (marcar Resolvido com o filtro em "Em aberto"), o detalhe
+          fecha sozinho — e o que a lista faria. */}
+      {detalhe && (() => {
+        const c = cards.find(x => x.chave === detalhe)
+        if (!c) return null
+        return (
+          <DetalheSolicitacao c={c} salvando={triar.isPending || promover.isPending}
+            onFechar={() => setDetalhe(null)}
+            onTriar={sit => triar.mutate({ chave: c.chave, situacao: sit })}
+            onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
+            onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
+            onPromover={() => promover.mutate(c.chave)} />
+        )
+      })()}
     </div>
   )
 }
