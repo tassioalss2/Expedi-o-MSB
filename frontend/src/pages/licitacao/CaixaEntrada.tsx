@@ -104,6 +104,8 @@ type Card = {
   motivo: string | null
   tipo: string | null
   contrato: string | null
+  contrato_titulo: string | null
+  contrato_desconhecido: boolean
   pregao: string | null
   cliente_id: string | null
   cliente_nome: string | null
@@ -611,7 +613,19 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromo
           <Linha rotulo="CNPJ do órgão">
             {c.cnpj_orgao ? <span className="font-mono text-xs">{c.cnpj_orgao}</span> : null}
           </Linha>
-          <Linha rotulo="Contrato MSB">{c.contrato}</Linha>
+          <Linha rotulo="Contrato MSB">
+            {c.contrato ? (
+              <>
+                <span className="font-mono text-xs">{c.contrato}</span>
+                {c.contrato_titulo && <span className="ml-2 text-gray-600">{c.contrato_titulo}</span>}
+                {c.contrato_desconhecido && (
+                  <span className="ml-2 text-xs font-medium text-amber-700">
+                    não existe no export do D365 — confira o número
+                  </span>
+                )}
+              </>
+            ) : null}
+          </Linha>
           <Linha rotulo="Pregão">{c.pregao}</Linha>
         </Secao>
 
@@ -849,8 +863,16 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
               {c.dias_parados === 0 ? 'hoje' : `${c.dias_parados} dia${c.dias_parados > 1 ? 's' : ''}`}
             </span>
             {c.contrato && (
-              <span title="contrato MSB">
+              /* O codigo interno sozinho ("MSB-000238") nao diz nada; o titulo
+                 do contrato diz de que pregao e de que familia de produto o
+                 caso e. Fica no title para nao competir com o resto da linha. */
+              <span title={c.contrato_titulo
+                ? `contrato MSB — ${c.contrato_titulo}`
+                : 'contrato MSB citado no e-mail'}>
                 contrato <span className="font-medium text-gray-900">{c.contrato}</span>
+                {c.contrato_desconhecido && (
+                  <span className="ml-1 text-amber-700" title="este contrato não existe no export do D365 — pode ser erro de digitação">!</span>
+                )}
               </span>
             )}
             {c.pregao && (

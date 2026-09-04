@@ -123,6 +123,8 @@ def sincronizar(lote: list[dict]) -> dict:
     depara = {o["cnpj"]: o["cliente_id"] for o in
               db.table("licitacao_orgaos").select("cnpj, cliente_id").limit(2000).execute().data}
     por_ne = _demandas_por_empenho(db)
+    from app.services import contratos_d365_service
+    por_contrato, por_pregao = contratos_d365_service.mapa_para_resolucao(db)
 
     def resolve(e, cnpj):
         """Cliente e demanda que a entrada herda, sem ninguem digitar nada.
@@ -140,6 +142,18 @@ def sincronizar(lote: list[dict]) -> dict:
                 dem = d['id']
                 cli = cli or d['cliente_id']
                 break
+        # O contrato MSB citado no e-mail e a chave que mais rende: 81 dos 214
+        # casos, a frente do CNPJ (66) e da NE com demanda (31). Vem do export
+        # de contratos do D365, que liga contrato -> codigo do cliente.
+        if not cli:
+            ct = str(e.get('contrato') or '').strip().upper()
+            cli = por_contrato.get(ct)
+        # O pregao e o ultimo recurso e so vale quando aponta um cliente unico:
+        # ha pregao compartilhado por contratos de clientes diferentes, e
+        # escolher um seria atribuir a venda ao hospital errado.
+        if not cli:
+            pg = re.sub(r'\s+', '', str(e.get('pregao') or ''))
+            cli = por_pregao.get(pg)
         return cli, dem
 
     criados = atualizados = sem_cliente = ligados = 0
@@ -432,6 +446,20 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
                 .in_("id", sorted(ids_quem)).execute().data:
             quem[u["id"]] = u["nome"]
 
+    # O que o contrato MSB citado significa. O código sozinho ("MSB-000238") não
+    # diz nada a quem olha; o título do contrato diz de que pregão e de que
+    # família de produto o caso é ("PE 90080/2025 DIVERSOS").
+    contratos: dict = {}
+    citados = {c.strip().upper() for r in regs
+               for c in str(r.get("contrato") or "").split(" / ") if c.strip()}
+    if citados:
+        lista = sorted(citados)
+        for i in range(0, len(lista), 100):
+            for ct in db.table("licitacao_contratos_d365")\
+                    .select("contrato, titulo, pregao, nome_d365")\
+                    .in_("contrato", lista[i:i + 100]).execute().data:
+                contratos[ct["contrato"]] = ct
+
     grupos = agrupar(regs)
 
     cards = []
@@ -470,6 +498,18 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             "motivo": primeiro.get("motivo"),
             "tipo": primeiro_com("tipo"),
             "contrato": primeiro_com("contrato"),
+            # O titulo do contrato citado, para o codigo interno significar algo
+            # na tela. Quando o e-mail cita dois, vale o primeiro.
+            "contrato_titulo": (contratos.get(
+                str(primeiro_com("contrato") or "").split(" / ")[0].strip().upper(), {}
+            ) or {}).get("titulo"),
+            # Contrato citado que nao existe no export do D365 e erro de
+            # digitacao ou referencia velha — e como o cliente vai sair errado.
+            # Hoje sao zero das 114 citacoes, mas isso muda no dia em que
+            # mudar.
+            "contrato_desconhecido": bool(
+                primeiro_com("contrato")
+                and str(primeiro_com("contrato")).split(" / ")[0].strip().upper() not in contratos),
             "pregao": primeiro_com("pregao"),
             "cliente_id": primeiro_com("cliente_id"),
             "cliente_nome": cliente,
