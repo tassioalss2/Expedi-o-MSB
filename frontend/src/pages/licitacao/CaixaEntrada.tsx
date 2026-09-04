@@ -71,6 +71,18 @@ const TIPO_PONTO: Record<string, string> = {
   OUTRO: 'bg-gray-400',
 }
 
+// Nome curto da etapa da demanda. O enum do banco em caixa alta no meio de um
+// card fica ilegivel, e "AGUARDANDO_ESTOQUE" nao cabe.
+const ETAPA_CURTA: Record<string, string> = {
+  RECEBIDO: 'recebida',
+  PROCESSANDO: 'em processamento',
+  AGUARDANDO_ESTOQUE: 'aguardando estoque',
+  COTACAO_FRETE: 'cotando frete',
+  OV_GERADA: 'OV gerada',
+  NF_ENVIADA: 'NF enviada',
+  CONCLUIDO: 'concluída',
+}
+
 const SITUACAO = {
   NAO: { label: 'Em aberto', cor: 'bg-white border-gray-200', ponto: 'text-gray-400' },
   PARCIAL: { label: 'Parcial', cor: 'bg-amber-50 border-amber-200', ponto: 'text-amber-500' },
@@ -94,6 +106,8 @@ type Card = {
   orgao_texto: string | null
   cnpj_orgao: string | null
   demanda_id: string | null
+  demanda: { etapa: string; ovs: any[] | null; numero_nf: string | null
+             gerado_ref: string | null; tipo_operacao: string } | null
   situacao: 'NAO' | 'PARCIAL' | 'SIM'
   itens: any[]
   valor_total: number
@@ -540,9 +554,24 @@ function CardEntrada({ c, onTriar, onNota, onPromover, salvando }: {
           </div>
         </div>
         {c.demanda_id ? (
+          /* Ja virou trabalho: o card mostra ONDE esta, e nao so que existe.
+             E esta informacao — "isto ja e a OV016058, NF enviada" — que faz
+             alguem nao refazer o pedido. Foi um quase-duplicado que originou
+             todo este processo. */
           <a href={`/licitacoes?demanda=${c.demanda_id}`}
-            className="flex shrink-0 items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100">
-            <Link2 className="h-3.5 w-3.5" /> ver demanda
+            className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-right text-xs text-emerald-800 hover:bg-emerald-100">
+            <span className="flex items-center gap-1 font-medium">
+              <Link2 className="h-3.5 w-3.5" />
+              {c.demanda ? ETAPA_CURTA[c.demanda.etapa] || c.demanda.etapa.toLowerCase() : 'ver demanda'}
+            </span>
+            {c.demanda?.ovs?.length ? (
+              <span className="mt-0.5 block font-mono text-[11px]">
+                {c.demanda.ovs.map((o: any) => o.numero).filter(Boolean).join(' · ')}
+              </span>
+            ) : null}
+            {c.demanda?.numero_nf && (
+              <span className="mt-0.5 block text-[11px]">NF {c.demanda.numero_nf}</span>
+            )}
           </a>
         ) : (
           <button onClick={onPromover} disabled={salvando}

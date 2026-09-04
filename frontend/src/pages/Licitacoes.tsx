@@ -256,7 +256,12 @@ function PainelDemandas() {
   // para cá em vez de ter um formulário próprio de comunicado de uso.
   const novoParam = new URLSearchParams(window.location.search).get('novo') as TipoKey | null
   const [modalNovo, setModalNovo] = useState<TipoKey | null>(novoParam && TIPOS_NOVO.some(t => t.key === novoParam) ? novoParam : null)
-  const [detalheId, setDetalheId] = useState<string | null>(null)
+  // ?demanda=<id> abre o card direto. E o que faz o link "ver demanda" da caixa
+  // de entrada chegar em algum lugar: sem isto ele caia no painel padrao e
+  // ignorava qual demanda era, o que e pior que nao ter link — parece que o app
+  // perdeu o registro.
+  const demandaParam = new URLSearchParams(window.location.search).get('demanda')
+  const [detalheId, setDetalheId] = useState<string | null>(demandaParam || null)
   const [concluirManual, setConcluirManual] = useState<any | null>(null)
   const [gerar, setGerar] = useState<any | null>(null)
   const [gerarOv, setGerarOv] = useState<any | null>(null)

@@ -251,6 +251,20 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
         regs = [r for r in regs
                 if r["chave"] in alvos or (set(r.get("empenhos") or []) & nes)]
 
+    # O andamento da demanda vem junto. Sem isto o card só sabe dizer "existe
+    # uma demanda", e quem está na caixa de entrada teria de abrir a outra tela
+    # para descobrir se o caso já virou OV ou já foi faturado — que é
+    # exatamente a informação que faz alguém NÃO refazer um pedido.
+    ids = {r["demanda_id"] for r in regs if r.get("demanda_id")}
+    andamento: dict[str, dict] = {}
+    if ids:
+        lista = sorted(ids)
+        for i in range(0, len(lista), 100):
+            for d in db.table("licitacao_demandas")\
+                    .select("id, etapa, ovs, numero_nf, gerado_ref, tipo_operacao")\
+                    .in_("id", lista[i:i + 100]).execute().data:
+                andamento[d["id"]] = d
+
     # Um e-mail que cita duas NEs entra nos dois grupos: não dá para escolher
     # qual é a certa por conta própria (há um caso real de erro de digitação do
     # órgão, "2026NE001167 / 2026NE01167").
@@ -299,6 +313,7 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             "orgao_texto": primeiro_com("orgao_texto"),
             "cnpj_orgao": primeiro_com("cnpj_orgao"),
             "demanda_id": primeiro_com("demanda_id"),
+            "demanda": andamento.get(primeiro_com("demanda_id")),
             # "Sim" só quando TODOS os e-mails da NE estão resolvidos. Um card
             # verde com um e-mail em aberto dentro é pior que nenhum card.
             "situacao": ("SIM" if situacoes == {"SIM"}

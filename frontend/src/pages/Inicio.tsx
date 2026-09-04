@@ -54,11 +54,13 @@ const SETORES = [
   {
     to: '/licitacoes',
     titulo: 'Licitações',
-    desc: 'Triagem de demandas e contratos',
+    desc: 'Solicitações que chegam, demandas e contratos',
     icone: Gavel,
     cor: 'text-amber-600 bg-amber-50',
     borda: 'hover:border-amber-300',
     atalhos: [
+      // Solicitacoes primeiro: e por onde o trabalho entra.
+      { to: '/solicitacoes', label: 'Solicitações' },
       { to: '/licitacoes', label: 'Painel de demandas' },
       { to: '/licitacoes?aba=contratos', label: 'Contratos' },
     ],
