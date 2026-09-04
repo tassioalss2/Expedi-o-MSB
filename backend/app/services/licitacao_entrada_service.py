@@ -469,7 +469,7 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
     notas: dict = {}
     ids_entrada = [r["id"] for r in regs]
     for i in range(0, len(ids_entrada), 100):
-        for n in db.table("licitacao_entrada_notas")                .select("entrada_id, texto, autor_id, criado_em")                .in_("entrada_id", ids_entrada[i:i + 100]).limit(5000).execute().data:
+        for n in db.table("licitacao_entrada_notas")                .select("id, entrada_id, texto, autor_id, criado_em")                .in_("entrada_id", ids_entrada[i:i + 100]).limit(5000).execute().data:
             notas.setdefault(n["entrada_id"], []).append(n)
     ids_autor = {n["autor_id"] for v in notas.values() for n in v if n.get("autor_id")}
     autores: dict = {}
@@ -554,7 +554,8 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             # Historico de anotacoes do caso — de todos os e-mails do grupo,
             # do mais recente para o mais antigo.
             "notas": sorted(
-                [{"texto": n["texto"], "autor": autores.get(n.get("autor_id")),
+                [{"id": n["id"], "texto": n["texto"],
+                  "autor": autores.get(n.get("autor_id")),
                   "quando": n.get("criado_em")}
                  for m in membros for n in notas.get(m["id"], [])],
                 key=lambda n: n["quando"] or "", reverse=True),
@@ -667,6 +668,21 @@ def triar_grupo(chave: str, usuario: UsuarioOut, situacao: Optional[str] = None,
               em_tratativa=em_tratativa,
               observacao=observacao if pos == 0 else None)
     return {"chave": chave, "afetados": len(regs)}
+
+
+def apagar_nota(nota_id: str, usuario: UsuarioOut) -> dict:
+    """Apaga uma anotação.
+
+    Existe porque a falta de retorno visual na tela fez o Tassio clicar em
+    "salvar nota" três vezes, gravando a mesma anotação três vezes. Sem uma
+    forma de apagar, o engano viraria permanente — e anotação repetida em cima
+    de um caso é justamente o que atrapalha quem for ler depois.
+    """
+    db = get_service_db()
+    if not db.table("licitacao_entrada_notas").select("id").eq("id", nota_id).execute().data:
+        raise HTTPException(404, "anotação não encontrada")
+    db.table("licitacao_entrada_notas").delete().eq("id", nota_id).execute()
+    return {"apagada": nota_id}
 
 
 # ── de-para dos órgãos ──────────────────────────────────────────────────────

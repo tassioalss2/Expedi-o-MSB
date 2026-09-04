@@ -119,7 +119,7 @@ type Card = {
   situacao: 'NAO' | 'PARCIAL' | 'SIM'
   itens: any[]
   valor_total: number
-  notas: { texto: string; autor: string | null; quando: string | null }[]
+  notas: { id: string; texto: string; autor: string | null; quando: string | null }[]
   sugestoes: string[]
   anexos_com_problema: any[]
   anexos: any[]
@@ -552,12 +552,13 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  * a demanda ligada e o que o time anotou. Sem esta tela, responder "por que
  * este caso está aberto há 30 dias?" exigia abrir o Outlook.
  */
-function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromover, salvando }: {
+function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApagarNota, onPromover, salvando }: {
   c: Card
   onFechar: () => void
   onTriar: (situacao: string) => void
   onNota: (texto: string) => void
   onTratativa: (v: boolean) => void
+  onApagarNota: (id: string) => void
   onPromover: () => void
   salvando: boolean
 }) {
@@ -737,7 +738,8 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromo
                 anterior — antes apagava, e num caso que passa por mais de uma
                 pessoa era o histórico que explicava por que ele estava parado. */}
             {c.notas.map((n, i) => (
-              <div key={i} className="mb-1 rounded-lg bg-gray-50 px-2.5 py-1.5">
+              <div key={n.id} className="group mb-1 flex items-start gap-2 rounded-lg bg-gray-50 px-2.5 py-1.5">
+                <div className="min-w-0 flex-1">
                 <p className="text-sm italic text-gray-700">“{n.texto}”</p>
                 {(n.autor || n.quando) && (
                   <p className="mt-0.5 text-[11px] text-gray-400">
@@ -746,6 +748,15 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromo
                       { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`}
                   </p>
                 )}
+                </div>
+                {/* Apagar existe porque anotacao repetida por engano viraria
+                    permanente — e foi exatamente o que a falta de aviso na tela
+                    causou. */}
+                <button onClick={() => onApagarNota(n.id)} disabled={salvando}
+                  className="opacity-0 transition group-hover:opacity-100 disabled:opacity-30"
+                  title="apagar esta anotação">
+                  <X className="h-3.5 w-3.5 text-gray-400 hover:text-red-600" />
+                </button>
               </div>
             ))}
           </Secao>
@@ -1077,11 +1088,25 @@ export function AbaCaixaEntrada() {
       { chave: string; situacao?: string; observacao?: string; em_tratativa?: boolean }) =>
       api.post(`/licitacoes/entrada/grupo/triar?chave=${encodeURIComponent(chave)}`,
         { situacao: situacao || undefined, observacao, em_tratativa }),
-    onSuccess: () => {
+    onSuccess: (_r, vars) => {
+      // Sem aviso, salvar uma nota nao dava sinal nenhum na tela: o Tassio
+      // clicou tres vezes e gravou a mesma anotacao tres vezes. Retorno
+      // explicito e mais importante aqui do que em qualquer outra acao, porque
+      // a nota aparece numa secao que pode estar fora da area visivel.
+      if (vars.observacao) toast.success('Anotação salva')
       qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
       qc.invalidateQueries({ queryKey: ['licitacao-painel'] })
     },
     onError: (e: any) => toast.error(msgErro(e, 'Não consegui salvar a triagem')),
+  })
+
+  const apagarNota = useMutation({
+    mutationFn: (id: string) => api.delete(`/licitacoes/entrada/notas/${id}`),
+    onSuccess: () => {
+      toast.success('Anotação apagada')
+      qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não consegui apagar a anotação')),
   })
 
   const promover = useMutation({
@@ -1179,6 +1204,7 @@ export function AbaCaixaEntrada() {
             onTriar={sit => triar.mutate({ chave: c.chave, situacao: sit })}
             onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
             onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
+            onApagarNota={id => apagarNota.mutate(id)}
             onPromover={() => promover.mutate(c.chave)} />
         )
       })()}

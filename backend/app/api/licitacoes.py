@@ -303,6 +303,13 @@ def mapear_orgao(payload: OrgaoMapear, usuario: UsuarioOut = Depends(get_current
         payload.cnpj, str(payload.cliente_id), usuario, payload.nome_documento)
 
 
+@router.delete("/entrada/notas/{nota_id}")
+def apagar_nota(nota_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    """Apaga uma anotacao. Vem antes da rota de {entrada_id} de proposito: o
+    FastAPI casa na ordem, e /entrada/notas/... cairia na rota generica."""
+    return licitacao_entrada_service.apagar_nota(str(nota_id), usuario)
+
+
 @router.patch("/entrada/{entrada_id}")
 def triar_entrada(entrada_id: UUID, payload: EntradaTriar,
                   usuario: UsuarioOut = Depends(get_current_user)):
