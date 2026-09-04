@@ -95,6 +95,7 @@ type Card = {
   documento: string | null
   em_tratativa: boolean
   tratativa_por: string | null
+  tratativa_nome: string | null
   assunto: string
   recebido_em: string
   ultimo_em: string
@@ -192,7 +193,8 @@ function DetalheNumero({ metrica, dias, onFechar }: {
                     <span className="text-[11px] text-gray-500">{TIPO_LABEL[c.tipo || 'OUTRO']}</span>
             {c.em_tratativa && (
               <span className="flex items-center gap-1 rounded border border-violet-200 bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800">
-                <Hand className="h-3 w-3" /> em tratativa
+                <Hand className="h-3 w-3" />
+                {c.tratativa_nome ? `em tratativa · ${c.tratativa_nome.split(' ')[0]}` : 'em tratativa'}
               </span>
             )}
                     <span className={`text-[11px] ${c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-500'}`}>
@@ -667,13 +669,20 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onPromover, salvando }: 
         ))}
         {/* Eixo separado da situacao: um caso que voce assumiu continua em
             aberto ate ser atendido. Marcar PARCIAL para dizer "estou nisso"
-            mentiria sobre o atendimento. */}
+            mentiria sobre o atendimento.
+            
+            O rotulo diz o que o CLIQUE faz, nunca o estado. A primeira versao
+            escrevia "tratando" quando assumido, e o Tassio perguntou se era ali
+            que se aperta — sinal claro de que um botao rotulado com o estado
+            nao diz se o clique confirma ou desfaz. Quem mostra o estado e o
+            selo violeta no topo do card. */}
         <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
+          title={c.em_tratativa ? 'devolver o caso para ninguém' : 'marcar que você está cuidando deste caso'}
           className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
             c.em_tratativa
-              ? 'border-violet-300 bg-violet-100 text-violet-800'
+              ? 'border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200'
               : 'border-gray-200 bg-white text-gray-600 hover:border-violet-400'}`}>
-          <Hand className="h-3.5 w-3.5" /> {c.em_tratativa ? 'tratando' : 'assumir'}
+          <Hand className="h-3.5 w-3.5" /> {c.em_tratativa ? 'liberar' : 'assumir'}
         </button>
         <button onClick={() => setAberto(v => !v)}
           className="ml-auto text-xs font-medium text-blue-600 hover:underline">

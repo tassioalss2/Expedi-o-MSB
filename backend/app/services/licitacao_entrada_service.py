@@ -423,9 +423,15 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
                     .in_("id", lista[i:i + 100]).execute().data:
                 andamento[d["id"]] = d
 
-    # Um e-mail que cita duas NEs entra nos dois grupos: não dá para escolher
-    # qual é a certa por conta própria (há um caso real de erro de digitação do
-    # órgão, "2026NE001167 / 2026NE01167").
+    # Nome de quem assumiu cada caso. Uma consulta só, para os poucos usuários
+    # que aparecem — e não uma por card.
+    ids_quem = {r["tratativa_por"] for r in regs if r.get("tratativa_por")}
+    quem: dict = {}
+    if ids_quem:
+        for u in db.table("usuarios").select("id, nome")\
+                .in_("id", sorted(ids_quem)).execute().data:
+            quem[u["id"]] = u["nome"]
+
     grupos = agrupar(regs)
 
     cards = []
@@ -477,6 +483,11 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             "em_tratativa": any(m.get("em_tratativa") for m in membros),
             "tratativa_por": next((m.get("tratativa_por") for m in membros
                                    if m.get("em_tratativa")), None),
+            # O NOME de quem assumiu, não o id. Guardar quem assumiu só serve
+            # se a tela disser a quem perguntar sobre um caso que está "sendo
+            # tratado" há duas semanas.
+            "tratativa_nome": quem.get(next((m.get("tratativa_por") for m in membros
+                                             if m.get("em_tratativa")), None)),
             # "Sim" só quando TODOS os e-mails da NE estão resolvidos. Um card
             # verde com um e-mail em aberto dentro é pior que nenhum card.
             "situacao": ("SIM" if situacoes == {"SIM"}
