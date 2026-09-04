@@ -266,6 +266,11 @@ export function AbaAcompanhamento() {
     const p = new URLSearchParams(params)
     p.set('aba', 'entrada')
     p.set('tipo', tipo)
+    // Leva TAMBEM a situacao e a janela que produziram o numero clicado. Sem
+    // isso a lista responde a outra pergunta e mostra outro total — foi o
+    // "16 aqui, 13 la" que o Tassio viu.
+    p.set('situacao', 'ABERTOS')
+    p.set('dias', String(dias))
     setParams(p)
   }
   const { data, isLoading } = useQuery({
@@ -1087,12 +1092,23 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
 
 export function AbaCaixaEntrada() {
   const qc = useQueryClient()
-  const [filtro, setFiltro] = useState<'NAO' | 'PARCIAL' | 'SIM' | ''>('NAO')
+  const [params, setParams] = useSearchParams()
+  // Situacao e janela tambem vem da URL: e o que faz "clicar em 16 no painel"
+  // cair numa lista de 16. Antes a tela pedia so os NAO, numa janela de 60
+  // dias, enquanto o painel somava NAO+PARCIAL em 30 — dois desencontros
+  // empilhados.
+  const filtro = (params.get('situacao') || 'ABERTOS') as 'ABERTOS' | 'SIM' | ''
+  const dias = Number(params.get('dias')) || 60
+  const setFiltro = (f: string) => {
+    const p = new URLSearchParams(params)
+    if (f) p.set('situacao', f)
+    else p.delete('situacao')
+    setParams(p, { replace: true })
+  }
   // O tipo vive na URL, e nao em estado local: e o que permite o painel de
   // Acompanhamento mandar para ca ja filtrado ("clico em Venda direta e caio na
   // caixa de entrada mostrando so venda direta"). De graca, o filtro tambem
   // passa a ser linkavel.
-  const [params, setParams] = useSearchParams()
   const tipo = params.get('tipo') || ''
   const setTipo = (t: string) => {
     const p = new URLSearchParams(params)
@@ -1105,11 +1121,12 @@ export function AbaCaixaEntrada() {
   const [busca, setBusca] = useState('')
 
   const { data: cards = [], isLoading } = useQuery<Card[]>({
-    queryKey: ['licitacao-entrada', filtro, tipo],
+    queryKey: ['licitacao-entrada', filtro, tipo, dias],
     queryFn: () => {
       const p = new URLSearchParams()
       if (filtro) p.set('situacao', filtro)
       if (tipo) p.set('tipo', tipo)
+      p.set('dias', String(dias))
       const q = p.toString()
       return api.get(`/licitacoes/entrada${q ? `?${q}` : ''}`).then(r => r.data)
     },
@@ -1170,7 +1187,11 @@ export function AbaCaixaEntrada() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
-          {([['NAO', 'Em aberto'], ['PARCIAL', 'Parcial'], ['SIM', 'Resolvidos'], ['', 'Todos']] as const)
+          {/* "A fazer" e o mesmo conjunto que o painel chama de em aberto:
+              nao resolvido, incluindo os parciais. Os quatro botoes anteriores
+              tinham "Em aberto" significando so os intocados, o que fazia a
+              lista mostrar menos casos do que o numero clicado no painel. */}
+          {([['ABERTOS', 'A fazer'], ['SIM', 'Resolvidos'], ['', 'Todos']] as const)
             .map(([v, label]) => (
               <button key={v} onClick={() => setFiltro(v)}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${

@@ -412,19 +412,13 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
     """
     db = get_service_db()
     corte = (_hoje_brt() - timedelta(days=dias)).isoformat()
-    q = db.table("licitacao_entrada").select("*, clientes(nome)")\
-        .eq("ativo", True).gte("recebido_em", corte)
-    if situacao:
-        q = q.eq("situacao", situacao)
-    regs = q.limit(2000).execute().data
-    if tipo:
-        # Filtra DEPOIS de trazer, e nao no banco: o tipo do caso e o do
-        # primeiro e-mail que tem tipo, e filtrar no banco cortaria os irmaos
-        # sem tipo e quebraria o agrupamento da NE.
-        alvos = {r["chave"] for r in regs if (r.get("tipo") or "OUTRO") == tipo}
-        nes = {ne for r in regs if r["chave"] in alvos for ne in (r.get("empenhos") or [])}
-        regs = [r for r in regs
-                if r["chave"] in alvos or (set(r.get("empenhos") or []) & nes)]
+    # SEM filtro de situação nem de tipo aqui. Os dois são propriedades do CASO,
+    # e o caso só existe depois do agrupamento — filtrar e-mail por e-mail no
+    # banco carregava só parte de um grupo e mudava o próprio agrupamento. O
+    # sintoma era as partes não somarem o total: 145 + 5 + 66 = 216 contra 215.
+    # Agora carrega a janela inteira, agrupa, e filtra os cards no fim.
+    regs = db.table("licitacao_entrada").select("*, clientes(nome)")\
+        .eq("ativo", True).gte("recebido_em", corte).limit(3000).execute().data
 
     # O andamento da demanda vem junto. Sem isto o card só sabe dizer "existe
     # uma demanda", e quem está na caixa de entrada teria de abrir a outra tela
@@ -578,6 +572,19 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
                 "itens": m.get("itens") or [],
             } for m in membros],
         })
+
+    # Agora sim os filtros, sobre o caso já montado.
+    #
+    # ABERTOS = tudo que ainda dá trabalho (não resolvido), que é EXATAMENTE o
+    # que o painel conta. Sem esse valor, clicar em "16 em aberto" no painel
+    # caía numa lista de 13: a tela pedia só os NAO e o painel somava os PARCIAL
+    # junto. Duas telas com a mesma palavra significando coisas diferentes.
+    if tipo:
+        cards = [c for c in cards if (c["tipo"] or "OUTRO") == tipo]
+    if situacao == "ABERTOS":
+        cards = [c for c in cards if c["situacao"] != "SIM"]
+    elif situacao:
+        cards = [c for c in cards if c["situacao"] == situacao]
 
     # Mais crítico primeiro; dentro da mesma criticidade, o que está parado há
     # mais tempo. O que já foi resolvido desce.
