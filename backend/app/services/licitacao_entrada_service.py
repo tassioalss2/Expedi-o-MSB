@@ -54,6 +54,9 @@ from app.models.schemas import UsuarioOut
 _CAMPOS_DA_MAQUINA = (
     "recebido_em", "pasta", "assunto", "corpo", "tipo", "prioridade", "motivo",
     "empenhos", "contrato", "pregao", "itens", "anexos", "cnpj_orgao", "orgao_texto",
+    # Volatil de proposito: reescrito a cada rodada porque o EntryID muda quando
+    # o e-mail e movido de pasta.
+    "entry_id",
 )
 SITUACOES = ("NAO", "PARCIAL", "SIM")
 
@@ -569,6 +572,7 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
                 "assunto": m.get("assunto"), "corpo": m.get("corpo"), "pasta": m.get("pasta"),
                 "situacao": m.get("situacao"), "observacao": m.get("observacao"),
                 "em_tratativa": m.get("em_tratativa"),
+                "entry_id": m.get("entry_id"),
                 "anexos": m.get("anexos") or [],
                 "itens": m.get("itens") or [],
             } for m in membros],

@@ -16,6 +16,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, CircleDot, Clock, Inbox, Link2, Loader2, Mail,
   MinusCircle, Paperclip, Package, Search, ShieldQuestion, X, CalendarClock, Hand,
+  ExternalLink,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -758,6 +759,42 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onPromo
                   <span className="font-medium tabular-nums text-gray-700">{fmtDia(e.recebido_em)}</span>
                   {e.pasta && <span className="rounded bg-gray-100 px-1.5 py-0.5">{e.pasta}</span>}
                   {(e.anexos || []).length > 0 && <span>{e.anexos.length} anexo(s)</span>}
+                  {/* Abre o item no Outlook pelo esquema `outlook:<EntryID>`.
+                      O EntryID MUDA quando o e-mail é movido de pasta — e mover
+                      de pasta é o que o time faz ao resolver um assunto. O motor
+                      reescreve o id a cada rodada, então o link fica no máximo
+                      meio dia velho; quando ele falhar, o "buscar" ao lado acha
+                      pelo assunto e nunca envelhece. */}
+                  {/* Sempre há uma ação visível. Quando o EntryID existe, o link
+                      abre o item exato no Outlook do computador; quando não
+                      existe (ou quando ele falha, porque o e-mail mudou de
+                      pasta), o de busca abre o Outlook web procurando pelo
+                      assunto. Deixar só o de busca em cinza pequeno escondia a
+                      ação — o Tassio olhou a tela e perguntou onde clicar. */}
+                  <span className="ml-auto flex items-center gap-2">
+                    {e.entry_id ? (
+                      <>
+                        <a href={`outlook:${e.entry_id}`}
+                          className="flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100"
+                          title="abrir este e-mail no Outlook do computador">
+                          <ExternalLink className="h-3 w-3" /> abrir no Outlook
+                        </a>
+                        <a href={`https://outlook.office.com/mail/search?q=${encodeURIComponent(e.assunto || '')}`}
+                          target="_blank" rel="noreferrer"
+                          className="text-gray-500 hover:text-blue-600 hover:underline"
+                          title="se o link acima não abrir (o e-mail pode ter mudado de pasta), procure pelo assunto no Outlook web">
+                          não abriu?
+                        </a>
+                      </>
+                    ) : (
+                      <a href={`https://outlook.office.com/mail/search?q=${encodeURIComponent(e.assunto || '')}`}
+                        target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100"
+                        title="procurar este assunto no Outlook web">
+                        <ExternalLink className="h-3 w-3" /> procurar no Outlook
+                      </a>
+                    )}
+                  </span>
                 </div>
                 {e.assunto !== c.assunto && (
                   <p className="mt-1 text-xs font-medium text-gray-800">{e.assunto}</p>
