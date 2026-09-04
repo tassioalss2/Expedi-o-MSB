@@ -1066,7 +1066,6 @@ export function AbaCaixaEntrada() {
   const qc = useQueryClient()
   const [filtro, setFiltro] = useState<'NAO' | 'PARCIAL' | 'SIM' | ''>('NAO')
   const [tipo, setTipo] = useState('')
-  const [soTratativa, setSoTratativa] = useState(false)
   // Qual solicitacao esta com o detalhe aberto (a chave do caso).
   const [detalhe, setDetalhe] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
@@ -1121,12 +1120,17 @@ export function AbaCaixaEntrada() {
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase()
-    const base = soTratativa ? cards.filter(c => c.em_tratativa) : cards
-    if (!q) return base
-    return base.filter(c =>
+    if (!q) return cards
+    return cards.filter(c =>
       [c.assunto, c.empenho, c.cliente_nome, c.orgao_texto, c.contrato]
         .some(v => (v || '').toLowerCase().includes(q)))
-  }, [cards, busca, soTratativa])
+  }, [cards, busca])
+
+  // Os dois lados da tela. A ordem dentro de cada um continua a que a listagem
+  // devolve: mais critico primeiro, e dentro da mesma criticidade o que espera
+  // ha mais tempo.
+  const naoTratados = useMemo(() => filtrados.filter(c => !c.em_tratativa), [filtrados])
+  const emTratamento = useMemo(() => filtrados.filter(c => c.em_tratativa), [filtrados])
 
   return (
     <div className="space-y-4">
@@ -1156,13 +1160,6 @@ export function AbaCaixaEntrada() {
             placeholder="nota de empenho, órgão, assunto…"
             className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm" />
         </div>
-        <button onClick={() => setSoTratativa(v => !v)}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-            soTratativa
-              ? 'border-violet-300 bg-violet-100 text-violet-800'
-              : 'border-gray-200 bg-white text-gray-600 hover:border-violet-400'}`}>
-          <Hand className="h-4 w-4" /> em tratativa
-        </button>
         <span className="text-sm text-gray-500">{filtrados.length} casos</span>
       </div>
 
@@ -1176,16 +1173,47 @@ export function AbaCaixaEntrada() {
           </p>
         </div>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
-          {filtrados.map(c => (
-            <CardEntrada key={c.chave} c={c}
-              salvando={triar.isPending || promover.isPending}
-              onTriar={s => triar.mutate({ chave: c.chave, situacao: s })}
-              onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
-              onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
-              onAbrir={() => setDetalhe(c.chave)}
-              onPromover={() => promover.mutate(c.chave)} />
-          ))}
+        /* Duas colunas pelo eixo da tratativa: o que ninguém pegou e o que
+           alguém está cuidando. É a pergunta que a pessoa faz ao abrir a tela
+           ("o que ainda não tem dono?"), e ela não se responde numa lista
+           misturada — antes era uma coluna só, com um selo violeta perdido
+           entre os cards.
+
+           A coluna substitui o antigo filtro "em tratativa": botão de filtro e
+           coluna faziam a mesma coisa, e manter os dois só confundiria. O
+           "assumir"/"liberar" do card move ele de lado. */
+        <div className="grid gap-4 lg:grid-cols-2">
+          {([['NAO', 'Não tratado', naoTratados], ['SIM', 'Em tratamento', emTratamento]] as const)
+            .map(([lado, titulo, lista]) => (
+              <div key={lado}>
+                <div className={`mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 ${
+                  lado === 'SIM'
+                    ? 'border-violet-200 bg-violet-50 text-violet-900'
+                    : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+                  {lado === 'SIM'
+                    ? <Hand className="h-4 w-4" />
+                    : <MinusCircle className="h-4 w-4" />}
+                  <span className="text-sm font-semibold">{titulo}</span>
+                  <span className="ml-auto text-sm tabular-nums">{lista.length}</span>
+                </div>
+                <div className="space-y-3">
+                  {lista.length === 0 && (
+                    <p className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-xs text-gray-400">
+                      {lado === 'SIM' ? 'Ninguém assumiu nenhum caso ainda.' : 'Nada sem dono aqui.'}
+                    </p>
+                  )}
+                  {lista.map(c => (
+                    <CardEntrada key={c.chave} c={c}
+                      salvando={triar.isPending || promover.isPending}
+                      onTriar={s => triar.mutate({ chave: c.chave, situacao: s })}
+                      onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
+                      onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
+                      onAbrir={() => setDetalhe(c.chave)}
+                      onPromover={() => promover.mutate(c.chave)} />
+                  ))}
+                </div>
+              </div>
+            ))}
         </div>
       )}
 
