@@ -57,6 +57,7 @@ _CAMPOS_DA_MAQUINA = (
     # Volatil de proposito: reescrito a cada rodada porque o EntryID muda quando
     # o e-mail e movido de pasta.
     "entry_id",
+    "conversation_id",
 )
 SITUACOES = ("NAO", "PARCIAL", "SIM")
 
@@ -100,6 +101,91 @@ def _demandas_por_empenho(db) -> dict:
 
 
 # ── sincronização a partir do motor ─────────────────────────────────────────
+# A conversa só passou a existir na v39. Enquanto a migração não roda na mão
+# (é assim que este projeto migra), escrever essas colunas derrubaria a
+# sincronização inteira — e a sincronização é o que alimenta a triagem. Descobre
+# uma vez e segue sem elas se não existirem.
+_TEM_CONVERSA: Optional[bool] = None
+
+
+def _suporta_conversa(db) -> bool:
+    global _TEM_CONVERSA
+    if _TEM_CONVERSA is None:
+        try:
+            db.table("licitacao_entrada").select("conversation_id").limit(1).execute()
+            db.table("licitacao_mensagens").select("entry_id").limit(1).execute()
+            _TEM_CONVERSA = True
+        except Exception:
+            _TEM_CONVERSA = False
+    return _TEM_CONVERSA
+
+
+def _resumo_da_conversa(thread: list[dict]) -> dict:
+    """O resumo que a listagem precisa sem carregar a conversa inteira.
+
+    "Respondido" é a última fala de alguém da MSB que NÃO seja a caixa da
+    licitação: a licitação repassa e sai, então uma mensagem dela não é sinal de
+    que alguém pegou o caso. Isso é sinal, não decisão — quem diz se o caso está
+    em tratativa continua sendo a pessoa, em `em_tratativa`.
+    """
+    msgs = sorted([m for m in (thread or []) if m.get("quando")],
+                  key=lambda m: m["quando"])
+    nossas = [m for m in msgs if m.get("papel") == "MSB"]
+    return {
+        "msgs_total": len(thread or []),
+        "ultima_msg_em": msgs[-1]["quando"] if msgs else None,
+        "respondido_em": nossas[-1]["quando"] if nossas else None,
+        "respondido_por": (nossas[-1].get("nome") or None) if nossas else None,
+    }
+
+
+def _grava_mensagens(db, lote: list[dict]) -> dict:
+    """Grava as mensagens da conversa, UMA vez por conversa.
+
+    253 e-mails caem em 192 conversas: gravar por e-mail reescreveria as mesmas
+    threads várias vezes. A chave é o EntryID longo, então reprocessar a mesma
+    mensagem é idempotente.
+
+    Best-effort de propósito e com a falha CONTADA no retorno (o motor grava
+    isso no log): se a conversa não gravar, a triagem ainda tem que entrar.
+    """
+    por_conversa: dict[str, list] = {}
+    for e in lote:
+        cid = str(e.get("conversation_id") or "").strip()
+        if cid and cid not in por_conversa:
+            por_conversa[cid] = e.get("thread") or []
+
+    linhas = []
+    for cid, thread in por_conversa.items():
+        for m in thread:
+            if not m.get("entry_id"):
+                continue
+            linhas.append({
+                "conversation_id": cid,
+                "entry_id": m["entry_id"],
+                "enviado_em": m.get("quando"),
+                "de": m.get("de"),
+                "nome": m.get("nome"),
+                "papel": m.get("papel"),
+                "assunto": m.get("assunto"),
+                "corpo": m.get("corpo"),
+                "pasta": m.get("pasta"),
+            })
+
+    # Blocos de 25: com corpo de até 15 KB por mensagem, um bloco grande vira
+    # uma requisição de megabytes.
+    gravadas = falhas = 0
+    for i in range(0, len(linhas), 25):
+        bloco = linhas[i:i + 25]
+        try:
+            db.table("licitacao_mensagens").upsert(bloco).execute()
+            gravadas += len(bloco)
+        except Exception:
+            falhas += len(bloco)
+    return {"conversas": len(por_conversa), "mensagens": gravadas,
+            "mensagens_falhas": falhas}
+
+
 def sincronizar(lote: list[dict]) -> dict:
     """Grava o que o motor leu. Idempotente pela chave do e-mail.
 
@@ -159,6 +245,9 @@ def sincronizar(lote: list[dict]) -> dict:
             cli = por_pregao.get(pg)
         return cli, dem
 
+    tem_conversa = _suporta_conversa(db)
+    conversa = _grava_mensagens(db, lote) if tem_conversa else {}
+
     criados = atualizados = sem_cliente = ligados = 0
     for e in lote:
         chave = str(e.get("chave") or "").strip()
@@ -166,6 +255,12 @@ def sincronizar(lote: list[dict]) -> dict:
             continue
         campos = {k: e.get(k) for k in _CAMPOS_DA_MAQUINA if k in e}
         campos["atualizado_em"] = _agora()
+        # O resumo da conversa é derivado, não vem do motor pronto: assim a
+        # regra de "o que conta como resposta nossa" mora num lugar só.
+        if tem_conversa:
+            campos.update(_resumo_da_conversa(e.get("thread")))
+        else:
+            campos.pop("conversation_id", None)
         cnpj = _digitos(e.get("cnpj_orgao"))
         campos["cnpj_orgao"] = cnpj or None
 
@@ -210,7 +305,7 @@ def sincronizar(lote: list[dict]) -> dict:
             sem_cliente += 1
 
     return {"recebidos": len(lote), "criados": criados, "atualizados": atualizados,
-            "sem_cliente": sem_cliente, "ligados_a_demanda": ligados}
+            "sem_cliente": sem_cliente, "ligados_a_demanda": ligados, **conversa}
 
 
 # ── leitura: a caixa de entrada agrupada por nota de empenho ────────────────
@@ -370,7 +465,98 @@ def agrupar(regs: list[dict]) -> dict[str, list[dict]]:
         destinos = conhecidos.get(numero) or set()
         if len(destinos) == 1:
             grupos[next(iter(destinos))].extend(grupos.pop(chave))
-    return grupos
+
+    return _costura_pela_conversa(grupos)
+
+
+def _representante(chaves: set) -> str:
+    """Qual chave sobrevive quando grupos se juntam.
+
+    A NE primeiro porque e o nome que a operacao usa para falar do caso; depois
+    o numero do documento; o e-mail solto por ultimo, que e o que menos
+    identifica.
+    """
+    for prefixo in ("NE:", "DOC:", "DOC?:", "EM:"):
+        candidatos = sorted(c for c in chaves if c.startswith(prefixo))
+        if candidatos:
+            return candidatos[0]
+    return sorted(chaves)[0]
+
+
+def _costura_pela_conversa(grupos: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Junta os grupos que sao a mesma conversa do Outlook.
+
+    O assunto repetido era o buraco. "Ordem de fornecimento - MSB" chegou seis
+    vezes, sem numero no assunto e com o documento so em parte dos anexos: dava
+    tres cards do mesmo caso. Idem "HRN - SOLICITACAO DE OPME", cinco e-mails em
+    cinco cards, e "Queixa tecnica cateter balao", quatro em quatro. O
+    ConversationID do Outlook resolve isso sem heuristica: e o mesmo criterio
+    que o Outlook usa para mostrar a thread.
+
+    Medido na janela de 01/07 a 08/09: 19 conversas estavam espalhadas em mais
+    de um card.
+
+    E uma passada que SO JUNTA. O que agrupava antes continua agrupado — assim
+    nao existe o risco de um documento reenviado numa thread nova deixar de
+    casar com o card que ja existia.
+
+    Duas travas, porque fundir dois pedidos de verdade e o erro mais caro deste
+    modulo:
+
+      · conversa que toca dois clientes resolvidos diferentes nao funde. Hoje
+        sao zero, e e justamente por isso que a trava e barata.
+      · conversa que atravessa duas NEs distintas nao funde. A operacao fala
+        por NE, e juntar duas notas de empenho num card esconderia uma.
+    """
+    por_conversa: dict[str, set] = {}
+    clientes: dict[str, set] = {}
+    for chave, membros in grupos.items():
+        for r in membros:
+            cid = r.get("conversation_id")
+            if not cid:
+                continue
+            por_conversa.setdefault(cid, set()).add(chave)
+            if r.get("cliente_id"):
+                clientes.setdefault(cid, set()).add(r["cliente_id"])
+
+    pai: dict[str, str] = {}
+
+    def raiz(k: str) -> str:
+        while pai.get(k, k) != k:
+            k = pai[k]
+        return k
+
+    for cid, chaves in por_conversa.items():
+        if len(chaves) < 2:
+            continue
+        if len(clientes.get(cid) or ()) > 1:
+            continue
+        if len({c for c in chaves if c.startswith("NE:")}) > 1:
+            continue
+        alvo = raiz(_representante(chaves))
+        for c in chaves:
+            r = raiz(c)
+            if r != alvo:
+                pai[r] = alvo
+
+    if not pai:
+        return grupos
+
+    juntos: dict[str, list[dict]] = {}
+    for chave, membros in grupos.items():
+        juntos.setdefault(raiz(chave), []).extend(membros)
+    # Sem repetir: um e-mail que cita duas NEs entra nos dois grupos de
+    # proposito, e depois da costura os dois podem ser o mesmo card.
+    limpos: dict[str, list[dict]] = {}
+    for chave, membros in juntos.items():
+        vistos, unicos = set(), []
+        for r in membros:
+            if r["id"] in vistos:
+                continue
+            vistos.add(r["id"])
+            unicos.append(r)
+        limpos[chave] = unicos
+    return limpos
 
 
 def _entrega_prevista(membros: list[dict]) -> Optional[str]:
@@ -495,6 +681,19 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
         situacoes = {m.get("situacao") for m in membros}
         cliente = next((m["clientes"]["nome"] for m in membros
                         if m.get("clientes") and m["clientes"].get("nome")), None)
+
+        # A conversa do caso. A licitação repassa e sai da conversa, então o que
+        # diz se o caso andou é a última mensagem da THREAD — não a data do
+        # e-mail dela, que era o único sinal que existia antes.
+        conversas = sorted({m["conversation_id"] for m in membros
+                            if m.get("conversation_id")})
+        respondido_em = max((m.get("respondido_em") for m in membros
+                             if m.get("respondido_em")), default=None)
+        respondido_por = next(
+            (m.get("respondido_por") for m in membros
+             if m.get("respondido_em") == respondido_em), None) if respondido_em else None
+        ultima_msg = max((m.get("ultima_msg_em") for m in membros
+                          if m.get("ultima_msg_em")), default=None)
         cards.append({
             "chave": chave,
             "empenho": chave[3:] if chave.startswith("NE:") else None,
@@ -543,6 +742,19 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             # verde com um e-mail em aberto dentro é pior que nenhum card.
             "situacao": ("SIM" if situacoes == {"SIM"}
                          else "PARCIAL" if situacoes & {"SIM", "PARCIAL"} else "NAO"),
+            "conversas": conversas,
+            "msgs_total": sum({m["conversation_id"]: (m.get("msgs_total") or 0)
+                               for m in membros if m.get("conversation_id")}.values()),
+            # Sinal, não decisão: alguém da MSB já falou na conversa. Não mexe em
+            # `em_tratativa`, que é a marca que a pessoa faz de propósito.
+            "respondido_em": respondido_em,
+            "respondido_por": respondido_por,
+            "ultima_msg_em": ultima_msg,
+            # `dias_parados` continua contando do PRIMEIRO e-mail (a idade do
+            # pedido, que é o que ordena a fila). Este outro conta do último
+            # movimento real da conversa: um caso de 40 dias que teve resposta
+            # ontem não é o mesmo problema que um de 40 dias sem ninguém falar.
+            "dias_sem_movimento": _dias_parados(ultima_msg) if ultima_msg else None,
             "itens": itens,
             "valor_total": round(sum(float(i.get("valor_total") or 0) for i in itens), 2),
             # Historico de anotacoes do caso — de todos os e-mails do grupo,
@@ -609,13 +821,45 @@ def _emails_do_grupo(chave: str, colunas: str = "*") -> list[dict]:
         raise HTTPException(400, "chave de grupo inválida: %s" % chave)
     # Os campos de que a chave depende vêm junto mesmo quando o chamador não
     # pediu: é por eles que se filtra.
-    extras = "empenhos, chave, anexos, assunto, cnpj_orgao"
+    #
+    # `cliente_id` faltava aqui e isso QUEBRAVA a triagem em grupo: o escopo do
+    # órgão prefere o cliente resolvido ao CNPJ, então sem a coluna a chave
+    # remontada era outra e o grupo não era encontrado. `triar_grupo` respondia
+    # 404 "nenhum e-mail para a chave" em 13 dos 16 cards agrupados por número
+    # de documento — assumir ou resolver o caso pelo card simplesmente falhava.
+    extras = "empenhos, chave, anexos, assunto, cnpj_orgao, cliente_id, conversation_id"
     pedido = colunas if colunas == "*" else "%s, %s" % (colunas, extras)
     todos = db.table("licitacao_entrada").select(pedido).eq("ativo", True)\
         .limit(5000).execute().data
     # Reagrupa tudo e devolve o grupo pedido: a mesma funcao da listagem, para
     # triar um card nunca afetar um conjunto diferente do que a tela mostrou.
     return agrupar(todos).get(chave, [])
+
+
+def conversa(chave: str) -> list[dict]:
+    """A conversa inteira do caso, em ordem de tempo.
+
+    Vem da tabela de mensagens, que guarda também o que nunca passou pela caixa
+    da licitação: as respostas do órgão e as nossas. É a diferença entre ler um
+    pedaço da conversa e ler a conversa.
+
+    Cada mensagem leva o próprio EntryID, então a tela abre EXATAMENTE aquela
+    mensagem no Outlook em vez de abrir o e-mail de origem e deixar quem lê
+    procurar o resto.
+    """
+    regs = _emails_do_grupo(chave, "id, conversation_id")
+    cids = sorted({r["conversation_id"] for r in regs if r.get("conversation_id")})
+    if not cids:
+        return []
+    db = get_service_db()
+    msgs: list[dict] = []
+    for i in range(0, len(cids), 50):
+        msgs += db.table("licitacao_mensagens").select(
+            "entry_id, conversation_id, enviado_em, de, nome, papel, "
+            "assunto, corpo, pasta"
+        ).in_("conversation_id", cids[i:i + 50]).limit(1000).execute().data
+    msgs.sort(key=lambda m: m.get("enviado_em") or "")
+    return msgs
 
 
 def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,

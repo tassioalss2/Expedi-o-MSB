@@ -282,6 +282,17 @@ def painel_entrada(dias: int = 30, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_entrada_service.painel(dias)
 
 
+@router.get("/entrada/conversa")
+def conversa_do_caso(chave: str, _: UsuarioOut = Depends(get_current_user)):
+    """A conversa inteira do caso, e não só o e-mail que a licitação repassou.
+
+    Rota separada da listagem de propósito: são 3,5 MB de corpos na janela
+    inteira, e a lista da caixa de entrada carregaria isso a cada abertura para
+    um conteúdo que só interessa quando alguém abre UM caso.
+    """
+    return licitacao_entrada_service.conversa(chave)
+
+
 @router.get("/entrada/orgaos")
 def listar_orgaos(_: UsuarioOut = Depends(get_current_user)):
     return licitacao_entrada_service.listar_orgaos()

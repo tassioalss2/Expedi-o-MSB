@@ -27,6 +27,9 @@ import { ClienteAutocomplete } from '../NovoPedido'
 const fmtBRL = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const fmtDia = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'
+const fmtMomento = (iso?: string | null) =>
+  iso ? new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
 
 /**
  * As faixas de atraso são uma escala de severidade ORDENADA, não séries
@@ -125,6 +128,44 @@ type Card = {
   anexos_com_problema: any[]
   anexos: any[]
   emails: any[]
+  /** A conversa do Outlook. A licitação repassa e SAI da conversa: quem trata
+   *  somos nós, com outro remetente, e por isso 61% das mensagens nunca
+   *  chegavam ao app. Estes campos são o resumo; a conversa em si vem por
+   *  /entrada/conversa quando alguém abre o caso. */
+  conversas: string[]
+  msgs_total: number
+  respondido_em: string | null
+  respondido_por: string | null
+  ultima_msg_em: string | null
+  dias_sem_movimento: number | null
+}
+
+interface Mensagem {
+  entry_id: string
+  enviado_em: string | null
+  de: string | null
+  nome: string | null
+  papel: 'LICITACAO' | 'MSB' | 'EXTERNO' | null
+  assunto: string | null
+  corpo: string | null
+  pasta: string | null
+}
+
+const PAPEL: Record<string, { label: string; cor: string; barra: string }> = {
+  LICITACAO: { label: 'licitação', cor: 'bg-gray-100 text-gray-700 border-gray-200', barra: 'bg-gray-300' },
+  MSB: { label: 'nós', cor: 'bg-blue-50 text-blue-700 border-blue-200', barra: 'bg-blue-400' },
+  EXTERNO: { label: 'cliente / órgão', cor: 'bg-amber-50 text-amber-800 border-amber-200', barra: 'bg-amber-400' },
+}
+
+/** O começo da mensagem, sem a conversa citada.
+ *
+ *  Cada resposta carrega a thread inteira colada embaixo, então os primeiros
+ *  caracteres são o que a pessoa realmente escreveu — e o resto é repetição do
+ *  que já está listado acima. */
+function partePropria(corpo?: string | null) {
+  const t = (corpo || '').replace(/\r/g, '')
+  const corte = t.search(/\n\s*(De:|From:|Em .{0,40}escreveu:|-{3,}\s*Mensagem original)/)
+  return (corte > 40 ? t.slice(0, corte) : t).trim()
 }
 
 
@@ -580,6 +621,198 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  * a demanda ligada e o que o time anotou. Sem esta tela, responder "por que
  * este caso está aberto há 30 dias?" exigia abrir o Outlook.
  */
+/** A conversa inteira do caso.
+
+ * Esta secao existe por uma confusao concreta, e a causa foi o Tassio quem
+ * apontou: o e-mail licitacao@msbbrasil.com recebe a solicitacao do cliente e
+ * repassa para a equipe — e depois SAI da conversa. A tratativa e nossa, tem
+ * outro remetente, e o motor (que le so o que vem da licitacao) nunca a via.
+ * Resultado na tela: abria-se o caso e lia-se um pedaco solto, e "abrir no
+ * Outlook" levava justamente a mensagem que menos explica o assunto.
+ *
+ * Medido no Outlook de 01/07 a 08/09/2026: 253 mensagens vistas contra 399
+ * nunca vistas — 61% da conversa fora do app, incluindo 34 respostas nossas.
+ *
+ * Cada mensagem tem o proprio EntryID, entao o link abre AQUELA mensagem.
+ */
+function Conversa({ c }: { c: Card }) {
+  const { data, isLoading } = useQuery<Mensagem[]>({
+    queryKey: ['licitacao-conversa', c.chave],
+    queryFn: () => api.get('/licitacoes/entrada/conversa',
+      { params: { chave: c.chave } }).then(r => r.data),
+    staleTime: 120000,
+  })
+  const [abertas, setAbertas] = useState<Record<string, boolean>>({})
+  const msgs = data || []
+
+  if (isLoading) {
+    return (
+      <Secao titulo="Conversa">
+        <p className="flex items-center gap-2 text-xs text-gray-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> carregando a conversa...
+        </p>
+      </Secao>
+    )
+  }
+  // Sem conversa gravada: cai no historico dos e-mails da licitacao, que e o
+  // que existia antes. Acontece enquanto o motor nao roda de novo, e nos
+  // registros antigos, que nunca tiveram thread lida.
+  if (!msgs.length) return <HistoricoDeEmails c={c} />
+
+  const nossas = msgs.filter(m => m.papel === 'MSB')
+  const ultima = msgs[msgs.length - 1]
+
+  return (
+    <Secao titulo={`Conversa — ${msgs.length} mensagem${msgs.length > 1 ? 's' : ''}`}>
+      {/* O resumo primeiro: em duas linhas, quem falou por ultimo e se alguem
+          nosso ja entrou. Sao as duas perguntas que se faz antes de ler. */}
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
+        <span>ultima fala: <span className="font-medium text-gray-800">
+          {PAPEL[ultima.papel || 'EXTERNO']?.label}</span> em {fmtMomento(ultima.enviado_em)}</span>
+        {nossas.length ? (
+          <span className="text-blue-700">
+            respondido por {nossas[nossas.length - 1]!.nome || 'alguem da MSB'} em{' '}
+            {fmtMomento(nossas[nossas.length - 1]!.enviado_em)}
+          </span>
+        ) : (
+          // 67 dos 192 casos estao assim. Nao e acusacao: as vezes a licitacao
+          // resolveu sozinha. Mas quando o caso esta aberto, e o sinal mais
+          // util da tela.
+          <span className="font-medium text-amber-700">ninguem da MSB respondeu nesta conversa</span>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        {msgs.map((m, i) => {
+          const papel = PAPEL[m.papel || 'EXTERNO'] || PAPEL.EXTERNO!
+          const proprio = partePropria(m.corpo)
+          // A ultima vem aberta: e a que diz em que pe o caso esta. As outras
+          // abrem no clique, senao a conversa e uma parede de texto citado.
+          const aberta = abertas[m.entry_id] ?? (i === msgs.length - 1)
+          const tem_mais = (m.corpo || '').length > proprio.length + 20
+          return (
+            <div key={m.entry_id} className="flex gap-2">
+              <span className={`mt-1 w-0.5 shrink-0 rounded ${papel.barra}`} />
+              <div className="min-w-0 flex-1 rounded-lg border border-gray-100 p-2.5">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                  <span className={`rounded border px-1.5 py-0.5 text-[11px] font-semibold ${papel.cor}`}>
+                    {papel.label}
+                  </span>
+                  <span className="font-medium text-gray-700">{m.nome || m.de}</span>
+                  <span className="tabular-nums">{fmtMomento(m.enviado_em)}</span>
+                  {m.pasta && <span className="rounded bg-gray-100 px-1.5 py-0.5">{m.pasta}</span>}
+                  <span className="ml-auto flex items-center gap-2">
+                    {/* `ace-email:` e nao `outlook:`: o esquema do Office NAO
+                        esta registrado nesta instalacao, e o link nao fazia
+                        nada. Este e um handler proprio (abre_email.py). */}
+                    <a href={`ace-email:${m.entry_id}`}
+                      className="flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100"
+                      title="abrir ESTA mensagem no Outlook do computador">
+                      <ExternalLink className="h-3 w-3" /> abrir
+                    </a>
+                  </span>
+                </div>
+                {m.assunto && m.assunto !== c.assunto && (
+                  <p className="mt-1 text-xs font-medium text-gray-800">{m.assunto}</p>
+                )}
+                <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-gray-600">
+                  {aberta ? (m.corpo || '(sem texto)')
+                    : (proprio.slice(0, 220) || '(sem texto)')}
+                  {!aberta && proprio.length > 220 ? '...' : ''}
+                </p>
+                {(tem_mais || proprio.length > 220) && (
+                  <button
+                    onClick={() => setAbertas(a => ({ ...a, [m.entry_id]: !aberta }))}
+                    className="mt-1 text-[11px] text-gray-400 hover:text-blue-600 hover:underline">
+                    {aberta ? 'recolher' : 'ver a mensagem inteira'}
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <p className="mt-1.5 text-[11px] text-gray-400">
+        Se "abrir" nao fizer nada, o atalho nao esta registrado nesta maquina: rode
+        uma vez <code className="rounded bg-gray-100 px-1">instala_protocolo.py</code> na
+        pasta do motor.
+      </p>
+    </Secao>
+  )
+}
+
+
+/** Os e-mails que a licitacao repassou — a visao antiga, hoje so reserva.
+ *
+ * Fica para os casos sem conversa gravada. Nao foi apagada porque e o unico
+ * conteudo que existe nos registros lidos antes da v39. */
+function HistoricoDeEmails({ c }: { c: Card }) {
+  return (
+        <Secao titulo={`Histórico — ${c.emails.length} e-mail${c.emails.length > 1 ? 's' : ''}`}>
+          <div className="space-y-2">
+            {c.emails.map(e => (
+              <div key={e.id} className="rounded-lg border border-gray-100 p-2.5">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                  <span className="font-medium tabular-nums text-gray-700">{fmtDia(e.recebido_em)}</span>
+                  {e.pasta && <span className="rounded bg-gray-100 px-1.5 py-0.5">{e.pasta}</span>}
+                  {(e.anexos || []).length > 0 && <span>{e.anexos.length} anexo(s)</span>}
+                  {/* Abre o item no Outlook pelo esquema `outlook:<EntryID>`.
+                      O EntryID MUDA quando o e-mail é movido de pasta — e mover
+                      de pasta é o que o time faz ao resolver um assunto. O motor
+                      reescreve o id a cada rodada, então o link fica no máximo
+                      meio dia velho; quando ele falhar, o "buscar" ao lado acha
+                      pelo assunto e nunca envelhece. */}
+                  {/* `ace-email:` e não `outlook:`. O esquema `outlook:` NÃO está
+                      registrado no Windows desta instalação do Office — só o
+                      `mailto:` —, então o link não fazia nada ao ser clicado.
+                      `ace-email:` é um handler próprio (Licitacao/_motor/
+                      abre_email.py) que resolve o EntryID pelo COM e manda o
+                      Outlook mostrar o item; testado ponta a ponta.
+
+                      A saída é copiar o assunto, e não um link de busca do
+                      Outlook web: aquele link ignorava a consulta e abria a
+                      caixa de entrada, o que é pior que não ter saída — parece
+                      que funcionou e não levou a lugar nenhum. */}
+                  <span className="ml-auto flex items-center gap-2">
+                    {e.entry_id && (
+                      <a href={`ace-email:${e.entry_id}`}
+                        className="flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100"
+                        title="abrir este e-mail no Outlook do computador">
+                        <ExternalLink className="h-3 w-3" /> abrir no Outlook
+                      </a>
+                    )}
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(e.assunto || '')
+                          .then(() => toast.success('Assunto copiado — cole na busca do Outlook'))
+                          .catch(() => toast.error('Não consegui copiar'))
+                      }}
+                      className="text-gray-500 hover:text-blue-600 hover:underline"
+                      title="copiar o assunto para colar na busca do Outlook">
+                      copiar assunto
+                    </button>
+                  </span>
+                </div>
+                {e.assunto !== c.assunto && (
+                  <p className="mt-1 text-xs font-medium text-gray-800">{e.assunto}</p>
+                )}
+                <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-gray-600">
+                  {e.corpo || '(sem texto no corpo)'}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-gray-400">
+            Se “abrir no Outlook” não fizer nada, o atalho não está registrado nesta
+            máquina: rode uma vez{' '}
+            <code className="rounded bg-gray-100 px-1">instala_protocolo.py</code> na pasta
+            do motor.
+          </p>
+        </Secao>
+  )
+}
+
+
 function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApagarNota, onPromover, salvando }: {
   c: Card
   onFechar: () => void
@@ -790,67 +1023,7 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
           </Secao>
         )}
 
-        <Secao titulo={`Histórico — ${c.emails.length} e-mail${c.emails.length > 1 ? 's' : ''}`}>
-          <div className="space-y-2">
-            {c.emails.map(e => (
-              <div key={e.id} className="rounded-lg border border-gray-100 p-2.5">
-                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                  <span className="font-medium tabular-nums text-gray-700">{fmtDia(e.recebido_em)}</span>
-                  {e.pasta && <span className="rounded bg-gray-100 px-1.5 py-0.5">{e.pasta}</span>}
-                  {(e.anexos || []).length > 0 && <span>{e.anexos.length} anexo(s)</span>}
-                  {/* Abre o item no Outlook pelo esquema `outlook:<EntryID>`.
-                      O EntryID MUDA quando o e-mail é movido de pasta — e mover
-                      de pasta é o que o time faz ao resolver um assunto. O motor
-                      reescreve o id a cada rodada, então o link fica no máximo
-                      meio dia velho; quando ele falhar, o "buscar" ao lado acha
-                      pelo assunto e nunca envelhece. */}
-                  {/* `ace-email:` e não `outlook:`. O esquema `outlook:` NÃO está
-                      registrado no Windows desta instalação do Office — só o
-                      `mailto:` —, então o link não fazia nada ao ser clicado.
-                      `ace-email:` é um handler próprio (Licitacao/_motor/
-                      abre_email.py) que resolve o EntryID pelo COM e manda o
-                      Outlook mostrar o item; testado ponta a ponta.
-
-                      A saída é copiar o assunto, e não um link de busca do
-                      Outlook web: aquele link ignorava a consulta e abria a
-                      caixa de entrada, o que é pior que não ter saída — parece
-                      que funcionou e não levou a lugar nenhum. */}
-                  <span className="ml-auto flex items-center gap-2">
-                    {e.entry_id && (
-                      <a href={`ace-email:${e.entry_id}`}
-                        className="flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 font-medium text-blue-700 hover:bg-blue-100"
-                        title="abrir este e-mail no Outlook do computador">
-                        <ExternalLink className="h-3 w-3" /> abrir no Outlook
-                      </a>
-                    )}
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(e.assunto || '')
-                          .then(() => toast.success('Assunto copiado — cole na busca do Outlook'))
-                          .catch(() => toast.error('Não consegui copiar'))
-                      }}
-                      className="text-gray-500 hover:text-blue-600 hover:underline"
-                      title="copiar o assunto para colar na busca do Outlook">
-                      copiar assunto
-                    </button>
-                  </span>
-                </div>
-                {e.assunto !== c.assunto && (
-                  <p className="mt-1 text-xs font-medium text-gray-800">{e.assunto}</p>
-                )}
-                <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-gray-600">
-                  {e.corpo || '(sem texto no corpo)'}
-                </p>
-              </div>
-            ))}
-          </div>
-          <p className="mt-1.5 text-[11px] text-gray-400">
-            Se “abrir no Outlook” não fizer nada, o atalho não está registrado nesta
-            máquina: rode uma vez{' '}
-            <code className="rounded bg-gray-100 px-1">instala_protocolo.py</code> na pasta
-            do motor.
-          </p>
-        </Secao>
+        <Conversa c={c} />
 
         {/* Ações: as mesmas do card, para não obrigar a fechar e voltar. */}
         <div className="sticky bottom-0 space-y-2 border-t border-gray-200 bg-white p-4">
@@ -933,6 +1106,32 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
             {c.emails.length > 1 && (
               <span className="flex items-center gap-1 text-[11px] text-gray-500">
                 <Mail className="h-3 w-3" />{c.emails.length} e-mails
+              </span>
+            )}
+            {/* Se alguem nosso ja falou na conversa. E sinal, nao decisao: quem
+                diz que o caso esta em tratativa continua sendo a pessoa, no
+                botao "assumir". Mas um caso aberto em que NINGUEM respondeu e
+                diferente de um em que se respondeu e esta-se aguardando — e
+                antes disto a tela nao sabia a diferenca, porque a licitacao
+                repassa e sai da conversa. */}
+            {c.respondido_por ? (
+              <span className="flex items-center gap-1 text-[11px] text-blue-700"
+                title={`${c.respondido_por} respondeu na conversa em ${fmtMomento(c.respondido_em)}`}>
+                <Mail className="h-3 w-3" />respondido · {c.respondido_por.split(' ')[0]}
+              </span>
+            ) : c.msgs_total > 0 && c.situacao !== 'SIM' ? (
+              <span className="flex items-center gap-1 text-[11px] font-medium text-amber-700"
+                title="ninguem da MSB falou nesta conversa; a licitacao repassou e ficou por isso">
+                <Mail className="h-3 w-3" />sem resposta nossa
+              </span>
+            ) : null}
+            {/* Dias sem NINGUEM falar, contados pela conversa e nao pelo e-mail
+                da licitacao. So aparece quando difere do "parado ha", senao
+                seriam dois numeros iguais lado a lado. */}
+            {c.dias_sem_movimento != null && c.dias_sem_movimento !== c.dias_parados && (
+              <span className="text-[11px] text-gray-400"
+                title="dias desde a ultima mensagem da conversa, de qualquer lado">
+                {c.dias_sem_movimento}d sem movimento
               </span>
             )}
           </div>
