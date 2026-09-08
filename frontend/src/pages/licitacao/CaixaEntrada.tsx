@@ -118,6 +118,11 @@ type Card = {
   em_tratativa: boolean
   tratativa_por: string | null
   tratativa_nome: string | null
+  /** De onde saiu o "em tratamento": PESSOA (alguem clicou em assumir) ou
+   *  RESPOSTA (alguem de nos ja respondeu na conversa). Nulo quando ninguem
+   *  tratou. A tela precisa dizer qual dos dois — "assumido por Tassio" e
+   *  "respondeu: Maiara" nao sao a mesma informacao. */
+  tratativa_origem: 'PESSOA' | 'RESPOSTA' | null
   assunto: string
   recebido_em: string
   ultimo_em: string
@@ -265,7 +270,7 @@ function DetalheNumero({ metrica, onFechar }: {
             {c.em_tratativa && (
               <span className="flex items-center gap-1 rounded border border-violet-200 bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800">
                 <Hand className="h-3 w-3" />
-                {c.tratativa_nome ? `em tratativa · ${c.tratativa_nome.split(' ')[0]}` : 'em tratativa'}
+                {rotuloTratativa(c)}
               </span>
             )}
                     <span className={`text-[11px] ${c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-500'}`}>
@@ -515,6 +520,23 @@ function DetalheDoDia({ dia, tipo, onFechar, onTrocarTipo }: {
       </div>
     </div>
   )
+}
+
+
+/** O que dizer sobre "em tratamento": quem, e como se soube.
+ *
+ * "assumido" e "respondeu" nao sao a mesma coisa e a tela nao pode fingir que
+ * sao. Alguem que clicou em assumir esta dizendo "e meu"; alguem que respondeu
+ * ao cliente pode ter apenas pedido um dado e nao ter assumido nada. Mostrar os
+ * dois com a mesma palavra faria o quadro parecer mais organizado do que esta.
+ */
+function rotuloTratativa(c: Card) {
+  if (!c.em_tratativa) return null
+  const nome = c.tratativa_nome ? c.tratativa_nome.split(' ')[0] : null
+  if (c.tratativa_origem === 'RESPOSTA') {
+    return nome ? `respondeu · ${nome}` : 'já respondemos'
+  }
+  return nome ? `assumido · ${nome}` : 'em tratativa'
 }
 
 
@@ -1233,7 +1255,7 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
               {c.em_tratativa && (
                 <span className="flex items-center gap-1 rounded border border-violet-200 bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800">
                   <Hand className="h-3 w-3" />
-                  {c.tratativa_nome ? `em tratativa · ${c.tratativa_nome}` : 'em tratativa'}
+                  {rotuloTratativa(c)}
                 </span>
               )}
             </div>
@@ -1420,7 +1442,21 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
                 <Icone className="h-3.5 w-3.5" /> {label}
               </button>
             ))}
+            {/* Quando o "em tratamento" veio da RESPOSTA, cabem as duas acoes:
+                assumir (o caso passa a ter o SEU nome) e liberar (tirar da fila
+                de tratados). Com um botao so nao havia como assumir um caso que
+                a maquina ja considerava tratado. */}
+            {c.tratativa_origem === 'RESPOSTA' && (
+              <button onClick={() => onTratativa(true)} disabled={salvando}
+                title="assumir o caso no seu nome"
+                className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 transition hover:border-violet-400 disabled:opacity-50">
+                <Hand className="h-3.5 w-3.5" /> assumir
+              </button>
+            )}
             <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
+              title={c.em_tratativa
+                ? 'tirar da coluna "em tratamento" — vale mesmo havendo resposta nossa'
+                : 'marcar que você está cuidando deste caso'}
               className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
                 c.em_tratativa
                   ? 'border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200'
@@ -1660,7 +1696,11 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
             nao diz se o clique confirma ou desfaz. Quem mostra o estado e o
             selo violeta no topo do card. */}
         <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
-          title={c.em_tratativa ? 'devolver o caso para ninguém' : 'marcar que você está cuidando deste caso'}
+          title={c.em_tratativa
+            ? (c.tratativa_origem === 'RESPOSTA'
+               ? 'tirar da coluna "em tratamento" — vale mesmo havendo resposta nossa'
+               : 'devolver o caso para ninguém')
+            : 'marcar que você está cuidando deste caso'}
           className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
             c.em_tratativa
               ? 'border-violet-300 bg-violet-100 text-violet-800 hover:bg-violet-200'

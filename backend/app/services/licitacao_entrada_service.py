@@ -158,6 +158,73 @@ def _tipo_efetivo(reg: dict) -> str:
 _TIPOS_GENERICOS = ("VENDA_DIRETA", "OUTRO")
 
 
+def _tratativa_do_caso(membros: list[dict], nomes: dict,
+                       respondido_em: Optional[str],
+                       respondido_por: Optional[str]) -> dict:
+    """Se o caso está em tratamento, e com quem.
+
+    Pedido do Tássio: se alguém de nós já respondeu o e-mail, o caso está sendo
+    tratado — não faz sentido exigir que a pessoa também clique em "assumir"
+    depois de já ter respondido ao cliente. O sinal vem da conversa, que desde a
+    v39 traz as respostas nossas (a caixa da licitação não conta: ela repassa e
+    sai da conversa).
+
+    A ordem importa e é a regra que governa este módulo inteiro: DECISÃO HUMANA
+    PRIMEIRO. Três estados, não dois —
+
+        alguém assumiu   -> em tratamento, nome de quem assumiu
+        alguém liberou   -> NÃO tratado, mesmo havendo resposta nossa
+        ninguém mexeu    -> vale a resposta na conversa
+
+    O terceiro estado é o motivo da coluna `tratativa_manual` (v41). Com o
+    booleano antigo, "liberado" e "intocado" eram o mesmo `false`, e a dedução
+    ressuscitaria um caso que alguém tirou da fila de propósito — a máquina
+    desfazendo o que uma pessoa decidiu.
+
+    Basta UM e-mail do grupo carregar a decisão: o caso é um só, e quem decidiu
+    marcou onde estava olhando.
+    """
+    # A coluna só existe a partir da v41, e a migração é rodada à mão. Entre o
+    # deploy e a migração, `tratativa_manual` simplesmente não vem na linha — e
+    # aí NÃO se pode deduzir nada: sem os três estados, um caso que alguém
+    # liberou de propósito voltaria a aparecer como tratado por causa de uma
+    # resposta antiga. Nesse intervalo vale o comportamento antigo, que é o
+    # booleano que a pessoa marcou.
+    if not any("tratativa_manual" in m for m in membros):
+        id_quem = next((m.get("tratativa_por") for m in membros
+                        if m.get("em_tratativa")), None)
+        marcado = any(m.get("em_tratativa") for m in membros)
+        return {"em_tratativa": marcado, "tratativa_por": id_quem,
+                "tratativa_nome": nomes.get(id_quem),
+                "tratativa_origem": "PESSOA" if marcado else None}
+
+    decisao = next((m["tratativa_manual"] for m in membros
+                    if m.get("tratativa_manual") is not None), None)
+    if decisao is True:
+        id_quem = next((m.get("tratativa_por") for m in membros
+                        if m.get("tratativa_por")), None)
+        return {
+            "em_tratativa": True,
+            "tratativa_por": id_quem,
+            "tratativa_nome": nomes.get(id_quem),
+            "tratativa_origem": "PESSOA",
+        }
+    if decisao is False:
+        return {"em_tratativa": False, "tratativa_por": None,
+                "tratativa_nome": None, "tratativa_origem": None}
+    if respondido_em:
+        return {
+            "em_tratativa": True,
+            "tratativa_por": None,
+            # O nome de quem RESPONDEU, que é a quem perguntar. Sem nome, "em
+            # tratamento" não diz nada a quem olha um caso parado há duas semanas.
+            "tratativa_nome": respondido_por,
+            "tratativa_origem": "RESPOSTA",
+        }
+    return {"em_tratativa": False, "tratativa_por": None,
+            "tratativa_nome": None, "tratativa_origem": None}
+
+
 def _tipo_do_caso(membros: list[dict]) -> Optional[str]:
     """O tipo do caso: o sinal mais específico entre os e-mails dele.
 
@@ -893,16 +960,9 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             "demanda_id": primeiro_com("demanda_id"),
             "demanda": andamento.get(primeiro_com("demanda_id")),
             "entrega_prevista": _entrega_prevista(membros),
-            # Basta UM e-mail do grupo estar assumido: o caso e um so, e
-            # quem assumiu marcou onde estava olhando.
-            "em_tratativa": any(m.get("em_tratativa") for m in membros),
-            "tratativa_por": next((m.get("tratativa_por") for m in membros
-                                   if m.get("em_tratativa")), None),
-            # O NOME de quem assumiu, não o id. Guardar quem assumiu só serve
-            # se a tela disser a quem perguntar sobre um caso que está "sendo
-            # tratado" há duas semanas.
-            "tratativa_nome": quem.get(next((m.get("tratativa_por") for m in membros
-                                             if m.get("em_tratativa")), None)),
+            # "Em tratamento": decisão humana quando existe, senão a resposta
+            # nossa na conversa. Ver `_tratativa_do_caso`.
+            **_tratativa_do_caso(membros, quem, respondido_em, respondido_por),
             # "Sim" só quando TODOS os e-mails da NE estão resolvidos. Um card
             # verde com um e-mail em aberto dentro é pior que nenhum card.
             "situacao": ("SIM" if situacoes == {"SIM"}
@@ -1058,6 +1118,10 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
         campos["cliente_id"] = cliente_id
     if em_tratativa is not None:
         campos["em_tratativa"] = bool(em_tratativa)
+        # `tratativa_manual` guarda que UMA PESSOA decidiu, e o que ela decidiu.
+        # Sem esta coluna, "ninguém mexeu" e "alguém liberou" seriam o mesmo
+        # `false`, e a dedução pela conversa desfaria o "liberar" de alguém.
+        campos["tratativa_manual"] = bool(em_tratativa)
         # Quem assumiu e quando. Ao desmarcar, limpa — senao fica parecendo que
         # alguem ainda esta com o caso.
         campos["tratativa_por"] = str(usuario.id) if em_tratativa else None
