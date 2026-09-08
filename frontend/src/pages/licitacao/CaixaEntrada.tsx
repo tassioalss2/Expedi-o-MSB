@@ -25,8 +25,21 @@ import { msgErro } from '../../lib/crm'
 import { ClienteAutocomplete } from '../NovoPedido'
 
 const fmtBRL = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-const fmtDia = (iso?: string | null) =>
-  iso ? new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) : '—'
+/** Dia e mês. Aceita tanto instante ("...T14:05:00-03:00") quanto data pura.
+ *
+ *  A data pura precisa de tratamento à parte: `new Date('2026-08-10')` é lido
+ *  como meia-noite UTC e, em UTC-3, volta um dia — o eixo do gráfico mostrava
+ *  09/08 onde o primeiro e-mail é de 10/08, e um prazo de entrega apareceria um
+ *  dia antes do que o órgão exigiu. Data pura é dia de calendário, não instante:
+ *  montada campo por campo, não escorrega de fuso. */
+const fmtDia = (iso?: string | null) => {
+  if (!iso) return '—'
+  const so_data = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  const d = so_data
+    ? new Date(Number(so_data[1]), Number(so_data[2]) - 1, Number(so_data[3]))
+    : new Date(iso)
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+}
 const fmtMomento = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString('pt-BR', {
     day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
@@ -469,9 +482,17 @@ export function AbaAcompanhamento() {
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <h3 className="text-sm font-semibold text-gray-900">E-mails recebidos por dia</h3>
           <p className="mt-0.5 text-xs text-gray-500">{data.emails_recebidos} no período</p>
+          {/* `h-full items-end` em CADA coluna, e não só na fileira: a altura da
+              barra é percentual, e percentual só resolve contra pai de altura
+              DEFINIDA. Com `items-end` na fileira, o flex item deixa de ser
+              esticado e passa a ter altura de conteúdo — o conteúdo é a barra,
+              cuja altura depende do pai. A conta não fecha, o navegador resolve
+              como 0, e o gráfico ficava um retângulo vazio com 138 e-mails
+              dentro. */}
           <div className="mt-4 flex h-28 items-end gap-[2px]">
             {(data.entrada_por_dia || []).map((d: any) => (
-              <div key={d.dia} className="group relative flex-1" title={`${fmtDia(d.dia)}: ${d.emails} e-mail(s)`}>
+              <div key={d.dia} className="group relative flex h-full flex-1 items-end"
+                title={`${fmtDia(d.dia)}: ${d.emails} e-mail(s)`}>
                 <div className="w-full rounded-t bg-blue-500 transition group-hover:bg-blue-600"
                   style={{ height: `${Math.max(3, (d.emails / maxDia) * 100)}%` }} />
               </div>
