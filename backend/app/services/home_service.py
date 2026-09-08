@@ -116,17 +116,29 @@ def barra_meta() -> dict:
     dia = None
     if valor_meta:
         restantes = _ritmo(pct, hoje)["dias_uteis_restantes"]
-        # Alvo do dia = ritmo p/ bater a meta (falta ÷ dias úteis restantes), o
-        # MESMO número da Previsão de Faturamento. Antes aqui era a média
-        # achatada do mês (meta ÷ dias úteis totais), que com o mês atrasado dá
-        # ~1/3 do que o dia realmente precisa entregar — a barra dizia "1% da
-        # diária" de um alvo que já não valia mais.
-        alvo = round(falta / restantes, 2) if restantes and falta else 0.0
+        # Alvo do dia = pendente NO INÍCIO DO DIA ÷ dias úteis restantes.
+        #
+        # O "no início do dia" é o ponto todo. Antes o alvo saia de `falta`, que
+        # já desconta o faturamento de hoje: cada NF do dia diminuia o próprio
+        # alvo do dia, e a meta fugia para baixo à medida que se faturava. Um dia
+        # que precisava de R$ 136 mil e entregou R$ 40 mil passava a "precisar"
+        # de R$ 130 mil — o dia parecia sempre igualmente longe, e o mérito de
+        # ter faturado desaparecia no denominador.
+        #
+        # Congelando no pendente de ontem, o alvo não se move durante o dia: só
+        # o realizado sobe, e 100% passa a significar "o dia entregou a parte
+        # dele". Por isso este número não é mais igual ao ritmo necessário da
+        # Previsão de Faturamento, que é ao vivo de propósito (lá a pergunta é
+        # "daqui para frente, quanto por dia?").
+        pendente_inicio = round(
+            max(0.0, float(valor_meta) - (realizado - realizado_hoje)), 2)
+        alvo = round(pendente_inicio / restantes, 2) if restantes and pendente_inicio else 0.0
         dia = {
             "data": hoje.isoformat(),
             "realizado": round(realizado_hoje, 2),
             "nfs": nfs_hoje,
             "alvo": alvo,
+            "pendente_inicio": pendente_inicio,
             "pct": round(realizado_hoje / alvo * 100, 1) if alvo else 100.0,
             "dias_uteis_restantes": restantes,
             "eh_dia_util": hoje.weekday() < 5,

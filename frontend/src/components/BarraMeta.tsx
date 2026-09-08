@@ -12,9 +12,11 @@ interface DiaMeta {
   data: string
   realizado: number
   nfs: number
-  /** Ritmo p/ bater a meta: falta ÷ dias úteis restantes (mesmo número da
-   *  Previsão de Faturamento). */
+  /** Alvo do dia, FIXO durante o dia: pendente no início do dia ÷ dias úteis
+   *  restantes. Faturar hoje não diminui o alvo de hoje — só enche a barra. */
   alvo: number
+  /** Quanto faltava para a meta quando o dia começou (a base do alvo). */
+  pendente_inicio: number
   pct: number
   dias_uteis_restantes: number
   eh_dia_util: boolean
@@ -125,8 +127,11 @@ export function BarraMeta() {
             uma fileira só de números sem hierarquia. */}
         {data.dia && (
           <span className="flex items-center gap-2 sm:ml-auto whitespace-nowrap"
-            title={`Ritmo p/ bater a meta: ${fmtR$(data.dia.alvo)}/dia útil`
-              + ` · faltam ${fmtR$(data.falta)} em ${data.dia.dias_uteis_restantes} dia(s) útil(eis)`}>
+            title={`Alvo de hoje: ${fmtR$(data.dia.alvo)}`
+              + ` — ${fmtR$(data.dia.pendente_inicio)} pendentes no início do dia`
+              + ` ÷ ${data.dia.dias_uteis_restantes} dia(s) útil(eis).`
+              + ` O alvo não muda durante o dia: faturar enche a barra, não abaixa a régua.`
+              + ` Falta agora no mês: ${fmtR$(data.falta)}.`}>
             <span className="w-px h-5 bg-white/25 hidden sm:inline-block" />
             <span className="text-xs font-semibold">Hoje</span>
             <span className="text-sm font-bold tabular-nums">{fmtR$(data.dia.realizado)}</span>
