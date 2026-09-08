@@ -182,17 +182,50 @@ def _grava_mensagens(db, lote: list[dict]) -> dict:
                 "pasta": m.get("pasta"),
             })
 
+    # Só as mensagens que ainda não estão gravadas, e por INSERT — não upsert.
+    #
+    # O upsert deste wrapper manda `Prefer: resolution=merge-duplicates`, e o
+    # PostgREST resolve o conflito pela CHAVE PRIMÁRIA, não por qualquer índice
+    # único. A unicidade aqui é `entry_id`, a PK é `id`: da segunda rodada em
+    # diante todo bloco batia de frente e voltava 409. O log dizia "0 mensagens,
+    # 656 falharam" — as 654 que existem entraram na primeiríssima rodada, e
+    # nenhuma mensagem nova entraria mais.
+    #
+    # Ler antes e inserir só o que falta também é mais barato do que a intenção
+    # original: mensagem de e-mail não muda depois de enviada, então regravar as
+    # 654 a cada rodada era trabalho puro. Agora uma rodada sem novidade escreve
+    # zero.
+    ja_gravadas: set = set()
+    cids = sorted(por_conversa)
+    for i in range(0, len(cids), 50):
+        try:
+            for m in db.table("licitacao_mensagens").select("entry_id")\
+                    .in_("conversation_id", cids[i:i + 50]).limit(1000).execute().data:
+                ja_gravadas.add(m["entry_id"])
+        except Exception:
+            pass
+
+    novas, vistos = [], set()
+    for l in linhas:
+        # Nunca duas vezes o mesmo entry_id no mesmo lote: um único duplicado
+        # derrubaria o bloco inteiro por 409.
+        if l["entry_id"] in ja_gravadas or l["entry_id"] in vistos:
+            continue
+        vistos.add(l["entry_id"])
+        novas.append(l)
+
     # Blocos de 25: com corpo de até 15 KB por mensagem, um bloco grande vira
     # uma requisição de megabytes.
     gravadas = falhas = 0
-    for i in range(0, len(linhas), 25):
-        bloco = linhas[i:i + 25]
+    for i in range(0, len(novas), 25):
+        bloco = novas[i:i + 25]
         try:
-            db.table("licitacao_mensagens").upsert(bloco).execute()
+            db.table("licitacao_mensagens").insert(bloco).execute()
             gravadas += len(bloco)
         except Exception:
             falhas += len(bloco)
     return {"conversas": len(por_conversa), "mensagens": gravadas,
+            "mensagens_ja_tinha": len(linhas) - len(novas),
             "mensagens_falhas": falhas}
 
 
