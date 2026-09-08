@@ -120,6 +120,27 @@ def _suporta_conversa(db) -> bool:
     return _TEM_CONVERSA
 
 
+def _corte(dias: Optional[int]) -> Optional[str]:
+    """A data de corte da janela, ou None para não cortar nada.
+
+    O seletor de 7 / 30 / 90 dias saiu da tela por pedido do Tássio: "para que a
+    gente não possa se perder". Ele estava certo, e o estrago era medível — foi a
+    raiz do "painel diz 16, lista mostra 13": o painel usava 30 dias e a lista
+    60, e o mesmo caso existia num e não no outro. Duas telas com janelas
+    diferentes são duas verdades diferentes sobre o mesmo mês.
+
+    Agora existe UMA janela e ela é "tudo que o motor leu" — que hoje começa em
+    01/07/2026. Nenhum corte escondido: se um caso está aberto há 80 dias, ele
+    aparece, o que é justamente o caso que não pode desaparecer da tela.
+
+    O parâmetro continua existindo na API para quem quiser recortar de fora, mas
+    o padrão de todas as telas é sem corte.
+    """
+    if not dias:
+        return None
+    return (_hoje_brt() - timedelta(days=dias)).isoformat()
+
+
 def _tipo_efetivo(reg: dict) -> str:
     """O tipo que vale: o que a pessoa corrigiu, senão o que o motor deduziu.
 
@@ -678,7 +699,7 @@ def _entrega_prevista(membros: list[dict]) -> Optional[str]:
     return min(achadas).isoformat() if achadas else None
 
 
-def listar(situacao: Optional[str] = None, dias: int = 60,
+def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
            tipo: Optional[str] = None) -> list[dict]:
     """A caixa de entrada, um card por nota de empenho.
 
@@ -687,14 +708,16 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
     dias parados — um pedido cobrado três vezes está parado desde o primeiro).
     """
     db = get_service_db()
-    corte = (_hoje_brt() - timedelta(days=dias)).isoformat()
+    corte = _corte(dias)
     # SEM filtro de situação nem de tipo aqui. Os dois são propriedades do CASO,
     # e o caso só existe depois do agrupamento — filtrar e-mail por e-mail no
     # banco carregava só parte de um grupo e mudava o próprio agrupamento. O
     # sintoma era as partes não somarem o total: 145 + 5 + 66 = 216 contra 215.
     # Agora carrega a janela inteira, agrupa, e filtra os cards no fim.
-    regs = db.table("licitacao_entrada").select("*, clientes(nome)")\
-        .eq("ativo", True).gte("recebido_em", corte).limit(3000).execute().data
+    consulta = db.table("licitacao_entrada").select("*, clientes(nome)").eq("ativo", True)
+    if corte:
+        consulta = consulta.gte("recebido_em", corte)
+    regs = consulta.limit(3000).execute().data
 
     # O andamento da demanda vem junto. Sem isto o card só sabe dizer "existe
     # uma demanda", e quem está na caixa de entrada teria de abrir a outra tela
@@ -1371,7 +1394,7 @@ def _observacao_da_entrada(regs: list[dict]) -> str:
 
 
 # ── painel executivo ────────────────────────────────────────────────────────
-def painel(dias: int = 30) -> dict:
+def painel(dias: Optional[int] = None) -> dict:
     """Os números que o conselho pergunta, e só eles.
 
     A tela do operador mostra cada caso; esta responde outra pergunta: o setor
@@ -1384,9 +1407,11 @@ def painel(dias: int = 30) -> dict:
     entraram na conta, para ninguém tratar um piso como se fosse o total.
     """
     db = get_service_db()
-    corte = (_hoje_brt() - timedelta(days=dias)).isoformat()
-    regs = db.table("licitacao_entrada").select("*")\
-        .eq("ativo", True).gte("recebido_em", corte).limit(3000).execute().data
+    corte = _corte(dias)
+    consulta = db.table("licitacao_entrada").select("*").eq("ativo", True)
+    if corte:
+        consulta = consulta.gte("recebido_em", corte)
+    regs = consulta.limit(3000).execute().data
 
     cards = listar(dias=dias)
     abertos = [c for c in cards if c["situacao"] != "SIM"]
@@ -1502,7 +1527,7 @@ _ORIGEM_COMUM = (
 )
 
 
-def _explica(metrica: str, dias: int) -> dict:
+def _explica(metrica: str, dias: Optional[int]) -> dict:
     """Filtro, origem e conta de uma métrica do painel."""
     faixas = {
         "faixa:ate_2": ("Esperando até 2 dias", lambda c: c["dias_parados"] <= 2),
@@ -1599,7 +1624,47 @@ def _explica(metrica: str, dias: int) -> dict:
     return registro[metrica]
 
 
-def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30) -> dict:
+def ultima_atualizacao() -> dict:
+    """Quando o motor entregou dados por último — e se isso está velho.
+
+    Vale estar na tela por um motivo concreto: o motor roda por Agendador de
+    Tarefas do Windows, às 08:00 e às 14:00, e uma rodada que não acontece falha
+    EM SILÊNCIO. A tela continua mostrando os mesmos casos, com a mesma cara, e
+    quem olha conclui que nada chegou. Aconteceu em 01/09/2026 (um patch meu
+    truncou o arquivo) e de novo em 08/09/2026 (um patch meu quebrou a sintaxe):
+    nos dois casos a planilha e o app pareciam atuais e não estavam.
+
+    `atualizado_em` é reescrito pela sincronização em TODOS os registros a cada
+    rodada, então o maior deles é a hora da última entrega bem-sucedida.
+    """
+    db = get_service_db()
+    linha = db.table("licitacao_entrada").select("atualizado_em")        .order("atualizado_em", desc=True).limit(1).execute().data
+    quando = (linha[0]["atualizado_em"] if linha else None)
+
+    horas = None
+    if quando:
+        try:
+            d = datetime.fromisoformat(str(quando).replace("Z", "+00:00"))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            horas = round((datetime.now(timezone.utc) - d).total_seconds() / 3600, 1)
+        except Exception:
+            horas = None
+
+    return {
+        "atualizado_em": quando,
+        "horas_atras": horas,
+        # 24 horas, e não 7: entre a rodada das 14:00 e a das 08:00 do dia
+        # seguinte passam 18 horas normais. Só acima de 24 é que se pode afirmar
+        # que uma rodada foi perdida — abaixo disso o aviso seria falso todas as
+        # manhãs, e aviso que grita sem motivo é aviso que ninguém lê.
+        "atrasado": bool(horas is not None and horas > 24),
+        "rodadas": "08:00 e 14:00, de segunda a sexta",
+    }
+
+
+def detalhe_do_dia(dia: str, tipo: Optional[str] = None,
+                   dias: Optional[int] = None) -> dict:
     """Os e-mails que produziram uma barra do gráfico de entrada.
 
     A unidade aqui é E-MAIL, e não caso — e isso está dito na tela, porque a
@@ -1613,8 +1678,11 @@ def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30) -> dict
     aqui abriria a porta para a lista não somar a barra que foi clicada.
     """
     db = get_service_db()
-    corte = (_hoje_brt() - timedelta(days=dias)).isoformat()
-    regs = db.table("licitacao_entrada").select("*, clientes(nome)")        .eq("ativo", True).gte("recebido_em", corte).limit(3000).execute().data
+    corte = _corte(dias)
+    consulta = db.table("licitacao_entrada").select("*, clientes(nome)").eq("ativo", True)
+    if corte:
+        consulta = consulta.gte("recebido_em", corte)
+    regs = consulta.limit(3000).execute().data
 
     do_dia = [r for r in regs if str(r.get("recebido_em") or "")[:10] == dia]
     por_tipo: dict[str, int] = {}
@@ -1674,7 +1742,7 @@ def _dia_br(dia: str) -> str:
     return "%s/%s" % (partes[2], partes[1]) if len(partes) == 3 else str(dia)
 
 
-def detalhe(metrica: str, dias: int = 30) -> dict:
+def detalhe(metrica: str, dias: Optional[int] = None) -> dict:
     """Os casos por trás de um número do painel, e de onde ele vem."""
     e = _explica(metrica, dias)
     casos = [c for c in listar(dias=dias) if e["filtro"](c)]
@@ -1685,7 +1753,10 @@ def detalhe(metrica: str, dias: int = 30) -> dict:
         "titulo": e["titulo"],
         "origem": e["origem"],
         "conta": e["conta"],
+        # None quando não há corte: a tela escreve "desde <primeira data>" em vez
+        # de "últimos N dias", que seria mentira.
         "periodo_dias": dias,
+        "desde": min((c["recebido_em"] for c in casos), default=None),
         "quantidade": len(casos),
         "valor": round(sum(c["valor_total"] for c in casos), 2),
         "casos": casos,

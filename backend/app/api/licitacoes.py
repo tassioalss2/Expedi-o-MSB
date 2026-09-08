@@ -258,7 +258,7 @@ class OrgaoMapear(BaseModel):
 
 
 @router.get("/entrada")
-def listar_entrada(situacao: Optional[str] = None, dias: int = 60,
+def listar_entrada(situacao: Optional[str] = None, dias: Optional[int] = None,
                    tipo: Optional[str] = None,
                    _: UsuarioOut = Depends(get_current_user)):
     return licitacao_entrada_service.listar(situacao, dias, tipo)
@@ -277,7 +277,8 @@ def detalhe_do_numero(metrica: str, dias: int = 30,
 
 
 @router.get("/entrada/painel")
-def painel_entrada(dias: int = 30, _: UsuarioOut = Depends(get_current_user)):
+def painel_entrada(dias: Optional[int] = None,
+                   _: UsuarioOut = Depends(get_current_user)):
     """Visão de fluxo do setor. É o que o conselho acompanha."""
     return licitacao_entrada_service.painel(dias)
 
@@ -304,7 +305,7 @@ def listar_reclassificacoes(limite: int = 200,
 
 
 @router.get("/entrada/dia")
-def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30,
+def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: Optional[int] = None,
                    _: UsuarioOut = Depends(get_current_user)):
     """Os e-mails por tras de uma barra do grafico de entrada.
 
@@ -314,6 +315,17 @@ def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30,
     barra clicada.
     """
     return licitacao_entrada_service.detalhe_do_dia(dia, tipo, dias)
+
+
+@router.get("/entrada/atualizacao")
+def ultima_atualizacao(_: UsuarioOut = Depends(get_current_user)):
+    """Quando o motor entregou dados por ultimo, e se isso esta velho.
+
+    Uma rodada que nao acontece falha em silencio: a tela mostra os mesmos casos
+    com a mesma cara, e quem olha conclui que nada chegou. Ja aconteceu duas
+    vezes por patch meu. Ter a hora na tela e o que permite desconfiar.
+    """
+    return licitacao_entrada_service.ultima_atualizacao()
 
 
 @router.get("/entrada/conversa")

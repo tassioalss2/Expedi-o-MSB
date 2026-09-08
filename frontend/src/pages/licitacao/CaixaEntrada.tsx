@@ -203,12 +203,15 @@ function partePropria(corpo?: string | null) {
  * defeito: se alguém perguntar "de onde saiu esse valor?", a resposta tem que
  * ser um clique, não uma investigação.
  */
-function DetalheNumero({ metrica, dias, onFechar }: {
-  metrica: string; dias: number; onFechar: () => void
+function DetalheNumero({ metrica, onFechar }: {
+  metrica: string; onFechar: () => void
 }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['licitacao-detalhe', metrica, dias],
-    queryFn: () => api.get(`/licitacoes/entrada/detalhe?metrica=${encodeURIComponent(metrica)}&dias=${dias}`)
+    queryKey: ['licitacao-detalhe', metrica],
+    // Sem `dias`: uma janela só, a mesma do painel e da lista. Ver `_corte` no
+    // serviço — janelas diferentes por tela foi a raiz do "painel diz 16, lista
+    // mostra 13".
+    queryFn: () => api.get(`/licitacoes/entrada/detalhe?metrica=${encodeURIComponent(metrica)}`)
       .then(r => r.data),
   })
 
@@ -225,7 +228,7 @@ function DetalheNumero({ metrica, dias, onFechar }: {
               <p className="mt-0.5 text-sm text-gray-500">
                 {data.quantidade} caso{data.quantidade === 1 ? '' : 's'}
                 {data.valor > 0 && <> · {fmtBRL(data.valor)}</>}
-                {' · '}últimos {data.periodo_dias} dias
+                {data.desde && <> · desde {fmtDia(data.desde)}</>}
               </p>
             )}
           </div>
@@ -401,15 +404,15 @@ function ConfiancaDaClassificacao({ conf }: { conf: any }) {
  * lista nao somar a barra clicada — foi confundir duas unidades que fez o painel
  * dizer 16 e a lista mostrar 13.
  */
-function DetalheDoDia({ dia, tipo, dias, onFechar, onTrocarTipo }: {
-  dia: string; tipo: string | null; dias: number
+function DetalheDoDia({ dia, tipo, onFechar, onTrocarTipo }: {
+  dia: string; tipo: string | null
   onFechar: () => void
   onTrocarTipo: (t: string | null) => void
 }) {
   const { data, isLoading } = useQuery({
-    queryKey: ['licitacao-dia', dia, tipo, dias],
+    queryKey: ['licitacao-dia', dia, tipo],
     queryFn: () => api.get('/licitacoes/entrada/dia', {
-      params: { dia, dias, ...(tipo ? { tipo } : {}) },
+      params: { dia, ...(tipo ? { tipo } : {}) },
     }).then(r => r.data),
   })
 
@@ -546,7 +549,6 @@ function Tile({ titulo, valor, sub, alerta }: {
 }
 
 export function AbaAcompanhamento() {
-  const [dias, setDias] = useState(30)
   // Qual número o usuário abriu. null = nenhum.
   const [aberto, setAberto] = useState<string | null>(null)
   const [diaAberto, setDiaAberto] = useState<{ dia: string; tipo: string | null } | null>(null)
@@ -558,16 +560,16 @@ export function AbaAcompanhamento() {
     const p = new URLSearchParams(params)
     p.set('aba', 'entrada')
     p.set('tipo', tipo)
-    // Leva TAMBEM a situacao e a janela que produziram o numero clicado. Sem
-    // isso a lista responde a outra pergunta e mostra outro total — foi o
-    // "16 aqui, 13 la" que o Tassio viu.
+    // Leva TAMBEM a situacao que produziu o numero clicado. Sem isso a lista
+    // responde a outra pergunta e mostra outro total — foi o "16 aqui, 13 la"
+    // que o Tassio viu. A janela nao precisa mais viajar: e uma so.
     p.set('situacao', 'ABERTOS')
-    p.set('dias', String(dias))
+    p.delete('dias')
     setParams(p)
   }
   const { data, isLoading } = useQuery({
-    queryKey: ['licitacao-painel', dias],
-    queryFn: () => api.get(`/licitacoes/entrada/painel?dias=${dias}`).then(r => r.data),
+    queryKey: ['licitacao-painel'],
+    queryFn: () => api.get('/licitacoes/entrada/painel').then(r => r.data),
   })
 
   if (isLoading) return <div className="py-16 text-center text-gray-400">
@@ -587,19 +589,16 @@ export function AbaAcompanhamento() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">Acompanhamento da licitação</h2>
+          {/* Sem seletor de janela, a pedido do Tassio: "para que a gente não
+              possa se perder". Ele estava certo e o estrago era medível — o
+              painel usava 30 dias e a lista 60, e o mesmo caso existia num e não
+              no outro ("aqui diz 16, lá tem 13"). Agora é uma janela só, e ela é
+              TUDO: nenhum corte escondido, um caso aberto há 80 dias aparece. */}
           <p className="text-sm text-gray-500">
-            Tudo que chegou por e-mail da licitação nos últimos {dias} dias, e em que pé está.
+            Tudo que chegou por e-mail da licitação
+            {data.entrada_por_dia?.[0]?.dia && <> desde {fmtDia(data.entrada_por_dia[0].dia)}</>}
+            , e em que pé está.
           </p>
-        </div>
-        {/* Filtro em uma linha, acima dos gráficos. */}
-        <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
-          {[7, 30, 90].map(d => (
-            <button key={d} onClick={() => setDias(d)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                dias === d ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
-              {d} dias
-            </button>
-          ))}
         </div>
       </div>
 
@@ -835,9 +834,9 @@ export function AbaAcompanhamento() {
         )}
       </div>
 
-      {aberto && <DetalheNumero metrica={aberto} dias={dias} onFechar={() => setAberto(null)} />}
+      {aberto && <DetalheNumero metrica={aberto} onFechar={() => setAberto(null)} />}
       {diaAberto && (
-        <DetalheDoDia dia={diaAberto.dia} tipo={diaAberto.tipo} dias={dias}
+        <DetalheDoDia dia={diaAberto.dia} tipo={diaAberto.tipo}
           onTrocarTipo={t => setDiaAberto({ dia: diaAberto.dia, tipo: t })}
           onFechar={() => setDiaAberto(null)} />
       )}
@@ -1681,12 +1680,11 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
 export function AbaCaixaEntrada() {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
-  // Situacao e janela tambem vem da URL: e o que faz "clicar em 16 no painel"
-  // cair numa lista de 16. Antes a tela pedia so os NAO, numa janela de 60
-  // dias, enquanto o painel somava NAO+PARCIAL em 30 — dois desencontros
-  // empilhados.
+  // A situacao vem da URL: e o que faz "clicar em 16 no painel" cair numa lista
+  // de 16. Antes a tela pedia so os NAO, numa janela de 60 dias, enquanto o
+  // painel somava NAO+PARCIAL em 30 — dois desencontros empilhados. O primeiro
+  // se resolveu com a situacao na URL; o segundo, tirando a janela de vez.
   const filtro = (params.get('situacao') || 'ABERTOS') as 'ABERTOS' | 'SIM' | ''
-  const dias = Number(params.get('dias')) || 60
   const setFiltro = (f: string) => {
     const p = new URLSearchParams(params)
     if (f) p.set('situacao', f)
@@ -1709,12 +1707,13 @@ export function AbaCaixaEntrada() {
   const [busca, setBusca] = useState('')
 
   const { data: cards = [], isLoading } = useQuery<Card[]>({
-    queryKey: ['licitacao-entrada', filtro, tipo, dias],
+    queryKey: ['licitacao-entrada', filtro, tipo],
     queryFn: () => {
       const p = new URLSearchParams()
       if (filtro) p.set('situacao', filtro)
       if (tipo) p.set('tipo', tipo)
-      p.set('dias', String(dias))
+      // Sem `dias`: o backend sem janela devolve tudo, que e a mesma coisa que
+      // o painel conta. Uma janela so, em todas as telas.
       const q = p.toString()
       return api.get(`/licitacoes/entrada${q ? `?${q}` : ''}`).then(r => r.data)
     },
