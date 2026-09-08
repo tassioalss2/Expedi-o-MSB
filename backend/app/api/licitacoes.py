@@ -265,7 +265,7 @@ def listar_entrada(situacao: Optional[str] = None, dias: Optional[int] = None,
 
 
 @router.get("/entrada/detalhe")
-def detalhe_do_numero(metrica: str, dias: int = 30,
+def detalhe_do_numero(metrica: str, dias: Optional[int] = None,
                       _: UsuarioOut = Depends(get_current_user)):
     """Os casos por tras de um numero do painel, e de onde ele vem.
 

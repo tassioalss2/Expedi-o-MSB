@@ -208,8 +208,8 @@ function partePropria(corpo?: string | null) {
  * defeito: se alguém perguntar "de onde saiu esse valor?", a resposta tem que
  * ser um clique, não uma investigação.
  */
-function DetalheNumero({ metrica, onFechar }: {
-  metrica: string; onFechar: () => void
+function DetalheNumero({ metrica, onFechar, onAbrirCaso }: {
+  metrica: string; onFechar: () => void; onAbrirCaso: (chave: string) => void
 }) {
   const { data, isLoading } = useQuery({
     queryKey: ['licitacao-detalhe', metrica],
@@ -255,7 +255,9 @@ function DetalheNumero({ metrica, onFechar }: {
                 <p className="p-6 text-center text-sm text-gray-500">Nenhum caso compõe este número.</p>
               )}
               {data.casos.map((c: Card) => (
-                <div key={c.chave} className="p-3 hover:bg-gray-50">
+                <button key={c.chave} onClick={() => onAbrirCaso(c.chave)}
+                  className="block w-full p-3 text-left hover:bg-blue-50"
+                  title="abrir esta solicitação">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {c.empenho ? (
                       <span className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[11px] text-white">
@@ -285,7 +287,7 @@ function DetalheNumero({ metrica, onFechar }: {
                     {c.cliente_nome || c.orgao_texto || 'sem cliente definido'}
                     {c.itens.length > 0 && <> · {c.itens.length} item(ns) do anexo</>}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </>
@@ -589,6 +591,18 @@ export function AbaAcompanhamento() {
     p.delete('dias')
     setParams(p)
   }
+  /** Abre a solicitacao na caixa de entrada. Sem filtro de situacao nem de
+   *  tipo: o caso pode estar resolvido ou ser de outro tipo, e um filtro ativo
+   *  o esconderia da lista de onde o detalhe e montado. */
+  const irParaCaso = (chave: string) => {
+    const p = new URLSearchParams(params)
+    p.set('aba', 'entrada')
+    p.set('caso', chave)
+    p.set('situacao', '')
+    p.delete('tipo')
+    setParams(p)
+  }
+
   const { data, isLoading } = useQuery({
     queryKey: ['licitacao-painel'],
     queryFn: () => api.get('/licitacoes/entrada/painel').then(r => r.data),
@@ -843,6 +857,74 @@ export function AbaAcompanhamento() {
         </table>
       </div>
 
+      {/* Por solicitacao, nao por orgao: a tabela de cima responde "com quem esta
+          a espera" e esta responde "qual pedido e". Sem ela, ver R$ 128 mil num
+          orgao obrigava a abrir o numero e cacar o caso na lista. Clicar abre a
+          solicitacao. */}
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-gray-100 px-4 py-3">
+          <h3 className="text-sm font-semibold text-gray-900">Quanto está parado, por solicitação</h3>
+          <p className="text-xs text-gray-500">
+            {(data.por_solicitacao || []).length} solicitações com valor lido do anexo ·{' '}
+            {fmtBRL(data.valor_parado || 0)} · clique para abrir
+          </p>
+        </div>
+        <div className="max-h-[420px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white">
+              <tr className="text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="px-4 py-2 font-medium">Solicitação</th>
+                <th className="px-4 py-2 font-medium">Órgão</th>
+                <th className="px-4 py-2 text-right font-medium">Parado há</th>
+                <th className="px-4 py-2 text-right font-medium">Valor</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {(data.por_solicitacao || []).map((c: any) => (
+                <tr key={c.chave} onClick={() => irParaCaso(c.chave)}
+                  className="cursor-pointer hover:bg-blue-50" title="abrir esta solicitação">
+                  <td className="px-4 py-2.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {c.empenho ? (
+                        <span className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[11px] text-white">{c.empenho}</span>
+                      ) : c.documento ? (
+                        <span className="rounded bg-gray-200 px-1.5 py-0.5 font-mono text-[11px] text-gray-700">doc {c.documento}</span>
+                      ) : null}
+                      <span className="flex items-center gap-1 text-[11px] text-gray-500">
+                        <span className={`h-2 w-2 rounded-sm ${TIPO_PONTO[c.tipo]}`} />
+                        {TIPO_LABEL[c.tipo] || c.tipo}
+                      </span>
+                      {/* Quem esta com o caso, para nao perguntar a tela toda a
+                          quem cobrar. */}
+                      {c.em_tratativa && c.tratativa_nome && (
+                        <span className="text-[11px] text-violet-700">
+                          {c.tratativa_origem === 'RESPOSTA' ? 'respondeu' : 'assumido'}
+                          {' · '}{c.tratativa_nome.split(' ')[0]}
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate text-xs text-gray-900">{c.assunto}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-gray-600">{c.cliente}</td>
+                  <td className={`px-4 py-2.5 text-right tabular-nums ${
+                    c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-700'}`}>
+                    {c.dias_parados} d
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-medium tabular-nums text-gray-900">
+                    {fmtBRL(c.valor)}
+                  </td>
+                </tr>
+              ))}
+              {(data.por_solicitacao || []).length === 0 && (
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-500">
+                  Nenhuma solicitação com valor lido do anexo.
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* O rodapé honesto. Sem ele, alguém trata o piso como se fosse o total. */}
       <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs leading-relaxed text-gray-600">
         <b className="text-gray-800">Sobre o valor em aberto.</b>{' '}
@@ -856,7 +938,10 @@ export function AbaAcompanhamento() {
         )}
       </div>
 
-      {aberto && <DetalheNumero metrica={aberto} onFechar={() => setAberto(null)} />}
+      {aberto && (
+        <DetalheNumero metrica={aberto} onFechar={() => setAberto(null)}
+          onAbrirCaso={irParaCaso} />
+      )}
       {diaAberto && (
         <DetalheDoDia dia={diaAberto.dia} tipo={diaAberto.tipo}
           onTrocarTipo={t => setDiaAberto({ dia: diaAberto.dia, tipo: t })}
@@ -1724,11 +1809,15 @@ export function AbaCaixaEntrada() {
   // de 16. Antes a tela pedia so os NAO, numa janela de 60 dias, enquanto o
   // painel somava NAO+PARCIAL em 30 — dois desencontros empilhados. O primeiro
   // se resolveu com a situacao na URL; o segundo, tirando a janela de vez.
-  const filtro = (params.get('situacao') || 'ABERTOS') as 'ABERTOS' | 'SIM' | ''
+  // `null` (parametro ausente) e ABERTOS; string VAZIA e "Todos". A versao
+  // anterior usava `|| 'ABERTOS'`, que trata os dois como a mesma coisa — e
+  // como o botao "Todos" apagava o parametro, clicar nele devolvia "A fazer" e
+  // o botao nem acendia. Agora "Todos" grava `situacao=` de proposito.
+  const bruto = params.get('situacao')
+  const filtro = (bruto === null ? 'ABERTOS' : bruto) as 'ABERTOS' | 'SIM' | ''
   const setFiltro = (f: string) => {
     const p = new URLSearchParams(params)
-    if (f) p.set('situacao', f)
-    else p.delete('situacao')
+    p.set('situacao', f)      // inclusive vazio: `situacao=` significa Todos
     setParams(p, { replace: true })
   }
   // O tipo vive na URL, e nao em estado local: e o que permite o painel de
@@ -1742,8 +1831,17 @@ export function AbaCaixaEntrada() {
     else p.delete('tipo')
     setParams(p, { replace: true })
   }
-  // Qual solicitacao esta com o detalhe aberto (a chave do caso).
-  const [detalhe, setDetalhe] = useState<string | null>(null)
+  // Qual solicitacao esta com o detalhe aberto (a chave do caso). Na URL, e nao
+  // em estado local, porque o painel precisa poder mandar para ca JA COM o caso
+  // aberto — antes, clicar num caso no detalhe de um numero nao levava a lugar
+  // nenhum. De graca, o caso aberto passa a ser linkavel.
+  const detalhe = params.get('caso')
+  const setDetalhe = (chave: string | null) => {
+    const p = new URLSearchParams(params)
+    if (chave) p.set('caso', chave)
+    else p.delete('caso')
+    setParams(p, { replace: true })
+  }
   const [busca, setBusca] = useState('')
 
   const { data: cards = [], isLoading } = useQuery<Card[]>({

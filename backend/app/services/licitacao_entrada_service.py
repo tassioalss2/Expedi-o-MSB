@@ -1615,6 +1615,26 @@ def painel(dias: Optional[int] = None) -> dict:
                                          and not c.get("tipo_corrigido")),
         },
         "por_cliente": ranking,
+        # O dinheiro parado caso a caso. A tabela por órgão responde "com quem
+        # está a espera"; esta responde "qual pedido é". Sem ela, ver R$ 128 mil
+        # num órgão obrigava a abrir o número e caçar o caso na lista.
+        #
+        # Só os que têm valor lido do anexo: um caso sem valor apareceria como
+        # R$ 0,00 e pareceria pequeno quando na verdade é desconhecido.
+        "por_solicitacao": [{
+            "chave": c["chave"],
+            "empenho": c["empenho"],
+            "documento": c["documento"],
+            "assunto": c["assunto"],
+            "cliente": c["cliente_nome"] or c["orgao_texto"] or "(órgão não identificado)",
+            "tipo": c["tipo"] or "OUTRO",
+            "dias_parados": c["dias_parados"],
+            "valor": c["valor_total"],
+            "em_tratativa": c["em_tratativa"],
+            "tratativa_nome": c["tratativa_nome"],
+            "tratativa_origem": c["tratativa_origem"],
+        } for c in sorted([x for x in abertos if x["valor_total"] > 0],
+                          key=lambda x: -x["valor_total"])],
         "entrada_por_dia": [{"dia": d, "emails": sum(t.values()), "tipos": t}
                             for d, t in sorted(por_dia.items())],
         "demandas_por_etapa": por_etapa,
