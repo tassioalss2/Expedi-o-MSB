@@ -1090,7 +1090,10 @@ def reclassificar(chave: str, tipo: str, motivo: str, usuario: UsuarioOut) -> di
     for r in regs:
         db.table("licitacao_entrada").update({
             "tipo_manual": tipo,
-            "tipo_manual_por": usuario.id,
+            # str(): `usuario.id` e UUID, e o corpo vai como JSON. Sem isto
+            # estoura em "Object of type UUID is not JSON serializable" — o
+            # resto do arquivo ja fazia str() por este motivo.
+            "tipo_manual_por": str(usuario.id),
             "tipo_manual_em": agora,
             "tipo_herdado": False,
             "atualizado_em": agora,
@@ -1106,7 +1109,7 @@ def reclassificar(chave: str, tipo: str, motivo: str, usuario: UsuarioOut) -> di
             "tipo_motor": r.get("tipo"),
             "tipo_correto": tipo,
             "motivo": motivo,
-            "autor_id": usuario.id,
+            "autor_id": str(usuario.id),
         }).execute()
 
     return {"chave": chave, "tipo": tipo, "emails": len(regs), "motivo": motivo}
