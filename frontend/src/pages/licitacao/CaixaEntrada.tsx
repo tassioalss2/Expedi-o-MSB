@@ -149,6 +149,11 @@ type Card = {
    *  somos nós, com outro remetente, e por isso 61% das mensagens nunca
    *  chegavam ao app. Estes campos são o resumo; a conversa em si vem por
    *  /entrada/conversa quando alguém abre o caso. */
+  /** O que o motor deduziu, e se gente corrigiu. Guardados os dois porque a
+   *  diferenca entre eles E a medida de confianca da classificacao. */
+  tipo_motor: string | null
+  tipo_corrigido: boolean
+  tipo_herdado: boolean
   conversas: string[]
   msgs_total: number
   respondido_em: string | null
@@ -281,6 +286,112 @@ function DetalheNumero({ metrica, dias, onFechar }: {
     </div>
   )
 }
+
+/** Quanto da classificacao alguem conferiu, e o placar do classificador.
+ *
+ * Esta secao existe porque o Tassio perguntou "posso confiar nessas analises?".
+ * A resposta honesta em 08/09/2026 era: as CONTAS batem (painel e lista
+ * reconciliam caso a caso, e isso e conferido), o que gente marcou vale o que
+ * gente marcou, o valor vindo de anexo e um piso declarado — mas o TIPO era
+ * palpite de maquina, e dos 188 casos so 32 tinham veredito humano, sendo 1
+ * comunicado de uso e ZERO consignacao.
+ *
+ * Um numero que nao diz quanto de si foi verificado convida a confiar mais do
+ * que se deve. Entao a tela passa a dizer.
+ */
+function ConfiancaDaClassificacao({ conf }: { conf: any }) {
+  const { data } = useQuery({
+    queryKey: ['licitacao-reclassificacoes'],
+    queryFn: () => api.get('/licitacoes/entrada/reclassificacoes?limite=50').then(r => r.data),
+    staleTime: 60000,
+  })
+  const [aberto, setAberto] = useState(false)
+  if (!conf) return null
+
+  const conferidos = (conf.corrigidos_por_gente || 0) + (conf.conferidos_na_demanda || 0)
+  const pct = conf.casos ? Math.round((conferidos / conf.casos) * 100) : 0
+  const correcoes = data?.correcoes || []
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <h3 className="text-sm font-semibold text-gray-900">Confiança da classificação</h3>
+      <p className="mt-0.5 text-xs text-gray-500">
+        o tipo comanda a leitura desta tela, então vale saber quanto dele foi conferido
+      </p>
+
+      <div className="mt-3 flex items-baseline gap-2">
+        <span className="text-3xl font-bold tabular-nums text-gray-900">{pct}%</span>
+        <span className="text-xs text-gray-500">
+          {conferidos} de {conf.casos} casos com tipo conferido por gente
+        </span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-100">
+        <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-2 space-y-0.5 text-xs text-gray-600">
+        <p>{conf.corrigidos_por_gente} corrigidos à mão na triagem</p>
+        <p>{conf.conferidos_na_demanda} com o tipo escolhido ao gerar a demanda</p>
+        <p className="text-amber-700">
+          {Math.max(0, conf.casos - conferidos)} classificados só pelo motor, sem ninguém conferir
+        </p>
+      </div>
+
+      {/* O placar do aprendizado. Medido pelo motor, onde as regras moram —
+          duplicar as regras aqui garantiria que as duas copias divergissem. */}
+      <div className="mt-3 border-t border-gray-100 pt-3">
+        {!data || data.total === 0 ? (
+          <p className="text-xs text-gray-500">
+            Nenhuma correção de tipo ainda. Ao corrigir um caso, o motivo entra aqui
+            como prova, e o classificador passa a ser medido contra ela a cada rodada.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-gray-700">
+              <b className="text-gray-900">{data.total} correç{data.total === 1 ? 'ão' : 'ões'}</b> de tipo
+              {data.medidas > 0 ? (
+                <> · o classificador de hoje já acerta{' '}
+                  <b className="text-gray-900">{data.acertos_agora} de {data.medidas}</b></>
+              ) : (
+                <span className="text-gray-500"> · ainda não medidas (o motor mede na próxima rodada)</span>
+              )}
+            </p>
+            <button onClick={() => setAberto(!aberto)}
+              className="mt-1 text-xs font-medium text-blue-700 hover:underline">
+              {aberto ? 'esconder' : 'ver o que foi corrigido e por quê'}
+            </button>
+            {aberto && (
+              <div className="mt-2 max-h-64 space-y-2 overflow-y-auto">
+                {correcoes.map((r: any) => (
+                  <div key={r.id} className="rounded-lg border border-gray-100 p-2">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="text-gray-500">{fmtDia(r.quando)}</span>
+                      <span className="text-gray-700">
+                        {TIPO_LABEL[r.de] || r.de || '—'} → <b>{TIPO_LABEL[r.para] || r.para}</b>
+                      </span>
+                      {r.autor && <span className="text-gray-500">· {r.autor.split(' ')[0]}</span>}
+                      {r.acerta_agora === true && (
+                        <span className="ml-auto font-medium text-emerald-700">o motor já acerta</span>
+                      )}
+                      {r.acerta_agora === false && (
+                        <span className="ml-auto font-medium text-amber-700">o motor ainda erra</span>
+                      )}
+                      {r.acerta_agora == null && (
+                        <span className="ml-auto text-gray-400">não medido</span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-gray-900">{r.assunto}</p>
+                    <p className="text-xs text-gray-600">{r.motivo}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 
 /** Os e-mails de um dia do grafico — de onde vem aquela barra.
  *
@@ -652,6 +763,8 @@ export function AbaAcompanhamento() {
           </div>
         </div>
 
+        <ConfiancaDaClassificacao conf={data.confianca_do_tipo} />
+
         {/* Onde as demandas estão paradas — mostra o gargalo da operação. */}
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <h3 className="text-sm font-semibold text-gray-900">Demandas por etapa</h3>
@@ -795,6 +908,98 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  * a demanda ligada e o que o time anotou. Sem esta tela, responder "por que
  * este caso está aberto há 30 dias?" exigia abrir o Outlook.
  */
+/** O tipo do caso, e a correcao dele.
+ *
+ * O tipo e a parte MENOS confiavel deste modulo, e isso foi medido: dos 188
+ * casos da janela de 90 dias, so 32 tinham veredito humano (os que viraram
+ * demanda, onde alguem escolheu o tipo a mao) — e desses 32, um era comunicado
+ * de uso e ZERO eram consignacao. Ou seja, os dois tipos que somam 90 casos
+ * nunca passaram por conferencia de ninguem.
+ *
+ * Por isso a correcao exige MOTIVO. Sem ele a correcao conserta um card e nao
+ * ensina nada: daqui a um mes ninguem sabe se aquilo era regra ("assunto que e
+ * so o numero da NE e venda direta") ou excecao daquele caso. A primeira muda o
+ * classificador; a segunda nao deve mudar. Quem le a diferenca e gente, e o
+ * motivo e o que da a ela o que ler.
+ */
+function TipoDaSolicitacao({ c, onReclassificar, salvando }: {
+  c: Card
+  onReclassificar: (tipo: string, motivo: string) => void
+  salvando: boolean
+}) {
+  const [novo, setNovo] = useState<string | null>(null)
+  const [motivo, setMotivo] = useState('')
+
+  return (
+    <Secao titulo="Tipo da solicitação">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1 text-sm font-medium text-gray-800">
+          <span className={`h-2.5 w-2.5 rounded-sm ${TIPO_PONTO[c.tipo || 'OUTRO']}`} />
+          {TIPO_LABEL[c.tipo || 'OUTRO']}
+        </span>
+        {c.tipo_corrigido ? (
+          <span className="text-xs text-emerald-700">
+            corrigido por gente
+            {c.tipo_herdado && <span className="text-gray-500"> · herdado de outra mensagem da mesma conversa</span>}
+            {c.tipo_motor && c.tipo_motor !== c.tipo && (
+              <span className="text-gray-500"> · o motor dizia {TIPO_LABEL[c.tipo_motor] || c.tipo_motor}</span>
+            )}
+          </span>
+        ) : (
+          // Dizer que ninguem conferiu e mais util que nao dizer nada: e o que
+          // separa "esta certo" de "ninguem olhou ainda".
+          <span className="text-xs text-gray-500">classificado pelo motor, sem conferência humana</span>
+        )}
+      </div>
+
+      {novo === null ? (
+        <button onClick={() => { setNovo(c.tipo || 'OUTRO'); setMotivo('') }}
+          className="mt-2 text-xs font-medium text-blue-700 hover:underline">
+          corrigir o tipo
+        </button>
+      ) : (
+        <div className="mt-2 space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-2.5">
+          <div className="flex flex-wrap gap-1.5">
+            {['VENDA_DIRETA', 'CONSIGNACAO', 'COMUNICADO_USO', 'AMOSTRA', 'OUTRO'].map(t => (
+              <button key={t} onClick={() => setNovo(t)}
+                className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium ${
+                  novo === t ? 'border-gray-900 bg-gray-900 text-white'
+                             : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'}`}>
+                <span className={`h-2 w-2 rounded-sm ${TIPO_PONTO[t]}`} />
+                {TIPO_LABEL[t]}
+              </button>
+            ))}
+          </div>
+          <textarea value={motivo} onChange={e => setMotivo(e.target.value)}
+            rows={2}
+            placeholder="Por que este é o tipo certo? Ex.: 'assunto é só o número da NE; empenho é venda direta'"
+            className="w-full rounded-lg border border-gray-200 p-2 text-xs focus:border-blue-400 focus:outline-none" />
+          <p className="text-[11px] text-gray-500">
+            O motivo é obrigatório e não é burocracia: ele é o que o motor usa de
+            prova. A cada rodada o classificador é medido contra todas as
+            correções já feitas, então uma regra nova que quebre uma correção
+            antiga aparece na hora.
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={salvando || motivo.trim().length < 3 || novo === (c.tipo || 'OUTRO')}
+              onClick={() => { onReclassificar(novo!, motivo.trim()); setNovo(null) }}
+              className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40">
+              salvar correção
+            </button>
+            <button onClick={() => setNovo(null)}
+              className="text-xs text-gray-500 hover:underline">cancelar</button>
+            {novo === (c.tipo || 'OUTRO') && (
+              <span className="text-[11px] text-gray-500">escolha um tipo diferente do atual</span>
+            )}
+          </div>
+        </div>
+      )}
+    </Secao>
+  )
+}
+
+
 /** A conversa inteira do caso.
 
  * Esta secao existe por uma confusao concreta, e a causa foi o Tassio quem
@@ -987,9 +1192,11 @@ function HistoricoDeEmails({ c }: { c: Card }) {
 }
 
 
-function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApagarNota, onPromover, salvando }: {
+function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApagarNota,
+  onPromover, onReclassificar, salvando }: {
   c: Card
   onFechar: () => void
+  onReclassificar: (tipo: string, motivo: string) => void
   onTriar: (situacao: string) => void
   onNota: (texto: string) => void
   onTratativa: (v: boolean) => void
@@ -1197,6 +1404,8 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
           </Secao>
         )}
 
+        <TipoDaSolicitacao c={c} onReclassificar={onReclassificar} salvando={salvando} />
+
         <Conversa c={c} />
 
         {/* Ações: as mesmas do card, para não obrigar a fechar e voltar. */}
@@ -1276,7 +1485,13 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
                 doc {c.documento}
               </span>
             )}
-            <span className="text-[11px] text-gray-500">{TIPO_LABEL[c.tipo || 'OUTRO']}</span>
+            <span className="text-[11px] text-gray-500"
+              title={c.tipo_corrigido
+                ? `tipo corrigido por gente${c.tipo_motor && c.tipo_motor !== c.tipo ? ` — o motor dizia ${TIPO_LABEL[c.tipo_motor] || c.tipo_motor}` : ''}`
+                : 'tipo classificado pelo motor, sem conferência humana'}>
+              {TIPO_LABEL[c.tipo || 'OUTRO']}
+              {c.tipo_corrigido && <span className="text-emerald-600"> ✓</span>}
+            </span>
             {c.emails.length > 1 && (
               <span className="flex items-center gap-1 text-[11px] text-gray-500">
                 <Mail className="h-3 w-3" />{c.emails.length} e-mails
@@ -1531,6 +1746,18 @@ export function AbaCaixaEntrada() {
     onError: (e: any) => toast.error(msgErro(e, 'Não consegui apagar a anotação')),
   })
 
+  const reclassificar = useMutation({
+    mutationFn: ({ chave, tipo, motivo }: { chave: string; tipo: string; motivo: string }) =>
+      api.post('/licitacoes/entrada/grupo/reclassificar', { chave, tipo, motivo }),
+    onSuccess: () => {
+      toast.success('Tipo corrigido — o motivo entra no placar do classificador')
+      qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
+      qc.invalidateQueries({ queryKey: ['licitacao-painel'] })
+      qc.invalidateQueries({ queryKey: ['licitacao-reclassificacoes'] })
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não consegui corrigir o tipo')),
+  })
+
   const promover = useMutation({
     mutationFn: (chave: string) =>
       api.post(`/licitacoes/entrada/grupo/promover?chave=${encodeURIComponent(chave)}`, {}),
@@ -1654,8 +1881,11 @@ export function AbaCaixaEntrada() {
         const c = cards.find(x => x.chave === detalhe)
         if (!c) return null
         return (
-          <DetalheSolicitacao c={c} salvando={triar.isPending || promover.isPending}
+          <DetalheSolicitacao c={c}
+            salvando={triar.isPending || promover.isPending || reclassificar.isPending}
             onFechar={() => setDetalhe(null)}
+            onReclassificar={(tipo, motivo) =>
+              reclassificar.mutate({ chave: c.chave, tipo, motivo })}
             onTriar={sit => triar.mutate({ chave: c.chave, situacao: sit })}
             onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
             onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}

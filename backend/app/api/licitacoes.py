@@ -282,6 +282,27 @@ def painel_entrada(dias: int = 30, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_entrada_service.painel(dias)
 
 
+class EntradaReclassificar(BaseModel):
+    chave: str
+    tipo: str
+    motivo: str
+
+
+@router.post("/entrada/grupo/reclassificar")
+def reclassificar_entrada(payload: EntradaReclassificar,
+                          usuario: UsuarioOut = Depends(get_current_user)):
+    """Corrige o tipo do caso, com o motivo — que e o que ensina o motor."""
+    return licitacao_entrada_service.reclassificar(
+        payload.chave, payload.tipo, payload.motivo, usuario)
+
+
+@router.get("/entrada/reclassificacoes")
+def listar_reclassificacoes(limite: int = 200,
+                            _: UsuarioOut = Depends(get_current_user)):
+    """As correcoes de tipo e o placar do classificador atual."""
+    return licitacao_entrada_service.reclassificacoes(limite)
+
+
 @router.get("/entrada/dia")
 def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30,
                    _: UsuarioOut = Depends(get_current_user)):

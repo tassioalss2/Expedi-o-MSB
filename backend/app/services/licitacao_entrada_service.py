@@ -120,6 +120,16 @@ def _suporta_conversa(db) -> bool:
     return _TEM_CONVERSA
 
 
+def _tipo_efetivo(reg: dict) -> str:
+    """O tipo que vale: o que a pessoa corrigiu, senão o que o motor deduziu.
+
+    Existe porque `tipo` é campo da máquina — reescrito a cada rodada — e a
+    correção humana não pode viver nele: a rodada das 14:00 apagaria a correção
+    feita às 11:00. Mesma separação da situação e das notas.
+    """
+    return str(reg.get("tipo_manual") or reg.get("tipo") or "OUTRO")
+
+
 def _resumo_da_conversa(thread: list[dict]) -> dict:
     """O resumo que a listagem precisa sem carregar a conversa inteira.
 
@@ -255,6 +265,9 @@ def sincronizar(lote: list[dict]) -> dict:
             continue
         campos = {k: e.get(k) for k in _CAMPOS_DA_MAQUINA if k in e}
         campos["atualizado_em"] = _agora()
+        # `tipo` é da máquina e continua sendo reescrito; `tipo_manual` NUNCA
+        # entra aqui. Ver `_tipo_efetivo`.
+        campos.pop("tipo_manual", None)
         # O resumo da conversa é derivado, não vem do motor pronto: assim a
         # regra de "o que conta como resposta nossa" mora num lugar só.
         if tem_conversa:
@@ -304,8 +317,52 @@ def sincronizar(lote: list[dict]) -> dict:
         if not (campos.get("cliente_id") or antes.get("cliente_id")):
             sem_cliente += 1
 
+    herdadas = _herda_correcoes(db) if tem_conversa else 0
     return {"recebidos": len(lote), "criados": criados, "atualizados": atualizados,
-            "sem_cliente": sem_cliente, "ligados_a_demanda": ligados, **conversa}
+            "sem_cliente": sem_cliente, "ligados_a_demanda": ligados,
+            "tipos_herdados": herdadas, **conversa}
+
+
+def _herda_correcoes(db) -> int:
+    """Aplica a correção de tipo às mensagens novas da MESMA conversa.
+
+    Sem isto a correção duraria um dia: o órgão responde na mesma thread, o
+    motor classifica a resposta pela regra antiga, e o caso volta a aparecer
+    errado — que é exatamente o "não erre mais" que se pede.
+
+    A conversa é o limite, e é um limite objetivo: é a mesma thread do Outlook,
+    o mesmo pedido, o mesmo cliente. Não há generalização nenhuma aqui — nada é
+    inferido de parecença de assunto.
+
+    Fica marcado como HERDADO. É decisão emprestada de outra mensagem, não
+    conferida naquela, e a tela precisa poder dizer isso.
+    """
+    try:
+        corrigidos = db.table("licitacao_entrada")\
+            .select("conversation_id, tipo_manual, tipo_manual_por")\
+            .eq("ativo", True).limit(3000).execute().data
+    except Exception:
+        return 0
+    mapa = {r["conversation_id"]: r for r in corrigidos
+            if r.get("conversation_id") and r.get("tipo_manual")}
+    if not mapa:
+        return 0
+
+    n = 0
+    for r in db.table("licitacao_entrada")\
+            .select("id, conversation_id, tipo_manual").eq("ativo", True)\
+            .limit(3000).execute().data:
+        cid = r.get("conversation_id")
+        if not cid or r.get("tipo_manual") or cid not in mapa:
+            continue
+        db.table("licitacao_entrada").update({
+            "tipo_manual": mapa[cid]["tipo_manual"],
+            "tipo_manual_por": mapa[cid].get("tipo_manual_por"),
+            "tipo_manual_em": _agora(),
+            "tipo_herdado": True,
+        }).eq("id", r["id"]).execute()
+        n += 1
+    return n
 
 
 # ── leitura: a caixa de entrada agrupada por nota de empenho ────────────────
@@ -706,7 +763,14 @@ def listar(situacao: Optional[str] = None, dias: int = 60,
             "dias_parados": _dias_parados(primeiro.get("recebido_em")),
             "prioridade": min(m.get("prioridade") or 5 for m in membros),
             "motivo": primeiro.get("motivo"),
-            "tipo": primeiro_com("tipo"),
+            # Basta UMA pessoa ter corrigido em qualquer e-mail do grupo: o
+            # caso é um só, e quem corrigiu decidiu sobre o caso.
+            "tipo": next((m["tipo_manual"] for m in membros if m.get("tipo_manual")),
+                         None) or primeiro_com("tipo"),
+            "tipo_motor": primeiro_com("tipo"),
+            "tipo_corrigido": next((True for m in membros if m.get("tipo_manual")), False),
+            "tipo_herdado": next((bool(m.get("tipo_herdado")) for m in membros
+                                  if m.get("tipo_manual")), False),
             "contrato": primeiro_com("contrato"),
             # O titulo do contrato citado, para o codigo interno significar algo
             # na tela. Quando o e-mail cita dois, vale o primeiro.
@@ -937,6 +1001,99 @@ def apagar_nota(nota_id: str, usuario: UsuarioOut) -> dict:
 
 
 # ── de-para dos órgãos ──────────────────────────────────────────────────────
+def reclassificar(chave: str, tipo: str, motivo: str, usuario: UsuarioOut) -> dict:
+    """Corrige o tipo do caso e guarda POR QUE, como evidência.
+
+    O motivo é obrigatório, e não por burocracia: uma correção sem motivo não
+    ensina nada. Daqui a um mês ninguém sabe se aquilo era regra ("assunto que é
+    só o número da NE é venda direta") ou exceção daquele caso ("este hospital
+    manda reposição com o assunto de empenho"). A primeira muda o classificador;
+    a segunda não deve mudar.
+
+    Junto com o motivo ficam congelados o assunto e o início do corpo. É isso que
+    transforma a tabela num CONJUNTO DE TESTES: o motor mede, a cada rodada, se
+    as regras de hoje acertariam cada evidência já corrigida — então mexer numa
+    regra mostra na hora o que melhorou e o que quebrou.
+
+    A correção vale para o caso inteiro, porque é assim que o time trabalha: se
+    o pedido é consignação, é consignação em todos os e-mails dele.
+    """
+    tipo = str(tipo or "").strip().upper()
+    if tipo not in TIPOS_SOLICITACAO:
+        raise HTTPException(422, "tipo inválido: %s" % tipo)
+    motivo = str(motivo or "").strip()
+    if len(motivo) < 3:
+        raise HTTPException(422, "escreva o motivo da correção — é ele que ensina o motor")
+
+    regs = _emails_do_grupo(chave, "*")
+    if not regs:
+        raise HTTPException(404, "nenhum e-mail para a chave %s" % chave)
+
+    db = get_service_db()
+    agora = _agora()
+    for r in regs:
+        db.table("licitacao_entrada").update({
+            "tipo_manual": tipo,
+            "tipo_manual_por": usuario.id,
+            "tipo_manual_em": agora,
+            "tipo_herdado": False,
+            "atualizado_em": agora,
+        }).eq("id", r["id"]).execute()
+        db.table("licitacao_reclassificacoes").insert({
+            "entrada_id": r["id"],
+            "conversation_id": r.get("conversation_id"),
+            "chave_grupo": chave,
+            "assunto": r.get("assunto"),
+            # Só o começo: é onde a pessoa escreve o que quer. O resto de uma
+            # resposta é a conversa citada, que se repete e não classifica nada.
+            "corpo_inicio": (r.get("corpo") or "")[:1500],
+            "tipo_motor": r.get("tipo"),
+            "tipo_correto": tipo,
+            "motivo": motivo,
+            "autor_id": usuario.id,
+        }).execute()
+
+    return {"chave": chave, "tipo": tipo, "emails": len(regs), "motivo": motivo}
+
+
+def reclassificacoes(limite: int = 200) -> dict:
+    """As correções feitas, com o placar do classificador atual.
+
+    `acerta_agora` é escrito pelo MOTOR, não aqui: as regras moram em
+    `classifica.py`, no motor, e duplicá-las no app garantiria que as duas cópias
+    divergissem. O motor mede a cada rodada e grava o resultado; esta tela só
+    mostra. Enquanto uma correção estiver sem medição, aparece como "ainda não
+    medido" em vez de fingir um placar.
+    """
+    db = get_service_db()
+    linhas = db.table("licitacao_reclassificacoes")\
+        .select("*").order("criado_em", desc=True).limit(limite).execute().data
+
+    ids = {l["autor_id"] for l in linhas if l.get("autor_id")}
+    nomes = {}
+    if ids:
+        for u in db.table("usuarios").select("id, nome").in_("id", sorted(ids)).execute().data:
+            nomes[u["id"]] = u["nome"]
+
+    medidas = [l for l in linhas if l.get("acerta_agora") is not None]
+    return {
+        "total": len(linhas),
+        "medidas": len(medidas),
+        "acertos_agora": sum(1 for l in medidas if l["acerta_agora"]),
+        "correcoes": [{
+            "id": l["id"],
+            "quando": l.get("criado_em"),
+            "autor": nomes.get(l.get("autor_id")),
+            "assunto": l.get("assunto"),
+            "de": l.get("tipo_motor"),
+            "para": l.get("tipo_correto"),
+            "motivo": l.get("motivo"),
+            "acerta_agora": l.get("acerta_agora"),
+            "medido_em": l.get("medido_em"),
+        } for l in linhas],
+    }
+
+
 def orgaos_pendentes() -> list[dict]:
     """Os órgãos que apareceram nos e-mails e ainda não têm cliente definido.
 
@@ -1095,7 +1252,11 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
             422, "defina o cliente antes de promover: o CNPJ %s não está no de-para de órgãos"
                  % (base.get("cnpj_orgao") or "(não lido)"))
 
-    tipo = extra.get("tipo_operacao") or base.get("tipo") or "VENDA_DIRETA"
+    # A correção humana vence o palpite do motor também aqui: promover com o
+    # tipo errado faz a demanda nascer no fluxo errado.
+    tipo = extra.get("tipo_operacao") or _tipo_efetivo(base)
+    if tipo == "OUTRO":
+        tipo = base.get("tipo") or "OUTRO"
     if tipo == "OUTRO":
         raise HTTPException(422, "escolha o tipo da operação: o e-mail não deixou claro")
 
@@ -1226,7 +1387,7 @@ def painel(dias: int = 30) -> dict:
         dia = str(r.get("recebido_em") or "")[:10]
         if dia:
             alvo = por_dia.setdefault(dia, {})
-            t = r.get("tipo") or "OUTRO"
+            t = _tipo_efetivo(r)
             alvo[t] = alvo.get(t, 0) + 1
 
     etapas = db.table("licitacao_demandas").select("etapa, criado_em")\
@@ -1271,6 +1432,18 @@ def painel(dias: int = 30) -> dict:
             "casos_sem_valor_lido": len(abertos) - len(com_valor),
         },
         "por_tipo": por_tipo,
+        # Quanto da classificação alguém realmente conferiu. Vai no painel de
+        # propósito: o tipo comanda a leitura toda desta tela (é por tipo que se
+        # decide se o mês foi de faturamento ou de venda), e um número sem dizer
+        # quanto dele foi verificado convida a confiar mais do que se deve.
+        "confianca_do_tipo": {
+            "casos": len(cards),
+            "corrigidos_por_gente": sum(1 for c in cards if c.get("tipo_corrigido")),
+            # Quem promoveu escolheu o tipo da operação à mão: é veredito humano
+            # também, ainda que indireto.
+            "conferidos_na_demanda": sum(1 for c in cards if c.get("demanda_id")
+                                         and not c.get("tipo_corrigido")),
+        },
         "por_cliente": ranking,
         "entrada_por_dia": [{"dia": d, "emails": sum(t.values()), "tipos": t}
                             for d, t in sorted(por_dia.items())],
@@ -1413,11 +1586,10 @@ def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30) -> dict
     do_dia = [r for r in regs if str(r.get("recebido_em") or "")[:10] == dia]
     por_tipo: dict[str, int] = {}
     for r in do_dia:
-        t = r.get("tipo") or "OUTRO"
-        por_tipo[t] = por_tipo.get(t, 0) + 1
+        por_tipo[_tipo_efetivo(r)] = por_tipo.get(_tipo_efetivo(r), 0) + 1
 
     escolhidos = do_dia if not tipo else [
-        r for r in do_dia if (r.get("tipo") or "OUTRO") == tipo]
+        r for r in do_dia if _tipo_efetivo(r) == tipo]
     escolhidos.sort(key=lambda r: r.get("recebido_em") or "")
 
     rotulo_tipo = (tipo or "").replace("_", " ").lower()
@@ -1444,7 +1616,8 @@ def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30) -> dict
             "id": r["id"],
             "recebido_em": r.get("recebido_em"),
             "assunto": r.get("assunto"),
-            "tipo": r.get("tipo") or "OUTRO",
+            "tipo": _tipo_efetivo(r),
+            "tipo_corrigido": bool(r.get("tipo_manual")),
             "pasta": r.get("pasta"),
             "situacao": r.get("situacao"),
             "prioridade": r.get("prioridade"),
