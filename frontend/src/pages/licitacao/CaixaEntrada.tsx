@@ -81,6 +81,10 @@ const TIPO_LABEL: Record<string, string> = {
   OUTRO: 'A classificar',
 }
 
+/** Ordem fixa da pilha e da legenda. Fixa de proposito: ordenar por volume
+ *  faria as cores trocarem de lugar de um dia para o outro. */
+const ORDEM_TIPO = ['VENDA_DIRETA', 'CONSIGNACAO', 'COMUNICADO_USO', 'AMOSTRA', 'OUTRO']
+
 const TIPO_PONTO: Record<string, string> = {
   VENDA_DIRETA: 'bg-blue-500',
   CONSIGNACAO: 'bg-amber-500',
@@ -278,6 +282,128 @@ function DetalheNumero({ metrica, dias, onFechar }: {
   )
 }
 
+/** Os e-mails de um dia do grafico — de onde vem aquela barra.
+ *
+ * Modal separado do DetalheNumero por um motivo que nao e cosmetico: a UNIDADE
+ * e outra. Aquele conta CASOS, este conta E-MAILS, e varios e-mails podem ser o
+ * mesmo caso (o orgao reenvia, cobra, responde). Mostrar casos aqui faria a
+ * lista nao somar a barra clicada — foi confundir duas unidades que fez o painel
+ * dizer 16 e a lista mostrar 13.
+ */
+function DetalheDoDia({ dia, tipo, dias, onFechar, onTrocarTipo }: {
+  dia: string; tipo: string | null; dias: number
+  onFechar: () => void
+  onTrocarTipo: (t: string | null) => void
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['licitacao-dia', dia, tipo, dias],
+    queryFn: () => api.get('/licitacoes/entrada/dia', {
+      params: { dia, dias, ...(tipo ? { tipo } : {}) },
+    }).then(r => r.data),
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onFechar}>
+      <div className="w-full max-w-3xl rounded-xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-gray-900">
+              {isLoading ? 'Carregando...' : data?.titulo}
+            </h3>
+            {data && (
+              <p className="mt-0.5 text-sm text-gray-500">
+                {data.quantidade} e-mail{data.quantidade === 1 ? '' : 's'}
+                {tipo && data.total_do_dia !== data.quantidade && (
+                  <> de {data.total_do_dia} no dia</>
+                )}
+              </p>
+            )}
+          </div>
+          <button onClick={onFechar} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="py-16 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-gray-400" /></div>
+        ) : !data ? null : (
+          <>
+            {/* Os tipos do dia viram filtro aqui dentro, e nao no grafico: uma
+                faixa de dois pixels e alvo ruim de clique, e daqui se ve o dia
+                inteiro sem ter de fechar e clicar de novo. */}
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-100 p-3">
+              <button onClick={() => onTrocarTipo(null)}
+                className={`rounded-lg border px-2 py-1 text-xs font-medium ${
+                  !tipo ? 'border-gray-900 bg-gray-900 text-white'
+                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'}`}>
+                todos · {data.total_do_dia}
+              </button>
+              {(data.por_tipo || []).map((t: any) => (
+                <button key={t.tipo} onClick={() => onTrocarTipo(t.tipo)}
+                  className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium ${
+                    tipo === t.tipo ? 'border-gray-900 bg-gray-900 text-white'
+                                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'}`}>
+                  <span className={`h-2 w-2 rounded-sm ${TIPO_PONTO[t.tipo]}`} />
+                  {TIPO_LABEL[t.tipo] || t.tipo} · {t.emails}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-2 border-b border-gray-100 bg-gray-50 p-4 text-xs leading-relaxed text-gray-700">
+              <p><b className="text-gray-900">Como este número é calculado.</b> {data.conta}</p>
+              <p><b className="text-gray-900">De onde vem o dado.</b> {data.origem}</p>
+            </div>
+
+            <div className="max-h-[55vh] divide-y divide-gray-100 overflow-y-auto">
+              {data.emails.length === 0 && (
+                <p className="p-6 text-center text-sm text-gray-500">Nenhum e-mail compõe este número.</p>
+              )}
+              {data.emails.map((e: any) => (
+                <div key={e.id} className="p-3 hover:bg-gray-50">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="tabular-nums text-[11px] font-medium text-gray-700">
+                      {fmtMomento(e.recebido_em)}
+                    </span>
+                    <span className="flex items-center gap-1 text-[11px] text-gray-500">
+                      <span className={`h-2 w-2 rounded-sm ${TIPO_PONTO[e.tipo]}`} />
+                      {TIPO_LABEL[e.tipo] || e.tipo}
+                    </span>
+                    {(e.empenhos || []).map((ne: string) => (
+                      <span key={ne} className="rounded bg-gray-900 px-1.5 py-0.5 font-mono text-[11px] text-white">{ne}</span>
+                    ))}
+                    {e.pasta && <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600">{e.pasta}</span>}
+                    {e.situacao === 'SIM' && (
+                      <span className="text-[11px] font-medium text-emerald-700">resolvido</span>
+                    )}
+                    {e.valor > 0 && (
+                      <span className="text-[11px] font-medium text-gray-900">{fmtBRL(e.valor)}</span>
+                    )}
+                    {e.entry_id && (
+                      <a href={`ace-email:${e.entry_id}`}
+                        className="ml-auto flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100"
+                        title="abrir este e-mail no Outlook do computador">
+                        <ExternalLink className="h-3 w-3" /> abrir
+                      </a>
+                    )}
+                  </div>
+                  <div className="mt-0.5 truncate text-sm text-gray-900">{e.assunto}</div>
+                  <div className="text-xs text-gray-500">
+                    {e.cliente_nome || 'sem cliente definido'}
+                    {e.itens > 0 && <> · {e.itens} item(ns) do anexo</>}
+                    {e.contrato && <> · contrato {e.contrato}</>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 /** Envolve qualquer número do painel e o torna clicável. */
 function Abrivel({ metrica, onAbrir, children }: {
   metrica: string; onAbrir: (m: string) => void; children: any
@@ -312,6 +438,7 @@ export function AbaAcompanhamento() {
   const [dias, setDias] = useState(30)
   // Qual número o usuário abriu. null = nenhum.
   const [aberto, setAberto] = useState<string | null>(null)
+  const [diaAberto, setDiaAberto] = useState<{ dia: string; tipo: string | null } | null>(null)
   const [params, setParams] = useSearchParams()
 
   /** Vai para a caixa de entrada já filtrada por tipo. As duas coisas viajam
@@ -482,25 +609,46 @@ export function AbaAcompanhamento() {
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <h3 className="text-sm font-semibold text-gray-900">E-mails recebidos por dia</h3>
           <p className="mt-0.5 text-xs text-gray-500">{data.emails_recebidos} no período</p>
-          {/* `h-full items-end` em CADA coluna, e não só na fileira: a altura da
-              barra é percentual, e percentual só resolve contra pai de altura
-              DEFINIDA. Com `items-end` na fileira, o flex item deixa de ser
-              esticado e passa a ter altura de conteúdo — o conteúdo é a barra,
-              cuja altura depende do pai. A conta não fecha, o navegador resolve
-              como 0, e o gráfico ficava um retângulo vazio com 138 e-mails
-              dentro. */}
+          {/* Barra empilhada, uma faixa por tipo. O volume total nao diz que
+              trabalho e: comunicado de uso e papel de faturamento e venda
+              direta e material saindo — um dia de 8 comunicados nao pesa como
+              um dia de 8 vendas diretas.
+
+              `h-full items-end` em CADA coluna, e nao so na fileira: a altura e
+              percentual, e percentual so resolve contra pai de altura DEFINIDA.
+              Com `items-end` na fileira o item deixa de ser esticado e passa a
+              ter altura de conteudo — que depende do pai. A conta nao fecha, o
+              navegador resolve como 0, e o grafico ficava vazio. */}
           <div className="mt-4 flex h-28 items-end gap-[2px]">
             {(data.entrada_por_dia || []).map((d: any) => (
-              <div key={d.dia} className="group relative flex h-full flex-1 items-end"
-                title={`${fmtDia(d.dia)}: ${d.emails} e-mail(s)`}>
-                <div className="w-full rounded-t bg-blue-500 transition group-hover:bg-blue-600"
-                  style={{ height: `${Math.max(3, (d.emails / maxDia) * 100)}%` }} />
+              <div key={d.dia} className="group relative flex h-full flex-1 flex-col justify-end">
+                {ORDEM_TIPO.filter(t => (d.tipos || {})[t]).map(t => (
+                  <button key={t}
+                    onClick={() => setDiaAberto({ dia: d.dia, tipo: t })}
+                    title={`${fmtDia(d.dia)} · ${TIPO_LABEL[t]}: ${d.tipos[t]} e-mail(s) — clique para ver quais`}
+                    className={`w-full ${TIPO_PONTO[t]} transition hover:opacity-70`}
+                    style={{ height: `${Math.max(3, (d.tipos[t] / maxDia) * 100)}%` }} />
+                ))}
               </div>
             ))}
           </div>
           <div className="mt-1.5 flex justify-between text-[11px] text-gray-400">
             <span>{fmtDia(data.entrada_por_dia?.[0]?.dia)}</span>
             <span>{fmtDia(data.entrada_por_dia?.[data.entrada_por_dia.length - 1]?.dia)}</span>
+          </div>
+          {/* Legenda com o total do periodo. Sem ela, cor empilhada e adivinhacao. */}
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-gray-100 pt-2">
+            {ORDEM_TIPO.map(t => {
+              const n = (data.entrada_por_dia || []).reduce(
+                (soma: number, d: any) => soma + ((d.tipos || {})[t] || 0), 0)
+              if (!n) return null
+              return (
+                <span key={t} className="flex items-center gap-1 text-[11px] text-gray-600">
+                  <span className={`h-2 w-2 rounded-sm ${TIPO_PONTO[t]}`} />
+                  {TIPO_LABEL[t]} <b className="tabular-nums text-gray-900">{n}</b>
+                </span>
+              )
+            })}
           </div>
         </div>
 
@@ -575,6 +723,11 @@ export function AbaAcompanhamento() {
       </div>
 
       {aberto && <DetalheNumero metrica={aberto} dias={dias} onFechar={() => setAberto(null)} />}
+      {diaAberto && (
+        <DetalheDoDia dia={diaAberto.dia} tipo={diaAberto.tipo} dias={dias}
+          onTrocarTipo={t => setDiaAberto({ dia: diaAberto.dia, tipo: t })}
+          onFechar={() => setDiaAberto(null)} />
+      )}
     </div>
   )
 }

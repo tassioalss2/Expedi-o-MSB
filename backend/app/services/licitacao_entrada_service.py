@@ -1217,11 +1217,17 @@ def painel(dias: int = 30) -> dict:
 
     # Entrada por dia, para a linha do tempo. Conta e-mail, não card: é o volume
     # que chega na mesa do time.
-    por_dia: dict[str, int] = {}
+    #
+    # Separada por TIPO porque o volume total não diz que trabalho é: 44 dos 74
+    # casos abertos são comunicado de uso, que é papel de faturamento, e um dia
+    # cheio de comunicado não pesa como um dia cheio de venda direta.
+    por_dia: dict[str, dict] = {}
     for r in regs:
         dia = str(r.get("recebido_em") or "")[:10]
         if dia:
-            por_dia[dia] = por_dia.get(dia, 0) + 1
+            alvo = por_dia.setdefault(dia, {})
+            t = r.get("tipo") or "OUTRO"
+            alvo[t] = alvo.get(t, 0) + 1
 
     etapas = db.table("licitacao_demandas").select("etapa, criado_em")\
         .eq("ativo", True).limit(2000).execute().data
@@ -1266,7 +1272,8 @@ def painel(dias: int = 30) -> dict:
         },
         "por_tipo": por_tipo,
         "por_cliente": ranking,
-        "entrada_por_dia": [{"dia": d, "emails": n} for d, n in sorted(por_dia.items())],
+        "entrada_por_dia": [{"dia": d, "emails": sum(t.values()), "tipos": t}
+                            for d, t in sorted(por_dia.items())],
         "demandas_por_etapa": por_etapa,
     }
 
@@ -1384,6 +1391,81 @@ def _explica(metrica: str, dias: int) -> dict:
     if metrica not in registro:
         raise HTTPException(404, "não sei explicar a métrica '%s'" % metrica)
     return registro[metrica]
+
+
+def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30) -> dict:
+    """Os e-mails que produziram uma barra do gráfico de entrada.
+
+    A unidade aqui é E-MAIL, e não caso — e isso está dito na tela, porque a
+    diferença já custou caro. Vários e-mails podem ser o mesmo caso (o órgão
+    reenvia, cobra, responde), então a soma das barras é maior que o número de
+    cards. Foi confundir duas unidades que fez o painel dizer 16 e a lista
+    mostrar 13.
+
+    O dia é recortado do mesmo jeito que o gráfico o agrupa (os 10 primeiros
+    caracteres de `recebido_em`, que já vem no fuso de Brasília). Fazer diferente
+    aqui abriria a porta para a lista não somar a barra que foi clicada.
+    """
+    db = get_service_db()
+    corte = (_hoje_brt() - timedelta(days=dias)).isoformat()
+    regs = db.table("licitacao_entrada").select("*, clientes(nome)")        .eq("ativo", True).gte("recebido_em", corte).limit(3000).execute().data
+
+    do_dia = [r for r in regs if str(r.get("recebido_em") or "")[:10] == dia]
+    por_tipo: dict[str, int] = {}
+    for r in do_dia:
+        t = r.get("tipo") or "OUTRO"
+        por_tipo[t] = por_tipo.get(t, 0) + 1
+
+    escolhidos = do_dia if not tipo else [
+        r for r in do_dia if (r.get("tipo") or "OUTRO") == tipo]
+    escolhidos.sort(key=lambda r: r.get("recebido_em") or "")
+
+    rotulo_tipo = (tipo or "").replace("_", " ").lower()
+    return {
+        "dia": dia,
+        "tipo": tipo,
+        "titulo": "E-mails de %s%s" % (
+            _dia_br(dia), (" · %s" % rotulo_tipo) if tipo else ""),
+        "conta": ("Contagem de E-MAILS recebidos no dia%s. Um caso pode ter "
+                  "vários e-mails — o órgão reenvia, cobra, responde —, então a "
+                  "soma do gráfico é maior que o número de cards da caixa de "
+                  "entrada." % ((" classificados como %s" % rotulo_tipo) if tipo else "")),
+        "origem": "E-mails que a caixa licitacao@msbbrasil.com repassou, lidos do "
+                  "Outlook pelo motor duas vezes por dia (08:00 e 14:00). O tipo é "
+                  "classificado pelo motor a partir do assunto e do corpo; quando o "
+                  "e-mail não deixa claro, fica como 'a classificar' — o motor não "
+                  "escolhe no chute. A data é a de recebimento, no fuso de Brasília.",
+        "periodo_dias": dias,
+        "quantidade": len(escolhidos),
+        "total_do_dia": len(do_dia),
+        "por_tipo": [{"tipo": t, "emails": n}
+                     for t, n in sorted(por_tipo.items(), key=lambda x: -x[1])],
+        "emails": [{
+            "id": r["id"],
+            "recebido_em": r.get("recebido_em"),
+            "assunto": r.get("assunto"),
+            "tipo": r.get("tipo") or "OUTRO",
+            "pasta": r.get("pasta"),
+            "situacao": r.get("situacao"),
+            "prioridade": r.get("prioridade"),
+            "empenhos": r.get("empenhos") or [],
+            "contrato": r.get("contrato"),
+            "entry_id": r.get("entry_id"),
+            "cliente_nome": ((r.get("clientes") or {}) or {}).get("nome")
+                            or r.get("orgao_texto"),
+            "itens": len(r.get("itens") or []),
+            "valor": round(sum(float(i.get("valor_total") or 0)
+                               for i in (r.get("itens") or [])), 2),
+        } for r in escolhidos],
+    }
+
+
+def _dia_br(dia: str) -> str:
+    """'2026-08-10' -> '10/08'. Sem passar por data: recortar texto não tem fuso,
+    e foi exatamente um acerto de fuso a mais que fez o eixo do gráfico mostrar
+    um dia antes do real."""
+    partes = str(dia or "").split("-")
+    return "%s/%s" % (partes[2], partes[1]) if len(partes) == 3 else str(dia)
 
 
 def detalhe(metrica: str, dias: int = 30) -> dict:

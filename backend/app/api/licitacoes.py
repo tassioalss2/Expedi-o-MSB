@@ -282,6 +282,19 @@ def painel_entrada(dias: int = 30, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_entrada_service.painel(dias)
 
 
+@router.get("/entrada/dia")
+def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: int = 30,
+                   _: UsuarioOut = Depends(get_current_user)):
+    """Os e-mails por tras de uma barra do grafico de entrada.
+
+    Rota separada de /entrada/detalhe porque a UNIDADE e outra: aquela devolve
+    casos, esta devolve e-mails. Sao numeros diferentes de proposito — varios
+    e-mails podem ser o mesmo caso — e mistura-los faria a lista nao somar a
+    barra clicada.
+    """
+    return licitacao_entrada_service.detalhe_do_dia(dia, tipo, dias)
+
+
 @router.get("/entrada/conversa")
 def conversa_do_caso(chave: str, _: UsuarioOut = Depends(get_current_user)):
     """A conversa inteira do caso, e não só o e-mail que a licitação repassou.
