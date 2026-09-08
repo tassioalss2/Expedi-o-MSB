@@ -151,6 +151,47 @@ def _tipo_efetivo(reg: dict) -> str:
     return str(reg.get("tipo_manual") or reg.get("tipo") or "OUTRO")
 
 
+# Tipos que são FALLBACK, não afirmação. "Venda direta" é o que sai de qualquer
+# título de documento genérico — "Ordem de fornecimento", "Solicitação de
+# material" —, e "a classificar" é a ausência de sinal. Os outros nomeiam a
+# operação.
+_TIPOS_GENERICOS = ("VENDA_DIRETA", "OUTRO")
+
+
+def _tipo_do_caso(membros: list[dict]) -> Optional[str]:
+    """O tipo do caso: o sinal mais específico entre os e-mails dele.
+
+    Antes era o tipo do PRIMEIRO e-mail, e isso perdia informação de um jeito
+    que o Tássio encontrou usando. Ele corrigiu "Ordem de fornecimento - MSB" de
+    venda direta para consignação, com o motivo: o corpo diz "Venda Futura
+    (Consignação)". Ao medir, os 3 e-mails que ele corrigiu NÃO tinham essa
+    frase — eles dizem "Segue solicitação do cliente", "Segue anexo", "PSC". A
+    frase está em OUTRA mensagem do mesmo caso.
+
+    Ou seja: ele julgou pela conversa, que é o certo, e a máquina julgava por uma
+    mensagem só. E a mensagem que ela escolhia era a primeira, que é justamente a
+    mais pobre — a que só encaminha.
+
+    Precedência medida, não inventada: hoje um único caso dos 188 tem e-mails
+    discordando (AF 29621/26 — três dizem consignação, um venda direta, um a
+    classificar) e o card mostrava venda direta, do primeiro. Como só existe um
+    caso de conflito, a regra fica no mínimo defensável: qualquer tipo que NOMEIE
+    a operação vence os dois genéricos; entre dois nomeados, vale o mais
+    frequente, e empate fica com o mais antigo. Não se ordena consignação contra
+    comunicado de uso — são operações diferentes que podem dividir uma thread de
+    verdade, e escolher entre elas sem evidência seria invenção.
+    """
+    ordenados = sorted(membros, key=lambda m: m.get("recebido_em") or "")
+    tipos = [_tipo_efetivo(m) for m in ordenados]
+    if not tipos:
+        return None
+    nomeados = [t for t in tipos if t not in _TIPOS_GENERICOS]
+    if nomeados:
+        return max(set(nomeados),
+                   key=lambda t: (nomeados.count(t), -nomeados.index(t)))
+    return next((t for t in tipos if t != "OUTRO"), tipos[0])
+
+
 def _resumo_da_conversa(thread: list[dict]) -> dict:
     """O resumo que a listagem precisa sem carregar a conversa inteira.
 
@@ -822,8 +863,12 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             # Basta UMA pessoa ter corrigido em qualquer e-mail do grupo: o
             # caso é um só, e quem corrigiu decidiu sobre o caso.
             "tipo": next((m["tipo_manual"] for m in membros if m.get("tipo_manual")),
-                         None) or primeiro_com("tipo"),
-            "tipo_motor": primeiro_com("tipo"),
+                         None) or _tipo_do_caso(membros),
+            # O que a MÁQUINA diria do caso, ignorando a correção humana: é a
+            # comparação que mede a confiança da classificação.
+            "tipo_motor": _tipo_do_caso(
+                [{"tipo": m.get("tipo"), "recebido_em": m.get("recebido_em")}
+                 for m in membros]),
             "tipo_corrigido": next((True for m in membros if m.get("tipo_manual")), False),
             "tipo_herdado": next((bool(m.get("tipo_herdado")) for m in membros
                                   if m.get("tipo_manual")), False),
