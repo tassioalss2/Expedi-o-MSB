@@ -15,10 +15,10 @@ import { LINHA_DO_CANAL } from '../../lib/statusConfig'
 import {
   ESTAGIOS, ESTAGIOS_PIPELINE, ESTAGIO_MAP, ORIGENS, TIPOS_ATIVIDADE, TIPO_ATIV_MAP,
   fmtBRL, fmtBRLcurto, fmtData, fmtDataHora, prazoCor, msgErro, type EstagioKey,
-  type Disponibilidade, type Pendencia, type PendenciasResp,
+  type Disponibilidade, type PendenciasResp,
 } from '../../lib/crm'
 import {
-  BlocoDisponibilidade, CardPendencia, ModalDecisaoEstoque, ModalLiberarPendencia,
+  BlocoDisponibilidade, ModalDecisaoEstoque, ModalLiberarPendencia,
   type DecisaoEstoque,
 } from '../../components/EstoqueVenda'
 import { ModalBase, Campo, inputCls, InputMoeda } from './CrmShared'
@@ -64,7 +64,6 @@ export function CrmPipeline() {
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [linha, setLinha] = useState('')
-  const [liberando, setLiberando] = useState<Pendencia | null>(null)
 
   // A coluna Ganho mostra so o mes corrente (o backend corta por `ganho_em`).
   // Isto abre as anteriores sem sair da tela: esconder sem caminho de volta e o
@@ -94,33 +93,22 @@ export function CrmPipeline() {
     })
   }, [opps, busca, linha])
 
-  // Pendência de estoque é coluna VIRTUAL: o card sai da coluna do estágio dele e
-  // aparece aqui enquanto o material não chega. Sem isso, uma venda travada por
-  // falta de material ficava indistinguível de uma venda andando normalmente.
-  const { data: pend } = useQuery<PendenciasResp>({
-    queryKey: ['crm-pendencias'],
-    queryFn: () => api.get('/crm/pendencias').then(r => r.data),
-    refetchInterval: 30000,
-  })
-  const pendencias = useMemo(() => {
-    const b = busca.trim().toLowerCase()
-    return (pend?.pendencias || []).filter(p => {
-      if (linha && LINHA_DO_CANAL[p.canal || ''] !== LINHA_DO_CANAL[linha]) return false
-      if (b && !`${p.titulo || ''} ${p.cliente || ''}`.toLowerCase().includes(b)) return false
-      return true
-    })
-  }, [pend, busca, linha])
-  const idsPendentes = useMemo(
-    () => new Set(pendencias.filter(p => p.fonte === 'oportunidade').map(p => p.id)),
-    [pendencias])
-
-  const porEstagio = (e: string) => filtradas.filter(o => o.estagio === e && !idsPendentes.has(o.id))
+  // A coluna "Pendência de estoque" saiu daqui em 09/09/2026, a pedido do
+  // Tássio: ela vive agora só em /pendencias, que é uma tela de TRATAR (liberar
+  // total, liberar parcial, cobrar o PCP e anotar a resposta) e não apenas de
+  // ver. Ter as duas era a mesma verdade em dois lugares, e o funil ficava com
+  // seis colunas — a de pendência empurrando as do estágio para fora da tela.
+  //
+  // Nada se perdeu: o botão de liberar continua no detalhe da oportunidade,
+  // logo abaixo, e a tela de pendências faz o resto.
+  // Sem a coluna virtual, o card volta para a coluna do estágio dele. Manter a
+  // exclusão sem a coluna faria a oportunidade com pendência DESAPARECER do
+  // funil — hoje seriam zero (as 11 pendências abertas são todas de OV, nenhuma
+  // de oportunidade), e é justamente por ser invisível hoje que valia arrumar.
+  const porEstagio = (e: string) => filtradas.filter(o => o.estagio === e)
 
   const totalPonderado = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_ponderado || 0), 0)
   const totalPipe = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_estimado || 0), 0)
-  const totalPendente = pendencias.reduce((a, p) => a + (p.valor || 0), 0)
-  // Conta sobre a lista FILTRADA: o cabeçalho tem que falar do que está na tela.
-  const liberaveis = pendencias.filter(p => p.estoque_agora?.status === 'COMPLETO').length
 
   return (
     <div className="space-y-4">
@@ -154,47 +142,7 @@ export function CrmPipeline() {
       ) : (
         <div className="overflow-x-auto lg:overflow-x-visible pb-2">
           <div className="kanban-grid gap-2"
-            style={{ ['--kanban-cols' as any]: ESTAGIOS_PIPELINE.length + 1 }}>
-            {/* Pendência de estoque vem PRIMEIRO: é venda fechada esperando
-                material, o que trava dinheiro. Ficava no fim, fora da tela sem
-                rolar — e o que não se vê não é cobrado. */}
-            <div className="bg-red-50/40 rounded-xl border border-red-100 flex flex-col min-h-[400px]">
-              <div className="h-1 rounded-t-xl bg-red-500" />
-              {/* Cabeçalho empilhado: com 6 colunas na tela não há largura para
-                  título e total na mesma linha sem cortar um dos dois. */}
-              <div className="px-2.5 py-2">
-                <span className="text-[13px] font-semibold text-gray-700 flex items-start gap-1.5 leading-tight">
-                  <span className="w-2 h-2 rounded-full bg-red-500 mt-1 shrink-0" /> Pendência de estoque
-                </span>
-                <span className="text-[11px] text-gray-400 block mt-0.5">
-                  {pendencias.length} · {fmtBRLcurto(totalPendente)}
-                </span>
-                {/* O que dá para resolver HOJE, antes de rolar a coluna. */}
-                {liberaveis > 0 && (
-                  <span className="text-[11px] font-semibold text-emerald-700 block mt-1 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
-                    ✓ {liberaveis} com material · destrava {fmtBRLcurto(pend?.valor_liberavel || 0)}
-                  </span>
-                )}
-                {pend?.estoque_desatualizado && (
-                  <span className="text-[10px] text-amber-700 block mt-0.5">
-                    ⚠ estoque da última foto do PCP
-                  </span>
-                )}
-              </div>
-              <div className="px-1.5 pb-2 space-y-2 flex-1 overflow-y-auto">
-                {pendencias.map(p => (
-                  <CardPendencia key={`${p.fonte}-${p.id}`} p={p}
-                    onAbrir={() => { if (p.fonte === 'oportunidade') setDetalheId(p.id) }}
-                    onLiberar={() => setLiberando(p)} />
-                ))}
-                {pendencias.length === 0 && (
-                  <div className="text-[11px] text-gray-300 text-center py-6 rounded-lg">
-                    nenhuma — tudo com material
-                  </div>
-                )}
-              </div>
-            </div>
-
+            style={{ ['--kanban-cols' as any]: ESTAGIOS_PIPELINE.length }}>
             {ESTAGIOS_PIPELINE.map(ek => {
               const cfg = ESTAGIO_MAP[ek]
               const cards = porEstagio(ek)
@@ -238,10 +186,6 @@ export function CrmPipeline() {
         </div>
       )}
 
-      {liberando && (
-        <ModalLiberarPendencia pendencia={liberando} onClose={() => setLiberando(null)}
-          onLiberado={invalidar} />
-      )}
       {novo && <ModalOportunidadeForm onClose={() => setNovo(false)} onSaved={invalidar} />}
       {detalheId && <ModalDetalheOportunidade id={detalheId} onClose={() => setDetalheId(null)} onChanged={invalidar} />}
     </div>
