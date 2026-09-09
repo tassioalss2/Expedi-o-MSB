@@ -41,7 +41,11 @@ const LINHAS = ['URO', 'VASCULAR', 'REALCLOSURE']
 // resolvido (server-side, em criar_desafio/atualizar_desafio). "Avançar" pula
 // direto para a etapa seguinte de negócio; quem quiser sinalizar um problema usa
 // o botão "Registrar problema" do painel de Desafios, não um clique na etapa.
-const ORDEM_AVANCO: EstagioKey[] = ['QUALIFICACAO', 'NEGOCIACAO', 'PROPOSTA']
+// CONVERSA entrou aqui em 09/09/2026 junto com a etapa. Sem ela,
+// `proximaEtapa` devolvia null (indexOf -1) e o detalhe de uma oportunidade em
+// Conversa dizia "Última etapa do funil — use Ganhar ou Perder" sobre a
+// PRIMEIRA etapa. Foi o Tassio quem viu, no print.
+const ORDEM_AVANCO: EstagioKey[] = ['CONVERSA', 'QUALIFICACAO', 'NEGOCIACAO', 'PROPOSTA']
 
 function proximaEtapa(atual: string): EstagioKey | null {
   const i = ORDEM_AVANCO.indexOf(atual as EstagioKey)
@@ -54,6 +58,16 @@ function proximaEtapa(atual: string): EstagioKey | null {
 function etapasAnteriores(atual: string): EstagioKey[] {
   const i = ORDEM_AVANCO.indexOf(atual as EstagioKey)
   return i > 0 ? ORDEM_AVANCO.slice(0, i) : []
+}
+/** Todas as etapas ADIANTE da atual, e nao so a proxima.
+ *
+ *  Pedido do Tassio: poder escolher para qual etapa avancar. O servidor continua
+ *  sendo quem decide se o pulo e permitido (ver requisitos_avanco) — a tela
+ *  mostra a opcao e o motivo de ela estar travada, em vez de esconder o caminho
+ *  ou deixar o clique falhar. */
+function etapasSeguintes(atual: string): EstagioKey[] {
+  const i = ORDEM_AVANCO.indexOf(atual as EstagioKey)
+  return i === -1 ? [] : ORDEM_AVANCO.slice(i + 1)
 }
 
 /** O mes corrente escrito, para a coluna Ganho dizer de que periodo ela fala. */
@@ -343,10 +357,47 @@ function CardOpp({ o, onClick }: { o: any; onClick: () => void }) {
  *  avanço linear. Mostra também, ao lado do botão, o que o servidor exige para
  *  aquela passagem específica — é a resposta direta a "que informação preciso
  *  para passar de uma etapa para outra". */
+/** Um destino possivel, com o que o servidor exige para chegar nele.
+ *
+ *  Cada etapa tem a propria consulta de requisitos porque a regra e por
+ *  PASSAGEM, nao por oportunidade: de Conversa para Qualificada pede proximo
+ *  passo; para Proposta pede passar por Qualificada antes; para Proposta com a
+ *  etapa certa pede itens com preco. Mostrar a etapa sem o motivo de ela estar
+ *  travada obrigaria a clicar para descobrir. */
+function BotaoEtapa({ o, destino, primeira, onMover, onEditar }: {
+  o: any; destino: EstagioKey; primeira: boolean
+  onMover: (destino: string) => void; onEditar: () => void
+}) {
+  const { data: req } = useQuery<any>({
+    queryKey: ['crm-requisitos', o.id, destino],
+    queryFn: () => api.get(`/crm/oportunidades/${o.id}/requisitos`,
+      { params: { destino } }).then(r => r.data),
+  })
+  const cfg = ESTAGIO_MAP[destino]
+  const falta: string[] = req?.falta || []
+  const travada = falta.length > 0
+
+  return (
+    <button onClick={() => (travada ? undefined : onMover(destino))}
+      disabled={travada}
+      title={travada ? `Falta: ${falta.join(' · ')}` : `Mover para ${cfg.label}`}
+      className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg ${
+        travada
+          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+          : primeira
+            ? `text-white ${cfg.coluna} hover:opacity-90`
+            : 'bg-white border border-gray-300 text-gray-700 hover:border-gray-400'}`}>
+      {primeira ? 'Avançar para ' : ''}{cfg.label} <ArrowRight size={14} />
+    </button>
+  )
+}
+
+
 function FluxoAvanco({ oportunidade: o, onMover, onEditar }: {
   oportunidade: any; onMover: (destino: string) => void; onEditar: () => void
 }) {
   const proxima = proximaEtapa(o.estagio)
+  const seguintes = etapasSeguintes(o.estagio)
 
   const { data: req } = useQuery<any>({
     queryKey: ['crm-requisitos', o.id, proxima],
@@ -388,17 +439,23 @@ function FluxoAvanco({ oportunidade: o, onMover, onEditar }: {
     )
   }
 
-  const cfg = ESTAGIO_MAP[proxima]
+  // `req` continua sendo o da PROXIMA etapa: e dela que sai o aviso grande de
+  // "falta para avancar", porque e o caminho normal. As outras etapas mostram o
+  // motivo no titulo do proprio botao.
   const falta: string[] = req?.falta || []
   const faltaItens = falta.some(f => f.startsWith('itens'))
 
   return (
     <div className="mt-3 space-y-2">
+      {/* Todas as etapas adiante, e nao so a proxima: a primeira em destaque
+          (o caminho normal) e as outras como opcao. As travadas ficam
+          desabilitadas COM o motivo no titulo — esconder o caminho faria
+          parecer que nao existe, e deixar clicavel faria o clique falhar. */}
       <div className="flex items-center gap-2 flex-wrap">
-        <button onClick={() => onMover(proxima)}
-          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg text-white ${cfg.coluna} hover:opacity-90`}>
-          Avançar para {cfg.label} <ArrowRight size={14} />
-        </button>
+        {seguintes.map((k, i) => (
+          <BotaoEtapa key={k} o={o} destino={k} primeira={i === 0}
+            onMover={onMover} onEditar={onEditar} />
+        ))}
         {anteriores.length > 0 && (
           <select onChange={e => { if (e.target.value) onMover(e.target.value) }} value=""
             className="ml-auto text-xs text-gray-500 border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
