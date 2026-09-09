@@ -191,8 +191,12 @@ type Card = {
   contrato_operacao: string | null
   conversas: string[]
   msgs_total: number
+  /** Ultima fala de QUEM RESOLVE licitacao (Tassio, Jaqueline, Emanoela). */
   respondido_em: string | null
   respondido_por: string | null
+  /** Ultima fala de outra pessoa da MSB: resposta de informacao, nao tratativa. */
+  informado_em: string | null
+  informado_por: string | null
   ultima_msg_em: string | null
   dias_sem_movimento: number | null
 }
@@ -1540,6 +1544,16 @@ function Conversa({ c }: { c: Card }) {
   if (!msgs.length) return <HistoricoDeEmails c={c} />
 
   const nossas = msgs.filter(m => m.papel === 'MSB')
+  // Quem RESOLVE licitacao: Tassio, Jaqueline e Emanoela (dito pelo Tassio). O
+  // resto do time que fala na conversa esta informando. A mesma regra do
+  // backend (`_RESOLVEM`), repetida aqui porque a conversa vem sem esse rotulo
+  // por mensagem — se um dia virar campo da mensagem, esta copia sai.
+  const RESOLVEM = [['tassio', 'santana'], ['jaqueline', 'teixeira'], ['emanoela', 'costa']]
+  const resolve = (n?: string | null) => {
+    const t = (n || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    return RESOLVEM.some(partes => partes.every(p => t.includes(p)))
+  }
+  const deQuemResolve = nossas.filter(m => resolve(m.nome))
   const ultima = msgs[msgs.length - 1]
 
   return (
@@ -1549,10 +1563,17 @@ function Conversa({ c }: { c: Card }) {
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600">
         <span>ultima fala: <span className="font-medium text-gray-800">
           {PAPEL[ultima.papel || 'EXTERNO']?.label}</span> em {fmtMomento(ultima.enviado_em)}</span>
-        {nossas.length ? (
+        {deQuemResolve.length ? (
           <span className="text-blue-700">
-            respondido por {nossas[nossas.length - 1]!.nome || 'alguem da MSB'} em{' '}
-            {fmtMomento(nossas[nossas.length - 1]!.enviado_em)}
+            respondido por {deQuemResolve[deQuemResolve.length - 1]!.nome || 'alguem da MSB'} em{' '}
+            {fmtMomento(deQuemResolve[deQuemResolve.length - 1]!.enviado_em)}
+          </span>
+        ) : nossas.length ? (
+          // Falou alguem da MSB, mas nao quem resolve: e informacao.
+          <span className="text-gray-600">
+            {nossas[nossas.length - 1]!.nome || 'alguem da MSB'} informou em{' '}
+            {fmtMomento(nossas[nossas.length - 1]!.enviado_em)} — quem resolve
+            licitação é Tássio, Jaqueline ou Emanoela
           </span>
         ) : (
           // 67 dos 192 casos estao assim. Nao e acusacao: as vezes a licitacao
@@ -2024,10 +2045,21 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
                 diferente de um em que se respondeu e esta-se aguardando — e
                 antes disto a tela nao sabia a diferenca, porque a licitacao
                 repassa e sai da conversa. */}
+            {/* Tres estados, e nao dois. Quem RESOLVE licitacao e o Tassio, a
+                Jaqueline e a Emanoela; o resto do time que responde esta
+                informando. Antes qualquer resposta virava "respondido", e 8
+                casos apareciam como tratados sem ninguem estar com eles. */}
             {c.respondido_por ? (
               <span className="flex items-center gap-1 text-[11px] text-blue-700"
                 title={`${c.respondido_por} respondeu na conversa em ${fmtMomento(c.respondido_em)}`}>
                 <Mail className="h-3 w-3" />respondido · {c.respondido_por.split(' ')[0]}
+              </span>
+            ) : c.informado_por ? (
+              // Houve resposta nossa, mas de quem nao resolve: dizer "sem
+              // resposta" seria falso, e dizer "respondido" seria pior.
+              <span className="flex items-center gap-1 text-[11px] text-gray-500"
+                title={`${c.informado_por} respondeu na conversa em ${fmtMomento(c.informado_em)} — resposta de informação: quem resolve licitação é Tássio, Jaqueline ou Emanoela`}>
+                <Mail className="h-3 w-3" />informou · {c.informado_por.split(' ')[0]}
               </span>
             ) : c.msgs_total > 0 && c.situacao !== 'SIM' ? (
               <span className="flex items-center gap-1 text-[11px] font-medium text-amber-700"

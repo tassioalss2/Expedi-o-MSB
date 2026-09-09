@@ -291,22 +291,60 @@ def _tipo_do_caso(membros: list[dict]) -> Optional[str]:
     return next((t for t in tipos if t != "OUTRO"), tipos[0])
 
 
+# Quem RESOLVE solicitação de licitação, dito pelo Tássio em 09/09/2026: ele,
+# Jaqueline e Emanoela. Todo o resto do time que aparece na conversa está
+# informando — respondeu ao órgão, passou um dado — e não assumiu o caso.
+#
+# O casamento é por NOME e não por endereço porque o remetente interno chega
+# como caminho X500 e o sufixo dele é hash na maioria dos casos (só três dos 17
+# remetentes trazem o apelido legível). Cada entrada é um conjunto de palavras
+# que TODAS precisam aparecer no nome de quem enviou: assim "Jaqueline Lima
+# Teixeira" casa, nome do meio não estraga, e uma segunda Jaqueline de outro
+# sobrenome não entra por acidente.
+#
+# Para mudar quem resolve, é esta lista — e só ela.
+_RESOLVEM = (("tassio", "santana"), ("jaqueline", "teixeira"), ("emanoela", "costa"))
+
+
+def _quem_resolve(nome: Optional[str]) -> bool:
+    # `.lower()` porque `_norm` devolve em MAIUSCULAS (ela nasceu para casar nome
+    # de orgao) e as entradas de `_RESOLVEM` estao em minuscula. Sem isso a
+    # comparacao dava False para todo mundo, inclusive para os tres.
+    n = _norm(nome or "").lower()
+    return any(all(p in n for p in partes) for partes in _RESOLVEM)
+
+
 def _resumo_da_conversa(thread: list[dict]) -> dict:
     """O resumo que a listagem precisa sem carregar a conversa inteira.
 
-    "Respondido" é a última fala de alguém da MSB que NÃO seja a caixa da
-    licitação: a licitação repassa e sai, então uma mensagem dela não é sinal de
-    que alguém pegou o caso. Isso é sinal, não decisão — quem diz se o caso está
-    em tratativa continua sendo a pessoa, em `em_tratativa`.
+    Duas coisas diferentes, e a diferença foi o Tássio quem ensinou:
+
+        respondido   última fala de QUEM RESOLVE (ele, Jaqueline, Emanoela).
+                     É o que sugere que alguém pegou o caso.
+        informado    última fala de outra pessoa da MSB. Houve resposta nossa,
+                     mas ninguém assumiu.
+
+    Antes as duas eram a mesma coisa, e 8 casos apareciam como "em tratamento"
+    porque alguém que não resolve tinha respondido — pior do que não deduzir,
+    porque tira o caso da fila de quem procura trabalho.
+
+    A caixa da licitação continua fora das duas: ela repassa e sai da conversa.
+
+    E segue sendo SINAL, não decisão: quem diz se o caso está em tratativa é a
+    pessoa, em `tratativa_manual`.
     """
     msgs = sorted([m for m in (thread or []) if m.get("quando")],
                   key=lambda m: m["quando"])
     nossas = [m for m in msgs if m.get("papel") == "MSB"]
+    resolve = [m for m in nossas if _quem_resolve(m.get("nome"))]
+    informa = [m for m in nossas if not _quem_resolve(m.get("nome"))]
     return {
         "msgs_total": len(thread or []),
         "ultima_msg_em": msgs[-1]["quando"] if msgs else None,
-        "respondido_em": nossas[-1]["quando"] if nossas else None,
-        "respondido_por": (nossas[-1].get("nome") or None) if nossas else None,
+        "respondido_em": resolve[-1]["quando"] if resolve else None,
+        "respondido_por": (resolve[-1].get("nome") or None) if resolve else None,
+        "informado_em": informa[-1]["quando"] if informa else None,
+        "informado_por": (informa[-1].get("nome") or None) if informa else None,
     }
 
 
@@ -954,6 +992,11 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
         # e-mail dela, que era o único sinal que existia antes.
         conversas = sorted({m["conversation_id"] for m in membros
                             if m.get("conversation_id")})
+        informado_em = max((m.get("informado_em") for m in membros
+                            if m.get("informado_em")), default=None)
+        informado_por = next((m.get("informado_por") for m in membros
+                              if m.get("informado_em") == informado_em), None) \
+            if informado_em else None
         respondido_em = max((m.get("respondido_em") for m in membros
                              if m.get("respondido_em")), default=None)
         respondido_por = next(
@@ -1040,6 +1083,9 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             # `em_tratativa`, que é a marca que a pessoa faz de propósito.
             "respondido_em": respondido_em,
             "respondido_por": respondido_por,
+            # Resposta de quem NAO resolve: informacao, e nao tratativa.
+            "informado_em": informado_em,
+            "informado_por": informado_por,
             "ultima_msg_em": ultima_msg,
             # `dias_parados` continua contando do PRIMEIRO e-mail (a idade do
             # pedido, que é o que ordena a fila). Este outro conta do último
