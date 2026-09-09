@@ -371,6 +371,32 @@ def _serializar_opp(o: dict, itens: Optional[list] = None) -> dict:
     }
 
 
+def _mes_brt() -> str:
+    """A competência de hoje em Brasília, no formato AAAA-MM.
+
+    Em Brasília, e não em UTC: `ganho_em` é timestamptz e volta em UTC, então
+    fatiar os 7 primeiros caracteres jogaria um ganho de 31/08 às 22h (01h UTC
+    de 01/09) para setembro. Um mês a mais ou a menos no corte é exatamente o
+    tipo de erro que ninguém confere.
+    """
+    return (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m")
+
+
+def _ganho_no_mes(reg: dict, mes: str) -> bool:
+    quando = reg.get("ganho_em")
+    if not quando:
+        # Ganho sem data não dá para situar no tempo, e sumir com ele em
+        # silêncio seria pior do que mostrá-lo. Hoje são zero das 24.
+        return True
+    try:
+        d = datetime.fromisoformat(str(quando).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return (d.astimezone(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m") == mes
+    except Exception:
+        return True
+
+
 def listar_oportunidades(estagio: Optional[str] = None, incluir_fechadas: bool = False) -> list:
     db = get_service_db()
     q = db.table("crm_oportunidades").select("*, clientes(nome)").eq("ativo", True)
@@ -378,7 +404,21 @@ def listar_oportunidades(estagio: Optional[str] = None, incluir_fechadas: bool =
         q = q.eq("estagio", estagio)
     rows = q.order("criado_em", desc=True).execute().data
     if not incluir_fechadas:
-        rows = [r for r in rows if r.get("estagio") in _ESTAGIOS_ABERTOS or r.get("estagio") == "GANHO"]
+        # GANHO fica só o do MÊS CORRENTE, a pedido do Tássio. A coluna
+        # acumulava desde julho — 24 cards, dos quais 21 eram de meses fechados
+        # — e uma coluna que só cresce deixa de informar: ninguém olha "ganho"
+        # para revisar julho, olha para ver o que fechou agora.
+        #
+        # O total ponderado e o do pipe na tela já excluíam GANHO, então esconder
+        # os antigos não mexe em nenhum número — só na coluna.
+        #
+        # `incluir_fechadas=True` continua trazendo tudo, e é por ele que a tela
+        # oferece "ver anteriores". Esconder sem deixar caminho de volta é o que
+        # faz alguém achar que perdeu dado.
+        mes = _mes_brt()
+        rows = [r for r in rows
+                if r.get("estagio") in _ESTAGIOS_ABERTOS
+                or (r.get("estagio") == "GANHO" and _ganho_no_mes(r, mes))]
     # contagem de itens/atividades pendentes por oportunidade (para o card)
     ids = [r["id"] for r in rows]
     pendentes = _atividades_pendentes_por_opp(db, ids)

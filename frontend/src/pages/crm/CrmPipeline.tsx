@@ -55,6 +55,9 @@ function etapasAnteriores(atual: string): EstagioKey[] {
   return i > 0 ? ORDEM_AVANCO.slice(0, i) : []
 }
 
+/** O mes corrente escrito, para a coluna Ganho dizer de que periodo ela fala. */
+const MES_CORRENTE = new Date().toLocaleDateString('pt-BR', { month: 'long' })
+
 export function CrmPipeline() {
   const qc = useQueryClient()
   const [novo, setNovo] = useState(false)
@@ -63,9 +66,15 @@ export function CrmPipeline() {
   const [linha, setLinha] = useState('')
   const [liberando, setLiberando] = useState<Pendencia | null>(null)
 
+  // A coluna Ganho mostra so o mes corrente (o backend corta por `ganho_em`).
+  // Isto abre as anteriores sem sair da tela: esconder sem caminho de volta e o
+  // que faz alguem achar que perdeu dado.
+  const [ganhosAntigos, setGanhosAntigos] = useState(false)
+
   const { data: opps = [], isLoading } = useQuery<any[]>({
-    queryKey: ['crm-opps'],
-    queryFn: () => api.get('/crm/oportunidades').then(r => r.data),
+    queryKey: ['crm-opps', ganhosAntigos],
+    queryFn: () => api.get('/crm/oportunidades',
+      { params: ganhosAntigos ? { incluir_fechadas: true } : {} }).then(r => r.data),
     refetchInterval: 20000,
   })
 
@@ -199,6 +208,17 @@ export function CrmPipeline() {
                       <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${cfg.ponto}`} /> {cfg.label}
                     </span>
                     <span className="text-[11px] text-gray-400 block mt-0.5">{cards.length} · {fmtBRLcurto(soma)}</span>
+                    {/* A coluna Ganho e a unica com corte de tempo, e a tela diz
+                        qual: sem o mes escrito, quem lembra de um ganho de
+                        agosto acha que ele desapareceu. */}
+                    {ek === 'GANHO' && (
+                      <button onClick={() => setGanhosAntigos(!ganhosAntigos)}
+                        className="mt-0.5 block text-[11px] text-blue-600 hover:underline">
+                        {ganhosAntigos
+                          ? 'mostrando todos · ver só este mês'
+                          : `${MES_CORRENTE} · ver anteriores`}
+                      </button>
+                    )}
                   </div>
                   <div className="px-1.5 pb-2 space-y-2 flex-1 overflow-y-auto">
                     {cards.map(o => (
