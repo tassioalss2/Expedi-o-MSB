@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Trash2, Pencil, ArrowRightCircle, PhoneCall, CheckCircle2, Circle,
@@ -78,12 +79,25 @@ function ScoreDetalhe({ detalhe }: { detalhe: any }) {
 
 export function CrmEmpresas() {
   const qc = useQueryClient()
+  // `?nova=1` abre o formulario ja aberto. Serve ao "+ prospectar" da coluna de
+  // prospectadas no funil: o formulario de empresa vive AQUI e nao e duplicado
+  // la, senao seriam duas telas de cadastro para manter em pe.
+  const [params, setParams] = useSearchParams()
   const [filtro, setFiltro] = useState('PROSPECTADA')
   const [busca, setBusca] = useState('')
   const [modal, setModal] = useState<any | null>(null)
   const [contatoDe, setContatoDe] = useState<any | null>(null)
   const [descartarDe, setDescartarDe] = useState<any | null>(null)
   const [expandido, setExpandido] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (params.get('nova') === '1') {
+      setModal({})
+      const p = new URLSearchParams(params)
+      p.delete('nova')          // consome o parametro: F5 nao reabre o formulario
+      setParams(p, { replace: true })
+    }
+  }, [params, setParams])
 
   const { data: empresas = [], isLoading } = useQuery<any[]>({
     queryKey: ['crm-empresas'],

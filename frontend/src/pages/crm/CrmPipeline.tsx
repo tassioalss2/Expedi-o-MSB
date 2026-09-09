@@ -193,6 +193,14 @@ export function CrmPipeline() {
                 <span className="text-[11px] text-gray-400 block mt-0.5">
                   {prospectadasFiltradas.length} · antes de virar oportunidade
                 </span>
+                {/* O caminho que faltava: prospectar sem sair do funil. O
+                    formulario vive na aba Empresas e NAO e duplicado aqui —
+                    duas telas de cadastro da mesma coisa e uma para esquecer de
+                    manter. */}
+                <button onClick={() => navegar('/crm?aba=empresas&nova=1')}
+                  className="mt-1 text-[11px] font-medium text-sky-700 hover:underline">
+                  + prospectar empresa
+                </button>
               </div>
               <div className="px-1.5 pb-2 space-y-2 flex-1 overflow-y-auto">
                 {prospectadasFiltradas.map((e: any) => (
@@ -533,6 +541,13 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
             </select>
             {!edicao && (
               <p className="text-[11px] text-gray-400 mt-1">
+                {/* O Tassio perguntou onde estava "Prospectada" nesta lista. Nao
+                    esta, e nao e falta: prospectada e estado da EMPRESA, nao
+                    estagio de oportunidade. A oportunidade nasce na
+                    qualificacao — e a qualificacao que a cria. Dizer isso aqui
+                    evita a duvida em vez de responde-la depois. */}
+                Prospecção não é estágio de oportunidade: empresa prospectada fica
+                em <strong>Empresas</strong>, e vira oportunidade quando é qualificada.
                 Para marcar ganho, crie a oportunidade e use o botão <strong>Ganhar</strong> —
                 é ele que confere o estoque e abre a OV.
               </p>
