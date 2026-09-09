@@ -85,6 +85,24 @@ const TIPO_LABEL: Record<string, string> = {
  *  faria as cores trocarem de lugar de um dia para o outro. */
 const ORDEM_TIPO = ['VENDA_DIRETA', 'CONSIGNACAO', 'COMUNICADO_USO', 'AMOSTRA', 'OUTRO']
 
+/** Os tipos em que ENTREGA e ESTOQUE fazem sentido, dito pelo Tassio.
+ *
+ *  Comunicado de uso e faturamento de material JA USADO no paciente: nao ha
+ *  entrega para ser parcial nem estoque para esperar — o material saiu do
+ *  estoque semanas antes. Amostra e doacao, mesma coisa. Oferecer "parcial" e
+ *  "sem estoque" nesses casos convida a marcar o que nao existe, e a coluna
+ *  ficaria enchendo de caso que nao pertence ali.
+ *
+ *  Conferido antes de aplicar: os 6 parciais em aberto sao 5 venda direta e 1
+ *  consignacao. Ninguem marcou comunicado de uso como parcial — a regra descreve
+ *  o que ja se faz. */
+const TIPOS_COM_ENTREGA = ['VENDA_DIRETA', 'CONSIGNACAO']
+const SITUACOES_COM_PARCIAL = [['NAO', 'Em aberto', MinusCircle],
+  ['PARCIAL', 'Parcial', CircleDot], ['SIM', 'Resolvido', Check]] as const
+const SITUACOES_SEM_PARCIAL = [['NAO', 'Em aberto', MinusCircle],
+  ['SIM', 'Resolvido', Check]] as const
+const temEntrega = (tipo?: string | null) => TIPOS_COM_ENTREGA.includes(tipo || '')
+
 const TIPO_PONTO: Record<string, string> = {
   VENDA_DIRETA: 'bg-blue-500',
   CONSIGNACAO: 'bg-amber-500',
@@ -1894,8 +1912,11 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
         {/* Ações: as mesmas do card, para não obrigar a fechar e voltar. */}
         <div className="sticky bottom-0 space-y-2 border-t border-gray-200 bg-white p-4">
           <div className="flex flex-wrap items-center gap-2">
-            {([['NAO', 'Em aberto', MinusCircle], ['PARCIAL', 'Parcial', CircleDot],
-               ['SIM', 'Resolvido', Check]] as const).map(([valor, label, Icone]) => (
+            {/* "Parcial" so onde ha entrega: comunicado de uso e faturamento de
+                material ja usado, e amostra e doacao — nao ha meia entrega. */}
+            {(temEntrega(c.tipo)
+              ? SITUACOES_COM_PARCIAL
+              : SITUACOES_SEM_PARCIAL).map(([valor, label, Icone]) => (
               <button key={valor} onClick={() => onTriar(valor)} disabled={salvando}
                 className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
                   c.situacao === valor
@@ -2141,8 +2162,10 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
           triagem de 03/09 escreveram "Parcial" à mão numa planilha que só
           oferecia Sim/Nao. */}
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-black/5 pt-3">
-        {([['NAO', 'Em aberto', MinusCircle], ['PARCIAL', 'Parcial', CircleDot],
-           ['SIM', 'Resolvido', Check]] as const).map(([valor, label, Icone]) => (
+        {/* "Parcial" so onde ha entrega: ver TIPOS_COM_ENTREGA. */}
+        {(temEntrega(c.tipo)
+          ? SITUACOES_COM_PARCIAL
+          : SITUACOES_SEM_PARCIAL).map(([valor, label, Icone]) => (
           <button key={valor} onClick={() => onTriar(valor)} disabled={salvando}
             className={`flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
               c.situacao === valor
@@ -2163,7 +2186,10 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
         {/* Parado por falta de material. Fica ao lado do assumir/liberar
             porque e da mesma familia: estado do caso que uma pessoa decide.
             Nao ha saldo de estoque aqui de proposito — ver a decisao de
-            04/09/2026 de nao trazer estoque para a caixa de entrada. */}
+            04/09/2026 de nao trazer estoque para a caixa de entrada.
+            So aparece onde ha entrega: comunicado de uso fatura material que ja
+            saiu do estoque, e nao ha o que esperar. */}
+        {temEntrega(c.tipo) && (
         <button
           onClick={() => {
             if (c.aguardando_estoque) return onEstoque(false)
@@ -2181,6 +2207,7 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
           <Package className="h-3.5 w-3.5" />
           {c.aguardando_estoque ? 'material chegou' : 'sem estoque'}
         </button>
+        )}
         <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
           title={c.em_tratativa
             ? (c.tratativa_origem === 'RESPOSTA'
@@ -2335,15 +2362,24 @@ export function AbaCaixaEntrada() {
   //
   // O que nao entrou na coluna continua visivel como selo no card, entao nada
   // se esconde por causa da precedencia.
+  // As duas colunas de entrega so aparecem quando o filtro pode conter venda
+  // direta ou consignacao. Filtrando por comunicado de uso, elas somem — nao ha
+  // entrega parcial de material que ja foi usado.
+  const mostraEntrega = !tipo || temEntrega(tipo)
+
   const colunas = useMemo(() => {
-    const semEstoque = filtrados.filter(c => c.aguardando_estoque)
-    const parciais = filtrados.filter(c => !c.aguardando_estoque && c.situacao === 'PARCIAL')
-    const emTratamento = filtrados.filter(c => !c.aguardando_estoque
-      && c.situacao !== 'PARCIAL' && c.em_tratativa)
-    const naoTratados = filtrados.filter(c => !c.aguardando_estoque
-      && c.situacao !== 'PARCIAL' && !c.em_tratativa)
+    // A precedencia vale so para quem tem entrega. Um comunicado de uso marcado
+    // PARCIAL (nao existe hoje, mas o dado permite) cai em tratamento ou nao
+    // tratado em vez de sumir — nenhuma condicao pode tirar card da tela.
+    const naColuna = (c: Card) => mostraEntrega && temEntrega(c.tipo)
+    const semEstoque = filtrados.filter(c => naColuna(c) && c.aguardando_estoque)
+    const parciais = filtrados.filter(c => naColuna(c)
+      && !c.aguardando_estoque && c.situacao === 'PARCIAL')
+    const usados = new Set([...semEstoque, ...parciais].map(c => c.chave))
+    const emTratamento = filtrados.filter(c => !usados.has(c.chave) && c.em_tratativa)
+    const naoTratados = filtrados.filter(c => !usados.has(c.chave) && !c.em_tratativa)
     return { semEstoque, parciais, emTratamento, naoTratados }
-  }, [filtrados])
+  }, [filtrados, mostraEntrega, tipo])
 
   return (
     <div className="space-y-4">
@@ -2399,7 +2435,8 @@ export function AbaCaixaEntrada() {
            A coluna substitui o antigo filtro "em tratativa": botão de filtro e
            coluna faziam a mesma coisa, e manter os dois só confundiria. O
            "assumir"/"liberar" do card move ele de lado. */
-        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
+        <div className={`grid gap-4 lg:grid-cols-2 ${
+          mostraEntrega ? '2xl:grid-cols-4' : ''}`}>
           {([
             ['NAO', 'Não tratado', colunas.naoTratados,
              'border-gray-200 bg-gray-50 text-gray-700', MinusCircle,
@@ -2407,12 +2444,14 @@ export function AbaCaixaEntrada() {
             ['TRAT', 'Em tratamento', colunas.emTratamento,
              'border-violet-200 bg-violet-50 text-violet-900', Hand,
              'Ninguém assumiu nem respondeu nenhum caso ainda.'],
-            ['PARC', 'Entrega parcial', colunas.parciais,
-             'border-amber-200 bg-amber-50 text-amber-900', CircleDot,
-             'Nenhuma entrega parcial em aberto.'],
-            ['EST', 'Aguardando estoque', colunas.semEstoque,
-             'border-red-200 bg-red-50 text-red-900', Package,
-             'Nenhum caso parado por falta de material.'],
+            ...(mostraEntrega ? [
+              ['PARC', 'Entrega parcial', colunas.parciais,
+               'border-amber-200 bg-amber-50 text-amber-900', CircleDot,
+               'Nenhuma entrega parcial em aberto.'],
+              ['EST', 'Aguardando estoque', colunas.semEstoque,
+               'border-red-200 bg-red-50 text-red-900', Package,
+               'Nenhum caso parado por falta de material.'],
+            ] as const : []),
           ] as const)
             .map(([lado, titulo, lista, cor, Icone, vazio]) => (
               <div key={lado}>
