@@ -375,18 +375,31 @@ function BotaoEtapa({ o, destino, primeira, onMover, onEditar }: {
   })
   const cfg = ESTAGIO_MAP[destino]
   const falta: string[] = req?.falta || []
-  const travada = falta.length > 0
+  // O que o PROPRIO modal de mover resolve nao trava o botao.
+  //
+  // Isto era um beco sem saida que eu criei: o modal ja pede o proximo passo e
+  // move o card, mas eu desabilitei o botao que leva a ele — a tela dizia "falta
+  // proximo passo definido" e nao havia onde definir. O Tassio perguntou, com
+  // razao, "o que eu preciso fazer para avancar?".
+  //
+  // Travam de verdade so os bloqueios estruturais: pular etapa e desafio
+  // bloqueante em aberto. Esses o clique nao resolve.
+  const bloqueios = falta.filter(f => f.startsWith('passar por') || f.startsWith('resolver'))
+
+  // Etapa que exige passar por outra antes NAO aparece, em vez de aparecer
+  // apagada. Um botao desabilitado que nunca vai habilitar dali e ruido: de
+  // Conversa, "Proposta" jamais e clicavel sem passar por Qualificada, e
+  // mostra-lo cinza so aumenta a tela sem dar opcao. O caminho continua obvio
+  // pela ordem das etapas.
+  if (bloqueios.length > 0) return null
 
   return (
-    <button onClick={() => (travada ? undefined : onMover(destino))}
-      disabled={travada}
-      title={travada ? `Falta: ${falta.join(' · ')}` : `Mover para ${cfg.label}`}
+    <button onClick={() => onMover(destino)}
+      title={`Mover para ${cfg.label}`}
       className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg ${
-        travada
-          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-          : primeira
-            ? `text-white ${cfg.coluna} hover:opacity-90`
-            : 'bg-white border border-gray-300 text-gray-700 hover:border-gray-400'}`}>
+        primeira
+          ? `text-white ${cfg.coluna} hover:opacity-90`
+          : 'bg-white border border-gray-300 text-gray-700 hover:border-gray-400'}`}>
       {primeira ? 'Avançar para ' : ''}{cfg.label} <ArrowRight size={14} />
     </button>
   )
@@ -439,10 +452,12 @@ function FluxoAvanco({ oportunidade: o, onMover, onEditar }: {
     )
   }
 
-  // `req` continua sendo o da PROXIMA etapa: e dela que sai o aviso grande de
-  // "falta para avancar", porque e o caminho normal. As outras etapas mostram o
-  // motivo no titulo do proprio botao.
+  // `req` e o da PROXIMA etapa: e dela que sai o aviso, porque e o caminho
+  // normal. As outras etapas mostram o motivo no titulo do proprio botao.
   const falta: string[] = req?.falta || []
+  // O proximo passo NAO entra no aviso: o modal de mover pede ele. Aqui ficam
+  // so as pendencias que exigem outra tela (itens) ou outra acao (desafio).
+  const avisos = falta.filter(f => !f.startsWith('próximo passo'))
   const faltaItens = falta.some(f => f.startsWith('itens'))
 
   return (
@@ -464,9 +479,12 @@ function FluxoAvanco({ oportunidade: o, onMover, onEditar }: {
           </select>
         )}
       </div>
-      {falta.length > 0 && (
+      {/* O aviso fica so para o que o clique NAO resolve. "Falta proximo passo"
+          saiu daqui: o modal de mover pergunta isso, e repetir o aviso antes do
+          clique fazia parecer que havia trabalho a fazer em outro lugar. */}
+      {avisos.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-2 flex-wrap">
-          <span>Falta para avançar: {falta.join(' · ')}</span>
+          <span>Antes de avançar: {avisos.join(' · ')}</span>
           {faltaItens && (
             <button onClick={onEditar} className="text-amber-900 underline font-medium whitespace-nowrap">
               Adicionar itens
