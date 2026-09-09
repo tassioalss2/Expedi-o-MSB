@@ -90,15 +90,35 @@ def importar(caminho: str) -> dict:
     # Código do cliente → id. Paginado: o cadastro tem ~3.900 clientes e o
     # PostgREST devolve no máximo 1.000 por vez.
     por_codigo: dict = {}
+    # Código repetido em dois clientes: o de-para NÃO escolhe um.
+    #
+    # Antes o laço fazia `por_codigo[codigo] = id` e o ÚLTIMO lido vencia, em
+    # silêncio. Em 09/09/2026 havia um caso real — C001946 no Hospital Regional
+    # Hans Dieter Schimidt e c001946 (minúsculo) num "FUNDO ESTADUAL DE SAUDE" —
+    # e qualquer contrato com esse código resolveria para o cliente que a
+    # paginação por acaso trouxesse depois. Venda atribuída ao hospital errado
+    # não se descobre olhando a tela: descobre-se quando alguém estranha a nota.
+    #
+    # Agora o código ambíguo fica FORA do de-para. O caso perde a resolução
+    # automática e aparece na tela de órgãos pendentes, que é onde uma pessoa
+    # decide — melhor um caso sem cliente do que um caso com o cliente errado.
+    repetidos: dict = {}
     passo, ini = 1000, 0
     while True:
-        bloco = db.table("clientes").select("id, codigo").limit(passo).offset(ini).execute().data
+        bloco = db.table("clientes").select("id, codigo, nome").limit(passo).offset(ini).execute().data
         for c in bloco:
-            if c.get("codigo"):
-                por_codigo[str(c["codigo"]).strip().upper()] = c["id"]
+            if not c.get("codigo"):
+                continue
+            k = str(c["codigo"]).strip().upper()
+            if k in por_codigo and por_codigo[k] != c["id"]:
+                repetidos.setdefault(k, [por_codigo[k]]).append(c["id"])
+            else:
+                por_codigo[k] = c["id"]
         ini += passo
         if len(bloco) < passo:
             break
+    for k in repetidos:
+        por_codigo.pop(k, None)
 
     agora = datetime.now(timezone.utc).isoformat()
     registros, sem_cliente = [], 0
@@ -151,6 +171,10 @@ def importar(caminho: str) -> dict:
 
     return {"lidos": len(registros), "gravados": gravados,
             "sem_cliente": sem_cliente,
+            # Vai para o log da rodada: código duplicado é erro de cadastro que
+            # só quem cuida do D365 resolve, e ficar calado sobre ele foi o que
+            # deixou uma venda ir para o cliente errado.
+            "codigos_duplicados": sorted(repetidos),
             "erro": ("gravado sem %s — falta a migração v42"
                      % ", ".join(sorted(idx_op))) if sem_a_coluna else None}
 
