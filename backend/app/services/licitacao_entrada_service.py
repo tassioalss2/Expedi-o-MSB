@@ -876,6 +876,7 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
     # Nome de quem assumiu cada caso. Uma consulta só, para os poucos usuários
     # que aparecem — e não uma por card.
     ids_quem = {r["tratativa_por"] for r in regs if r.get("tratativa_por")}
+    ids_quem |= {r["estoque_por"] for r in regs if r.get("estoque_por")}
     quem: dict = {}
     if ids_quem:
         for u in db.table("usuarios").select("id, nome")\
@@ -1019,6 +1020,15 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             # "Em tratamento": decisão humana quando existe, senão a resposta
             # nossa na conversa. Ver `_tratativa_do_caso`.
             **_tratativa_do_caso(membros, quem, respondido_em, respondido_por),
+            # Parado por falta de material. Basta UM e-mail do grupo marcado: o
+            # caso é um só, e quem marcou marcou onde estava olhando.
+            "aguardando_estoque": any(m.get("aguardando_estoque") for m in membros),
+            "estoque_obs": next((m.get("estoque_obs") for m in membros
+                                 if m.get("aguardando_estoque") and m.get("estoque_obs")), None),
+            "estoque_nome": quem.get(next((m.get("estoque_por") for m in membros
+                                           if m.get("aguardando_estoque")), None)),
+            "estoque_em": next((m.get("estoque_em") for m in membros
+                                if m.get("aguardando_estoque")), None),
             # "Sim" só quando TODOS os e-mails da NE estão resolvidos. Um card
             # verde com um e-mail em aberto dentro é pior que nenhum card.
             "situacao": ("SIM" if situacoes == {"SIM"}
@@ -1145,7 +1155,9 @@ def conversa(chave: str) -> list[dict]:
 
 def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
           observacao: Optional[str] = None, cliente_id: Optional[str] = None,
-          em_tratativa: Optional[bool] = None) -> dict:
+          em_tratativa: Optional[bool] = None,
+          aguardando_estoque: Optional[bool] = None,
+          estoque_obs: Optional[str] = None) -> dict:
     """O que uma pessoa decide sobre um e-mail. É o campo humano do registro."""
     db = get_service_db()
     reg = db.table("licitacao_entrada").select("*").eq("id", entrada_id).execute().data
@@ -1172,6 +1184,14 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
         }).execute()
     if cliente_id is not None:
         campos["cliente_id"] = cliente_id
+    if aguardando_estoque is not None:
+        campos["aguardando_estoque"] = bool(aguardando_estoque)
+        campos["estoque_por"] = str(usuario.id) if aguardando_estoque else None
+        campos["estoque_em"] = _agora() if aguardando_estoque else None
+        # A observacao do que falta acompanha a marca e sai com ela: "falta o 6F"
+        # sobre um caso que ja recebeu material vira ruido.
+        campos["estoque_obs"] = (estoque_obs or "").strip() or None \
+            if aguardando_estoque else None
     if em_tratativa is not None:
         campos["em_tratativa"] = bool(em_tratativa)
         # `tratativa_manual` guarda que UMA PESSOA decidiu, e o que ela decidiu.
@@ -1188,7 +1208,9 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
 
 def triar_grupo(chave: str, usuario: UsuarioOut, situacao: Optional[str] = None,
                 observacao: Optional[str] = None, cliente_id: Optional[str] = None,
-                em_tratativa: Optional[bool] = None) -> dict:
+                em_tratativa: Optional[bool] = None,
+                aguardando_estoque: Optional[bool] = None,
+                estoque_obs: Optional[str] = None) -> dict:
     """A mesma decisão, aplicada à nota de empenho inteira.
 
     É como o time trabalha: resolve a NE, não o e-mail. A observação fica no
@@ -1201,7 +1223,8 @@ def triar_grupo(chave: str, usuario: UsuarioOut, situacao: Optional[str] = None,
     regs.sort(key=lambda x: x.get("recebido_em") or "")
     for pos, r in enumerate(regs):
         triar(r["id"], usuario, situacao=situacao, cliente_id=cliente_id,
-              em_tratativa=em_tratativa,
+              em_tratativa=em_tratativa, aguardando_estoque=aguardando_estoque,
+              estoque_obs=estoque_obs,
               observacao=observacao if pos == 0 else None)
     return {"chave": chave, "afetados": len(regs)}
 
@@ -1909,6 +1932,13 @@ def painel(dias: Optional[int] = None) -> dict:
             "conferidos_na_demanda": sum(1 for c in cards if c.get("demanda_id")
                                          and not c.get("tipo_corrigido")),
         },
+        # As duas colunas novas do quadro, contadas aqui para o painel e a lista
+        # nunca discordarem: parcial e situacao (o pedido foi atendido em parte),
+        # aguardando estoque e marca humana (esta parado por falta de material).
+        "parciais": sum(1 for c in abertos if c["situacao"] == "PARCIAL"),
+        "aguardando_estoque": sum(1 for c in abertos if c.get("aguardando_estoque")),
+        "valor_aguardando_estoque": round(
+            sum(c["valor_total"] for c in abertos if c.get("aguardando_estoque")), 2),
         "por_cliente": ranking,
         # O que chegou HOJE. Duas unidades, ditas com nome: casos NOVOS (a
         # primeira mensagem e de hoje) e e-mails recebidos hoje. Sao numeros
@@ -2015,6 +2045,30 @@ def _explica(metrica: str, dias: Optional[int]) -> dict:
                       "aquela NE, ou de alguém que escolheu à mão na triagem. Sem "
                       "nenhum dos três, aparece o nome do órgão como está no documento.",
             "conta": "Contagem e soma dos casos em aberto do cliente.",
+        }
+
+    if metrica == "aguardando_estoque":
+        return {
+            "titulo": "Solicitações paradas por falta de material",
+            "filtro": lambda c: c["situacao"] != "SIM" and c.get("aguardando_estoque"),
+            "origem": _ORIGEM_COMUM + " Esta marca é feita por GENTE, na triagem, e "
+                      "não deduzida de saldo: quem sabe que falta material é quem "
+                      "está atendendo, muitas vezes antes de existir demanda. O "
+                      "saldo de estoque continua fora da caixa de entrada de "
+                      "propósito — ver a decisão de 04/09/2026.",
+            "conta": "Casos em aberto marcados como aguardando estoque.",
+        }
+
+    if metrica == "parciais":
+        return {
+            "titulo": "Entregas parciais",
+            "filtro": lambda c: c["situacao"] == "PARCIAL",
+            "origem": _ORIGEM_COMUM + " 'Parcial' é marcado por gente na triagem: "
+                      "parte do pedido foi atendida e parte não. O motor nunca "
+                      "altera a situação.",
+            "conta": "Casos cuja situação é Parcial. Eles continuam EM ABERTO — "
+                     "resolvido é só quando todos os e-mails do caso estão "
+                     "resolvidos.",
         }
 
     if metrica == "novas_hoje":

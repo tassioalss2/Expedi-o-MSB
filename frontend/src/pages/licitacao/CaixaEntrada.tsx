@@ -123,6 +123,11 @@ type Card = {
    *  tratou. A tela precisa dizer qual dos dois — "assumido por Tassio" e
    *  "respondeu: Maiara" nao sao a mesma informacao. */
   tratativa_origem: 'PESSOA' | 'RESPOSTA' | null
+  /** Parado por falta de material — marca de gente, nao deduzida de saldo. */
+  aguardando_estoque: boolean
+  estoque_obs: string | null
+  estoque_nome: string | null
+  estoque_em: string | null
   assunto: string
   recebido_em: string
   ultimo_em: string
@@ -280,6 +285,16 @@ function DetalheNumero({ metrica, onFechar, onAbrirCaso }: {
               <span className="flex items-center gap-1 rounded border border-violet-200 bg-violet-100 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800">
                 <Hand className="h-3 w-3" />
                 {rotuloTratativa(c)}
+              </span>
+            )}
+            {/* O selo aparece mesmo quando o card ESTA na coluna de estoque: a
+                coluna diz onde ele esta, o selo diz o que falta e quem marcou. */}
+            {c.aguardando_estoque && (
+              <span className="flex items-center gap-1 rounded border border-red-200 bg-red-100 px-1.5 py-0.5 text-[11px] font-semibold text-red-800"
+                title={[c.estoque_obs, c.estoque_nome && `marcado por ${c.estoque_nome}`,
+                        c.estoque_em && fmtMomento(c.estoque_em)].filter(Boolean).join(' · ')}>
+                <Package className="h-3 w-3" />
+                {c.estoque_obs ? `sem estoque: ${c.estoque_obs}` : 'aguardando estoque'}
               </span>
             )}
                     <span className={`text-[11px] ${c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-500'}`}>
@@ -1933,11 +1948,14 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
   )
 }
 
-function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, salvando }: {
+function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
+  onPromover, salvando }: {
   c: Card
   onTriar: (situacao: string) => void
   onNota: (texto: string) => void
   onTratativa: (v: boolean) => void
+  /** Marca/desmarca "parado por falta de material", com o que falta em texto. */
+  onEstoque: (v: boolean, obs?: string) => void
   onAbrir: () => void
   onPromover: () => void
   salvando: boolean
@@ -2142,6 +2160,27 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onAbrir, onPromover, sal
             que se aperta — sinal claro de que um botao rotulado com o estado
             nao diz se o clique confirma ou desfaz. Quem mostra o estado e o
             selo violeta no topo do card. */}
+        {/* Parado por falta de material. Fica ao lado do assumir/liberar
+            porque e da mesma familia: estado do caso que uma pessoa decide.
+            Nao ha saldo de estoque aqui de proposito — ver a decisao de
+            04/09/2026 de nao trazer estoque para a caixa de entrada. */}
+        <button
+          onClick={() => {
+            if (c.aguardando_estoque) return onEstoque(false)
+            const obs = window.prompt('O que está faltando? (opcional)') ?? ''
+            onEstoque(true, obs.trim() || undefined)
+          }}
+          disabled={salvando}
+          title={c.aguardando_estoque
+            ? 'material chegou / não é mais o bloqueio'
+            : 'marcar que este caso está parado por falta de material'}
+          className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+            c.aguardando_estoque
+              ? 'border-red-300 bg-red-100 text-red-800 hover:bg-red-200'
+              : 'border-gray-200 bg-white text-gray-600 hover:border-red-400'}`}>
+          <Package className="h-3.5 w-3.5" />
+          {c.aguardando_estoque ? 'material chegou' : 'sem estoque'}
+        </button>
         <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
           title={c.em_tratativa
             ? (c.tratativa_origem === 'RESPOSTA'
@@ -2220,10 +2259,13 @@ export function AbaCaixaEntrada() {
   })
 
   const triar = useMutation({
-    mutationFn: ({ chave, situacao, observacao, em_tratativa }:
-      { chave: string; situacao?: string; observacao?: string; em_tratativa?: boolean }) =>
+    mutationFn: ({ chave, situacao, observacao, em_tratativa, aguardando_estoque,
+                   estoque_obs }:
+      { chave: string; situacao?: string; observacao?: string; em_tratativa?: boolean
+        aguardando_estoque?: boolean; estoque_obs?: string }) =>
       api.post(`/licitacoes/entrada/grupo/triar?chave=${encodeURIComponent(chave)}`,
-        { situacao: situacao || undefined, observacao, em_tratativa }),
+        { situacao: situacao || undefined, observacao, em_tratativa,
+          aguardando_estoque, estoque_obs }),
     onSuccess: (_r, vars) => {
       // Sem aviso, salvar uma nota nao dava sinal nenhum na tela: o Tassio
       // clicou tres vezes e gravou a mesma anotacao tres vezes. Retorno
@@ -2279,8 +2321,29 @@ export function AbaCaixaEntrada() {
   // Os dois lados da tela. A ordem dentro de cada um continua a que a listagem
   // devolve: mais critico primeiro, e dentro da mesma criticidade o que espera
   // ha mais tempo.
-  const naoTratados = useMemo(() => filtrados.filter(c => !c.em_tratativa), [filtrados])
-  const emTratamento = useMemo(() => filtrados.filter(c => c.em_tratativa), [filtrados])
+  // As quatro colunas, com PRECEDENCIA explicita: cada card cai em exatamente
+  // uma. Sem isso um caso parcial que tambem aguarda estoque apareceria duas
+  // vezes (ou nenhuma), e a soma das colunas deixaria de bater com o filtro —
+  // que e o defeito que este modulo ja pagou caro no "16 aqui, 13 la".
+  //
+  // A ordem vai do mais especifico para o mais generico:
+  //
+  //   1 sem estoque   o que BLOQUEIA o caso, e nao depende de mais ninguem aqui
+  //   2 parcial       entregou parte; e trabalho de outra natureza
+  //   3 em tratamento alguem esta com ele
+  //   4 nao tratado   ninguem tocou
+  //
+  // O que nao entrou na coluna continua visivel como selo no card, entao nada
+  // se esconde por causa da precedencia.
+  const colunas = useMemo(() => {
+    const semEstoque = filtrados.filter(c => c.aguardando_estoque)
+    const parciais = filtrados.filter(c => !c.aguardando_estoque && c.situacao === 'PARCIAL')
+    const emTratamento = filtrados.filter(c => !c.aguardando_estoque
+      && c.situacao !== 'PARCIAL' && c.em_tratativa)
+    const naoTratados = filtrados.filter(c => !c.aguardando_estoque
+      && c.situacao !== 'PARCIAL' && !c.em_tratativa)
+    return { semEstoque, parciais, emTratamento, naoTratados }
+  }, [filtrados])
 
   return (
     <div className="space-y-4">
@@ -2336,24 +2399,32 @@ export function AbaCaixaEntrada() {
            A coluna substitui o antigo filtro "em tratativa": botão de filtro e
            coluna faziam a mesma coisa, e manter os dois só confundiria. O
            "assumir"/"liberar" do card move ele de lado. */
-        <div className="grid gap-4 lg:grid-cols-2">
-          {([['NAO', 'Não tratado', naoTratados], ['SIM', 'Em tratamento', emTratamento]] as const)
-            .map(([lado, titulo, lista]) => (
+        <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-4">
+          {([
+            ['NAO', 'Não tratado', colunas.naoTratados,
+             'border-gray-200 bg-gray-50 text-gray-700', MinusCircle,
+             'Nada sem dono aqui.'],
+            ['TRAT', 'Em tratamento', colunas.emTratamento,
+             'border-violet-200 bg-violet-50 text-violet-900', Hand,
+             'Ninguém assumiu nem respondeu nenhum caso ainda.'],
+            ['PARC', 'Entrega parcial', colunas.parciais,
+             'border-amber-200 bg-amber-50 text-amber-900', CircleDot,
+             'Nenhuma entrega parcial em aberto.'],
+            ['EST', 'Aguardando estoque', colunas.semEstoque,
+             'border-red-200 bg-red-50 text-red-900', Package,
+             'Nenhum caso parado por falta de material.'],
+          ] as const)
+            .map(([lado, titulo, lista, cor, Icone, vazio]) => (
               <div key={lado}>
-                <div className={`mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 ${
-                  lado === 'SIM'
-                    ? 'border-violet-200 bg-violet-50 text-violet-900'
-                    : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
-                  {lado === 'SIM'
-                    ? <Hand className="h-4 w-4" />
-                    : <MinusCircle className="h-4 w-4" />}
+                <div className={`mb-2 flex items-center gap-2 rounded-lg border px-3 py-2 ${cor}`}>
+                  <Icone className="h-4 w-4" />
                   <span className="text-sm font-semibold">{titulo}</span>
                   <span className="ml-auto text-sm tabular-nums">{lista.length}</span>
                 </div>
                 <div className="space-y-3">
                   {lista.length === 0 && (
                     <p className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-xs text-gray-400">
-                      {lado === 'SIM' ? 'Ninguém assumiu nenhum caso ainda.' : 'Nada sem dono aqui.'}
+                      {vazio}
                     </p>
                   )}
                   {lista.map(c => (
@@ -2362,6 +2433,8 @@ export function AbaCaixaEntrada() {
                       onTriar={s => triar.mutate({ chave: c.chave, situacao: s })}
                       onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
                       onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
+                      onEstoque={(v, obs) => triar.mutate({
+                        chave: c.chave, aguardando_estoque: v, estoque_obs: obs })}
                       onAbrir={() => setDetalhe(c.chave)}
                       onPromover={() => promover.mutate(c.chave)} />
                   ))}

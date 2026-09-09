@@ -226,6 +226,15 @@ class EntradaTriar(BaseModel):
     # ser atendido. Marcar PARCIAL para sinalizar que alguem pegou o caso seria
     # mentir sobre o atendimento, que e o numero que o conselho acompanha.
     em_tratativa: Optional[bool] = None
+    # Terceiro eixo, pelo mesmo motivo: "aguardando estoque" e a RAZAO de o caso
+    # nao andar, nao um grau de atendimento. Um caso parado por falta de material
+    # continua em aberto, e pode ate ser parcial (entregou o que tinha).
+    #
+    # Marca humana, e nao deduzida de saldo: quem sabe que falta material e quem
+    # esta atendendo, muitas vezes antes de existir demanda. O saldo continua
+    # fora da caixa de entrada de proposito (decisao de 04/09/2026).
+    aguardando_estoque: Optional[bool] = None
+    estoque_obs: Optional[str] = None
 
 
 class EntradaPromover(BaseModel):
@@ -384,7 +393,7 @@ def triar_entrada(entrada_id: UUID, payload: EntradaTriar,
     return licitacao_entrada_service.triar(
         str(entrada_id), usuario, payload.situacao, payload.observacao,
         str(payload.cliente_id) if payload.cliente_id else None,
-        payload.em_tratativa)
+        payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs)
 
 
 @router.post("/entrada/grupo/triar")
@@ -394,7 +403,7 @@ def triar_grupo(chave: str, payload: EntradaTriar,
     return licitacao_entrada_service.triar_grupo(
         chave, usuario, payload.situacao, payload.observacao,
         str(payload.cliente_id) if payload.cliente_id else None,
-        payload.em_tratativa)
+        payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs)
 
 
 @router.post("/entrada/grupo/promover")
