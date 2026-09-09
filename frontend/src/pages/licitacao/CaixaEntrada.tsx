@@ -876,9 +876,17 @@ export function AbaAcompanhamento() {
           <Tile titulo="Espera mais longa" valor={`${data.mais_antigo_dias} d`}
             sub="o caso aberto mais antigo" alerta={data.mais_antigo_dias > 15} />
         </Abrivel>
+        {/* O titulo mudou de "Valor em aberto" para "A faturar" porque o
+            numero mudou de significado: consignacao saiu dele. O valor de uma
+            consignacao e material a ENVIAR, e a receita nasce depois, no
+            comunicado de uso — somar os dois trata como dinheiro a faturar algo
+            que sera faturado uma vez. Consignacao e 35% do total, entao a
+            diferenca nao e detalhe. */}
         <Abrivel metrica="valor_parado" onAbrir={setAberto}>
-          <Tile titulo="Valor em aberto" valor={fmtBRL(data.valor_parado)}
-            sub={`piso — lido em ${cob.casos_com_valor} de ${cob.casos_abertos} casos`} />
+          <Tile titulo="A faturar, em aberto" valor={fmtBRL(data.valor_a_faturar)}
+            sub={data.valor_material_a_enviar > 0
+              ? `+ ${fmtBRL(data.valor_material_a_enviar)} de consignação a enviar · piso, lido em ${cob.casos_com_valor} de ${cob.casos_abertos} casos`
+              : `piso — lido em ${cob.casos_com_valor} de ${cob.casos_abertos} casos`} />
         </Abrivel>
       </div>
 

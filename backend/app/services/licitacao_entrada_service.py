@@ -1874,6 +1874,23 @@ def painel(dias: Optional[int] = None) -> dict:
         "parados_por_faixa": faixas,
         "mais_antigo_dias": max((c["dias_parados"] for c in abertos), default=0),
         "valor_parado": round(sum(c["valor_total"] for c in com_valor), 2),
+        # O total de cima soma ETAPAS DIFERENTES do mesmo ciclo, e por isso a
+        # tela nao o mostra como um numero so.
+        #
+        # Consignacao e material a ENVIAR: a receita dele nasce depois, no
+        # comunicado de uso (palavras do Tassio). Somar os dois trata como
+        # dinheiro a faturar algo que vai ser faturado uma vez. Hoje consignacao
+        # e 35% do total — R$ 114.854 de R$ 324.970 —, longe de detalhe.
+        #
+        # Nao da para apontar QUAIS pares sao o mesmo material: o item de
+        # consignacao e padronizado e repete de verdade (o HUC tem nove
+        # comunicados de uso do mesmo cateter, com AFs diferentes, todos
+        # legitimos). Por isso a separacao e por ETAPA, que e estrutural, e nao
+        # por semelhanca de item, que seria chute.
+        "valor_a_faturar": round(sum(c["valor_total"] for c in com_valor
+                                     if (c["tipo"] or "OUTRO") != "CONSIGNACAO"), 2),
+        "valor_material_a_enviar": round(sum(c["valor_total"] for c in com_valor
+                                             if (c["tipo"] or "OUTRO") == "CONSIGNACAO"), 2),
         "cobertura": {
             "casos_com_valor": len(com_valor),
             "casos_abertos": len(abertos),
@@ -2051,7 +2068,10 @@ def _explica(metrica: str, dias: Optional[int]) -> dict:
                       "cabeçalho do documento; fora disso não emite nada.",
             "conta": "Soma de quantidade × valor unitário dos itens dos casos em "
                      "aberto. É um PISO, não o total: casos cujo anexo não rendeu "
-                     "valor entram com zero.",
+                     "valor entram com zero. E soma ETAPAS DIFERENTES do mesmo "
+                     "ciclo: consignação é material a enviar, cuja receita nasce "
+                     "depois no comunicado de uso — por isso a tela separa 'a "
+                     "faturar' de 'material a enviar' em vez de mostrar um total só.",
         },
         "mais_antigo": {
             "titulo": "O caso que espera há mais tempo",
