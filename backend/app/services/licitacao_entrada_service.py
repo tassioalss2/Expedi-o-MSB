@@ -1506,30 +1506,33 @@ def _observacao_da_entrada(regs: list[dict]) -> str:
 
 
 # ── painel executivo ────────────────────────────────────────────────────────
-def _faturado_por_tipo(db, competencia: str) -> dict:
-    """Quanto cada tipo de solicitacao FATUROU, e nao apenas quanto pediu.
+def _notas_da_licitacao(db) -> list[dict]:
+    """Cada nota fiscal que nasceu de uma solicitacao, com o tipo atribuido.
 
-    O caminho e a demanda: ela guarda o tipo escolhido por gente e a OV que
-    gerou (`gerado_ref` e `ovs`). A OV, em `pedidos`, tem a nota e o valor. Medido
-    em 09/09/2026: das 196 OVs citadas pelas 202 demandas, 193 existem em
-    `pedidos` e TODAS as 193 estao faturadas — e por isso vale a pena atribuir
-    pela demanda em vez de somar `pedidos.tipo_operacao` solto, que traz venda
-    que nunca passou por licitacao.
+    Fonte unica: o total por tipo e o detalhe por dia/orgao saem daqui. Duas
+    copias da mesma atribuicao e a receita conhecida para o detalhe nao somar o
+    numero que foi clicado.
+
+    O caminho e a demanda, e nao `pedidos.tipo_operacao`: aquele campo traz venda
+    que nunca passou por licitacao, e as taxonomias nem batem (VENDA_NORMAL e
+    CONSIGNADO nos pedidos contra VENDA_DIRETA e CONSIGNACAO nas solicitacoes). A
+    demanda sabe o tipo escolhido por gente e a OV que gerou; a OV, em `pedidos`,
+    tem a nota e o valor. Medido em 09/09/2026: das 196 OVs citadas pelas 202
+    demandas, 193 existem em `pedidos` e todas as 193 estao faturadas.
 
     Duas regras herdadas, para este numero nao contradizer os outros do app:
 
       · frete CIF sai do valor da nota (mesma conta de `_nf_liquida` na Previsao)
-      · Biomedical fica FORA: e transfer price, venda intragrupo, e nao entra em
-        "Vendas" nem em meta. Aqui nao deve aparecer nenhuma — cliente de
-        licitacao e hospital —, e a regra fica de guarda-corpo.
+      · Biomedical fica FORA: transfer price nao entra em "Vendas" nem em meta
     """
     dem = db.table("licitacao_demandas")\
         .select("id, numero, tipo_operacao, ovs, gerado_ref")\
         .eq("ativo", True).limit(3000).execute().data
 
-    # De OV para tipo. Uma OV que aparece em duas demandas conta uma vez, para o
+    # De OV para tipo. OV que aparece em duas demandas conta uma vez, para o
     # primeiro tipo visto: somar duas vezes inventaria faturamento.
     tipo_da_ov: dict[str, str] = {}
+    demanda_da_ov: dict[str, str] = {}
     for d in dem:
         t = d.get("tipo_operacao") or "OUTRO"
         refs = [str((o or {}).get("numero") or "") for o in (d.get("ovs") or [])
@@ -1539,44 +1542,120 @@ def _faturado_por_tipo(db, competencia: str) -> dict:
         for r in refs:
             if r and r not in tipo_da_ov:
                 tipo_da_ov[r] = t
+                demanda_da_ov[r] = d.get("numero")
     if not tipo_da_ov:
-        return {"por_tipo": [], "competencia": competencia, "sem_nota": 0}
+        return []
 
     numeros = sorted(tipo_da_ov)
     pedidos: list[dict] = []
     for i in range(0, len(numeros), 100):
         pedidos += db.table("pedidos").select(
             "numero_pedido, numero_nf, valor_nf, valor_frete, tipo_frete, "
-            "data_faturamento, clientes(nome)"
+            "data_faturamento, cliente_id, clientes(nome)"
         ).in_("numero_pedido", numeros[i:i + 100]).execute().data
 
-    por_tipo: dict[str, dict] = {}
-    sem_nota = 0
+    saida = []
     for ped in pedidos:
-        t = tipo_da_ov.get(str(ped.get("numero_pedido")))
-        if not t:
-            continue
-        if not ped.get("numero_nf") or not ped.get("data_faturamento"):
-            sem_nota += 1
+        ov = str(ped.get("numero_pedido"))
+        tipo = tipo_da_ov.get(ov)
+        if not tipo:
             continue
         nome = ((ped.get("clientes") or {}) or {}).get("nome") or ""
         if "BIOMEDICAL" in nome.upper():
             continue
+        if not ped.get("numero_nf") or not ped.get("data_faturamento"):
+            saida.append({"ov": ov, "tipo": tipo, "nf": None, "dia": None,
+                          "cliente": nome or "(sem cliente)", "valor": 0.0,
+                          "demanda": demanda_da_ov.get(ov)})
+            continue
         valor = float(ped.get("valor_nf") or 0)
         if ped.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
             valor -= float(ped.get("valor_frete") or 0)
-        alvo = por_tipo.setdefault(t, {"tipo": t, "nfs": 0, "valor": 0.0,
-                                       "nfs_mes": 0, "valor_mes": 0.0})
-        alvo["nfs"] += 1
-        alvo["valor"] = round(alvo["valor"] + valor, 2)
-        if str(ped.get("data_faturamento") or "")[:7] == competencia:
-            alvo["nfs_mes"] += 1
-            alvo["valor_mes"] = round(alvo["valor_mes"] + valor, 2)
+        saida.append({
+            "ov": ov,
+            "tipo": tipo,
+            "nf": ped.get("numero_nf"),
+            "dia": str(ped.get("data_faturamento"))[:10],
+            "cliente": nome or "(sem cliente)",
+            "valor": round(valor, 2),
+            "demanda": demanda_da_ov.get(ov),
+        })
+    return saida
 
+
+def _faturado_por_tipo(db, competencia: str) -> dict:
+    """O quadro por tipo, do mes e do total. Agrega `_notas_da_licitacao`."""
+    notas = _notas_da_licitacao(db)
+    por_tipo: dict[str, dict] = {}
+    sem_nota = 0
+    for n in notas:
+        if not n["nf"]:
+            sem_nota += 1
+            continue
+        alvo = por_tipo.setdefault(n["tipo"], {"tipo": n["tipo"], "nfs": 0, "valor": 0.0,
+                                               "nfs_mes": 0, "valor_mes": 0.0})
+        alvo["nfs"] += 1
+        alvo["valor"] = round(alvo["valor"] + n["valor"], 2)
+        if n["dia"][:7] == competencia:
+            alvo["nfs_mes"] += 1
+            alvo["valor_mes"] = round(alvo["valor_mes"] + n["valor"], 2)
     return {
         "competencia": competencia,
         "sem_nota": sem_nota,
         "por_tipo": sorted(por_tipo.values(), key=lambda x: -x["valor"]),
+    }
+
+
+def detalhe_faturado(tipo: Optional[str] = None,
+                     competencia: Optional[str] = None) -> dict:
+    """O que esta por tras do faturado: dia por dia do mes, e para qual orgao.
+
+    A unidade aqui e a NOTA FISCAL, dita na tela. O resto do painel conta casos e
+    e-mails, e uma nota nao e nem um nem outro — uma solicitacao pode virar duas
+    notas (segunda remessa), e por isso o numero de notas nao bate com o de
+    casos. Misturar unidades sem dizer qual e foi o defeito que este painel ja
+    pagou caro.
+    """
+    db = get_service_db()
+    competencia = competencia or _hoje_brt().strftime("%Y-%m")
+    notas = [n for n in _notas_da_licitacao(db) if n["nf"]]
+    if tipo:
+        notas = [n for n in notas if n["tipo"] == tipo]
+    do_mes = [n for n in notas if n["dia"][:7] == competencia]
+
+    por_dia: dict[str, dict] = {}
+    for n in do_mes:
+        alvo = por_dia.setdefault(n["dia"], {"dia": n["dia"], "nfs": 0, "valor": 0.0})
+        alvo["nfs"] += 1
+        alvo["valor"] = round(alvo["valor"] + n["valor"], 2)
+
+    por_cliente: dict[str, dict] = {}
+    for n in do_mes:
+        alvo = por_cliente.setdefault(n["cliente"], {"cliente": n["cliente"],
+                                                     "nfs": 0, "valor": 0.0})
+        alvo["nfs"] += 1
+        alvo["valor"] = round(alvo["valor"] + n["valor"], 2)
+
+    rotulo = (tipo or "").replace("_", " ").lower()
+    return {
+        "tipo": tipo,
+        "competencia": competencia,
+        "titulo": "Faturado em %s/%s%s" % (competencia[5:], competencia[:4],
+                                           (" · %s" % rotulo) if tipo else ""),
+        "conta": "Soma das NOTAS FISCAIS das OVs que as demandas geraram%s. Uma "
+                 "solicitação pode virar duas notas (segunda remessa), então o "
+                 "número de notas não é o número de casos."
+                 % ((" do tipo %s" % rotulo) if tipo else ""),
+        "origem": "A demanda guarda o tipo escolhido por gente e a OV que gerou; a "
+                  "OV, em `pedidos`, traz a nota e o valor. O frete CIF é descontado "
+                  "(mesma conta da Previsão de Faturamento) e a Biomedical fica fora, "
+                  "porque é transfer price e não entra em Vendas nem em meta.",
+        "nfs": len(do_mes),
+        "valor": round(sum(n["valor"] for n in do_mes), 2),
+        "valor_total": round(sum(n["valor"] for n in notas), 2),
+        "por_dia": sorted(por_dia.values(), key=lambda x: x["dia"]),
+        "por_cliente": sorted(por_cliente.values(), key=lambda x: -x["valor"]),
+        "notas": sorted(do_mes, key=lambda n: (n["dia"], n["ov"]), reverse=True),
     }
 
 

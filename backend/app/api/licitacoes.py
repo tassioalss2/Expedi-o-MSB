@@ -304,6 +304,17 @@ def listar_reclassificacoes(limite: int = 200,
     return licitacao_entrada_service.reclassificacoes(limite)
 
 
+@router.get("/entrada/faturado")
+def detalhe_faturado(tipo: Optional[str] = None, competencia: Optional[str] = None,
+                     _: UsuarioOut = Depends(get_current_user)):
+    """O que esta por tras do faturado: dia por dia do mes, e para qual orgao.
+
+    A unidade e a NOTA FISCAL, e a tela diz isso: uma solicitacao pode virar
+    duas notas (segunda remessa), entao numero de notas nao e numero de casos.
+    """
+    return licitacao_entrada_service.detalhe_faturado(tipo, competencia)
+
+
 @router.get("/entrada/dia")
 def detalhe_do_dia(dia: str, tipo: Optional[str] = None, dias: Optional[int] = None,
                    _: UsuarioOut = Depends(get_current_user)):

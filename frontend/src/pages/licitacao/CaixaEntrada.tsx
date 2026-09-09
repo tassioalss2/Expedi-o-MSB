@@ -525,6 +525,144 @@ function DetalheDoDia({ dia, tipo, onFechar, onTrocarTipo }: {
 }
 
 
+/** O que esta por tras do faturado do mes: dia por dia, e para qual orgao.
+ *
+ * A unidade e a NOTA FISCAL, e o modal diz isso na cara. O resto do painel conta
+ * casos e e-mails, e uma nota nao e nem um nem outro — uma solicitacao pode
+ * virar duas notas (segunda remessa). Misturar unidades sem dizer qual e foi o
+ * defeito que este painel ja pagou caro no "16 aqui, 13 la".
+ */
+function DetalheFaturado({ tipo, onFechar }: {
+  tipo: string | null; onFechar: () => void
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['licitacao-faturado', tipo],
+    queryFn: () => api.get('/licitacoes/entrada/faturado',
+      { params: tipo ? { tipo } : {} }).then(r => r.data),
+  })
+  const maxDia = Math.max(1, ...((data?.por_dia || []).map((d: any) => d.valor)))
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onFechar}>
+      <div className="w-full max-w-3xl rounded-xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 p-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-gray-900">
+              {isLoading ? 'Carregando...' : data?.titulo}
+            </h3>
+            {data && (
+              <p className="mt-0.5 text-sm text-gray-500">
+                {fmtBRL(data.valor)} em {data.nfs} nota{data.nfs === 1 ? '' : 's'} fiscal
+                {data.nfs === 1 ? '' : 'is'}
+                {data.valor_total > data.valor && (
+                  <> · {fmtBRL(data.valor_total)} desde o começo</>
+                )}
+              </p>
+            )}
+          </div>
+          <button onClick={onFechar} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="py-16 text-center"><Loader2 className="mx-auto h-6 w-6 animate-spin text-gray-400" /></div>
+        ) : !data ? null : (
+          <>
+            <div className="space-y-2 border-b border-gray-100 bg-gray-50 p-4 text-xs leading-relaxed text-gray-700">
+              <p><b className="text-gray-900">Como este número é calculado.</b> {data.conta}</p>
+              <p><b className="text-gray-900">De onde vem o dado.</b> {data.origem}</p>
+            </div>
+
+            <div className="max-h-[60vh] overflow-y-auto">
+              {/* Por dia. Barra horizontal e nao vertical: o mes tem poucos dias
+                  faturados e o nome do dia cabe na linha. */}
+              <div className="border-b border-gray-100 p-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Por dia do mês
+                </h4>
+                <div className="mt-2 space-y-1">
+                  {(data.por_dia || []).map((d: any) => (
+                    <div key={d.dia} className="flex items-center gap-2">
+                      <span className="w-12 shrink-0 text-xs tabular-nums text-gray-600">
+                        {fmtDia(d.dia)}
+                      </span>
+                      <div className="h-4 flex-1 overflow-hidden rounded bg-gray-100">
+                        <div className="h-4 rounded bg-emerald-500"
+                          style={{ width: `${Math.max(2, (d.valor / maxDia) * 100)}%` }} />
+                      </div>
+                      <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-gray-500">
+                        {d.nfs} NF
+                      </span>
+                      <span className="w-28 shrink-0 text-right text-xs font-medium tabular-nums text-gray-900">
+                        {fmtBRL(d.valor)}
+                      </span>
+                    </div>
+                  ))}
+                  {(data.por_dia || []).length === 0 && (
+                    <p className="text-sm text-gray-500">Nada faturado neste mês.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Para qual orgao foi. */}
+              <div className="border-b border-gray-100 p-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Para qual órgão
+                </h4>
+                <table className="mt-2 w-full text-sm">
+                  <tbody className="divide-y divide-gray-100">
+                    {(data.por_cliente || []).map((c: any) => (
+                      <tr key={c.cliente}>
+                        <td className="py-1.5 pr-2 text-gray-900">{c.cliente}</td>
+                        <td className="py-1.5 text-right text-[11px] tabular-nums text-gray-500">{c.nfs} NF</td>
+                        <td className="w-28 py-1.5 text-right font-medium tabular-nums text-gray-900">
+                          {fmtBRL(c.valor)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Nota por nota: e a resposta a "de onde saiu esse valor?". */}
+              <div className="p-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  Nota por nota
+                </h4>
+                <table className="mt-2 w-full text-sm">
+                  <tbody className="divide-y divide-gray-100">
+                    {(data.notas || []).map((n: any) => (
+                      <tr key={`${n.ov}-${n.nf}`}>
+                        <td className="py-1.5 pr-2 text-xs tabular-nums text-gray-600">{fmtDia(n.dia)}</td>
+                        <td className="py-1.5 pr-2">
+                          <span className="font-mono text-[11px] text-gray-700">{n.ov}</span>
+                          <span className="ml-1 text-[11px] text-gray-400">NF {n.nf}</span>
+                        </td>
+                        <td className="py-1.5 pr-2 text-xs text-gray-600">
+                          <span className="flex items-center gap-1">
+                            <span className={`h-2 w-2 shrink-0 rounded-sm ${TIPO_PONTO[n.tipo]}`} />
+                            <span className="truncate">{n.cliente}</span>
+                          </span>
+                        </td>
+                        <td className="w-28 py-1.5 text-right font-medium tabular-nums text-gray-900">
+                          {fmtBRL(n.valor)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 /** O que dizer sobre "em tratamento": quem, e como se soube.
  *
  * "assumido" e "respondeu" nao sao a mesma coisa e a tela nao pode fingir que
@@ -576,6 +714,8 @@ export function AbaAcompanhamento() {
   // Qual número o usuário abriu. null = nenhum.
   const [aberto, setAberto] = useState<string | null>(null)
   const [diaAberto, setDiaAberto] = useState<{ dia: string; tipo: string | null } | null>(null)
+  // `undefined` = fechado; `null` = todos os tipos; string = um tipo.
+  const [faturado, setFaturado] = useState<string | null | undefined>(undefined)
   const [params, setParams] = useSearchParams()
 
   /** Vai para a caixa de entrada já filtrada por tipo. As duas coisas viajam
@@ -963,8 +1103,13 @@ export function AbaAcompanhamento() {
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{t.nfs_mes}</td>
-                  <td className="px-4 py-2.5 text-right font-medium tabular-nums text-gray-900">
-                    {t.valor_mes > 0 ? fmtBRL(t.valor_mes) : '—'}
+                  {/* A celula do mes abre: dia por dia e para qual orgao. */}
+                  <td className="px-4 py-2.5 text-right">
+                    <button onClick={() => setFaturado(t.tipo)}
+                      title="ver dia por dia e para qual órgão foi"
+                      className="font-medium tabular-nums text-gray-900 underline decoration-gray-300 decoration-dotted underline-offset-2 hover:text-blue-700 hover:decoration-blue-400">
+                      {t.valor_mes > 0 ? fmtBRL(t.valor_mes) : '—'}
+                    </button>
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-gray-500">{t.nfs}</td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{fmtBRL(t.valor)}</td>
@@ -975,8 +1120,12 @@ export function AbaAcompanhamento() {
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">
                   {(data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.nfs_mes, 0)}
                 </td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-gray-900">
-                  {fmtBRL((data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.valor_mes, 0))}
+                <td className="px-4 py-2.5 text-right">
+                  <button onClick={() => setFaturado(null)}
+                    title="ver dia por dia e para qual órgão foi, todos os tipos"
+                    className="tabular-nums text-gray-900 underline decoration-gray-300 decoration-dotted underline-offset-2 hover:text-blue-700 hover:decoration-blue-400">
+                    {fmtBRL((data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.valor_mes, 0))}
+                  </button>
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">
                   {(data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.nfs, 0)}
@@ -1081,6 +1230,9 @@ export function AbaAcompanhamento() {
       {aberto && (
         <DetalheNumero metrica={aberto} onFechar={() => setAberto(null)}
           onAbrirCaso={irParaCaso} />
+      )}
+      {faturado !== undefined && (
+        <DetalheFaturado tipo={faturado} onFechar={() => setFaturado(undefined)} />
       )}
       {diaAberto && (
         <DetalheDoDia dia={diaAberto.dia} tipo={diaAberto.tipo}
