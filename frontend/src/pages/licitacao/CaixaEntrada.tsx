@@ -638,6 +638,81 @@ export function AbaAcompanhamento() {
         </div>
       </div>
 
+      {/* O que chegou HOJE, em destaque: e a pergunta que se faz de manha, e
+          antes disso exigia abrir o grafico e passar o mouse na ultima barra.
+
+          Duas unidades, nomeadas: CASOS novos (a primeira mensagem e de hoje) e
+          E-MAILS de hoje. Resposta em caso antigo e e-mail de hoje mas nao e
+          solicitacao nova — e chamar os dois pelo mesmo nome era exatamente o
+          tipo de confusao que este painel ja pagou caro. */}
+      {data.do_dia && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-sm font-semibold text-gray-900">
+              Novas solicitações de hoje
+            </h3>
+            <span className="text-xs text-gray-500">{fmtDia(data.do_dia.dia)}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap items-end gap-x-6 gap-y-2">
+            <button onClick={() => setAberto('novas_hoje')}
+              className="text-left transition hover:opacity-70"
+              title="ver as solicitações novas de hoje">
+              <div className="text-3xl font-bold tabular-nums text-gray-900">
+                {data.do_dia.casos}
+              </div>
+              <div className="text-xs text-gray-600">
+                caso{data.do_dia.casos === 1 ? '' : 's'} novo{data.do_dia.casos === 1 ? '' : 's'}
+              </div>
+            </button>
+            <button onClick={() => setDiaAberto({ dia: data.do_dia.dia, tipo: null })}
+              className="text-left transition hover:opacity-70"
+              title="ver os e-mails que chegaram hoje">
+              <div className="text-2xl font-semibold tabular-nums text-gray-700">
+                {data.do_dia.emails}
+              </div>
+              <div className="text-xs text-gray-600">
+                e-mail{data.do_dia.emails === 1 ? '' : 's'} recebido{data.do_dia.emails === 1 ? '' : 's'}
+              </div>
+            </button>
+            {data.do_dia.valor > 0 && (
+              <div>
+                <div className="text-2xl font-semibold tabular-nums text-gray-700">
+                  {fmtBRL(data.do_dia.valor)}
+                </div>
+                <div className="text-xs text-gray-600">pedido de hoje, lido do anexo</div>
+              </div>
+            )}
+            {data.do_dia.criticos > 0 && (
+              <div>
+                <div className="text-2xl font-semibold tabular-nums text-red-700">
+                  {data.do_dia.criticos}
+                </div>
+                <div className="text-xs text-red-700">crítico{data.do_dia.criticos === 1 ? '' : 's'}</div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {(data.do_dia.por_tipo || []).map((t: any) => (
+                <button key={t.tipo}
+                  onClick={() => setDiaAberto({ dia: data.do_dia.dia, tipo: t.tipo })}
+                  title={`ver os e-mails de ${TIPO_LABEL[t.tipo] || t.tipo} de hoje`}
+                  className="flex items-center gap-1 rounded-lg border border-blue-200 bg-white px-2 py-1 text-xs text-gray-700 hover:border-blue-400">
+                  <span className={`h-2 w-2 rounded-sm ${TIPO_PONTO[t.tipo]}`} />
+                  {TIPO_LABEL[t.tipo] || t.tipo} <b className="tabular-nums">{t.casos}</b>
+                </button>
+              ))}
+            </div>
+          </div>
+          {data.do_dia.casos === 0 && data.do_dia.emails === 0 && (
+            // Dizer "nada chegou" e diferente de nao dizer nada: foi essa duvida
+            // ("nao chegou nenhuma solicitacao no dia 08/09?") que mostrou que a
+            // tela nao respondia isso.
+            <p className="mt-1 text-xs text-gray-600">
+              Nada da licitação chegou hoje ainda. O motor lê às 08:00 e às 14:00.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Abrivel metrica="abertos" onAbrir={setAberto}>
           <Tile titulo="Em aberto" valor={String(data.abertos)}
@@ -856,6 +931,71 @@ export function AbaAcompanhamento() {
           </tbody>
         </table>
       </div>
+
+      {/* Quanto cada tipo FATUROU — o outro lado do "quanto pediu". Atribuido
+          pela demanda, que e quem sabe o tipo escolhido por gente e a OV que
+          gerou; a OV traz a nota e o valor. */}
+      {data.faturado && (data.faturado.por_tipo || []).length > 0 && (
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-gray-100 px-4 py-3">
+            <h3 className="text-sm font-semibold text-gray-900">Faturado por tipo de solicitação</h3>
+            <p className="text-xs text-gray-500">
+              o que virou nota fiscal, atribuído pela demanda que nasceu do caso
+            </p>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="px-4 py-2 font-medium">Tipo</th>
+                <th className="px-4 py-2 text-right font-medium">NFs no mês</th>
+                <th className="px-4 py-2 text-right font-medium">Faturado no mês</th>
+                <th className="px-4 py-2 text-right font-medium">NFs (tudo)</th>
+                <th className="px-4 py-2 text-right font-medium">Faturado (tudo)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {(data.faturado.por_tipo || []).map((t: any) => (
+                <tr key={t.tipo}>
+                  <td className="px-4 py-2.5">
+                    <span className="flex items-center gap-1.5 text-gray-900">
+                      <span className={`h-2.5 w-2.5 rounded-sm ${TIPO_PONTO[t.tipo]}`} />
+                      {TIPO_LABEL[t.tipo] || t.tipo}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{t.nfs_mes}</td>
+                  <td className="px-4 py-2.5 text-right font-medium tabular-nums text-gray-900">
+                    {t.valor_mes > 0 ? fmtBRL(t.valor_mes) : '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-gray-500">{t.nfs}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{fmtBRL(t.valor)}</td>
+                </tr>
+              ))}
+              <tr className="bg-gray-50 font-medium">
+                <td className="px-4 py-2.5 text-gray-900">Total</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">
+                  {(data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.nfs_mes, 0)}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-gray-900">
+                  {fmtBRL((data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.valor_mes, 0))}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">
+                  {(data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.nfs, 0)}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-gray-900">
+                  {fmtBRL((data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.valor, 0))}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="border-t border-gray-100 px-4 py-2 text-[11px] leading-relaxed text-gray-500">
+            Sai da nota fiscal da OV que a demanda gerou, com o frete CIF descontado e
+            Biomedical de fora (transfer price não entra em Vendas).
+            {data.faturado.sem_nota > 0 && (
+              <> {data.faturado.sem_nota} OV(s) de demanda ainda sem nota não entram nesta conta.</>
+            )}
+          </p>
+        </div>
+      )}
 
       {/* Por solicitacao, nao por orgao: a tabela de cima responde "com quem esta
           a espera" e esta responde "qual pedido e". Sem ela, ver R$ 128 mil num

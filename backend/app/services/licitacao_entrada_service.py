@@ -1506,6 +1506,80 @@ def _observacao_da_entrada(regs: list[dict]) -> str:
 
 
 # ── painel executivo ────────────────────────────────────────────────────────
+def _faturado_por_tipo(db, competencia: str) -> dict:
+    """Quanto cada tipo de solicitacao FATUROU, e nao apenas quanto pediu.
+
+    O caminho e a demanda: ela guarda o tipo escolhido por gente e a OV que
+    gerou (`gerado_ref` e `ovs`). A OV, em `pedidos`, tem a nota e o valor. Medido
+    em 09/09/2026: das 196 OVs citadas pelas 202 demandas, 193 existem em
+    `pedidos` e TODAS as 193 estao faturadas — e por isso vale a pena atribuir
+    pela demanda em vez de somar `pedidos.tipo_operacao` solto, que traz venda
+    que nunca passou por licitacao.
+
+    Duas regras herdadas, para este numero nao contradizer os outros do app:
+
+      · frete CIF sai do valor da nota (mesma conta de `_nf_liquida` na Previsao)
+      · Biomedical fica FORA: e transfer price, venda intragrupo, e nao entra em
+        "Vendas" nem em meta. Aqui nao deve aparecer nenhuma — cliente de
+        licitacao e hospital —, e a regra fica de guarda-corpo.
+    """
+    dem = db.table("licitacao_demandas")\
+        .select("id, numero, tipo_operacao, ovs, gerado_ref")\
+        .eq("ativo", True).limit(3000).execute().data
+
+    # De OV para tipo. Uma OV que aparece em duas demandas conta uma vez, para o
+    # primeiro tipo visto: somar duas vezes inventaria faturamento.
+    tipo_da_ov: dict[str, str] = {}
+    for d in dem:
+        t = d.get("tipo_operacao") or "OUTRO"
+        refs = [str((o or {}).get("numero") or "") for o in (d.get("ovs") or [])
+                if isinstance(o, dict)]
+        if d.get("gerado_ref"):
+            refs.append(str(d["gerado_ref"]))
+        for r in refs:
+            if r and r not in tipo_da_ov:
+                tipo_da_ov[r] = t
+    if not tipo_da_ov:
+        return {"por_tipo": [], "competencia": competencia, "sem_nota": 0}
+
+    numeros = sorted(tipo_da_ov)
+    pedidos: list[dict] = []
+    for i in range(0, len(numeros), 100):
+        pedidos += db.table("pedidos").select(
+            "numero_pedido, numero_nf, valor_nf, valor_frete, tipo_frete, "
+            "data_faturamento, clientes(nome)"
+        ).in_("numero_pedido", numeros[i:i + 100]).execute().data
+
+    por_tipo: dict[str, dict] = {}
+    sem_nota = 0
+    for ped in pedidos:
+        t = tipo_da_ov.get(str(ped.get("numero_pedido")))
+        if not t:
+            continue
+        if not ped.get("numero_nf") or not ped.get("data_faturamento"):
+            sem_nota += 1
+            continue
+        nome = ((ped.get("clientes") or {}) or {}).get("nome") or ""
+        if "BIOMEDICAL" in nome.upper():
+            continue
+        valor = float(ped.get("valor_nf") or 0)
+        if ped.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+            valor -= float(ped.get("valor_frete") or 0)
+        alvo = por_tipo.setdefault(t, {"tipo": t, "nfs": 0, "valor": 0.0,
+                                       "nfs_mes": 0, "valor_mes": 0.0})
+        alvo["nfs"] += 1
+        alvo["valor"] = round(alvo["valor"] + valor, 2)
+        if str(ped.get("data_faturamento") or "")[:7] == competencia:
+            alvo["nfs_mes"] += 1
+            alvo["valor_mes"] = round(alvo["valor_mes"] + valor, 2)
+
+    return {
+        "competencia": competencia,
+        "sem_nota": sem_nota,
+        "por_tipo": sorted(por_tipo.values(), key=lambda x: -x["valor"]),
+    }
+
+
 def painel(dias: Optional[int] = None) -> dict:
     """Os números que o conselho pergunta, e só eles.
 
@@ -1527,6 +1601,10 @@ def painel(dias: Optional[int] = None) -> dict:
 
     cards = listar(dias=dias)
     abertos = [c for c in cards if c["situacao"] != "SIM"]
+    # Casos cuja PRIMEIRA mensagem e de hoje: solicitacao nova, e nao qualquer
+    # movimento de hoje.
+    _hoje_iso = _hoje_brt().isoformat()
+    novos_hoje = [c for c in cards if str(c["recebido_em"] or "")[:10] == _hoje_iso]
 
     faixas = {"ate_2": 0, "de_3_a_7": 0, "de_8_a_15": 0, "mais_de_15": 0}
     for c in abertos:
@@ -1615,6 +1693,25 @@ def painel(dias: Optional[int] = None) -> dict:
                                          and not c.get("tipo_corrigido")),
         },
         "por_cliente": ranking,
+        # O que chegou HOJE. Duas unidades, ditas com nome: casos NOVOS (a
+        # primeira mensagem e de hoje) e e-mails recebidos hoje. Sao numeros
+        # diferentes de proposito — resposta em caso antigo e e-mail de hoje, mas
+        # nao e solicitacao nova, e chamar os dois de "novas do dia" era o tipo
+        # de confusao que este painel ja pagou caro.
+        "do_dia": {
+            "dia": _hoje_brt().isoformat(),
+            "casos": len(novos_hoje),
+            "emails": sum(1 for r in regs
+                          if str(r.get("recebido_em") or "")[:10] == _hoje_brt().isoformat()),
+            "valor": round(sum(c["valor_total"] for c in novos_hoje), 2),
+            "criticos": sum(1 for c in novos_hoje if c["prioridade"] <= 1),
+            "por_tipo": [{"tipo": t, "casos": sum(1 for c in novos_hoje
+                                                  if (c["tipo"] or "OUTRO") == t)}
+                         for t in TIPOS_SOLICITACAO
+                         if any((c["tipo"] or "OUTRO") == t for c in novos_hoje)],
+        },
+        # Quanto cada tipo faturou, atribuido pela demanda que nasceu do caso.
+        "faturado": _faturado_por_tipo(db, _hoje_brt().strftime("%Y-%m")),
         # O dinheiro parado caso a caso. A tabela por órgão responde "com quem
         # está a espera"; esta responde "qual pedido é". Sem ela, ver R$ 128 mil
         # num órgão obrigava a abrir o número e caçar o caso na lista.
@@ -1701,6 +1798,18 @@ def _explica(metrica: str, dias: Optional[int]) -> dict:
                       "aquela NE, ou de alguém que escolheu à mão na triagem. Sem "
                       "nenhum dos três, aparece o nome do órgão como está no documento.",
             "conta": "Contagem e soma dos casos em aberto do cliente.",
+        }
+
+    if metrica == "novas_hoje":
+        hoje = _hoje_brt().isoformat()
+        return {
+            "titulo": "Solicitações novas de hoje",
+            "filtro": lambda c: str(c["recebido_em"] or "")[:10] == hoje,
+            "origem": _ORIGEM_COMUM + " 'Novas de hoje' conta o CASO cuja primeira "
+                      "mensagem chegou hoje. Resposta em caso antigo é e-mail de "
+                      "hoje, mas não é solicitação nova — o gráfico de entrada "
+                      "conta e-mails, e por isso os dois números diferem.",
+            "conta": "Casos cujo primeiro e-mail é de hoje, resolvidos ou não.",
         }
 
     registro = {
