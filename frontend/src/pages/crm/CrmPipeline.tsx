@@ -432,7 +432,11 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
   const [clienteNome, setClienteNome] = useState(base.cliente || '')
   const [contatoId, setContatoId] = useState(base.contato_id || '')
 
-  const [estagio, setEstagio] = useState<string>(base.estagio || 'QUALIFICACAO')
+  // Nasce em CONVERSA quando e criada a mao: quem digita uma oportunidade nova
+  // esta registrando algo que comecou a conversar. Qualificada continua sendo o
+  // estagio de quem chega pela qualificacao de uma empresa (aquele fluxo cria a
+  // oportunidade ja qualificada, e nao passa por este formulario).
+  const [estagio, setEstagio] = useState<string>(base.estagio || 'CONVERSA')
   const [valor, setValor] = useState<number | null>(base.valor_estimado ? Number(base.valor_estimado) : null)
   const [previsao, setPrevisao] = useState(base.previsao_fechamento || '')
   const [origem, setOrigem] = useState(base.origem || '')
@@ -541,13 +545,14 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
             </select>
             {!edicao && (
               <p className="text-[11px] text-gray-400 mt-1">
-                {/* O Tassio perguntou onde estava "Prospectada" nesta lista. Nao
-                    esta, e nao e falta: prospectada e estado da EMPRESA, nao
-                    estagio de oportunidade. A oportunidade nasce na
-                    qualificacao — e a qualificacao que a cria. Dizer isso aqui
-                    evita a duvida em vez de responde-la depois. */}
-                Prospecção não é estágio de oportunidade: empresa prospectada fica
-                em <strong>Empresas</strong>, e vira oportunidade quando é qualificada.
+                {/* Duas coisas diferentes, e a tela agora diz as duas: CONVERSA
+                    e a oportunidade que ainda e so conversa (empresa ja
+                    cadastrada), e PROSPECTADA e estado da empresa, antes de
+                    existir oportunidade. Foi a pergunta do Tassio que separou
+                    uma da outra. */}
+                <strong>Conversa</strong> é para o que ainda é só conversa, com a empresa
+                já cadastrada. Empresa que nem foi abordada fica em <strong>Empresas</strong>,
+                como prospectada.
                 Para marcar ganho, crie a oportunidade e use o botão <strong>Ganhar</strong> —
                 é ele que confere o estoque e abre a OV.
               </p>

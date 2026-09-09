@@ -1,6 +1,7 @@
 // Config compartilhada do CRM — estágios do funil, cores e helpers de formato.
 
-export type EstagioKey = 'QUALIFICACAO' | 'DESAFIOS' | 'NEGOCIACAO' | 'PROPOSTA' | 'GANHO' | 'PERDIDO'
+export type EstagioKey = 'CONVERSA' | 'QUALIFICACAO' | 'DESAFIOS' | 'NEGOCIACAO'
+  | 'PROPOSTA' | 'GANHO' | 'PERDIDO'
 
 export interface EstagioCfg {
   key: EstagioKey
@@ -22,6 +23,11 @@ export interface EstagioCfg {
 // As probabilidades aqui são só o valor BASE; o servidor devolve `probabilidade`
 // já ajustada por dias parado, ausência de próximo passo e concorrente conhecido.
 export const ESTAGIOS: EstagioCfg[] = [
+  // A conversa e a entrada do funil: oportunidade com empresa cadastrada que
+  // ainda e so conversa. Probabilidade 10 e nao 25 de proposito — se pesasse
+  // igual a Qualificada, mover o card entre as duas nao mudaria a previsao
+  // ponderada e a etapa nao significaria nada no numero.
+  { key: 'CONVERSA',     label: 'Conversa',     prob: 10,  coluna: 'bg-slate-400',    chip: 'bg-slate-100 text-slate-700',   ponto: 'bg-slate-400' },
   { key: 'QUALIFICACAO', label: 'Qualificada',  prob: 25,  coluna: 'bg-sky-500',      chip: 'bg-sky-100 text-sky-700',       ponto: 'bg-sky-500' },
   { key: 'DESAFIOS',     label: 'Desafios',     prob: 30,  coluna: 'bg-orange-500',   chip: 'bg-orange-100 text-orange-700', ponto: 'bg-orange-500' },
   { key: 'NEGOCIACAO',   label: 'Negociação',   prob: 50,  coluna: 'bg-amber-500',    chip: 'bg-amber-100 text-amber-700',   ponto: 'bg-amber-500' },
@@ -31,7 +37,7 @@ export const ESTAGIOS: EstagioCfg[] = [
 ]
 
 // Colunas exibidas no funil (abertas + ganho). Perdido é acessível pelo card.
-export const ESTAGIOS_PIPELINE: EstagioKey[] = ['QUALIFICACAO', 'DESAFIOS', 'NEGOCIACAO', 'PROPOSTA', 'GANHO']
+export const ESTAGIOS_PIPELINE: EstagioKey[] = ['CONVERSA', 'QUALIFICACAO', 'DESAFIOS', 'NEGOCIACAO', 'PROPOSTA', 'GANHO']
 
 export const ESTAGIO_MAP: Record<string, EstagioCfg> = Object.fromEntries(ESTAGIOS.map(e => [e.key, e])) as any
 

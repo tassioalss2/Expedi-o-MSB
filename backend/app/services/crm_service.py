@@ -39,6 +39,15 @@ from app.services import disponibilidade_service, linha_produto, pendencia_servi
 # O que trava o avanço não é "passar por Desafios" — é ter desafio bloqueante
 # aberto, de qualquer etapa.
 ESTAGIOS = [
+    # A conversa e a entrada do funil, pedida pelo Tassio em 09/09/2026: "algo
+    # que ainda e so conversa, porem com empresa cadastrada". Antes disso a
+    # oportunidade so podia nascer em Qualificada, e registrar uma conversa
+    # exigia afirmar uma qualificacao que nao aconteceu.
+    #
+    # Probabilidade 10 e nao 25: conversa nao e qualificacao. Se as duas
+    # pesassem igual, mover o card de Conversa para Qualificada nao mudaria a
+    # previsao ponderada — e a etapa existiria sem significar nada no numero.
+    {"key": "CONVERSA", "label": "Conversa", "prob": 10},
     {"key": "QUALIFICACAO", "label": "Qualificada", "prob": 25},
     {"key": "DESAFIOS", "label": "Desafios", "prob": 30},
     {"key": "NEGOCIACAO", "label": "Negociação", "prob": 50},
@@ -47,7 +56,7 @@ ESTAGIOS = [
     {"key": "PERDIDO", "label": "Perdido", "prob": 0},
 ]
 _PROB_POR_ESTAGIO = {e["key"]: e["prob"] for e in ESTAGIOS}
-_ESTAGIOS_ABERTOS = ["QUALIFICACAO", "DESAFIOS", "NEGOCIACAO", "PROPOSTA"]
+_ESTAGIOS_ABERTOS = ["CONVERSA", "QUALIFICACAO", "DESAFIOS", "NEGOCIACAO", "PROPOSTA"]
 _ESTAGIO_LABEL = {e["key"]: e["label"] for e in ESTAGIOS}
 # Ordem para não deixar pular etapa. DESAFIOS compartilha posição com
 # QUALIFICACAO porque é um desvio, não um degrau: sair dela para NEGOCIACAO é o
@@ -59,8 +68,12 @@ _ESTAGIO_LABEL = {e["key"]: e["label"] for e in ESTAGIOS}
 # o app cobrava "próximo passo definido" para desfazer um ganho.
 # Como destino, os dois são desviados antes do validador (ganhar/perder têm portão
 # próprio), então o número só pesa como origem.
-_ORDEM_ESTAGIO = {"QUALIFICACAO": 1, "DESAFIOS": 1, "NEGOCIACAO": 2, "PROPOSTA": 3,
-                  "GANHO": 4, "PERDIDO": 4}
+# CONVERSA e 0: sair dela para Qualificada e um degrau (permitido), e ir dela
+# direto para Negociacao pula etapa e cai na trava de "passar por Qualificada
+# antes" — que e o que se quer, porque negociar sem qualificar e negociar no
+# escuro.
+_ORDEM_ESTAGIO = {"CONVERSA": 0, "QUALIFICACAO": 1, "DESAFIOS": 1, "NEGOCIACAO": 2,
+                  "PROPOSTA": 3, "GANHO": 4, "PERDIDO": 4}
 
 MOTIVOS_PERDA = {
     "PRECO": "Preço acima do concorrente",
