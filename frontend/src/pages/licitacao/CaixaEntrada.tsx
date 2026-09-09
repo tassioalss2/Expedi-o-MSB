@@ -133,6 +133,9 @@ type Card = {
   contrato: string | null
   contrato_titulo: string | null
   contrato_desconhecido: boolean
+  /** Contrato que nao esta "Efetivo" no D365. Pedido em contrato suspenso e
+   *  problema que se descobre tarde: melhor a tela dizer. */
+  contrato_em_espera: boolean
   pregao: string | null
   cliente_id: string | null
   cliente_nome: string | null
@@ -1339,6 +1342,12 @@ function TipoDaSolicitacao({ c, onReclassificar, salvando }: {
           <span className={`h-2.5 w-2.5 rounded-sm ${TIPO_PONTO[c.tipo || 'OUTRO']}`} />
           {TIPO_LABEL[c.tipo || 'OUTRO']}
         </span>
+        {c.contrato_em_espera && (
+          <span className="flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800"
+            title="o contrato citado nao esta Efetivo no D365 — confira antes de faturar">
+            <AlertTriangle className="h-3 w-3" /> contrato nao efetivo
+          </span>
+        )}
         {c.tipo_pelo_contrato ? (
           // Tipo que veio do contrato merece leitura diferente de tipo deduzido
           // do assunto: um e cadastro de quem assinou, o outro e palpite sobre

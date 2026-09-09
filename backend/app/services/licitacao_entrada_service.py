@@ -892,7 +892,7 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
         lista = sorted(citados)
         for i in range(0, len(lista), 100):
             for ct in db.table("licitacao_contratos_d365")\
-                    .select("contrato, titulo, pregao, nome_d365, tipo_operacao")\
+                    .select("contrato, titulo, pregao, nome_d365, tipo_operacao, status")\
                     .in_("contrato", lista[i:i + 100]).execute().data:
                 contratos[ct["contrato"]] = ct
 
@@ -1001,6 +1001,13 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             "contrato_desconhecido": bool(
                 primeiro_com("contrato")
                 and str(primeiro_com("contrato")).split(" / ")[0].strip().upper() not in contratos),
+            # Contrato que não está "Efetivo" no D365 (em espera, encerrado).
+            # Hoje é UM dos 304 e nenhum caso o cita, mas pedido em contrato
+            # suspenso é problema de verdade no dia em que aparece — e a
+            # alternativa é alguém descobrir depois de faturar.
+            "contrato_em_espera": bool(
+                ct_citado and (contratos.get(ct_citado) or {}).get("status")
+                and (contratos.get(ct_citado) or {})["status"] != "Efetivo"),
             "pregao": primeiro_com("pregao"),
             "cliente_id": primeiro_com("cliente_id"),
             "cliente_nome": cliente,
