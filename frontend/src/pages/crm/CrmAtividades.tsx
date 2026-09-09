@@ -5,6 +5,8 @@ import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { TIPO_ATIV_MAP, fmtDataHora, prazoCor, msgErro } from '../../lib/crm'
 import { ModalNovaAtividade } from './CrmPipeline'
+import { FiltroLinha, LINHAS_ROTULO } from './CrmShared'
+import { LINHA_DO_CANAL } from '../../lib/statusConfig'
 
 const ESCOPOS: { key: string; label: string }[] = [
   { key: 'atrasadas', label: 'Atrasadas' },
@@ -19,10 +21,19 @@ export function CrmAtividades() {
   const [escopo, setEscopo] = useState('abertas')
   const [nova, setNova] = useState(false)
 
-  const { data: atividades = [], isLoading } = useQuery<any[]>({
+  const [linha, setLinha] = useState('')
+
+  const { data: todas = [], isLoading } = useQuery<any[]>({
     queryKey: ['crm-atividades', escopo],
     queryFn: () => api.get('/crm/atividades', { params: { escopo } }).then(r => r.data),
   })
+  // A atividade nao tem linha propria: ela herda o canal da oportunidade ligada
+  // (o backend passou a mandar). Atividade sem oportunidade fica sem linha, e o
+  // filtro diz quantas sao em vez de faze-las desaparecer.
+  const atividades = linha
+    ? todas.filter(a => LINHA_DO_CANAL[a.canal || ''] === linha)
+    : todas
+  const semLinha = todas.filter(a => !LINHA_DO_CANAL[a.canal || '']).length
 
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ['crm-atividades'] })
@@ -50,6 +61,8 @@ export function CrmAtividades() {
             </button>
           ))}
         </div>
+        <FiltroLinha valor={linha} onMudar={setLinha} linhas={LINHAS_ROTULO}
+          semLinha={semLinha} />
         <button onClick={() => setNova(true)}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
           <Plus size={16} /> Nova atividade

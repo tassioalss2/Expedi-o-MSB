@@ -1431,6 +1431,9 @@ def _serializar_atividade(a: dict) -> dict:
         "id": a["id"],
         "oportunidade_id": a.get("oportunidade_id"),
         "oportunidade": (a.get("crm_oportunidades") or {}).get("titulo") if a.get("crm_oportunidades") else None,
+        # Herdado da oportunidade, para a aba poder filtrar por linha como as
+        # outras. Nulo quando a atividade nao esta ligada a nenhuma.
+        "canal": (a.get("crm_oportunidades") or {}).get("canal") if a.get("crm_oportunidades") else None,
         "contato_id": a.get("contato_id"),
         "cliente_id": a.get("cliente_id"),
         "tipo": a.get("tipo"),
@@ -1446,7 +1449,11 @@ def _serializar_atividade(a: dict) -> dict:
 
 def listar_atividades(escopo: str = "abertas", oportunidade_id: Optional[str] = None) -> list:
     db = get_service_db()
-    q = db.table("crm_atividades").select("*, crm_oportunidades(titulo)")
+    # O canal vem da oportunidade ligada: a atividade nao tem linha propria, e e
+    # por linha que o CRM filtra em todas as abas. Atividade sem oportunidade
+    # (contato solto, ligacao de prospeccao) fica sem linha — e a tela diz
+    # quantas sao em vez de fazer elas desaparecerem no filtro.
+    q = db.table("crm_atividades").select("*, crm_oportunidades(titulo, canal)")
     if oportunidade_id:
         q = q.eq("oportunidade_id", oportunidade_id)
     rows = q.order("data_hora", desc=False).execute().data
@@ -1529,9 +1536,29 @@ def excluir_atividade(atividade_id: str) -> dict:
 
 
 # ── Dashboard ────────────────────────────────────────────────────────────────────
-def dashboard() -> dict:
+# O mesmo de-para que o frontend usa (LINHA_DO_CANAL em lib/statusConfig): a
+# linha e o ROTULO, e cada linha tem o canal direto e o de licitacao.
+_LINHA_DO_CANAL = {
+    "URO": "Uro", "LICITACAO_URO": "Uro",
+    "VASCULAR": "Vascular", "LICITACAO_VASCULAR": "Vascular",
+    "REALCLOSURE": "Realclosure",
+}
+
+
+def dashboard(linha: Optional[str] = None) -> dict:
+    """Os numeros do CRM. `linha` recorta por linha de produto (rotulo).
+
+    O recorte e aplicado nas OPORTUNIDADES logo depois de carregar, e nao em
+    cada conta: assim todo numero da tela fala do mesmo conjunto. Filtrar por
+    canal cru deixaria a metade de licitacao fora (a mesma linha tem URO e
+    LICITACAO_URO), entao a comparacao e pelo rotulo — o mesmo valor que as
+    outras abas do CRM usam.
+    """
     db = get_service_db()
     opps = db.table("crm_oportunidades").select("*").eq("ativo", True).execute().data
+    if linha:
+        opps = [o for o in opps
+                if _LINHA_DO_CANAL.get(str(o.get("canal") or "").upper()) == linha]
 
     abertas = [o for o in opps if o.get("estagio") in _ESTAGIOS_ABERTOS]
     ganhas = [o for o in opps if o.get("estagio") == "GANHO"]
@@ -1586,8 +1613,18 @@ def dashboard() -> dict:
 
     ganho_mes_valor = round(sum(v(o) for o in ganhas if ganho_no_mes(o)), 2)
 
-    atrasadas = len(listar_atividades("atrasadas"))
-    hoje = len(listar_atividades("hoje"))
+    # As atividades tambem entram no recorte, senao o painel mostraria pipeline
+    # de uma linha ao lado de atividade de todas — dois conjuntos no mesmo
+    # cartao, que e o defeito que este app ja pagou caro em outra tela. A
+    # atividade herda o canal da oportunidade ligada; a que nao tem oportunidade
+    # fica fora quando ha filtro, porque nao ha como situa-la numa linha.
+    def _da_linha(a):
+        if not linha:
+            return True
+        return _LINHA_DO_CANAL.get(str(a.get("canal") or "").upper()) == linha
+
+    atrasadas = len([a for a in listar_atividades("atrasadas") if _da_linha(a)])
+    hoje = len([a for a in listar_atividades("hoje") if _da_linha(a)])
 
     return {
         "pipeline_total": round(sum(v(o) for o in abertas), 2),

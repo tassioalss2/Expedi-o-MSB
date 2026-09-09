@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { FiltroLinha, LINHAS_ROTULO } from './CrmShared'
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts'
 import { TrendingUp, Target, Trophy, AlertTriangle, CalendarClock, Percent } from 'lucide-react'
 import api from '../../lib/api'
@@ -10,9 +12,15 @@ const CORES: Record<string, string> = {
 }
 
 export function CrmDashboard() {
+  const [linha, setLinha] = useState('')
   const { data: d, isLoading } = useQuery<any>({
-    queryKey: ['crm-dashboard'],
-    queryFn: () => api.get('/crm/dashboard').then(r => r.data),
+    queryKey: ['crm-dashboard', linha],
+    // O recorte vai para o SERVIDOR: os numeros daqui sao agregados (pipeline
+    // ponderado, taxa de ganho, atividades atrasadas) e recortar no navegador
+    // exigiria refazer cada conta aqui — duas implementacoes da mesma regra, que
+    // e como duas telas passam a discordar.
+    queryFn: () => api.get('/crm/dashboard',
+      { params: linha ? { linha } : {} }).then(r => r.data),
     refetchInterval: 30000,
   })
 
@@ -22,6 +30,7 @@ export function CrmDashboard() {
 
   return (
     <div className="space-y-4">
+      <FiltroLinha valor={linha} onMudar={setLinha} linhas={LINHAS_ROTULO} />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <KPI label="Pipeline aberto" valor={fmtBRL(d.pipeline_total)} sub={`${d.abertas_qtd} oportunidade(s)`} />
         <KPI label="Previsão ponderada" valor={fmtBRL(d.pipeline_ponderado)} sub="valor × probabilidade" cor="text-emerald-600" />

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { FiltroLinha, LINHAS_ROTULO } from './CrmShared'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, FileText, Printer, Trash2, Send, CheckCircle2, XCircle, Package, Copy } from 'lucide-react'
@@ -25,10 +26,19 @@ export function CrmCotacoes() {
   const qc = useQueryClient()
   const [modal, setModal] = useState<any | 'novo' | null>(null)
 
-  const { data: cotacoes = [], isLoading } = useQuery<any[]>({
+  const [linha, setLinha] = useState('')
+
+  const { data: todas = [], isLoading } = useQuery<any[]>({
     queryKey: ['crm-cotacoes'],
     queryFn: () => api.get('/crm/cotacoes').then(r => r.data),
   })
+  // A cotacao guarda `canal` (o campo `linha` dela vem sempre vazio), e o filtro
+  // compara o ROTULO da linha — o mesmo valor que o funil usa, para "Uro"
+  // significar a mesma coisa nas duas abas.
+  const cotacoes = linha
+    ? todas.filter(c => LINHA_DO_CANAL[c.canal || ''] === linha)
+    : todas
+  const semLinha = todas.filter(c => !LINHA_DO_CANAL[c.canal || '']).length
   const invalidar = () => {
     qc.invalidateQueries({ queryKey: ['crm-cotacoes'] })
     qc.invalidateQueries({ queryKey: ['crm-opps'] })
@@ -37,7 +47,13 @@ export function CrmCotacoes() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-400">{cotacoes.length} cotação(ões) · gere propostas comerciais e acompanhe a resposta</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <FiltroLinha valor={linha} onMudar={setLinha} linhas={LINHAS_ROTULO}
+            semLinha={semLinha} />
+          <p className="text-sm text-gray-400">
+            {cotacoes.length} cotação(ões) · gere propostas comerciais e acompanhe a resposta
+          </p>
+        </div>
         <button onClick={() => setModal('novo')} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-4 py-2 rounded-lg">
           <Plus size={16} /> Nova cotação
         </button>

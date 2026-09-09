@@ -42,8 +42,10 @@ router = APIRouter(prefix="/crm", tags=["crm"])
 
 # ── Dashboard ────────────────────────────────────────────────────────────────────
 @router.get("/dashboard")
-def dashboard(_: UsuarioOut = Depends(get_current_user)):
-    return crm_service.dashboard()
+def dashboard(linha: Optional[str] = Query(None),
+              _: UsuarioOut = Depends(get_current_user)):
+    """Os numeros do CRM. `linha` e o ROTULO (Uro, Vascular, Realclosure)."""
+    return crm_service.dashboard(linha)
 
 
 # ── Clientes (cadastro rápido pelo comercial) ──────────────────────────────────────

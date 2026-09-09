@@ -17,6 +17,7 @@ import {
   fmtBRL, fmtBRLcurto, fmtData, fmtDataHora, prazoCor, msgErro, type EstagioKey,
   type Disponibilidade, type PendenciasResp,
 } from '../../lib/crm'
+import { FiltroLinha, LINHAS_ROTULO } from './CrmShared'
 import {
   BlocoDisponibilidade, ModalDecisaoEstoque, ModalLiberarPendencia,
   type DecisaoEstoque,
@@ -87,7 +88,11 @@ export function CrmPipeline() {
   const filtradas = useMemo(() => {
     const b = busca.trim().toLowerCase()
     return opps.filter(o => {
-      if (linha && o.linha !== linha) return false
+      // Compara o ROTULO da linha (Uro, Vascular, Realclosure), e nao o canal
+      // cru: a mesma linha tem dois canais (URO e LICITACAO_URO), e comparar
+      // canal deixaria a metade de licitacao fora do filtro. O rotulo tambem e o
+      // que as outras abas usam, entao "Uro" quer dizer a mesma coisa em todas.
+      if (linha && LINHA_DO_CANAL[o.canal || o.linha || ''] !== linha) return false
       if (b && !`${o.titulo || ''} ${o.cliente || ''}`.toLowerCase().includes(b)) return false
       return true
     })
@@ -119,11 +124,10 @@ export function CrmPipeline() {
             <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar oportunidade ou cliente…"
               className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
           </div>
-          <select value={linha} onChange={e => setLinha(e.target.value)} className="border rounded-lg px-3 py-2 text-sm"
-            title="A linha vem dos itens da oportunidade — as que ainda não têm item ficam de fora do filtro">
-            <option value="">Todas as linhas</option>
-            {LINHAS.map(c => <option key={c} value={c}>{LINHA_DO_CANAL[c] || c}</option>)}
-          </select>
+          {/* Botao e nao lista suspensa: sao tres linhas, e botao mostra qual
+              esta ativa sem abrir nada. Ver FiltroLinha. */}
+          <FiltroLinha valor={linha} onMudar={setLinha} linhas={LINHAS_ROTULO}
+            semLinha={opps.filter((o: any) => !LINHA_DO_CANAL[o.canal || o.linha || '']).length} />
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right hidden md:block">
