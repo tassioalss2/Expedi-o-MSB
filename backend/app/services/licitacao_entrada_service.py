@@ -1562,6 +1562,20 @@ def _observacao_da_entrada(regs: list[dict]) -> str:
 
 
 # ── painel executivo ────────────────────────────────────────────────────────
+# Operacoes que emitem nota mas NAO sao receita. E a mesma regra que a
+# conciliacao do D365 usa (`NAO_RECEITA` em conciliacao_d365.py), traduzida do
+# "Descricao da operacao" do export para o `tipo_operacao` do pedido.
+#
+# A razao, nas palavras do Tassio: consignacao "so vai entrar no faturamento por
+# meio do comunicado de uso". A remessa manda o material para o hospital; a
+# receita nasce quando ele e usado, e ai vem o comunicado de uso. Somar as duas
+# e faturar o mesmo material duas vezes.
+#
+# Amostra entra aqui pelo mesmo motivo dela ser doacao — ja e regra deste modulo
+# que amostra nao tem condicao de pagamento porque nao se cobra por ela.
+_OPERACAO_SEM_RECEITA = ("CONSIGNADO", "AMOSTRA", "BONIFICACAO_DOACAO", "DEVOLUCAO")
+
+
 def _notas_da_licitacao(db) -> list[dict]:
     """Cada nota fiscal que nasceu de uma solicitacao, com o tipo atribuido.
 
@@ -1607,7 +1621,7 @@ def _notas_da_licitacao(db) -> list[dict]:
     for i in range(0, len(numeros), 100):
         pedidos += db.table("pedidos").select(
             "numero_pedido, numero_nf, valor_nf, valor_frete, tipo_frete, "
-            "data_faturamento, cliente_id, clientes(nome)"
+            "data_faturamento, cliente_id, tipo_operacao, clientes(nome)"
         ).in_("numero_pedido", numeros[i:i + 100]).execute().data
 
     saida = []
@@ -1619,10 +1633,18 @@ def _notas_da_licitacao(db) -> list[dict]:
         nome = ((ped.get("clientes") or {}) or {}).get("nome") or ""
         if "BIOMEDICAL" in nome.upper():
             continue
-        if not ped.get("numero_nf") or not ped.get("data_faturamento"):
+        nf = str(ped.get("numero_nf") or "").strip()
+        # NF cujo numero E o numero da OV nao e nota: e o marcador que o app usa
+        # enquanto o D365 nao emitiu. Medido: das 643 notas, 3 nao sao numericas
+        # e apenas essas 2 sao marcador — a terceira ("20540 / 20541") e
+        # legitima, duas notas num campo. Por isso o teste e a igualdade com a
+        # OV, e nao "nao e numero", que descartaria a legitima.
+        if nf.upper() == ov.upper():
+            nf = ""
+        if not nf or not ped.get("data_faturamento"):
             saida.append({"ov": ov, "tipo": tipo, "nf": None, "dia": None,
                           "cliente": nome or "(sem cliente)", "valor": 0.0,
-                          "demanda": demanda_da_ov.get(ov)})
+                          "receita": True, "demanda": demanda_da_ov.get(ov)})
             continue
         valor = float(ped.get("valor_nf") or 0)
         if ped.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
@@ -1630,7 +1652,14 @@ def _notas_da_licitacao(db) -> list[dict]:
         saida.append({
             "ov": ov,
             "tipo": tipo,
-            "nf": ped.get("numero_nf"),
+            # A operacao do PEDIDO decide se a nota e receita; o tipo da DEMANDA
+            # diz que solicitacao originou o caso. Sao perguntas diferentes: uma
+            # solicitacao de consignacao gera remessa (sem receita) agora e
+            # comunicado de uso (com receita) depois.
+            "receita": str(ped.get("tipo_operacao") or "").upper()
+                       not in _OPERACAO_SEM_RECEITA,
+            "operacao": ped.get("tipo_operacao"),
+            "nf": nf,
             "dia": str(ped.get("data_faturamento"))[:10],
             "cliente": nome or "(sem cliente)",
             "valor": round(valor, 2),
@@ -1640,7 +1669,14 @@ def _notas_da_licitacao(db) -> list[dict]:
 
 
 def _faturado_por_tipo(db, competencia: str) -> dict:
-    """O quadro por tipo, do mes e do total. Agrega `_notas_da_licitacao`."""
+    """O quadro por tipo, separando receita de circulacao de material.
+
+    A separacao existe porque somar as duas coisas mente sobre o faturamento.
+    Remessa de consignacao e amostra emitem nota fiscal, e nao sao venda: a
+    consignacao vira receita depois, no comunicado de uso. Medido em 09/09/2026:
+    6 das 192 notas da licitacao sao dessas (5 amostras e 1 remessa de
+    consignacao), R$ 3.767,19 que estavam somando como faturamento.
+    """
     notas = _notas_da_licitacao(db)
     por_tipo: dict[str, dict] = {}
     sem_nota = 0
@@ -1648,17 +1684,34 @@ def _faturado_por_tipo(db, competencia: str) -> dict:
         if not n["nf"]:
             sem_nota += 1
             continue
-        alvo = por_tipo.setdefault(n["tipo"], {"tipo": n["tipo"], "nfs": 0, "valor": 0.0,
-                                               "nfs_mes": 0, "valor_mes": 0.0})
+        alvo = por_tipo.setdefault(n["tipo"], {
+            "tipo": n["tipo"], "nfs": 0, "valor": 0.0, "nfs_mes": 0, "valor_mes": 0.0,
+            # Um tipo e tratado como receita quando as notas dele sao de venda.
+            # Nao ha tipo misto na pratica: solicitacao de consignacao gera
+            # remessa, comunicado de uso gera venda.
+            "receita": True})
         alvo["nfs"] += 1
         alvo["valor"] = round(alvo["valor"] + n["valor"], 2)
+        alvo["receita"] = alvo["receita"] and n.get("receita", True)
         if n["dia"][:7] == competencia:
             alvo["nfs_mes"] += 1
             alvo["valor_mes"] = round(alvo["valor_mes"] + n["valor"], 2)
+
+    linhas = sorted(por_tipo.values(), key=lambda x: (not x["receita"], -x["valor"]))
+    receita = [x for x in linhas if x["receita"]]
+    circulacao = [x for x in linhas if not x["receita"]]
     return {
         "competencia": competencia,
         "sem_nota": sem_nota,
-        "por_tipo": sorted(por_tipo.values(), key=lambda x: -x["valor"]),
+        "por_tipo": linhas,
+        # Os totais que a tela mostra: SO receita. Circulacao de material aparece
+        # a parte, com nome proprio.
+        "total_mes": round(sum(x["valor_mes"] for x in receita), 2),
+        "total": round(sum(x["valor"] for x in receita), 2),
+        "nfs_mes": sum(x["nfs_mes"] for x in receita),
+        "nfs": sum(x["nfs"] for x in receita),
+        "circulacao_mes": round(sum(x["valor_mes"] for x in circulacao), 2),
+        "circulacao": round(sum(x["valor"] for x in circulacao), 2),
     }
 
 
@@ -1674,10 +1727,14 @@ def detalhe_faturado(tipo: Optional[str] = None,
     """
     db = get_service_db()
     competencia = competencia or _hoje_brt().strftime("%Y-%m")
-    notas = [n for n in _notas_da_licitacao(db) if n["nf"]]
+    todas = [n for n in _notas_da_licitacao(db) if n["nf"]]
     if tipo:
-        notas = [n for n in notas if n["tipo"] == tipo]
+        todas = [n for n in todas if n["tipo"] == tipo]
+    # Receita e circulacao NAO se somam. Ver `_OPERACAO_SEM_RECEITA`.
+    notas = [n for n in todas if n.get("receita", True)]
+    circulacao = [n for n in todas if not n.get("receita", True)]
     do_mes = [n for n in notas if n["dia"][:7] == competencia]
+    circ_mes = [n for n in circulacao if n["dia"][:7] == competencia]
 
     por_dia: dict[str, dict] = {}
     for n in do_mes:
@@ -1698,7 +1755,10 @@ def detalhe_faturado(tipo: Optional[str] = None,
         "competencia": competencia,
         "titulo": "Faturado em %s/%s%s" % (competencia[5:], competencia[:4],
                                            (" · %s" % rotulo) if tipo else ""),
-        "conta": "Soma das NOTAS FISCAIS das OVs que as demandas geraram%s. Uma "
+        "conta": "Soma das NOTAS FISCAIS DE VENDA das OVs que as demandas "
+                 "geraram%s. Remessa de consignação e amostra emitem nota e NÃO "
+                 "entram: a consignação vira receita depois, no comunicado de uso, "
+                 "e somar as duas seria faturar o mesmo material duas vezes. Uma "
                  "solicitação pode virar duas notas (segunda remessa), então o "
                  "número de notas não é o número de casos."
                  % ((" do tipo %s" % rotulo) if tipo else ""),
@@ -1709,6 +1769,11 @@ def detalhe_faturado(tipo: Optional[str] = None,
         "nfs": len(do_mes),
         "valor": round(sum(n["valor"] for n in do_mes), 2),
         "valor_total": round(sum(n["valor"] for n in notas), 2),
+        # Nota emitida que nao e venda: remessa de consignacao, amostra. Fica
+        # visivel, e fora do total.
+        "circulacao_nfs": len(circ_mes),
+        "circulacao_valor": round(sum(n["valor"] for n in circ_mes), 2),
+        "circulacao_notas": sorted(circ_mes, key=lambda n: n["dia"], reverse=True),
         "por_dia": sorted(por_dia.values(), key=lambda x: x["dia"]),
         "por_cliente": sorted(por_cliente.values(), key=lambda x: -x["valor"]),
         "notas": sorted(do_mes, key=lambda n: (n["dia"], n["ov"]), reverse=True),

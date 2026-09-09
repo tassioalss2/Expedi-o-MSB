@@ -565,6 +565,9 @@ function DetalheFaturado({ tipo, onFechar }: {
                 {data.valor_total > data.valor && (
                   <> · {fmtBRL(data.valor_total)} desde o começo</>
                 )}
+                {data.circulacao_valor > 0 && (
+                  <> · mais {fmtBRL(data.circulacao_valor)} de remessa/amostra, que não é receita</>
+                )}
               </p>
             )}
           </div>
@@ -907,6 +910,15 @@ export function AbaAcompanhamento() {
                 <div className="mt-0.5 text-[11px] text-gray-500">
                   {t.valor > 0 ? fmtBRL(t.valor) : 'sem valor lido'}
                 </div>
+                {/* Consignacao nao vira faturamento aqui: o material vai para o
+                    hospital e a receita nasce depois, no comunicado de uso. Sem
+                    esta linha o valor acima parece venda a caminho, e somar os
+                    dois seria faturar o mesmo material duas vezes. */}
+                {t.tipo === 'CONSIGNACAO' && t.valor > 0 && (
+                  <div className="text-[11px] italic leading-tight text-gray-500">
+                    material a enviar — fatura depois, no comunicado de uso
+                  </div>
+                )}
                 <div className="mt-1 flex flex-wrap gap-x-2 text-[11px]">
                   {t.criticos > 0 && <span className="font-medium text-red-700">{t.criticos} crítico(s)</span>}
                   {t.mais_antigo > 0 && (
@@ -1102,11 +1114,17 @@ export function AbaAcompanhamento() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {(data.faturado.por_tipo || []).map((t: any) => (
-                <tr key={t.tipo}>
+                <tr key={t.tipo} className={t.receita ? '' : 'bg-gray-50/60'}>
                   <td className="px-4 py-2.5">
-                    <span className="flex items-center gap-1.5 text-gray-900">
+                    <span className={`flex items-center gap-1.5 ${
+                      t.receita ? 'text-gray-900' : 'text-gray-500'}`}>
                       <span className={`h-2.5 w-2.5 rounded-sm ${TIPO_PONTO[t.tipo]}`} />
                       {TIPO_LABEL[t.tipo] || t.tipo}
+                      {/* Nota emitida que nao e venda: fica na tabela porque
+                          aconteceu, e fora do total porque nao e receita. */}
+                      {!t.receita && (
+                        <span className="text-[11px] italic text-gray-500">não é receita</span>
+                      )}
                     </span>
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{t.nfs_mes}</td>
@@ -1122,30 +1140,51 @@ export function AbaAcompanhamento() {
                   <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{fmtBRL(t.valor)}</td>
                 </tr>
               ))}
+              {/* Total = SO receita. Somar remessa de consignacao e amostra
+                  mentiria sobre o faturamento: consignacao vira receita depois,
+                  no comunicado de uso, e as duas juntas faturariam o mesmo
+                  material duas vezes. */}
               <tr className="bg-gray-50 font-medium">
-                <td className="px-4 py-2.5 text-gray-900">Total</td>
+                <td className="px-4 py-2.5 text-gray-900">Total faturado</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">
-                  {(data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.nfs_mes, 0)}
+                  {data.faturado.nfs_mes}
                 </td>
                 <td className="px-4 py-2.5 text-right">
                   <button onClick={() => setFaturado(null)}
                     title="ver dia por dia e para qual órgão foi, todos os tipos"
                     className="tabular-nums text-gray-900 underline decoration-gray-300 decoration-dotted underline-offset-2 hover:text-blue-700 hover:decoration-blue-400">
-                    {fmtBRL((data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.valor_mes, 0))}
+                    {fmtBRL(data.faturado.total_mes)}
                   </button>
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">
-                  {(data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.nfs, 0)}
+                  {data.faturado.nfs}
                 </td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-900">
-                  {fmtBRL((data.faturado.por_tipo || []).reduce((a: number, t: any) => a + t.valor, 0))}
+                  {fmtBRL(data.faturado.total)}
                 </td>
               </tr>
+              {data.faturado.circulacao > 0 && (
+                <tr className="text-gray-500">
+                  <td className="px-4 py-2 text-xs" colSpan={2}>
+                    Circulação de material (fora do total)
+                  </td>
+                  <td className="px-4 py-2 text-right text-xs tabular-nums">
+                    {data.faturado.circulacao_mes > 0 ? fmtBRL(data.faturado.circulacao_mes) : '—'}
+                  </td>
+                  <td />
+                  <td className="px-4 py-2 text-right text-xs tabular-nums">
+                    {fmtBRL(data.faturado.circulacao)}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
           <p className="border-t border-gray-100 px-4 py-2 text-[11px] leading-relaxed text-gray-500">
             Sai da nota fiscal da OV que a demanda gerou, com o frete CIF descontado e
-            Biomedical de fora (transfer price não entra em Vendas).
+            Biomedical de fora (transfer price não entra em Vendas).{' '}
+            <b className="text-gray-700">Remessa de consignação e amostra emitem nota e não
+            são receita</b> — a consignação vira faturamento depois, no comunicado de uso,
+            e contar as duas seria faturar o mesmo material duas vezes.
             {data.faturado.sem_nota > 0 && (
               <> {data.faturado.sem_nota} OV(s) de demanda ainda sem nota não entram nesta conta.</>
             )}
