@@ -1623,6 +1623,24 @@ def dashboard(linha: Optional[str] = None) -> dict:
             return True
         return _LINHA_DO_CANAL.get(str(a.get("canal") or "").upper()) == linha
 
+    # Empresas prospectadas: a entrada do funil. Entra como CONTAGEM e nunca em
+    # valor — empresa mapeada nao tem valor nem probabilidade, e um "pipeline"
+    # que a somasse inventaria previsao a partir de quem so foi cadastrado.
+    #
+    # Import local: `crm_empresas_service` importa `crm_service` para criar a
+    # oportunidade na qualificacao, e importar no topo daqui fecharia o ciclo.
+    try:
+        from app.services import crm_empresas_service
+        empresas = crm_empresas_service.listar_empresas("PROSPECTADA")
+        if linha:
+            empresas = [e for e in empresas
+                        if _LINHA_DO_CANAL.get(str(e.get("canal") or "").upper()) == linha]
+        prospectadas = len(empresas)
+        prospectadas_quentes = sum(1 for e in empresas if e.get("temperatura") == "QUENTE")
+    except Exception:
+        # Best-effort: um numero novo nao pode derrubar o painel inteiro.
+        prospectadas, prospectadas_quentes = 0, 0
+
     atrasadas = len([a for a in listar_atividades("atrasadas") if _da_linha(a)])
     hoje = len([a for a in listar_atividades("hoje") if _da_linha(a)])
 
@@ -1635,6 +1653,8 @@ def dashboard(linha: Optional[str] = None) -> dict:
         "perdidas_90d": len(perdidas_90),
         "ganho_mes_valor": ganho_mes_valor,
         "por_estagio": por_estagio,
+        "empresas_prospectadas": prospectadas,
+        "empresas_prospectadas_quentes": prospectadas_quentes,
         "atividades_atrasadas": atrasadas,
         "atividades_hoje": hoje,
     }

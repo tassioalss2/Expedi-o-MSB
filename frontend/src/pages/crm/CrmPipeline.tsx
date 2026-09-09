@@ -65,11 +65,26 @@ export function CrmPipeline() {
   const [detalheId, setDetalheId] = useState<string | null>(null)
   const [busca, setBusca] = useState('')
   const [linha, setLinha] = useState('')
+  // Para o card de empresa prospectada levar a aba Empresas, onde se qualifica.
+  const navegar = useNavigate()
 
   // A coluna Ganho mostra so o mes corrente (o backend corta por `ganho_em`).
   // Isto abre as anteriores sem sair da tela: esconder sem caminho de volta e o
   // que faz alguem achar que perdeu dado.
   const [ganhosAntigos, setGanhosAntigos] = useState(false)
+
+  // Empresas prospectadas: a entrada do funil, ANTES de existir oportunidade.
+  // Elas NAO sao oportunidade e nao entram em nenhum total do pipeline — empresa
+  // mapeada nao tem valor nem probabilidade, e somar as duas coisas inventaria
+  // previsao. A coluna existe para o trabalho de prospeccao ter lugar visivel:
+  // sem ela, mapear empresa nao aparecia no funil e so virava numero quando ja
+  // era oportunidade.
+  const { data: prospectadas = [] } = useQuery<any[]>({
+    queryKey: ['crm-empresas', 'PROSPECTADA'],
+    queryFn: () => api.get('/crm/empresas', { params: { estado: 'PROSPECTADA' } })
+      .then(r => r.data),
+    refetchInterval: 60000,
+  })
 
   const { data: opps = [], isLoading } = useQuery<any[]>({
     queryKey: ['crm-opps', ganhosAntigos],
@@ -112,6 +127,19 @@ export function CrmPipeline() {
   // de oportunidade), e é justamente por ser invisível hoje que valia arrumar.
   const porEstagio = (e: string) => filtradas.filter(o => o.estagio === e)
 
+  // A prospectada passa pelo MESMO filtro das outras colunas: busca por nome e
+  // linha pelo rotulo. Empresa sem canal fica fora quando ha linha escolhida,
+  // como nas outras abas.
+  const prospectadasFiltradas = useMemo(() => {
+    const b = busca.trim().toLowerCase()
+    return prospectadas.filter((e: any) => {
+      if (linha && LINHA_DO_CANAL[e.canal || ''] !== linha) return false
+      if (b && !`${e.razao_social || ''} ${e.nome_fantasia || ''} ${e.cidade || ''}`
+        .toLowerCase().includes(b)) return false
+      return true
+    })
+  }, [prospectadas, busca, linha])
+
   const totalPonderado = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_ponderado || 0), 0)
   const totalPipe = filtradas.filter(o => o.estagio !== 'GANHO').reduce((a, o) => a + (o.valor_estimado || 0), 0)
 
@@ -146,7 +174,66 @@ export function CrmPipeline() {
       ) : (
         <div className="overflow-x-auto lg:overflow-x-visible pb-2">
           <div className="kanban-grid gap-2"
-            style={{ ['--kanban-cols' as any]: ESTAGIOS_PIPELINE.length }}>
+            style={{ ['--kanban-cols' as any]: ESTAGIOS_PIPELINE.length + 1 }}>
+            {/* A prospeccao vem PRIMEIRO porque e o inicio do funil: empresa
+                mapeada, ainda sem oportunidade. O card leva o score (que ja
+                pontua na prospeccao, por tipo e porte) para dar ordem a quem
+                trabalhar primeiro, e abre a empresa na aba Empresas, onde se
+                qualifica — e a qualificacao que a transforma em oportunidade. */}
+            <div className="bg-sky-50/40 rounded-xl border border-sky-100 flex flex-col min-h-[400px]">
+              <div className="h-1 rounded-t-xl bg-sky-500" />
+              <div className="px-2.5 py-2">
+                <span className="text-[13px] font-semibold text-gray-700 flex items-start gap-1.5 leading-tight">
+                  <span className="w-2 h-2 rounded-full bg-sky-500 mt-1 shrink-0" /> Empresas prospectadas
+                </span>
+                {/* Sem valor: empresa prospectada nao tem valor nem
+                    probabilidade, e por isso ela nao entra no total do pipeline
+                    ao lado. Mostrar "R$ 0" diria que nao vale nada, quando o
+                    certo e que ainda nao se sabe. */}
+                <span className="text-[11px] text-gray-400 block mt-0.5">
+                  {prospectadasFiltradas.length} · antes de virar oportunidade
+                </span>
+              </div>
+              <div className="px-1.5 pb-2 space-y-2 flex-1 overflow-y-auto">
+                {prospectadasFiltradas.map((e: any) => (
+                  <button key={e.id} onClick={() => navegar('/crm?aba=empresas')}
+                    title="abrir a aba Empresas para qualificar"
+                    className="w-full text-left bg-white rounded-lg border border-gray-200 p-2 hover:border-sky-400 hover:shadow-sm transition">
+                    <div className="flex items-start justify-between gap-1.5">
+                      <span className="text-[13px] font-medium text-gray-800 leading-tight line-clamp-2">
+                        {e.nome_fantasia || e.razao_social}
+                      </span>
+                      {e.score != null && (
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 ${
+                          e.temperatura === 'QUENTE' ? 'bg-red-100 text-red-700'
+                            : e.temperatura === 'MORNO' ? 'bg-amber-100 text-amber-700'
+                            : 'bg-gray-100 text-gray-500'}`}>
+                          {e.score}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-1 flex flex-wrap gap-x-1.5">
+                      {e.tipo_label && <span>{e.tipo_label}</span>}
+                      {e.cidade && <span>{e.cidade}{e.uf ? `/${e.uf}` : ''}</span>}
+                      {e.canal && <span>{LINHA_DO_CANAL[e.canal] || e.canal}</span>}
+                    </div>
+                    {/* O que falta para qualificar: e a acao concreta que tira a
+                        empresa desta coluna. */}
+                    {e.falta_para_qualificar?.length > 0 && (
+                      <div className="text-[10px] text-sky-700 mt-1">
+                        falta: {e.falta_para_qualificar.slice(0, 2).join(', ')}
+                      </div>
+                    )}
+                  </button>
+                ))}
+                {prospectadasFiltradas.length === 0 && (
+                  <div className="text-[11px] text-gray-300 text-center py-6 rounded-lg">
+                    nenhuma empresa prospectada
+                  </div>
+                )}
+              </div>
+            </div>
+
             {ESTAGIOS_PIPELINE.map(ek => {
               const cfg = ESTAGIO_MAP[ek]
               const cards = porEstagio(ek)

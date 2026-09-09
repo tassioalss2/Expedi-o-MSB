@@ -31,7 +31,16 @@ export function CrmDashboard() {
   return (
     <div className="space-y-4">
       <FiltroLinha valor={linha} onMudar={setLinha} linhas={LINHAS_ROTULO} />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {/* A prospeccao vem primeiro: e a entrada do funil, e o KPI e CONTAGEM
+            e nao valor — empresa mapeada nao tem valor nem probabilidade, e um
+            "pipeline" que a somasse inventaria previsao a partir de quem so foi
+            cadastrado. */}
+        <KPI label="Empresas prospectadas" valor={String(d.empresas_prospectadas ?? 0)}
+          sub={d.empresas_prospectadas_quentes
+            ? `${d.empresas_prospectadas_quentes} quente(s) · antes de virar oportunidade`
+            : 'antes de virar oportunidade'}
+          cor="text-sky-600" />
         <KPI label="Pipeline aberto" valor={fmtBRL(d.pipeline_total)} sub={`${d.abertas_qtd} oportunidade(s)`} />
         <KPI label="Previsão ponderada" valor={fmtBRL(d.pipeline_ponderado)} sub="valor × probabilidade" cor="text-emerald-600" />
         <KPI label="Ganho no mês" valor={fmtBRL(d.ganho_mes_valor)} cor="text-emerald-600" />
