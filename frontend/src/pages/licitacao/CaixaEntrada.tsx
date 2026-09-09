@@ -159,6 +159,10 @@ type Card = {
   tipo_motor: string | null
   tipo_corrigido: boolean
   tipo_herdado: boolean
+  /** O tipo veio do CONTRATO do D365 (S.LIC.002 venda direta, S.LIC.003
+   *  consignacao), corrigindo o que o texto do e-mail sugeria. */
+  tipo_pelo_contrato: boolean
+  contrato_operacao: string | null
   conversas: string[]
   msgs_total: number
   respondido_em: string | null
@@ -1335,7 +1339,17 @@ function TipoDaSolicitacao({ c, onReclassificar, salvando }: {
           <span className={`h-2.5 w-2.5 rounded-sm ${TIPO_PONTO[c.tipo || 'OUTRO']}`} />
           {TIPO_LABEL[c.tipo || 'OUTRO']}
         </span>
-        {c.tipo_corrigido ? (
+        {c.tipo_pelo_contrato ? (
+          // Tipo que veio do contrato merece leitura diferente de tipo deduzido
+          // do assunto: um e cadastro de quem assinou, o outro e palpite sobre
+          // texto de e-mail.
+          <span className="text-xs text-blue-700">
+            pelo contrato {c.contrato_operacao}
+            {c.tipo_motor && c.tipo_motor !== c.tipo && (
+              <span className="text-gray-500"> · o texto sugeria {TIPO_LABEL[c.tipo_motor] || c.tipo_motor}</span>
+            )}
+          </span>
+        ) : c.tipo_corrigido ? (
           <span className="text-xs text-emerald-700">
             corrigido por gente
             {c.tipo_herdado && <span className="text-gray-500"> · herdado de outra mensagem da mesma conversa</span>}

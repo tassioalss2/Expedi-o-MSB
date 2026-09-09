@@ -157,6 +157,38 @@ def _tipo_efetivo(reg: dict) -> str:
 # operação.
 _TIPOS_GENERICOS = ("VENDA_DIRETA", "OUTRO")
 
+# O tipo de venda do contrato no D365. Dito pelo Tássio: S.LIC.002 é venda
+# direta, S.LIC.003 é consignação.
+_OP_DO_CONTRATO = {"S.LIC.002": "VENDA_DIRETA", "S.LIC.003": "CONSIGNACAO"}
+
+
+def _tipo_com_contrato(tipo: Optional[str], op: Optional[str]) -> tuple:
+    """Corrige o tipo deduzido do texto usando o tipo de venda do CONTRATO.
+
+    O contrato é dado cadastrado por quem o assinou; o tipo do motor é dedução
+    do assunto de um e-mail. Quando os dois discordam sobre venda direta contra
+    consignação, o contrato ganha.
+
+    A regra é ESTREITA de propósito, e o limite vem do processo, não do código:
+    consignação **fatura por comunicado de uso**. Então um contrato S.LIC.003 não
+    afirma "este e-mail é reposição de consignado"; ele descarta venda direta.
+    Comunicado de uso em contrato de consignação continua comunicado de uso —
+    mexer nisso transformaria faturamento em pedido. Amostra também fica de fora:
+    amostra é doação e não segue o tipo do contrato.
+
+    Medido nos 197 casos antes de entrar: 120 citam contrato, 118 têm o contrato
+    no export, 113 já estavam coerentes e 5 mudam. Dois dos cinco são o caso que
+    o Tássio corrigiu à mão — o contrato explicava sozinho.
+    """
+    alvo = _OP_DO_CONTRATO.get(str(op or "").strip().upper())
+    if not alvo or not tipo:
+        return tipo, False
+    if alvo == "CONSIGNACAO" and tipo == "VENDA_DIRETA":
+        return "CONSIGNACAO", True
+    if alvo == "VENDA_DIRETA" and tipo == "CONSIGNACAO":
+        return "VENDA_DIRETA", True
+    return tipo, False
+
 
 def _tratativa_do_caso(membros: list[dict], nomes: dict,
                        respondido_em: Optional[str],
@@ -860,7 +892,7 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
         lista = sorted(citados)
         for i in range(0, len(lista), 100):
             for ct in db.table("licitacao_contratos_d365")\
-                    .select("contrato, titulo, pregao, nome_d365")\
+                    .select("contrato, titulo, pregao, nome_d365, tipo_operacao")\
                     .in_("contrato", lista[i:i + 100]).execute().data:
                 contratos[ct["contrato"]] = ct
 
@@ -903,6 +935,19 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
         cliente = next((m["clientes"]["nome"] for m in membros
                         if m.get("clientes") and m["clientes"].get("nome")), None)
 
+        # O tipo: correção humana primeiro; senão o sinal mais específico entre
+        # os e-mails, corrigido pelo tipo de venda do contrato quando os dois
+        # discordam sobre venda direta contra consignação.
+        tipo_manual_do_caso = next((m["tipo_manual"] for m in membros
+                                    if m.get("tipo_manual")), None)
+        ct_citado = str(primeiro_com("contrato") or "").split(" / ")[0].strip().upper()
+        op_do_contrato = (contratos.get(ct_citado) or {}).get("tipo_operacao")
+        if tipo_manual_do_caso:
+            tipo_do_caso, tipo_pelo_contrato = tipo_manual_do_caso, False
+        else:
+            tipo_do_caso, tipo_pelo_contrato = _tipo_com_contrato(
+                _tipo_do_caso(membros), op_do_contrato)
+
         # A conversa do caso. A licitação repassa e sai da conversa, então o que
         # diz se o caso andou é a última mensagem da THREAD — não a data do
         # e-mail dela, que era o único sinal que existia antes.
@@ -928,15 +973,19 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             "prioridade": min(m.get("prioridade") or 5 for m in membros),
             "motivo": primeiro.get("motivo"),
             # Basta UMA pessoa ter corrigido em qualquer e-mail do grupo: o
-            # caso é um só, e quem corrigiu decidiu sobre o caso.
-            "tipo": next((m["tipo_manual"] for m in membros if m.get("tipo_manual")),
-                         None) or _tipo_do_caso(membros),
+            # caso é um só, e quem corrigiu decidiu sobre o caso. A correção
+            # humana vence inclusive o contrato — ver `tipo_do_caso` abaixo.
+            "tipo": tipo_do_caso,
             # O que a MÁQUINA diria do caso, ignorando a correção humana: é a
             # comparação que mede a confiança da classificação.
             "tipo_motor": _tipo_do_caso(
                 [{"tipo": m.get("tipo"), "recebido_em": m.get("recebido_em")}
                  for m in membros]),
-            "tipo_corrigido": next((True for m in membros if m.get("tipo_manual")), False),
+            "tipo_corrigido": bool(tipo_manual_do_caso),
+            # Onde a tela diz de onde veio o tipo. Um tipo que veio do contrato
+            # do D365 merece ser lido diferente de um deduzido do assunto.
+            "tipo_pelo_contrato": tipo_pelo_contrato,
+            "contrato_operacao": op_do_contrato,
             "tipo_herdado": next((bool(m.get("tipo_herdado")) for m in membros
                                   if m.get("tipo_manual")), False),
             "contrato": primeiro_com("contrato"),

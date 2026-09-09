@@ -29,6 +29,15 @@ _COLUNAS = {
     "status": "Status",
 }
 
+# Colunas OPCIONAIS: existem no export novo e não no antigo. Exigi-las faria o
+# importador recusar o arquivo que já está na pasta e o cliente das solicitações
+# pararia de ser resolvido — um ganho novo não pode derrubar o que já funciona.
+_COLUNAS_OPCIONAIS = {
+    # S.LIC.002 = venda direta, S.LIC.003 = consignação. É o tipo de venda do
+    # CONTRATO, cadastrado por quem o assinou.
+    "tipo_operacao": "SalesPurchOperationType_BR_InoveProjects",
+}
+
 
 def pregao_do_titulo(titulo: Optional[str]) -> Optional[str]:
     m = _PREGAO_NO_TITULO.search(str(titulo or ""))
@@ -74,6 +83,8 @@ def importar(caminho: str) -> dict:
         return {"lidos": 0, "gravados": 0, "sem_cliente": 0,
                 "erro": "colunas ausentes: %s" % ", ".join(faltando)}
     idx = {chave: cab.index(nome) for chave, nome in _COLUNAS.items()}
+    idx_op = {chave: cab.index(nome) for chave, nome in _COLUNAS_OPCIONAIS.items()
+              if nome in cab}
 
     db = get_service_db()
     # Código do cliente → id. Paginado: o cadastro tem ~3.900 clientes e o
@@ -112,19 +123,36 @@ def importar(caminho: str) -> dict:
             "status": str(linha[idx["status"]] or "").strip() or None,
             "importado_em": agora,
         })
+        for chave, i in idx_op.items():
+            registros[-1][chave] = str(linha[i] or "").strip().upper() or None
 
     gravados = 0
+    sem_a_coluna = False
     for i in range(0, len(registros), 100):
         lote = registros[i:i + 100]
         # Upsert em lote pela chave primária. O cliente deste projeto declara
         # `upsert(data: dict)`, mas manda o corpo como JSON e com
         # `resolution=merge-duplicates` — então lista funciona e o PostgREST
         # infere o alvo do conflito pela PK, sem precisar de `on_conflict`.
-        db.table("licitacao_contratos_d365").upsert(lote).execute()
+        try:
+            db.table("licitacao_contratos_d365").upsert(lote).execute()
+        except Exception:
+            # A coluna opcional pode não existir ainda: as migrações deste
+            # projeto rodam à mão. Regrava SEM ela em vez de perder a importação
+            # inteira — o contrato é o que resolve o cliente da solicitação, e
+            # parar isso por causa de um campo novo seria trocar um ganho por um
+            # estrago.
+            if not idx_op:
+                raise
+            sem_a_coluna = True
+            limpo = [{k: v for k, v in r.items() if k not in idx_op} for r in lote]
+            db.table("licitacao_contratos_d365").upsert(limpo).execute()
         gravados += len(lote)
 
     return {"lidos": len(registros), "gravados": gravados,
-            "sem_cliente": sem_cliente, "erro": None}
+            "sem_cliente": sem_cliente,
+            "erro": ("gravado sem %s — falta a migração v42"
+                     % ", ".join(sorted(idx_op))) if sem_a_coluna else None}
 
 
 def mapa_para_resolucao(db) -> tuple[dict, dict]:
