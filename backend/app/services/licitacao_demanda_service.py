@@ -985,7 +985,43 @@ def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
 
 
 def excluir_demanda(demanda_id: str) -> dict:
+    """Apaga a demanda — MENOS quando ela já virou nota fiscal.
+
+    Apagar era só `ativo = False`, sem olhar a OV gerada, e isso produziu um
+    estrago real em 09/09/2026: a demanda 19449/2026 nasceu com o item a R$ 385,
+    gerou a OV016674 com a NF 20730, foi apagada dois minutos depois e recriada
+    com o valor certo (R$ 387,85), gerando a OV016675 e a NF 20733. Resultado:
+    DUAS notas fiscais para o mesmo comunicado de uso, e os dois painéis
+    discordando — o da licitação segue o `ativo` e mostrava uma; o faturamento da
+    empresa lê `pedidos` e mostrava as duas.
+
+    Apagar um card não cancela uma nota fiscal. Quando existe OV faturada, a
+    exclusão é recusada e a mensagem diz o que fazer: cancelar a OV (ato
+    consciente, com rastro) ou corrigir a demanda em vez de recriá-la.
+    """
     db = get_service_db()
+    d = db.table("licitacao_demandas").select("numero, gerado_ref, ovs")\
+        .eq("id", demanda_id).execute().data
+    if d:
+        refs = [str((o or {}).get("numero") or "") for o in (d[0].get("ovs") or [])
+                if isinstance(o, dict)]
+        if d[0].get("gerado_ref"):
+            refs.append(str(d[0]["gerado_ref"]))
+        refs = sorted({r for r in refs if r})
+        for k in range(0, len(refs), 100):
+            faturadas = [x for x in db.table("pedidos")
+                         .select("numero_pedido, numero_nf, status")
+                         .in_("numero_pedido", refs[k:k + 100]).execute().data
+                         if x.get("numero_nf") and x.get("status") != "CANCELADO"]
+            if faturadas:
+                nomes = ", ".join("%s (NF %s)" % (x["numero_pedido"], x["numero_nf"])
+                                  for x in faturadas)
+                raise HTTPException(
+                    409,
+                    "Esta demanda já virou nota fiscal: %s. Apagar o card não "
+                    "cancela a nota. Cancele a OV primeiro, ou corrija a demanda "
+                    "em vez de recriá-la — recriar gera uma segunda nota para o "
+                    "mesmo material." % nomes)
     db.table("licitacao_demandas").update({"ativo": False, "atualizado_em": _agora()})\
         .eq("id", demanda_id).execute()
     return {"ok": True}
