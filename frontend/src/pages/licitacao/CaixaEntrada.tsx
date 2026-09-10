@@ -1470,7 +1470,9 @@ function EscolheProduto({ produtos, escolhido, sugerido, erro, onEscolher }: {
   // ("4FRX110CM/125CM", "JL3.5") — comparar texto cru faria a busca depender de
   // acertar a pontuacao, que ninguem decora.
   const achados = useMemo(() => {
-    const limpa = (s: string) => s.toUpperCase().replace(/[^A-Z0-9 ]/g, ' ')
+    // Sem acento tambem: o catalogo tem "URETEROSCOPIO DIGITAL FLEXIVEL" e
+    // "LACO" escritos COM acento, e quem digita sem nunca acharia.
+    const limpa = (s: string) => semAcento(s).toUpperCase().replace(/[^A-Z0-9 ]/g, ' ')
     const alvos = limpa(q).split(/\s+/).filter(Boolean)
     const lista = produtos.map(p => ({
       p, texto: limpa(`${p.codigo} ${p.descricao} ${p.familia || ''}`).replace(/\s+/g, ' '),
@@ -2874,10 +2876,20 @@ export function AbaCaixaEntrada() {
   })
 
   const filtrados = useMemo(() => {
-    // Compara sem pontuacao: a AF chega escrita "29621/26" num e-mail e
-    // "29621.2026" no outro, e quem procura digita uma das duas. Comparar texto
-    // cru fazia a busca depender de acertar a grafia do orgao.
-    const limpa = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    // Compara sem pontuacao E SEM ACENTO. Sao duas razoes distintas:
+    //
+    //   · a AF chega escrita "29621/26" num e-mail e "29621.2026" no outro, e
+    //     quem procura digita uma das duas;
+    //   · o app guarda o assunto SEM acento ("SOLICITACAO COM ENTREGA"), porque
+    //     e assim que o motor normaliza, e quem procura digita COM
+    //     ("SOLICITAÇÃO"). Apagar o caractere acentuado em vez de CONVERTER
+    //     fazia "solicitação" virar "solicitao", que nunca casa "solicitacao":
+    //     em 10/09/2026 o Tassio colou o titulo exato do e-mail e a tela nao
+    //     achou o card que estava na frente dele.
+    //
+    // `NFD` separa a letra do acento; o range 0300-036F apaga so o acento, e
+    // nao a letra. Isso vale para os dois lados da comparacao.
+    const limpa = (s: any) => semAcento(String(s || '')).replace(/[^a-z0-9]/g, '')
     const q = limpa(busca)
     if (!q) return cards
     return cards.filter(c =>
