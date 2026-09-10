@@ -1230,7 +1230,14 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
     # gravado pelo motor, porque o corpo do e-mail já está em mãos: melhorar uma
     # regra passa a valer para o histórico inteiro na hora seguinte, sem
     # migração e sem esperar a próxima rodada do motor.
+    # As notas que o nosso sistema emitiu, uma consulta para a listagem toda.
+    # É o que faz o card poder dizer "a NF 20173 já saiu" — em 10/09/2026 o
+    # Tássio abriu um caso que estava "Em aberto" e tinha a nota no próprio
+    # assunto, e teve razão em reclamar: 22 dos 130 casos novos estavam assim.
+    emitidas = _notas_ja_emitidas(db)
+
     for c in cards:
+        c["nf_emitida"] = _nf_citada_e_nossa(c["emails"], emitidas)
         # O pregão do CONTRATO citado serve de reserva quando o e-mail não o
         # escreve: é o mesmo pregão, e sem essa reserva 33 casos de venda direta
         # apareceriam pedindo um número que o app já sabe.
@@ -1651,6 +1658,53 @@ def _produto_por_codigo(db, codigos: list[str]) -> dict:
                 .in_("codigo", limpos[i:i + 50]).execute().data:
             achados[str(p["codigo"]).strip()] = p
     return achados
+
+
+# "NF 20173", "NOTA FISCAL nº 20.173", "NFe 20173". Exige o rótulo antes do
+# número de propósito: sem ele, todo número de empenho e de processo do e-mail
+# viraria "nota fiscal".
+_CITA_NF = re.compile(r"(?:NF|NOTA\s+FISCAL|N\.?F\.?-?e?)\s*(?:N?[o°º.:]*\s*)?"
+                      r"(\d{2}[\d.]{2,8})", re.I)
+
+
+def _notas_ja_emitidas(db) -> dict:
+    """Mapa número de NF → a OV que a emitiu. Só o que saiu do NOSSO sistema.
+
+    É o que permite o card dizer "esta nota já saiu" em vez de deixar quem olha
+    abrir o caso para descobrir que ele acabou. Nota da Biomedical não está aqui
+    (é transfer price, outra empresa), então ausência não prova nada — e é por
+    isso que o selo só aparece quando ACHA, nunca quando não acha.
+    """
+    achadas: dict = {}
+    for off in range(0, 20000, 1000):
+        b = db.table("pedidos").select("numero_pedido, numero_nf, valor_nf")\
+            .limit(1000).offset(off).execute().data
+        for r in b:
+            n = re.sub(r"\D", "", str(r.get("numero_nf") or "")).lstrip("0")
+            if n:
+                achadas.setdefault(n, r)
+        if len(b) < 1000:
+            break
+    return achadas
+
+
+def _nf_citada_e_nossa(membros: list[dict], emitidas: dict) -> list[dict]:
+    """As notas citadas nos e-mails do caso que existem em `pedidos`."""
+    if not emitidas:
+        return []
+    texto = " ".join(
+        [str(m.get("assunto") or "") for m in membros] +
+        [str(m.get("corpo") or "")[:5000] for m in membros])
+    saida, vistos = [], set()
+    for m in _CITA_NF.finditer(texto):
+        n = m.group(1).replace(".", "").lstrip("0")
+        if n in vistos or n not in emitidas:
+            continue
+        vistos.add(n)
+        r = emitidas[n]
+        saida.append({"numero": n, "ov": r.get("numero_pedido"),
+                      "valor": r.get("valor_nf")})
+    return saida
 
 
 def _chave_da_descricao(descricao) -> str:

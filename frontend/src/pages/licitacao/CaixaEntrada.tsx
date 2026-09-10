@@ -209,6 +209,10 @@ type Card = {
   dados_comunicado: {
     nome_paciente?: string; prontuario?: string; data_procedimento?: string
   }
+  /** Notas citadas no e-mail que EXISTEM em `pedidos` — o nosso sistema já as
+   *  emitiu. Indício de caso encerrado, nunca decisão: carta de correção cita a
+   *  nota justamente porque o trabalho é sobre ela. */
+  nf_emitida: { numero: string; ov: string | null; valor: number | null }[]
   /** A conversa do Outlook. A licitação repassa e SAI da conversa: quem trata
    *  somos nós, com outro remetente, e por isso 61% das mensagens nunca
    *  chegavam ao app. Estes campos são o resumo; a conversa em si vem por
@@ -2662,6 +2666,29 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
           </button>
         )}
       </div>
+
+      {/* Nota citada no e-mail que EXISTE no nosso sistema. É indício de que o
+          caso já acabou, e não conclusão: dos 44 casos com este selo, 8 são
+          carta de correção e requerimento de pagamento, onde a nota é o ASSUNTO
+          e o trabalho continua. Por isso o selo informa e nunca marca
+          Resolvido sozinho.
+
+          Nasceu de uma reclamação justa do Tássio em 10/09/2026: ele abriu um
+          card "Em aberto" que tinha "NF 20173" no próprio assunto. */}
+      {c.nf_emitida?.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-900">
+          <Check className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-medium">
+            {c.nf_emitida.length === 1 ? 'nota já emitida:' : 'notas já emitidas:'}
+          </span>
+          {c.nf_emitida.map(n => (
+            <span key={n.numero} className="font-mono">
+              NF {n.numero}{n.ov ? ` · ${n.ov}` : ''}
+            </span>
+          ))}
+          <span className="text-emerald-700">— citada neste e-mail e encontrada no sistema</span>
+        </div>
+      )}
 
       {c.sugestoes.map((s, n) => (
         <div key={n} className="mt-2 flex items-start gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs text-sky-900">
