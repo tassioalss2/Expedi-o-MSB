@@ -48,6 +48,7 @@ from fastapi import HTTPException
 
 from app.core.database import get_service_db
 from app.models.schemas import UsuarioOut
+from app.services import licitacao_nf
 
 # Campos que a sincronização pode atualizar: são derivados do e-mail e do anexo,
 # e se o motor melhorar a extração o registro deve melhorar também.
@@ -1186,6 +1187,23 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             } for m in membros],
         })
 
+    # O que precisa constar na nota fiscal deste caso. Calculado aqui, e não
+    # gravado pelo motor, porque o corpo do e-mail já está em mãos: melhorar uma
+    # regra passa a valer para o histórico inteiro na hora seguinte, sem
+    # migração e sem esperar a próxima rodada do motor.
+    for c in cards:
+        # O pregão do CONTRATO citado serve de reserva quando o e-mail não o
+        # escreve: é o mesmo pregão, e sem essa reserva 33 casos de venda direta
+        # apareceriam pedindo um número que o app já sabe.
+        ct = str(c["contrato"] or "").split(" / ")[0].strip().upper()
+        c["exigencias_nf"] = licitacao_nf.exigencias_do_caso(
+            c["tipo"], [e.get("corpo") for e in c["emails"]],
+            {"NE": c["empenho"],
+             "PREGAO": c["pregao"] or (contratos.get(ct) or {}).get("pregao"),
+             # `documento` vem normalizado com ponto ("7331.2026"); o órgão
+             # escreve com barra, e é assim que vai na nota.
+             "AF": re.sub(r"^(\d+)\.(\d{4})$", r"\1/\2", c["documento"] or "") or None})
+
     # Agora sim os filtros, sobre o caso já montado.
     #
     # ABERTOS = tudo que ainda dá trabalho (não resolvido), que é EXATAMENTE o
@@ -1654,7 +1672,7 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
         prioridade=extra.get("prioridade") or (
             "CRITICA" if (base.get("prioridade") or 5) <= 1
             else "ALTA" if (base.get("prioridade") or 5) == 2 else "NORMAL"),
-        observacao=extra.get("observacao") or _observacao_da_entrada(regs),
+        observacao=extra.get("observacao") or _observacao_da_entrada(regs, tipo),
         itens=itens,
         nome_paciente=extra.get("nome_paciente"),
         prontuario=extra.get("prontuario"),
@@ -1675,12 +1693,32 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
     return {"demanda": demanda, "emails_ligados": len(regs)}
 
 
-def _observacao_da_entrada(regs: list[dict]) -> str:
+def _observacao_da_entrada(regs: list[dict], tipo: Optional[str] = None) -> str:
     """De onde a demanda veio, em uma linha, para quem abrir o card entender."""
     base = regs[0]
     partes = ["Da caixa de entrada da licitação: %s" % (base.get("assunto") or "")[:120]]
     if len(regs) > 1:
         partes.append("%d e-mails sobre esta nota de empenho" % len(regs))
+
+    # O que o órgão exige na nota, resumido. Vai para a demanda porque quem
+    # emite a nota trabalha no painel, e não na caixa de entrada: sem isto a
+    # análise ficaria numa tela que a pessoa que fatura não abre.
+    exig = licitacao_nf.exigencias_do_caso(
+        tipo, [r.get("corpo") for r in regs],
+        {"NE": (base.get("empenhos") or [None])[0],
+         "PREGAO": base.get("pregao"),
+         "AF": re.sub(r"^(\d+)\.(\d{4})$", r"\1/\2",
+                      _numero_do_documento(base) or "") or None})
+    if exig:
+        # "(falta)" so no que DEVERIA ter numero e nao tem. Exigencia que o
+        # orgao pediu e que nao tem numero para preencher ("dados bancarios",
+        # "retencao de IR") e instrucao, nao pendencia — marcar as duas igual
+        # faria a linha inteira parecer uma lista de problemas.
+        partes.append("Na NF: %s" % "; ".join(
+            "%s %s" % (e["rotulo"], e["valor"]) if e["valor"]
+            else "%s (falta)" % e["rotulo"] if e["origem"] != "EMAIL"
+            else e["rotulo"]
+            for e in exig)[:400])
     # As anotações vêm da tabela de notas (v37), não mais da coluna antiga.
     db = get_service_db()
     ids = [r["id"] for r in regs]

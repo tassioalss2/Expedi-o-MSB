@@ -196,6 +196,14 @@ type Card = {
   anexos_com_problema: any[]
   anexos: any[]
   emails: any[]
+  /** O que precisa constar na NF deste caso. `origem` diz de onde a exigência
+   *  vem: PADRAO é o que sempre vai (NE/AF e pregão), EMAIL é o que este órgão
+   *  pediu a mais. `valor` nulo é pendência; `trecho` é a frase do órgão, e é
+   *  ela que dá para conferir. */
+  exigencias_nf: {
+    chave: string; rotulo: string; valor: string | null
+    trecho: string | null; origem: 'PADRAO' | 'EMAIL' | 'PADRAO_E_EMAIL'
+  }[]
   /** A conversa do Outlook. A licitação repassa e SAI da conversa: quem trata
    *  somos nós, com outro remetente, e por isso 61% das mensagens nunca
    *  chegavam ao app. Estes campos são o resumo; a conversa em si vem por
@@ -1431,6 +1439,75 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  * classificador; a segunda nao deve mudar. Quem le a diferenca e gente, e o
  * motivo e o que da a ela o que ler.
  */
+/**
+ * O que precisa constar na nota fiscal deste caso.
+ *
+ * Existe porque a nota emitida sem o que o órgão pediu volta, e voltar custa um
+ * mês de faturamento — está no próprio histórico ("Solicitacao de Cancelamento
+ * e Correcao da NF nº 020.570", "Carta de correcao - NF 20208" por descrição
+ * divergente da ata). Antes, essa exigência estava no meio de um e-mail de 60
+ * linhas, diferente em cada órgão.
+ *
+ * Duas coisas na mesma lista, e a diferença aparece na tela:
+ *
+ *   · o que SEMPRE vai (NE/AF e pregão), mesmo que o e-mail não peça;
+ *   · o que ESTE órgão pediu a mais — com a frase dele do lado, porque a frase
+ *     é a instrução e é o que dá para conferir. O app não reescreve o pedido do
+ *     órgão com palavras minhas.
+ *
+ * Exigência sem valor conhecido aparece em âmbar, e não escondida: é a hora de
+ * descobrir que falta o número, e não depois de a nota voltar.
+ */
+function ExigenciasDaNF({ itens }: { itens: Card['exigencias_nf'] }) {
+  const faltando = itens.filter(e => !e.valor && e.origem !== 'EMAIL').length
+  return (
+    <Secao titulo="O que precisa constar na nota fiscal">
+      <div className="space-y-1.5">
+        {itens.map(e => (
+          <div key={e.chave} className="flex gap-2 text-sm">
+            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-300" />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="text-gray-600">{e.rotulo}</span>
+                {e.valor ? (
+                  <span className="font-mono text-sm font-semibold text-gray-900">{e.valor}</span>
+                ) : e.origem === 'EMAIL' ? (
+                  <span className="text-xs text-gray-400">— pedido pelo órgão</span>
+                ) : (
+                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                    falta — não foi lido em nenhum e-mail
+                  </span>
+                )}
+                {e.origem === 'PADRAO' && (
+                  <span className="text-[11px] text-gray-400" title="vale para este tipo de operação mesmo sem o órgão pedir">
+                    sempre
+                  </span>
+                )}
+              </div>
+              {e.trecho && (
+                <p className="mt-0.5 text-[11px] leading-relaxed text-gray-500">
+                  “{e.trecho}”
+                </p>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {faltando > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700">
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          {faltando === 1 ? 'Falta 1 número' : `Faltam ${faltando} números`} que a nota
+          precisa levar — está no documento do órgão, não no que o motor conseguiu ler.
+        </p>
+      )}
+      <p className="mt-1.5 text-[11px] text-gray-400">
+        Lido do corpo dos e-mails deste caso. Anexo não entra aqui: o arquivo é
+        apagado depois da leitura, só os números ficam.
+      </p>
+    </Secao>
+  )
+}
+
 function TipoDaSolicitacao({ c, onReclassificar, salvando }: {
   c: Card
   onReclassificar: (tipo: string, motivo: string) => void
@@ -1894,6 +1971,8 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
             </p>
           </Secao>
         )}
+
+        {c.exigencias_nf?.length > 0 && <ExigenciasDaNF itens={c.exigencias_nf} />}
 
         {c.demanda && (
           <Secao titulo="Já virou trabalho">
