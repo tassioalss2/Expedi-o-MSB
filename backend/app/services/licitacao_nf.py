@@ -202,6 +202,51 @@ def af_da_guia(corpo: Optional[str]) -> tuple:
     return achado.group(0).replace(" ", ""), texto[m.start():m.start() + 200].strip()
 
 
+# ── dados que o comunicado de uso exige ────────────────────────────────────
+# A demanda de comunicado de uso não nasce sem paciente, prontuário e data do
+# procedimento — é o que identifica o caso e o que evita processar o mesmo
+# procedimento duas vezes. Até 10/09/2026 a tela não pedia nada disso, então o
+# botão "gerar demanda" só sabia dar erro nos 70 comunicados abertos.
+#
+# E não precisava pedir na mão: a guia do hospital traz os três, e o assunto
+# repete paciente e data. Ler é melhor que digitar — o que se digita de novo é
+# o que se digita errado.
+_PACIENTE = re.compile(r"Paciente\s*:?\s*([A-Z][A-Z' ]{4,60}?)\s*(?:Data|RA\b|Medico|Prontuario|Procedimento)", re.I)
+_PRONTUARIO = re.compile(r"Prontuario\s*:?\s*(\d{3,12})", re.I)
+# "sa.da" e não "saida": o Í de SAÍDA chega corrompido em parte dos assuntos
+# ("DATA DA SAADA"), e é do assunto que vem a data em 19 dos comunicados.
+_DATA = re.compile(
+    r"Data\s*(?:d[ae]\s*)?(?:cirurgia|sa.{0,2}da|procedimento)\s*:?\s*(\d{2}/\d{2}/\d{4})", re.I)
+# O assunto do e-mail é a segunda fonte, e nele o nome vem antes do "-".
+_PACIENTE_ASSUNTO = re.compile(r"DE NOTA\s*:?\s*([A-Z][A-Z' ]{4,60}?)\s*-\s*DATA", re.I)
+_DATA_ASSUNTO = re.compile(r"DATA D[AE] SA.{0,2}DA\s*:?\s*(\d{2}/\d{2}/\d{4})", re.I)
+
+
+def dados_do_comunicado(assunto: Optional[str], corpo: Optional[str]) -> dict:
+    """Paciente, prontuário e data do procedimento, lidos do e-mail.
+
+    Devolve só o que achou — chave ausente é chave não lida, nunca um palpite.
+    O corpo (a guia do hospital) vence o assunto, que é resumo.
+    """
+    achado: dict = {}
+    texto = _limpa(_sem_acento(corpo))
+    tit = _limpa(_sem_acento(assunto))
+
+    m = _PACIENTE.search(texto) or _PACIENTE_ASSUNTO.search(tit)
+    if m:
+        nome = re.sub(r"\s+", " ", m.group(1)).strip()
+        if len(nome) > 4:
+            achado["nome_paciente"] = nome
+    m = _PRONTUARIO.search(texto)
+    if m:
+        achado["prontuario"] = m.group(1)
+    m = _DATA.search(texto) or _DATA_ASSUNTO.search(tit)
+    if m:
+        d, mes, a = m.group(1).split("/")
+        achado["data_procedimento"] = "%s-%s-%s" % (a, mes, d)
+    return achado
+
+
 # Exigências que valem SEMPRE, por tipo de operação. Dito pelo Tássio em
 # 10/09/2026: "de modo geral é o número da NE e do PE ou da AF". Vão na lista
 # mesmo quando o e-mail não pede, porque a nota sem elas volta.

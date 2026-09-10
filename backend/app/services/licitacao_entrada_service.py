@@ -1204,6 +1204,18 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
              # escreve com barra, e é assim que vai na nota.
              "AF": re.sub(r"^(\d+)\.(\d{4})$", r"\1/\2", c["documento"] or "") or None})
 
+        # Paciente, prontuário e data do procedimento, lidos do e-mail, para a
+        # tela de gerar demanda nascer preenchida. Só no comunicado de uso: é o
+        # único tipo em que a demanda os exige, e nenhum outro tem paciente.
+        c["dados_comunicado"] = {}
+        if (c["tipo"] or "") == "COMUNICADO_USO":
+            for e in c["emails"]:
+                c["dados_comunicado"] = {
+                    **licitacao_nf.dados_do_comunicado(e.get("assunto"), e.get("corpo")),
+                    **c["dados_comunicado"]}
+                if len(c["dados_comunicado"]) == 3:
+                    break
+
     # Agora sim os filtros, sobre o caso já montado.
     #
     # ABERTOS = tudo que ainda dá trabalho (não resolvido), que é EXATAMENTE o
@@ -1657,18 +1669,27 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
             vistos.add(assinatura)
             itens_brutos.append(i)
 
-    catalogo = _produto_por_codigo(db, [i.get("codigo_msb") for i in itens_brutos])
-    itens = []
-    for i in itens_brutos:
-        cod = str(i.get("codigo_msb") or "").strip()
-        p = catalogo.get(cod)
-        itens.append(DemandaItem(
-            produto_id=p["id"] if p else None,
-            codigo=(p["codigo"] if p else cod) or None,
-            descricao=(p["descricao"] if p else i.get("descricao")) or None,
-            qtd=float(i.get("qtd") or 0),
-            valor=float(i.get("valor_unitario") or 0),
-        ))
+    # A escolha de gente vence a leitura da máquina. O documento do órgão traz a
+    # descrição CATMAT, que é genérica de propósito ("SISTEMA IMPLANTAVEL P/
+    # ESTIMULACAO CARDIACA, COMPONENTE ELETRODO...") e serve para vários itens:
+    # dos 7 códigos citados nos documentos da janela, 3 existem no catálogo. Nos
+    # outros o produto só sai de quem conhece o pregão.
+    escolhidos = extra.get("itens")
+    if escolhidos:
+        itens = [i if isinstance(i, DemandaItem) else DemandaItem(**i) for i in escolhidos]
+    else:
+        catalogo = _produto_por_codigo(db, [i.get("codigo_msb") for i in itens_brutos])
+        itens = []
+        for i in itens_brutos:
+            cod = str(i.get("codigo_msb") or "").strip()
+            p = catalogo.get(cod)
+            itens.append(DemandaItem(
+                produto_id=p["id"] if p else None,
+                codigo=(p["codigo"] if p else cod) or None,
+                descricao=(p["descricao"] if p else i.get("descricao")) or None,
+                qtd=float(i.get("qtd") or 0),
+                valor=float(i.get("valor_unitario") or 0),
+            ))
 
     payload = DemandaCreate(
         tipo_operacao=tipo,

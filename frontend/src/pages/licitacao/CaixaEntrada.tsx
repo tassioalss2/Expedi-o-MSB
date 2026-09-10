@@ -17,7 +17,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, CircleDot, Clock, Inbox, Link2, Loader2, Mail,
   MinusCircle, Paperclip, Package, Search, ShieldQuestion, X, CalendarClock, Hand,
-  ExternalLink,
+  ExternalLink, Plus, Trash2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
@@ -204,6 +204,11 @@ type Card = {
     chave: string; rotulo: string; valor: string | null
     trecho: string | null; origem: 'PADRAO' | 'EMAIL' | 'PADRAO_E_EMAIL'
   }[]
+  /** Paciente, prontuário e data do procedimento lidos do e-mail — o que a
+   *  demanda de comunicado de uso exige. Chave ausente é chave não lida. */
+  dados_comunicado: {
+    nome_paciente?: string; prontuario?: string; data_procedimento?: string
+  }
   /** A conversa do Outlook. A licitação repassa e SAI da conversa: quem trata
    *  somos nós, com outro remetente, e por isso 61% das mensagens nunca
    *  chegavam ao app. Estes campos são o resumo; a conversa em si vem por
@@ -1439,6 +1444,323 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  * classificador; a segunda nao deve mudar. Quem le a diferenca e gente, e o
  * motivo e o que da a ela o que ler.
  */
+/** Escolhe um produto do catálogo por código ou por descrição.
+ *
+ *  O documento do órgão traz a descrição CATMAT, que é genérica de propósito e
+ *  serve para vários itens — por isso o produto não sai de regra nenhuma e
+ *  precisa de quem conhece o pregão. Filtra sobre o catálogo já carregado (são
+ *  ~187 SKUs) em vez de ir ao servidor a cada letra. */
+function EscolheProduto({ produtos, escolhido, onEscolher }: {
+  produtos: any[]
+  escolhido: { produto_id: string | null; codigo: string | null; descricao: string | null }
+  onEscolher: (p: any | null) => void
+}) {
+  const [q, setQ] = useState('')
+  const achados = useMemo(() => {
+    const t = q.trim().toLowerCase()
+    if (t.length < 2) return []
+    return produtos.filter(p =>
+      `${p.codigo} ${p.descricao}`.toLowerCase().includes(t)).slice(0, 8)
+  }, [q, produtos])
+
+  if (escolhido.produto_id) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5">
+        <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+        <span className="font-mono text-xs font-semibold text-emerald-900">{escolhido.codigo}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-emerald-800">{escolhido.descricao}</span>
+        <button onClick={() => { onEscolher(null); setQ('') }}
+          className="shrink-0 text-emerald-700 hover:text-emerald-900" title="trocar o produto">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <div className="relative">
+        <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" />
+        <input value={q} onChange={e => setQ(e.target.value)} autoFocus={false}
+          placeholder="qual produto é este? código ou descrição…"
+          className="w-full rounded-lg border border-amber-300 bg-amber-50/40 py-1.5 pl-8 pr-3 text-xs" />
+      </div>
+      {achados.length > 0 && (
+        <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+          {achados.map(p => (
+            <button key={p.id} onClick={() => onEscolher(p)}
+              className="flex w-full items-baseline gap-2 border-b border-gray-100 px-2.5 py-1.5 text-left last:border-0 hover:bg-blue-50">
+              <span className="font-mono text-xs font-semibold text-gray-900">{p.codigo}</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-gray-600">{p.descricao}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {q.trim().length >= 2 && achados.length === 0 && (
+        <p className="mt-1 text-[11px] text-gray-500">
+          Nada com esse texto no catálogo. O produto precisa existir em Cadastros.
+        </p>
+      )}
+    </div>
+  )
+}
+
+const CANAIS = [['LICITACAO_VASCULAR', 'Vascular'], ['LICITACAO_URO', 'Uro']] as const
+
+/**
+ * O que falta para o pedido virar demanda, pedido de uma vez.
+ *
+ * Antes o botão "Gerar demanda" mandava um payload vazio e o backend recusava:
+ * medido em 10/09/2026, 1 dos 123 casos abertos passava. Os outros 122 batiam
+ * num toast vermelho que ainda mentia sobre a causa — dizia "informe os itens e
+ * quantidades da NE" num caso cujo item estava lido e visível na tela. O que
+ * faltava não era o item; era saber QUAL PRODUTO ele é, porque o órgão manda a
+ * descrição CATMAT e nenhum código nosso.
+ *
+ * Tudo o que o e-mail já disse vem preenchido — NE, pregão (inclusive o do
+ * contrato citado), prazo do anexo, paciente, prontuário e data do
+ * procedimento. O que se digita de novo é o que se digita errado.
+ *
+ * E a janela diz o que falta em vez de só travar o botão: foi a lição do "o q
+ * tenho q fazer pra avançar? deixe isso mais simples!" no funil do CRM.
+ */
+function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
+  c: Card
+  onFechar: () => void
+  onGerar: (extra: any) => void
+  salvando: boolean
+}) {
+  const tipo = c.tipo || 'OUTRO'
+  const doExig = (k: string) => c.exigencias_nf?.find(e => e.chave === k)?.valor || ''
+  const eComunicado = tipo === 'COMUNICADO_USO'
+
+  const [numero, setNumero] = useState(c.empenho || doExig('AF') || doExig('NE') || '')
+  const [pregao, setPregao] = useState(doExig('PREGAO'))
+  const [prazo, setPrazo] = useState(c.entrega_prevista || '')
+  const [canal, setCanal] = useState('')
+  const [paciente, setPaciente] = useState(c.dados_comunicado?.nome_paciente || '')
+  const [prontuario, setProntuario] = useState(c.dados_comunicado?.prontuario || '')
+  const [dataProc, setDataProc] = useState(c.dados_comunicado?.data_procedimento || '')
+  const [itens, setItens] = useState<any[]>(() => (c.itens || []).map(i => ({
+    produto_id: null, codigo: null, descricao: null,
+    qtd: i.qtd || 0, valor: i.valor_unitario || 0,
+    // A descrição do órgão fica à vista, e não no campo: é o que permite
+    // reconhecer o produto, mas não é o nome dele no nosso catálogo.
+    catmat: i.descricao, do_email: true,
+  })))
+
+  const { data: produtos = [] } = useQuery<any[]>({
+    queryKey: ['produtos-catalogo'],
+    queryFn: () => api.get('/cadastros/produtos?limite=2000').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const comProduto = itens.filter(i => i.produto_id && Number(i.qtd) > 0)
+  const precisaItem = tipo === 'VENDA_DIRETA' || tipo === 'AMOSTRA'
+
+  const falta: string[] = []
+  if (!c.cliente_id) falta.push('o cliente — resolva o CNPJ na aba Órgãos')
+  if (tipo === 'OUTRO') falta.push('o tipo da operação — corrija no detalhe do caso')
+  if (!numero.trim()) falta.push(eComunicado ? 'o número da AF' : 'a nota de empenho')
+  if (eComunicado) {
+    if (!paciente.trim()) falta.push('o nome do paciente')
+    if (!prontuario.trim()) falta.push('o prontuário')
+    if (!dataProc) falta.push('a data do procedimento')
+  }
+  if (eComunicado && !canal) falta.push('o canal')
+  if (precisaItem && comProduto.length === 0) falta.push('escolher o produto de ao menos um item')
+  if (tipo === 'AMOSTRA' && !prazo) falta.push('o prazo de entrega/retirada')
+
+  function gerar() {
+    onGerar({
+      tipo_operacao: tipo,
+      numero: numero.trim() || undefined,
+      numero_pregao: pregao.trim() || undefined,
+      prazo: prazo || undefined,
+      canal: canal || undefined,
+      nome_paciente: eComunicado ? paciente.trim() || undefined : undefined,
+      prontuario: eComunicado ? prontuario.trim() || undefined : undefined,
+      data_procedimento: eComunicado ? dataProc || undefined : undefined,
+      itens: comProduto.length
+        ? comProduto.map(i => ({
+            produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao,
+            qtd: Number(i.qtd) || 0, valor: Number(i.valor) || 0,
+          }))
+        : undefined,
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onFechar}>
+      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-gray-900">Gerar demanda</h3>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {TIPO_LABEL[tipo]} · {c.cliente_nome || 'sem cliente'}
+              {c.empenho && <span className="font-mono"> · {c.empenho}</span>}
+            </p>
+          </div>
+          <button onClick={onFechar} className="shrink-0 text-gray-400 hover:text-gray-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-5 py-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Campo rotulo={eComunicado ? 'AF (autorização de fornecimento)' : 'Nota de empenho'}>
+              <input value={numero} onChange={e => setNumero(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 font-mono text-sm" />
+            </Campo>
+            <Campo rotulo="Pregão" dica={doExig('PREGAO') ? 'lido do e-mail ou do contrato' : undefined}>
+              <input value={pregao} onChange={e => setPregao(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 font-mono text-sm" />
+            </Campo>
+            <Campo rotulo="Prazo" dica={c.entrega_prevista ? 'lido do anexo do pedido' : undefined}>
+              <input type="date" value={prazo} onChange={e => setPrazo(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm" />
+            </Campo>
+            <Campo rotulo="Canal">
+              <div className="flex gap-1.5">
+                {CANAIS.map(([v, label]) => (
+                  <button key={v} onClick={() => setCanal(canal === v ? '' : v)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+                      canal === v ? 'border-blue-600 bg-blue-600 text-white'
+                                  : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Campo>
+          </div>
+
+          {eComunicado && (
+            <div className="rounded-xl border border-gray-200 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Do comunicado de uso
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Campo rotulo="Paciente">
+                  <input value={paciente} onChange={e => setPaciente(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm" />
+                </Campo>
+                <Campo rotulo="Prontuário">
+                  <input value={prontuario} onChange={e => setProntuario(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm" />
+                </Campo>
+                <Campo rotulo="Data do procedimento">
+                  <input type="date" value={dataProc} onChange={e => setDataProc(e.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm" />
+                </Campo>
+              </div>
+              {Object.keys(c.dados_comunicado || {}).length > 0 && (
+                <p className="mt-1.5 text-[11px] text-gray-400">
+                  Preenchido com o que o e-mail dizia — confira antes de gerar.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="rounded-xl border border-gray-200 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Itens {precisaItem && <span className="font-normal normal-case text-gray-400">· o produto é obrigatório aqui</span>}
+              </p>
+              <button onClick={() => setItens([...itens, {
+                produto_id: null, codigo: null, descricao: null, qtd: 0, valor: 0,
+                catmat: null, do_email: false,
+              }])}
+                className="flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:border-gray-400">
+                <Plus className="h-3 w-3" /> item
+              </button>
+            </div>
+            {itens.length === 0 && (
+              <p className="py-2 text-xs text-gray-500">
+                Nenhum item foi lido do documento. {precisaItem
+                  ? 'Acrescente o que a NE empenha — é o que vira a linha do contrato e o saldo da OV.'
+                  : 'Dá para gerar sem item neste tipo.'}
+              </p>
+            )}
+            <div className="space-y-2.5">
+              {itens.map((i, n) => (
+                <div key={n} className="rounded-lg bg-gray-50 p-2.5">
+                  {i.catmat && (
+                    <p className="mb-1.5 text-[11px] leading-relaxed text-gray-500">
+                      Documento do órgão: “{i.catmat}”
+                    </p>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1 text-xs text-gray-500">
+                      qtd
+                      <input value={i.qtd} onChange={e => setItens(itens.map((x, m) =>
+                        m === n ? { ...x, qtd: e.target.value } : x))}
+                        className="w-16 rounded border border-gray-200 px-1.5 py-1 text-right text-xs tabular-nums" />
+                    </label>
+                    <label className="flex items-center gap-1 text-xs text-gray-500">
+                      R$
+                      <input value={i.valor} onChange={e => setItens(itens.map((x, m) =>
+                        m === n ? { ...x, valor: e.target.value } : x))}
+                        className="w-24 rounded border border-gray-200 px-1.5 py-1 text-right text-xs tabular-nums" />
+                    </label>
+                    <div className="min-w-[220px] flex-1">
+                      <EscolheProduto produtos={produtos} escolhido={i}
+                        onEscolher={p => setItens(itens.map((x, m) => m === n ? {
+                          ...x,
+                          produto_id: p?.id || null,
+                          codigo: p?.codigo || null,
+                          descricao: p?.descricao || null,
+                        } : x))} />
+                    </div>
+                    {!i.do_email && (
+                      <button onClick={() => setItens(itens.filter((_x, m) => m !== n))}
+                        className="shrink-0 text-gray-400 hover:text-red-600" title="tirar este item">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {falta.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-900">
+                <AlertTriangle className="h-3.5 w-3.5" /> Para gerar, falta:
+              </p>
+              <ul className="mt-1 space-y-0.5 pl-5 text-xs text-amber-800">
+                {falta.map(f => <li key={f} className="list-disc">{f}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-5 py-3">
+          <button onClick={onFechar}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button onClick={gerar} disabled={falta.length > 0 || salvando}
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40">
+            {salvando && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Gerar demanda
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Campo({ rotulo, dica, children }: { rotulo: string; dica?: string; children: any }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-gray-600">{rotulo}</label>
+      {children}
+      {dica && <p className="mt-0.5 text-[11px] text-gray-400">{dica}</p>}
+    </div>
+  )
+}
+
 /**
  * O que precisa constar na nota fiscal deste caso.
  *
@@ -2465,11 +2787,18 @@ export function AbaCaixaEntrada() {
     onError: (e: any) => toast.error(msgErro(e, 'Não consegui corrigir o tipo')),
   })
 
+  // O caso que está na janela de gerar demanda. Antes o botão disparava a
+  // criação direto com payload vazio, e 122 dos 123 casos abertos batiam num
+  // erro do backend: o que faltava (qual produto é o item, o paciente do
+  // comunicado) ninguém tinha pedido.
+  const [promovendo, setPromovendo] = useState<Card | null>(null)
+
   const promover = useMutation({
-    mutationFn: (chave: string) =>
-      api.post(`/licitacoes/entrada/grupo/promover?chave=${encodeURIComponent(chave)}`, {}),
+    mutationFn: ({ chave, extra }: { chave: string; extra: any }) =>
+      api.post(`/licitacoes/entrada/grupo/promover?chave=${encodeURIComponent(chave)}`, extra),
     onSuccess: () => {
       toast.success('Demanda criada — o card já está no painel')
+      setPromovendo(null)
       qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
       qc.invalidateQueries({ queryKey: ['demandas'] })
     },
@@ -2625,7 +2954,7 @@ export function AbaCaixaEntrada() {
                       onEstoque={(v, obs) => triar.mutate({
                         chave: c.chave, aguardando_estoque: v, estoque_obs: obs })}
                       onAbrir={() => setDetalhe(c.chave)}
-                      onPromover={() => promover.mutate(c.chave)} />
+                      onPromover={() => setPromovendo(c)} />
                   ))}
                 </div>
               </div>
@@ -2651,7 +2980,20 @@ export function AbaCaixaEntrada() {
             onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
             onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
             onApagarNota={id => apagarNota.mutate(id)}
-            onPromover={() => promover.mutate(c.chave)} />
+            onPromover={() => setPromovendo(c)} />
+        )
+      })()}
+
+      {/* Le do array carregado, como o detalhe: se o caso mudar por baixo (o
+          motor roda de hora em hora), a janela mostra o estado novo em vez de
+          gerar a demanda com o que era verdade quando ela abriu. */}
+      {promovendo && (() => {
+        const c = cards.find(x => x.chave === promovendo.chave)
+        if (!c) return null
+        return (
+          <ModalGerarDemanda c={c} salvando={promover.isPending}
+            onFechar={() => setPromovendo(null)}
+            onGerar={extra => promover.mutate({ chave: c.chave, extra })} />
         )
       })()}
     </div>

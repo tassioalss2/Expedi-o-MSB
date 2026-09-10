@@ -13,6 +13,7 @@ from app.models.schemas import (
     DemandaEstoqueCreate,
     DemandaEstoqueLiberar,
     DemandaFreteCreate,
+    DemandaItem,
     DemandaNFEnvioCreate,
     DemandaUpdate,
     EmpenhoCreate,
@@ -255,6 +256,13 @@ class EntradaPromover(BaseModel):
     prontuario: Optional[str] = None
     numero_nf: Optional[str] = None
     data_procedimento: Optional[date] = None
+    # Os itens COM o produto escolhido por gente. O documento do órgão traz a
+    # descrição CATMAT, que é genérica de propósito e serve para vários itens:
+    # dos 7 códigos citados nos documentos da janela, 3 existem no catálogo.
+    # Sem este campo, a venda direta batia em "informe os itens e quantidades
+    # da NE" mesmo com o item lido e visível na tela — o que faltava não era o
+    # item, era saber qual produto ele é.
+    itens: Optional[list[DemandaItem]] = None
     # Segunda demanda para a mesma NE só quando alguém pede de propósito: duas
     # demandas para o mesmo empenho é o pedido duplicado que o processo evita.
     permitir_segunda: bool = False
