@@ -1450,8 +1450,11 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  *  serve para vários itens — por isso o produto não sai de regra nenhuma e
  *  precisa de quem conhece o pregão. Filtra sobre o catálogo já carregado (são
  *  ~187 SKUs) em vez de ir ao servidor a cada letra. */
-function EscolheProduto({ produtos, escolhido, sugerido, onEscolher }: {
+function EscolheProduto({ produtos, escolhido, sugerido, erro, onEscolher }: {
   produtos: any[]
+  /** O catálogo não carregou. Dizer isso é diferente de dizer que o produto não
+   *  existe — a segunda mensagem no lugar da primeira custou uma rodada. */
+  erro?: boolean
   escolhido: { produto_id: string | null; codigo: string | null; descricao: string | null }
   /** Veio do de-para (v45), não de um clique agora. Fica dito na tela: escolha
    *  de outro pregão pode ser outro SKU, porque a descrição CATMAT é ampla. */
@@ -1459,11 +1462,24 @@ function EscolheProduto({ produtos, escolhido, sugerido, onEscolher }: {
   onEscolher: (p: any | null) => void
 }) {
   const [q, setQ] = useState('')
+  const [aberto, setAberto] = useState(false)
+
+  // Busca por PEDAÇOS, em qualquer ordem, ignorando pontuacao: "vcet 4110",
+  // "4110ck1" e "eletrodo 4fr" acham o mesmo VCET-4110CK1. O codigo do catalogo
+  // tem hifen ("VCET-4110CK1") e a descricao tem barra e ponto
+  // ("4FRX110CM/125CM", "JL3.5") — comparar texto cru faria a busca depender de
+  // acertar a pontuacao, que ninguem decora.
   const achados = useMemo(() => {
-    const t = q.trim().toLowerCase()
-    if (t.length < 2) return []
-    return produtos.filter(p =>
-      `${p.codigo} ${p.descricao}`.toLowerCase().includes(t)).slice(0, 8)
+    const limpa = (s: string) => s.toUpperCase().replace(/[^A-Z0-9 ]/g, ' ')
+    const alvos = limpa(q).split(/\s+/).filter(Boolean)
+    const lista = produtos.map(p => ({
+      p, texto: limpa(`${p.codigo} ${p.descricao} ${p.familia || ''}`).replace(/\s+/g, ' '),
+      // Sem espaco tambem: casa "4110ck1" contra "4110 CK1".
+      grudado: limpa(`${p.codigo}${p.descricao}`).replace(/\s+/g, ''),
+    }))
+    const casa = alvos.length === 0 ? lista : lista.filter(x =>
+      alvos.every(a => x.texto.includes(a) || x.grudado.includes(a)))
+    return casa.slice(0, 40).map(x => x.p)
   }, [q, produtos])
 
   if (escolhido.produto_id) {
@@ -1492,30 +1508,38 @@ function EscolheProduto({ produtos, escolhido, sugerido, onEscolher }: {
       </div>
     )
   }
+  // A lista abre ao clicar no campo, ANTES de digitar: são ~187 produtos, e
+  // escolher de uma lista é mais fácil que adivinhar o texto certo. Digitar só
+  // estreita.
   return (
     <div>
       <div className="relative">
         <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-gray-400" />
-        <input value={q} onChange={e => setQ(e.target.value)} autoFocus={false}
-          placeholder="qual produto é este? código ou descrição…"
+        <input value={q} onFocus={() => setAberto(true)}
+          onChange={e => { setQ(e.target.value); setAberto(true) }}
+          placeholder="qual produto é este? clique para ver a lista…"
           className="w-full rounded-lg border border-amber-300 bg-amber-50/40 py-1.5 pl-8 pr-3 text-xs" />
       </div>
-      {achados.length > 0 && (
-        <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white">
+      {erro ? (
+        <p className="mt-1 text-[11px] font-medium text-red-600">
+          Não consegui carregar o catálogo de produtos — recarregue a página.
+        </p>
+      ) : aberto && achados.length > 0 ? (
+        <div className="mt-1 max-h-52 overflow-y-auto rounded-lg border border-gray-200 bg-white">
           {achados.map(p => (
-            <button key={p.id} onClick={() => onEscolher(p)}
+            <button key={p.id} onClick={() => { onEscolher(p); setAberto(false) }}
               className="flex w-full items-baseline gap-2 border-b border-gray-100 px-2.5 py-1.5 text-left last:border-0 hover:bg-blue-50">
-              <span className="font-mono text-xs font-semibold text-gray-900">{p.codigo}</span>
+              <span className="shrink-0 font-mono text-xs font-semibold text-gray-900">{p.codigo}</span>
               <span className="min-w-0 flex-1 truncate text-xs text-gray-600">{p.descricao}</span>
             </button>
           ))}
         </div>
-      )}
-      {q.trim().length >= 2 && achados.length === 0 && (
+      ) : aberto && q.trim() ? (
         <p className="mt-1 text-[11px] text-gray-500">
-          Nada com esse texto no catálogo. O produto precisa existir em Cadastros.
+          Nenhum dos {produtos.length} produtos do catálogo casa “{q.trim()}”.
+          Tente um pedaço só (“4110”, “eletrodo”), ou cadastre o produto em Cadastros.
         </p>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -1564,9 +1588,13 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
     catmat: i.descricao, chave_desc: i.chave_desc, do_email: true,
   })))
 
-  const { data: produtos = [] } = useQuery<any[]>({
+  // `/produtos`, e não `/cadastros/produtos`: o router de cadastros nao tem
+  // prefixo proprio. Com a URL errada a lista vinha vazia e o campo dizia "nada
+  // com esse texto no catalogo" para QUALQUER coisa digitada — inclusive para
+  // VCET-4110CK1, que existe. Erro caro justamente por parecer uma resposta.
+  const { data: produtos = [], isError: erroCatalogo } = useQuery<any[]>({
     queryKey: ['produtos-catalogo'],
-    queryFn: () => api.get('/cadastros/produtos?limite=2000').then(r => r.data),
+    queryFn: () => api.get('/produtos?limite=2000').then(r => r.data),
     staleTime: 5 * 60 * 1000,
   })
 
@@ -1740,7 +1768,7 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
                     </label>
                     <div className="min-w-[220px] flex-1">
                       <EscolheProduto produtos={produtos} escolhido={i}
-                        sugerido={i.sugerido}
+                        sugerido={i.sugerido} erro={erroCatalogo}
                         onEscolher={p => setItens(itens.map((x, m) => m === n ? {
                           ...x,
                           produto_id: p?.id || null,
