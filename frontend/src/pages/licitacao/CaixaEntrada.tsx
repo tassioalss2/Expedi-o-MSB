@@ -212,7 +212,12 @@ type Card = {
   /** Notas citadas no e-mail que EXISTEM em `pedidos` — o nosso sistema já as
    *  emitiu. Indício de caso encerrado, nunca decisão: carta de correção cita a
    *  nota justamente porque o trabalho é sobre ela. */
-  nf_emitida: { numero: string; ov: string | null; valor: number | null }[]
+  nf_emitida: {
+    numero: string; ov: string | null; valor: number | null
+    /** "no pedido" ou "na conversa" — e quem citou, quando vem da conversa.
+     *  "NF 20644 citada por Jaqueline" diz muito mais que "existe uma nota". */
+    onde?: string; por?: string | null; quando?: string | null
+  }[]
   /** A conversa do Outlook. A licitação repassa e SAI da conversa: quem trata
    *  somos nós, com outro remetente, e por isso 61% das mensagens nunca
    *  chegavam ao app. Estes campos são o resumo; a conversa em si vem por
@@ -2823,7 +2828,18 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
               NF {n.numero}{n.ov ? ` · ${n.ov}` : ''}
             </span>
           ))}
-          <span className="text-emerald-700">— citada neste e-mail e encontrada no sistema</span>
+          {/* De onde a nota apareceu importa: no pedido do orgao e uma coisa,
+              na RESPOSTA de quem resolve e outra — esta e quase sempre "ja
+              tratei". Regra do Tassio em 10/09/2026 sobre a Jaqueline. */}
+          <span className="text-emerald-700">
+            {c.nf_emitida.some(n => n.onde === 'na conversa')
+              ? (() => {
+                  const q = c.nf_emitida.find(n => n.onde === 'na conversa')
+                  const nome = q?.por ? String(q.por).split(' ')[0] : null
+                  return `— citada na conversa${nome ? ` por ${nome}` : ''}, e encontrada no sistema`
+                })()
+              : '— citada neste e-mail e encontrada no sistema'}
+          </span>
         </div>
       )}
 

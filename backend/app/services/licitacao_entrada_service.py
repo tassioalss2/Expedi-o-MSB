@@ -121,6 +121,25 @@ def _suporta_conversa(db) -> bool:
     return _TEM_CONVERSA
 
 
+_TEM_NF_CITADA = None
+
+
+def _suporta_nf_citada(db) -> bool:
+    """A coluna da v46 existe? Sem ela o selo cai para o que vem da caixa.
+
+    Mesmo padrao de `_suporta_conversa`: a migration e rodada a mao pelo Tassio,
+    e o app nao pode parar de sincronizar enquanto ela nao roda.
+    """
+    global _TEM_NF_CITADA
+    if _TEM_NF_CITADA is None:
+        try:
+            db.table("licitacao_entrada").select("nf_citada").limit(1).execute()
+            _TEM_NF_CITADA = True
+        except Exception:
+            _TEM_NF_CITADA = False
+    return _TEM_NF_CITADA
+
+
 def _corte(dias: Optional[int]) -> Optional[str]:
     """A data de corte da janela, ou None para não cortar nada.
 
@@ -315,6 +334,34 @@ def _quem_resolve(nome: Optional[str]) -> bool:
     return any(all(p in n for p in partes) for partes in _RESOLVEM)
 
 
+def _nf_na_thread(msgs: list[dict]) -> list[dict]:
+    """As notas fiscais citadas na conversa, com quem citou e quando (v46).
+
+    O caso que trouxe isto: a Jaqueline responde a "HUC - AUTORIZAÇÃO DE
+    FATURAMENTO - AF 39" com "confirmar o recebimento da nota fiscal de venda
+    20644". O caso está tratado, e o app mostrava "Em aberto" porque o selo de
+    nota emitida só olhava o corpo dos e-mails da CAIXA — e a resposta dela vive
+    na conversa.
+
+    Guarda o número CRU. Cruzar com `pedidos` para saber se é nota nossa é feito
+    na leitura, e não aqui: a nota pode ser emitida depois desta rodada, e
+    congelar o cruzamento faria o selo mentir por uma hora.
+
+    Só o que QUEM RESOLVE ou o órgão citou. Nota que a própria licitação
+    repassou no corpo original já é vista pelo outro caminho.
+    """
+    achadas: dict = {}
+    for m in msgs or ():
+        texto = "%s %s" % (m.get("assunto") or "", str(m.get("corpo") or "")[:8000])
+        for achado in _CITA_NF.finditer(texto):
+            n = achado.group(1).replace(".", "").lstrip("0")
+            if not n or n in achadas:
+                continue
+            achadas[n] = {"numero": n, "por": (m.get("nome") or None),
+                          "quando": (m.get("quando") or None)}
+    return list(achadas.values())
+
+
 def _resumo_da_conversa(thread: list[dict]) -> dict:
     """O resumo que a listagem precisa sem carregar a conversa inteira.
 
@@ -346,6 +393,10 @@ def _resumo_da_conversa(thread: list[dict]) -> dict:
         "respondido_por": (resolve[-1].get("nome") or None) if resolve else None,
         "informado_em": informa[-1]["quando"] if informa else None,
         "informado_por": (informa[-1].get("nome") or None) if informa else None,
+        # As notas citadas NA CONVERSA (v46). Extraídas aqui porque a thread já
+        # está em mãos: calcular isto na listagem custaria 5,4 MB de corpos por
+        # refresh de tela, que é exatamente o que a v39 evitou.
+        "nf_citada": _nf_na_thread(msgs),
     }
 
 
@@ -514,6 +565,7 @@ def sincronizar(lote: list[dict]) -> dict:
         return cli, dem
 
     tem_conversa = _suporta_conversa(db)
+    tem_nf_citada = _suporta_nf_citada(db)
     conversa = _grava_mensagens(db, lote) if tem_conversa else {}
 
     criados = atualizados = sem_cliente = ligados = 0
@@ -531,6 +583,8 @@ def sincronizar(lote: list[dict]) -> dict:
         # regra de "o que conta como resposta nossa" mora num lugar só.
         if tem_conversa:
             campos.update(_resumo_da_conversa(e.get("thread")))
+            if not tem_nf_citada:
+                campos.pop("nf_citada", None)
         else:
             campos.pop("conversation_id", None)
         cnpj = _digitos(e.get("cnpj_orgao"))
@@ -1722,21 +1776,43 @@ def _notas_ja_emitidas(db) -> dict:
 
 
 def _nf_citada_e_nossa(membros: list[dict], emitidas: dict) -> list[dict]:
-    """As notas citadas nos e-mails do caso que existem em `pedidos`."""
+    """As notas do caso que existem em `pedidos`, de dois lugares.
+
+    Do corpo dos e-mails da CAIXA e da CONVERSA (a coluna `nf_citada` da v46,
+    preenchida na sincronização). Os dois importam, e o segundo é o que pegava
+    o caso do Tássio: na AF 39 a nota não está no pedido do órgão, está na
+    resposta da Jaqueline — "confirmar o recebimento da nota fiscal de venda
+    20644". Medido: 96 casos ganham o selo por esse caminho, 50 em aberto.
+
+    O cruzamento com `pedidos` é feito AQUI e não na gravação: a nota pode ser
+    emitida depois da rodada, e congelar o cruzamento faria o selo mentir por
+    uma hora.
+    """
     if not emitidas:
         return []
     texto = " ".join(
         [str(m.get("assunto") or "") for m in membros] +
         [str(m.get("corpo") or "")[:5000] for m in membros])
-    saida, vistos = [], set()
+    saida, vistos = [], {}
     for m in _CITA_NF.finditer(texto):
         n = m.group(1).replace(".", "").lstrip("0")
         if n in vistos or n not in emitidas:
             continue
-        vistos.add(n)
         r = emitidas[n]
-        saida.append({"numero": n, "ov": r.get("numero_pedido"),
-                      "valor": r.get("valor_nf")})
+        vistos[n] = {"numero": n, "ov": r.get("numero_pedido"),
+                     "valor": r.get("valor_nf"), "onde": "no pedido"}
+    # A conversa. Quem citou vai junto: "citada por Jaqueline em 02/09" diz
+    # muito mais que "existe uma nota".
+    for m in membros:
+        for c in (m.get("nf_citada") or []):
+            n = str(c.get("numero") or "").lstrip("0")
+            if not n or n in vistos or n not in emitidas:
+                continue
+            r = emitidas[n]
+            vistos[n] = {"numero": n, "ov": r.get("numero_pedido"),
+                         "valor": r.get("valor_nf"), "onde": "na conversa",
+                         "por": c.get("por"), "quando": c.get("quando")}
+    saida = list(vistos.values())
     return saida
 
 
