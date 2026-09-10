@@ -1337,7 +1337,11 @@ def _emails_do_grupo(chave: str, colunas: str = "*") -> list[dict]:
     # remontada era outra e o grupo não era encontrado. `triar_grupo` respondia
     # 404 "nenhum e-mail para a chave" em 13 dos 16 cards agrupados por número
     # de documento — assumir ou resolver o caso pelo card simplesmente falhava.
-    extras = "empenhos, chave, anexos, assunto, cnpj_orgao, cliente_id, conversation_id"
+    # `id` entra sempre: `_funde` deduplica por ele, e um chamador que pedisse
+    # colunas sem `id` derrubava o agrupamento com KeyError em vez de devolver o
+    # grupo. Aconteceu ao pedir "chave, situacao".
+    extras = ("id, empenhos, chave, anexos, assunto, cnpj_orgao, cliente_id, "
+              "conversation_id")
     pedido = colunas if colunas == "*" else "%s, %s" % (colunas, extras)
     todos = db.table("licitacao_entrada").select(pedido).eq("ativo", True)\
         .limit(5000).execute().data
