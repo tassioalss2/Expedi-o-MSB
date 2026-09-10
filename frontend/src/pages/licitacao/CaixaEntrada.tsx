@@ -1411,6 +1411,15 @@ function ItensDoPedido({ itens }: { itens: any[] }) {
                 <AlertTriangle className="h-3 w-3" /> a conta não fecha no documento — confira o anexo
               </div>
             )}
+            {/* Ideia do Tassio: usar os nossos SKUs para "ter nocao". Tem, e a
+                nocao vira AVISO — nunca descarte. Medido no corpus, descartar
+                por esse sinal derrubaria 73 de 191 itens, e entre eles produto
+                de verdade escrito sem espaco. */}
+            {i.duvida && !i.produto_codigo && (
+              <div className="mt-0.5 flex items-start gap-1 text-[11px] text-amber-700">
+                <ShieldQuestion className="mt-0.5 h-3 w-3 shrink-0" /> {i.duvida}
+              </div>
+            )}
           </div>
           {i.valor_total ? (
             <span className="shrink-0 tabular-nums font-medium text-gray-900">{fmtBRL(i.valor_total)}</span>
@@ -2429,6 +2438,15 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
                   {i.conta_nao_fecha && (
                     <p className="mt-1 flex items-center gap-1 text-xs font-medium text-amber-700">
                       <AlertTriangle className="h-3 w-3" /> a conta não fecha no documento — confira o anexo
+                    </p>
+                  )}
+                  {i.duvida && !i.produto_codigo && (
+                    <p className="mt-1 flex items-start gap-1.5 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                      <ShieldQuestion className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        {i.duvida}. A quantidade e o valor podem estar certos —
+                        o que falta é saber de que produto é.
+                      </span>
                     </p>
                   )}
                   {/* Dizer QUAL produto é esta descrição, aqui, sem precisar

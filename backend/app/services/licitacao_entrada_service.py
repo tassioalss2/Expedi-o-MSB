@@ -1243,11 +1243,19 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
     # numero do item, eu tenho q ver onde tá parado".
     depara = _depara_cru([i.get("descricao") for c in cards
                           for i in (c["itens"] or [])])
+    vocab = _vocabulario_de_produtos(db)
 
     for c in cards:
         c["nf_emitida"] = _nf_citada_e_nossa(c["emails"], emitidas)
+        ct_item = str(c["contrato"] or "").split(" / ")[0].strip()
+        for i in c["itens"]:
+            # Só avisa sobre o que ninguém identificou ainda: item com o nosso
+            # código, ou com código do documento que existe no catálogo, já está
+            # resolvido e um selo ali seria ruído.
+            esc0 = _escolhe_do_depara(depara.get(i.get("chave_desc")), ct_item) \
+                if depara else None
+            i["duvida"] = None if esc0 else _por_que_nao_item(i.get("descricao"), vocab)
         if depara:
-            ct_item = str(c["contrato"] or "").split(" / ")[0].strip()
             for i in c["itens"]:
                 esc = _escolhe_do_depara(depara.get(i.get("chave_desc")), ct_item)
                 if esc:
@@ -1730,6 +1738,95 @@ def _nf_citada_e_nossa(membros: list[dict], emitidas: dict) -> list[dict]:
         saida.append({"numero": n, "ov": r.get("numero_pedido"),
                       "valor": r.get("valor_nf")})
     return saida
+
+
+# Palavras que aparecem no catálogo mas não distinguem produto de rodapé de
+# documento: casariam qualquer texto e tornariam o sinal inútil.
+_VAZIAS_PRODUTO = {
+    "MSB", "TIPO", "MODELO", "UNIDADE", "PARA", "COM", "SEM", "MEDICO",
+    "MEDICA", "HOSPITALAR", "MATERIAL", "PRODUTO", "PRODUTOS", "DESCRICAO",
+    "VALOR", "TOTAL", "QUANT", "QUANTIDADE", "CODIGO", "ITEM", "ITENS",
+}
+
+
+def _vocabulario_de_produtos(db) -> set:
+    """As palavras que aparecem no NOSSO catálogo. Sinal, não filtro.
+
+    Ideia do Tássio em 10/09/2026: "vc tem acesso aos nossos SKUs e vc poderia
+    ter noção por lá tbm, né?". Tem — e a noção é boa para AVISAR. Medido no
+    corpus, essa comparação não serve para DESCARTAR: derrubaria 73 dos 191
+    itens, e entre eles "CATETERBALAOPERIFERICOCOMSISTEMAOVERTHEWIRE(OTW)
+    DUPLOLUMEN", que é cateter balão de verdade escrito sem espaço nenhum.
+    Esconder item real é o erro mais caro deste módulo, então aqui o resultado
+    vira selo na tela e a decisão continua com quem lê.
+    """
+    palavras = set()
+    for off in range(0, 20000, 1000):
+        b = db.table("produtos").select("descricao, familia")\
+            .eq("ativo", True).limit(1000).offset(off).execute().data
+        for p in b:
+            for campo in (p.get("descricao"), p.get("familia")):
+                palavras |= {t for t in re.findall(r"[A-Z]{4,}", _norm(campo))
+                             if t not in _VAZIAS_PRODUTO}
+        if len(b) < 1000:
+            break
+    return palavras
+
+
+# Texto que o extrator pegou do documento e que NÃO é item: rodapé fiscal,
+# cabeçalho de empenho, endereço de entrega, link de autenticação. Cada padrão
+# veio de uma linha real do corpus — o Tássio apontou os dois primeiros na
+# 2026NE1051 ("tá claro q não é um produto").
+_NAO_E_ITEM = (
+    (r"RESERVADO AO FISCO|INFORMACOES COMPLEMENTARES|INF\.? CONTRIBUINTE"
+     r"|COFINS|CSLL|PIS-?RET|IPI ALIQUOTA|ICMS ISENTO|TIPI|CONVENIO 01/99"
+     r"|BASE DE CALCULO|SUBSTITUICAO TRIBUTARIA", "a descrição veio do rodapé fiscal da nota"),
+    (r"CRED\.? DISP|CREDITO DISPONIVEL|VALOR DO EMPENHO|SALDO APOS NE"
+     r"|EMPENHO ORIG|CGC/CPF/UG CREDOR|UG CREDOR", "a descrição veio do cabeçalho do empenho"),
+    (r"HTTPS?://|AUTENTICAR\?N=", "a descrição é um link do documento"),
+    (r"INFORMACOES DO LOCAL|ENDERECO PARA ENTREGA|VILA CLEMENTINO",
+     "a descrição veio do endereço de entrega"),
+)
+_NAO_E_ITEM = tuple((re.compile(p, re.I), r) for p, r in _NAO_E_ITEM)
+
+
+def _por_que_nao_item(descricao, vocab: set) -> Optional[str]:
+    """O que está estranho na DESCRIÇÃO deste item. None = nada.
+
+    Fala da descrição e não do item, e a diferença é grande: em 20 linhas o
+    extrator pegou a quantidade e o valor CERTOS e a descrição errada — no
+    2026NE13310, "4 un x R$ 914,80" bate exato com a NF 20738, mas a descrição
+    virou "Empenho Orig. Nº Contrato 2026CT06637". Dizer "não é item" ali seria
+    falso; o que falta é saber DE QUE PRODUTO é.
+
+    Dois sinais, e o primeiro vence porque é o preciso:
+
+      · PADRÃO CONHECIDO de texto que não é item (rodapé fiscal, cabeçalho de
+        empenho, endereço, link). Aqui a afirmação é forte.
+      · nenhuma palavra do NOSSO CATÁLOGO na descrição. Aqui a afirmação é
+        fraca de propósito: quer dizer "não reconheci", e não "não é produto".
+        Medido: os 12 "BOMBA DEFLATORA (SERINGA..." caem aqui, e caem com razão
+        — não existe bomba, deflatora nem seringa no catálogo; o mais próximo é
+        o KIT INSUFLADOR VKIN-203001. É pergunta legítima, não falso alarme.
+
+    Compara o catálogo por palavra E por substring no texto sem espaços: o
+    documento às vezes vem com tudo colado ("CATETERBALAOPERIFERICO"), e aí só
+    a segunda forma acha o que é claramente produto.
+    """
+    texto = _norm(descricao)
+    if not texto.strip():
+        return "o documento não trouxe descrição"
+    for rx, motivo in _NAO_E_ITEM:
+        if rx.search(texto):
+            return motivo
+    if not vocab:
+        return None
+    if {t for t in re.findall(r"[A-Z]{4,}", texto)} & vocab:
+        return None
+    grudado = re.sub(r"[^A-Z0-9]", "", texto)
+    if any(p in grudado for p in vocab if len(p) >= 6):
+        return None
+    return "não reconheci nada desta descrição no nosso catálogo"
 
 
 def _chave_da_descricao(descricao) -> str:
