@@ -439,6 +439,31 @@ def sincronizar(lote: list[dict]) -> dict:
         return {"recebidos": 0, "criados": 0, "atualizados": 0, "sem_cliente": 0}
 
     db = get_service_db()
+
+    # DUAS mensagens podem cair na mesma chave. A chave e um hash de (assunto,
+    # dia) — e o mesmo paciente cobrado duas vezes no mesmo dia gera dois
+    # e-mails que colapsam nela. Casos reais de 28/08/2026: "SOLIC. DE NOTA:
+    # EDILSON DOS SANTOS" as 09:13 e as 13:41, e "ARMANDO RUDNICK" as 11:39 e
+    # 11:58 — os assuntos diferem so pelo I de SAIDA, que chega corrompido em
+    # um deles ("SAADA" contra "SAA DA").
+    #
+    # Sem esta juntada o primeiro insert passava, o segundo violava o unico de
+    # `chave`, e o 409 derrubava a SINCRONIZACAO INTEIRA: em 10/09/2026 foram
+    # 402 registros perdidos por causa de 2. Perder o lote para nao perder uma
+    # duplicata e o pior negocio possivel aqui.
+    #
+    # Vence a ultima ocorrencia: e a que traz a thread mais completa.
+    vistos: dict[str, dict] = {}
+    colapsadas = 0
+    for e in lote:
+        c = str(e.get("chave") or "").strip()
+        if not c:
+            continue
+        if c in vistos:
+            colapsadas += 1
+        vistos[c] = e
+    lote = list(vistos.values())
+
     chaves = [c for c in (str(e.get("chave") or "").strip() for e in lote) if c]
     if not chaves:
         raise HTTPException(400, "nenhum registro do lote tem chave")
@@ -492,6 +517,7 @@ def sincronizar(lote: list[dict]) -> dict:
     conversa = _grava_mensagens(db, lote) if tem_conversa else {}
 
     criados = atualizados = sem_cliente = ligados = 0
+    falharam: list[str] = []
     for e in lote:
         chave = str(e.get("chave") or "").strip()
         if not chave:
@@ -522,7 +548,15 @@ def sincronizar(lote: list[dict]) -> dict:
                 campos["demanda_id"] = dem
                 ligados += 1
             campos["sugestao"] = e.get("sugestao")
-            db.table("licitacao_entrada").insert(campos).execute()
+            try:
+                db.table("licitacao_entrada").insert(campos).execute()
+            except Exception as erro:
+                # Um registro que o banco recusa nao pode custar os outros 400.
+                # Fica CONTADO e devolvido — o motor escreve isso no log dele, e
+                # e por ali que se descobre rodada que entrou pela metade.
+                # Engolir em silencio seria pior que a falha.
+                falharam.append("%s: %s" % (chave, str(erro)[:120]))
+                continue
             criados += 1
             if not campos["cliente_id"]:
                 sem_cliente += 1
@@ -553,7 +587,8 @@ def sincronizar(lote: list[dict]) -> dict:
     herdadas = _herda_correcoes(db) if tem_conversa else 0
     return {"recebidos": len(lote), "criados": criados, "atualizados": atualizados,
             "sem_cliente": sem_cliente, "ligados_a_demanda": ligados,
-            "tipos_herdados": herdadas, **conversa}
+            "tipos_herdados": herdadas, "chaves_colapsadas": colapsadas,
+            "falharam": falharam, **conversa}
 
 
 def _herda_correcoes(db) -> int:
