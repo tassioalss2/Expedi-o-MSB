@@ -2292,7 +2292,7 @@ function HistoricoDeEmails({ c }: { c: Card }) {
 
 
 function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApagarNota,
-  onPromover, onReclassificar, salvando }: {
+  onPromover, onReclassificar, onEstoque, salvando }: {
   c: Card
   onFechar: () => void
   onReclassificar: (tipo: string, motivo: string) => void
@@ -2301,6 +2301,11 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
   onTratativa: (v: boolean) => void
   onApagarNota: (id: string) => void
   onPromover: () => void
+  /** Faltava aqui, e o Tassio bateu nisso: "nao ta aparecendo pra colocar sem
+   *  estoque nessa tela". O card tinha o botao e o detalhe nao — e o detalhe e
+   *  onde a pessoa esta quando descobre que falta material, porque foi ler os
+   *  itens do pedido. */
+  onEstoque: (v: boolean, obs?: string) => void
   salvando: boolean
 }) {
   const [nota, setNota] = useState('')
@@ -2542,6 +2547,28 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
                 title="assumir o caso no seu nome"
                 className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 transition hover:border-violet-400 disabled:opacity-50">
                 <Hand className="h-3.5 w-3.5" /> assumir
+              </button>
+            )}
+            {/* Parado por falta de material. So onde ha entrega: comunicado de
+                uso fatura material que ja saiu, e nao ha o que esperar. Sem
+                saldo de estoque a vista — decisao de 04/09/2026. */}
+            {temEntrega(c.tipo) && (
+              <button
+                onClick={() => {
+                  if (c.aguardando_estoque) return onEstoque(false)
+                  const obs = window.prompt('O que está faltando? (opcional)') ?? ''
+                  onEstoque(true, obs.trim() || undefined)
+                }}
+                disabled={salvando}
+                title={c.aguardando_estoque
+                  ? 'material chegou / não é mais o bloqueio'
+                  : 'marcar que este caso está parado por falta de material'}
+                className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+                  c.aguardando_estoque
+                    ? 'border-red-300 bg-red-100 text-red-800 hover:bg-red-200'
+                    : 'border-gray-200 bg-white text-gray-600 hover:border-red-400'}`}>
+                <Package className="h-3.5 w-3.5" />
+                {c.aguardando_estoque ? 'material chegou' : 'sem estoque'}
               </button>
             )}
             <button onClick={() => onTratativa(!c.em_tratativa)} disabled={salvando}
@@ -3197,6 +3224,8 @@ export function AbaCaixaEntrada() {
             onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
             onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
             onApagarNota={id => apagarNota.mutate(id)}
+            onEstoque={(v, obs) => triar.mutate({
+              chave: c.chave, aguardando_estoque: v, estoque_obs: obs })}
             onPromover={() => setPromovendo(c)} />
         )
       })()}

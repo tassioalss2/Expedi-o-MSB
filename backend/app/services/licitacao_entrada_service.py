@@ -1997,9 +1997,21 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
 
     # Todos os e-mails da NE passam a apontar para a demanda: é o que impede o
     # mesmo empenho de ser trabalhado duas vezes por duas pessoas.
+    #
+    # A SITUAÇÃO NÃO É TOCADA AQUI, e isso é um conserto. Este update gravava
+    # `situacao = "PARCIAL"`, e o Tássio notou: "o app tá colocando como parcial
+    # sem eu apertar no botão". Estava — em 3 casos hoje, todos com a demanda
+    # recém-criada e ainda na etapa RECEBIDO, ou seja, sem NADA entregue.
+    #
+    # O erro não era só de rótulo. "Parcial" na tela significa ENTREGA PARCIAL,
+    # e é o que enche a coluna "Entrega parcial" e o número de parciais do
+    # painel: dizer parcial no instante em que a demanda nasce afirma uma
+    # entrega que não houve. Que o caso saiu da fila já é dito por outros dois
+    # caminhos honestos — o selo "já virou trabalho / etapa" e a coluna "Em
+    # tratamento". Situação é decisão de gente, como todo o resto deste módulo.
     for r in regs:
         db.table("licitacao_entrada").update({
-            "demanda_id": demanda["id"], "situacao": "PARCIAL",
+            "demanda_id": demanda["id"],
             "cliente_id": cliente_id, "atualizado_em": _agora(),
         }).eq("id", r["id"]).execute()
 
