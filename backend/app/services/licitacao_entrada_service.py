@@ -1234,9 +1234,21 @@ def _emails_do_grupo(chave: str, colunas: str = "*") -> list[dict]:
     aqui não existe.
     """
     db = get_service_db()
-    if chave.startswith("EM:"):
-        return db.table("licitacao_entrada").select(colunas).eq("chave", chave[3:]).execute().data
-    if not (chave.startswith("NE:") or chave.startswith("DOC")):
+    # `EM:` NÃO tem atalho. Parece um e-mail só — a chave é a dele — mas depois
+    # das costuras um grupo `EM:` pode ter vários: a mesma conversa do Outlook,
+    # ou a mesma solicitação de nota reenviada dias depois.
+    #
+    # O atalho que existia aqui buscava direto por `chave` e devolvia UM. Efeito
+    # medido em 10/09/2026: o Tássio clicou "Resolvido" no card do JOSE LUIZ
+    # TERRA (dois e-mails), só o representante virou SIM, o outro ficou NAO, e o
+    # card apareceu ÂMBAR — a cor de "parcial", que é o que o grupo virou. O
+    # clique dele estava certo; a tela obedeceu pela metade.
+    #
+    # É o mesmo defeito que o comentário abaixo descreve para o `cliente_id`, e
+    # a lição é a mesma: caminho de leitura diferente do da tela sempre acaba
+    # agindo sobre um conjunto diferente do que a tela mostrou. Um caminho só.
+    if not (chave.startswith("EM:") or chave.startswith("NE:")
+            or chave.startswith("DOC")):
         raise HTTPException(400, "chave de grupo inválida: %s" % chave)
     # Os campos de que a chave depende vêm junto mesmo quando o chamador não
     # pediu: é por eles que se filtra.
