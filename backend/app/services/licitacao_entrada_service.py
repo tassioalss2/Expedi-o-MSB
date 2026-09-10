@@ -755,7 +755,7 @@ def agrupar(regs: list[dict]) -> dict[str, list[dict]]:
         if len(destinos) == 1:
             grupos[next(iter(destinos))].extend(grupos.pop(chave))
 
-    return _costura_pela_conversa(grupos)
+    return _costura_pelo_paciente(_costura_pela_conversa(grupos))
 
 
 def _representante(chaves: set) -> str:
@@ -808,6 +808,70 @@ def _costura_pela_conversa(grupos: dict[str, list[dict]]) -> dict[str, list[dict
             if r.get("cliente_id"):
                 clientes.setdefault(cid, set()).add(r["cliente_id"])
 
+    return _funde(grupos, [(chaves, clientes.get(cid) or set())
+                           for cid, chaves in por_conversa.items()])
+
+
+# Assunto que identifica o caso sozinho: traz o paciente E a data da saída. É a
+# solicitação de nota do comunicado de uso, e essas duas informações juntas
+# apontam um procedimento — não existem dois procedimentos do mesmo paciente na
+# mesma data.
+_PACIENTE_NO_ASSUNTO = re.compile(
+    r"\bDE NOTA\b.*\bDATA DA SAIDA\b.*?\d{2}\D{0,3}\d{2}\D{0,3}\d{2,4}")
+
+
+def _assunto_do_paciente(reg: dict) -> Optional[str]:
+    """O assunto normalizado, SE ele identificar paciente + data de saída."""
+    a = re.sub(r"\s+", " ", _norm(reg.get("assunto"))).strip()
+    return a if _PACIENTE_NO_ASSUNTO.search(a) else None
+
+
+def _costura_pelo_paciente(grupos: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Junta a solicitação de nota reenviada numa conversa NOVA.
+
+    O caso que trouxe isto: "SOLIC. DE NOTA: EVANIR DOLORES - DATA DA SAIDA:
+    12/08/2026" chegou em 13/08 e de novo em 31/08, em duas conversas do Outlook
+    diferentes — a segunda é a cobrança da primeira. Como não tem NE nem número
+    de documento, e como o ConversationID é outro, as duas costuras anteriores
+    não tinham por onde casar: davam dois cards do mesmo procedimento.
+
+    Medido em 10/09/2026 na janela inteira: 5 pares, todos assim (Ervino, José
+    Luiz, José Aparecido, Leonilda, Evanir). Um deles traz cliente resolvido só
+    no primeiro e-mail, então juntar também propaga o cliente para o card.
+
+    A trava é o assunto ter de identificar o caso SOZINHO. Os assuntos que mais
+    repetem na caixa são justamente os genéricos — "COMUNICADO MSB" 7×, "RECUSA
+    DE MATERIAL" 3×, "SOLICITACAO DE NOTA" 3× — e nenhum deles casa
+    `_PACIENTE_NO_ASSUNTO`, porque nenhum diz de quem é. Fundir por assunto
+    genérico esconderia pedidos de verdade, que é o erro mais caro do módulo.
+
+    Como `_costura_pela_conversa`, só junta, e reaproveita as mesmas travas de
+    cliente e de NE.
+    """
+    por_assunto: dict[str, set] = {}
+    clientes: dict[str, set] = {}
+    for chave, membros in grupos.items():
+        for r in membros:
+            a = _assunto_do_paciente(r)
+            if not a:
+                continue
+            por_assunto.setdefault(a, set()).add(chave)
+            if r.get("cliente_id"):
+                clientes.setdefault(a, set()).add(r["cliente_id"])
+
+    return _funde(grupos, [(chaves, clientes.get(a) or set())
+                           for a, chaves in por_assunto.items()])
+
+
+def _funde(grupos: dict[str, list[dict]],
+           blocos: list[tuple]) -> dict[str, list[dict]]:
+    """A juntada em si. Cada bloco é (chaves que são o mesmo caso, clientes).
+
+    As travas moram aqui porque valem para qualquer critério de costura: bloco
+    que toca dois clientes resolvidos diferentes não funde, nem bloco que
+    atravessa duas notas de empenho — a operação fala por NE, e juntar duas num
+    card esconderia uma.
+    """
     pai: dict[str, str] = {}
 
     def raiz(k: str) -> str:
@@ -815,10 +879,10 @@ def _costura_pela_conversa(grupos: dict[str, list[dict]]) -> dict[str, list[dict
             k = pai[k]
         return k
 
-    for cid, chaves in por_conversa.items():
+    for chaves, clis in blocos:
         if len(chaves) < 2:
             continue
-        if len(clientes.get(cid) or ()) > 1:
+        if len(clis) > 1:
             continue
         if len({c for c in chaves if c.startswith("NE:")}) > 1:
             continue

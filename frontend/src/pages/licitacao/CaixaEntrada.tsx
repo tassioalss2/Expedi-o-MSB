@@ -2425,7 +2425,14 @@ export function AbaCaixaEntrada() {
   // As duas colunas de entrega so aparecem quando o filtro pode conter venda
   // direta ou consignacao. Filtrando por comunicado de uso, elas somem — nao ha
   // entrega parcial de material que ja foi usado.
-  const mostraEntrega = !tipo || temEntrega(tipo)
+  //
+  // E nada disso vale no filtro "Resolvidos". As colunas dividem TRABALHO —
+  // quem não tem dono, o que está bloqueado, o que entregou parte — e um caso
+  // encerrado não tem nenhuma dessas coisas. Mostrar "Não tratado: 2" em cima
+  // de casos resolvidos é uma contradição na cara de quem lê, e foi o que o
+  // Tássio apontou em 10/09: "resolvido é resolvido". Lá vai uma lista só.
+  const soResolvidos = filtro === 'SIM'
+  const mostraEntrega = !soResolvidos && (!tipo || temEntrega(tipo))
 
   const colunas = useMemo(() => {
     // A precedencia vale so para quem tem entrega. Um comunicado de uso marcado
@@ -2495,9 +2502,13 @@ export function AbaCaixaEntrada() {
            A coluna substitui o antigo filtro "em tratativa": botão de filtro e
            coluna faziam a mesma coisa, e manter os dois só confundiria. O
            "assumir"/"liberar" do card move ele de lado. */
-        <div className={`grid gap-4 lg:grid-cols-2 ${
+        <div className={`grid gap-4 ${soResolvidos ? '' : 'lg:grid-cols-2'} ${
           mostraEntrega ? '2xl:grid-cols-4' : ''}`}>
-          {([
+          {(soResolvidos ? ([
+            ['FEITO', 'Resolvidos', filtrados,
+             'border-emerald-200 bg-emerald-50 text-emerald-900', Check,
+             'Nada resolvido nesta janela.'],
+          ] as const) : [
             ['NAO', 'Não tratado', colunas.naoTratados,
              'border-gray-200 bg-gray-50 text-gray-700', MinusCircle,
              'Nada sem dono aqui.'],
