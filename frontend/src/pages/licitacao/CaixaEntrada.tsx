@@ -2874,11 +2874,22 @@ export function AbaCaixaEntrada() {
   })
 
   const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase()
+    // Compara sem pontuacao: a AF chega escrita "29621/26" num e-mail e
+    // "29621.2026" no outro, e quem procura digita uma das duas. Comparar texto
+    // cru fazia a busca depender de acertar a grafia do orgao.
+    const limpa = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const q = limpa(busca)
     if (!q) return cards
     return cards.filter(c =>
-      [c.assunto, c.empenho, c.cliente_nome, c.orgao_texto, c.contrato]
-        .some(v => (v || '').toLowerCase().includes(q)))
+      // O assunto de TODOS os e-mails do caso, e nao so o do primeiro. Este era
+      // o buraco: o card da AF 29621 nasceu do e-mail "Solicitacao de Entrega -
+      // AF 29621/26", entao procurar "AF 29621.2026" — o assunto dos outros
+      // quatro e-mails do mesmo caso — nao achava nada, e parecia que o e-mail
+      // nunca tinha sido identificado. O numero do documento tambem faltava.
+      [c.assunto, c.empenho, c.documento, c.cliente_nome, c.orgao_texto,
+       c.contrato, c.contrato_titulo, c.pregao,
+       ...(c.emails || []).map((e: any) => e.assunto)]
+        .some(v => limpa(v).includes(q)))
   }, [cards, busca])
 
   // Os dois lados da tela. A ordem dentro de cada um continua a que a listagem
