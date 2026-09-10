@@ -97,6 +97,26 @@ const ORDEM_TIPO = ['VENDA_DIRETA', 'CONSIGNACAO', 'COMUNICADO_USO', 'AMOSTRA', 
  *  consignacao. Ninguem marcou comunicado de uso como parcial — a regra descreve
  *  o que ja se faz. */
 const TIPOS_COM_ENTREGA = ['VENDA_DIRETA', 'CONSIGNACAO']
+
+/** Quem e da LOGISTICA, dito pelo Tassio: Mirailton e Italo. Eles cobram a
+ *  coleta e a comprovacao de entrega, e quando falam o pedido em geral JA foi
+ *  atendido por operacoes de vendas.
+ *
+ *  Por isso a fala deles nao e "informou" generico: e indicio de que o caso pode
+ *  ser fechado. Medido em 10/09/2026: os 17 casos com fala da logistica estavam
+ *  TODOS em Resolvido — a regra dele descreve o que o time ja faz, e o rotulo
+ *  serve para o dia em que um caso ficar para tras.
+ *
+ *  A classificacao mora aqui, e nao no backend, porque nenhum numero do servidor
+ *  depende dela — `informado_por` ja traz o nome, e quem precisa da distincao e
+ *  a tela. Uma implementacao so, no lugar onde e usada. */
+const LOGISTICA = [['mirailton'], ['italo', 'figueiredo']]
+const semAcento = (t?: string | null) =>
+  (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+const eLogistica = (nome?: string | null) => {
+  const t = semAcento(nome)
+  return !!t && LOGISTICA.some(partes => partes.every(p => t.includes(p)))
+}
 const SITUACOES_COM_PARCIAL = [['NAO', 'Em aberto', MinusCircle],
   ['PARCIAL', 'Parcial', CircleDot], ['SIM', 'Resolvido', Check]] as const
 const SITUACOES_SEM_PARCIAL = [['NAO', 'Em aberto', MinusCircle],
@@ -2053,6 +2073,14 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
               <span className="flex items-center gap-1 text-[11px] text-blue-700"
                 title={`${c.respondido_por} respondeu na conversa em ${fmtMomento(c.respondido_em)}`}>
                 <Mail className="h-3 w-3" />respondido · {c.respondido_por.split(' ')[0]}
+              </span>
+            ) : c.informado_por && eLogistica(c.informado_por) ? (
+              // Logistica cobrando coleta ou comprovacao: sinal de que o pedido
+              // ja saiu. Nao marca tratativa e nao marca Resolvido — quem
+              // resolve a situacao e gente —, mas avisa que ha o que conferir.
+              <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-700"
+                title={`${c.informado_por} (logística) falou em ${fmtMomento(c.informado_em)}. Logística cobra coleta e comprovação de entrega: o pedido provavelmente já foi atendido — confira e marque Resolvido.`}>
+                <Mail className="h-3 w-3" />logística · {c.informado_por.split(' ')[0]} · já atendido?
               </span>
             ) : c.informado_por ? (
               // Houve resposta nossa, mas de quem nao resolve: dizer "sem
