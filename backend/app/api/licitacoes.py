@@ -425,6 +425,20 @@ def triar_grupo(chave: str, payload: EntradaTriar,
         payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs)
 
 
+class EntradaItemProduto(BaseModel):
+    """Qual produto do catálogo é a descrição que o órgão escreveu."""
+    descricao: str
+    produto_id: UUID
+
+
+@router.post("/entrada/grupo/item-produto")
+def informar_produto_do_item(chave: str, payload: EntradaItemProduto,
+                             usuario: UsuarioOut = Depends(get_current_user)):
+    """Informa o produto de um item pelo próprio card, sem gerar demanda."""
+    return licitacao_entrada_service.informar_produto(
+        chave, payload.descricao, str(payload.produto_id), usuario)
+
+
 @router.get("/entrada/grupo/produto-sugerido")
 def produto_sugerido(chave: str, _: UsuarioOut = Depends(get_current_user)):
     """O que já foi escolhido antes para as descrições deste caso (v45)."""

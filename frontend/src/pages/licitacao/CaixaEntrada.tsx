@@ -1385,8 +1385,24 @@ function ItensDoPedido({ itens }: { itens: any[] }) {
               {i.qtd} un{i.valor_unitario ? ` × ${fmtBRL(i.valor_unitario)}` : ''}
             </span>
             {i.codigo_msb && (
-              <span className="ml-1.5 rounded bg-blue-50 px-1.5 py-0.5 font-mono text-[11px] text-blue-700">
+              <span className="ml-1.5 rounded bg-blue-50 px-1.5 py-0.5 font-mono text-[11px] text-blue-700"
+                title="código que veio no documento do órgão">
                 {i.codigo_msb}
+              </span>
+            )}
+            {/* O NOSSO código do item, quando alguém já disse qual produto é
+                esta descrição (de-para da v45). Verde para separar do azul, que
+                é o código do documento do órgão: um é o que gente informou, o
+                outro é o que o órgão escreveu, e conferir um contra o outro é
+                o que dá confiança. */}
+            {i.produto_codigo && (
+              <span className={`ml-1.5 rounded px-1.5 py-0.5 font-mono text-[11px] ${
+                i.produto_mesmo_contrato
+                  ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}`}
+                title={i.produto_mesmo_contrato
+                  ? `${i.produto_descricao} — informado ${i.produto_vezes}× neste contrato`
+                  : `${i.produto_descricao} — informado em OUTRO pregão, confira`}>
+                {i.produto_codigo}
               </span>
             )}
             <div className="truncate text-gray-600">{i.descricao || '(descrição não identificada)'}</div>
@@ -1434,6 +1450,74 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  * a demanda ligada e o que o time anotou. Sem esta tela, responder "por que
  * este caso está aberto há 30 dias?" exigia abrir o Outlook.
  */
+/** Qual produto do catálogo é esta descrição do órgão — informado no card.
+ *
+ *  Grava o de-para da v45, que vale para a DESCRIÇÃO no contrato, e não só para
+ *  este card: todo caso com o mesmo descritivo passa a mostrar o número do
+ *  item. É o mesmo aprendizado da janela de gerar demanda, pela outra porta.
+ *
+ *  O catálogo é carregado sob demanda (só quando alguém abre o seletor), porque
+ *  o detalhe de um caso não deveria pagar 187 produtos para nada. */
+function ProdutoDoItem({ item, chave }: { item: any; chave: string }) {
+  const qc = useQueryClient()
+  const [abrindo, setAbrindo] = useState(false)
+
+  const { data: produtos = [], isError } = useQuery<any[]>({
+    queryKey: ['produtos-catalogo'],
+    queryFn: () => api.get('/produtos?limite=2000').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+    enabled: abrindo,
+  })
+
+  const informar = useMutation({
+    mutationFn: (produto_id: string) =>
+      api.post(`/licitacoes/entrada/grupo/item-produto?chave=${encodeURIComponent(chave)}`,
+        { descricao: item.descricao, produto_id }),
+    onSuccess: (r: any) => {
+      toast.success(`Item ${r.data?.produto?.codigo} registrado para esta descrição`)
+      setAbrindo(false)
+      qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
+      qc.invalidateQueries({ queryKey: ['produto-sugerido'] })
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não consegui registrar o item')),
+  })
+
+  // Sem descrição não há o que aprender: a chave do de-para é o texto do órgão.
+  if (!item.descricao) return null
+
+  if (item.produto_codigo && !abrindo) {
+    return (
+      <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+        <span className="text-gray-500">nosso item:</span>
+        <span className="font-mono font-semibold text-gray-900">{item.produto_codigo}</span>
+        <span className="min-w-0 truncate text-gray-600">{item.produto_descricao}</span>
+        {!item.produto_mesmo_contrato && (
+          <span className="text-sky-700">(informado em outro pregão — confira)</span>
+        )}
+        <button onClick={() => setAbrindo(true)}
+          className="text-blue-600 hover:underline">trocar</button>
+      </p>
+    )
+  }
+  if (!abrindo) {
+    return (
+      <button onClick={() => setAbrindo(true)}
+        className="mt-1 text-[11px] font-medium text-blue-600 hover:underline">
+        informar qual é o nosso item
+      </button>
+    )
+  }
+  return (
+    <div className="mt-1.5">
+      <EscolheProduto produtos={produtos} erro={isError}
+        escolhido={{ produto_id: null, codigo: null, descricao: null }}
+        onEscolher={p => p && informar.mutate(p.id)} />
+      <button onClick={() => setAbrindo(false)}
+        className="mt-1 text-[11px] text-gray-500 hover:underline">cancelar</button>
+    </div>
+  )
+}
+
 /** O tipo do caso, e a correcao dele.
  *
  * O tipo e a parte MENOS confiavel deste modulo, e isso foi medido: dos 188
@@ -2342,6 +2426,14 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
                       <AlertTriangle className="h-3 w-3" /> a conta não fecha no documento — confira o anexo
                     </p>
                   )}
+                  {/* Dizer QUAL produto é esta descrição, aqui, sem precisar
+                      gerar demanda. Pedido do Tássio em 10/09/2026: ele quer
+                      informar o item e ver o número aparecer no card, e depois
+                      procurar por esse número para achar onde o caso parou. A
+                      janela de gerar demanda continua sendo a outra porta —
+                      esta serve ao caso que ainda não está pronto para virar
+                      demanda, que é a maioria. */}
+                  <ProdutoDoItem item={i} chave={c.chave} />
                   {i.fonte && <p className="text-[11px] text-gray-400">de {i.fonte}</p>}
                 </div>
               ))}
@@ -2925,9 +3017,16 @@ export function AbaCaixaEntrada() {
       // AF 29621/26", entao procurar "AF 29621.2026" — o assunto dos outros
       // quatro e-mails do mesmo caso — nao achava nada, e parecia que o e-mail
       // nunca tinha sido identificado. O numero do documento tambem faltava.
+      // Os ITENS entram na busca: o Tássio pediu para procurar pelo número do
+      // item e ver onde ele está parado. Entram os dois códigos — o que o órgão
+      // escreveu no documento e o NOSSO, informado por gente — mais as duas
+      // descrições, porque procurar "fio guia" também tem de achar.
       [c.assunto, c.empenho, c.documento, c.cliente_nome, c.orgao_texto,
        c.contrato, c.contrato_titulo, c.pregao,
-       ...(c.emails || []).map((e: any) => e.assunto)]
+       ...(c.emails || []).map((e: any) => e.assunto),
+       ...(c.itens || []).flatMap((i: any) => [
+         i.codigo_msb, i.produto_codigo, i.descricao, i.produto_descricao]),
+       ...(c.nf_emitida || []).flatMap(n => [n.numero, n.ov])]
         .some(v => limpa(v).includes(q)))
   }, [cards, busca])
 

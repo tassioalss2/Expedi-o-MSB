@@ -1236,8 +1236,29 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
     # assunto, e teve razão em reclamar: 22 dos 130 casos novos estavam assim.
     emitidas = _notas_ja_emitidas(db)
 
+    # O produto que alguém já disse ser cada descrição do órgão (v45), para a
+    # listagem inteira numa consulta. Sem isto o item continuaria mostrando só
+    # a descrição CATMAT, e procurar pelo NOSSO código de item não acharia o
+    # caso — que é o que o Tássio pediu em 10/09/2026: "quando eu filtrar pelo
+    # numero do item, eu tenho q ver onde tá parado".
+    depara = _depara_cru([i.get("descricao") for c in cards
+                          for i in (c["itens"] or [])])
+
     for c in cards:
         c["nf_emitida"] = _nf_citada_e_nossa(c["emails"], emitidas)
+        if depara:
+            ct_item = str(c["contrato"] or "").split(" / ")[0].strip()
+            for i in c["itens"]:
+                esc = _escolhe_do_depara(depara.get(i.get("chave_desc")), ct_item)
+                if esc:
+                    # `produto_*` é o que GENTE informou; `codigo_msb` continua
+                    # sendo o que veio no documento do órgão. Os dois na tela,
+                    # porque conferir um contra o outro é o que dá confiança.
+                    i["produto_codigo"] = esc["codigo"]
+                    i["produto_descricao"] = esc["descricao"]
+                    i["produto_id"] = esc["produto_id"]
+                    i["produto_vezes"] = esc["vezes"]
+                    i["produto_mesmo_contrato"] = esc["mesmo_contrato"]
         # O pregão do CONTRATO citado serve de reserva quando o e-mail não o
         # escreve: é o mesmo pregão, e sem essa reserva 33 casos de venda direta
         # apareceriam pedindo um número que o app já sabe.
@@ -1712,32 +1733,44 @@ def _chave_da_descricao(descricao) -> str:
     return re.sub(r"\s+", " ", _norm(descricao)).strip()
 
 
-def produto_do_documento(descricoes: list, contrato: Optional[str] = None) -> dict:
-    """Qual produto já foi escolhido antes para cada descrição do órgão (v45).
+def _depara_cru(chaves: list) -> dict:
+    """As linhas do de-para (v45) para estas descrições, sem escolher nenhuma.
 
-    Devolve {chave_da_descricao: {produto_id, codigo, descricao, vezes,
-    mesmo_contrato}}. É SUGESTÃO: `mesmo_contrato` falso quer dizer que a
-    escolha veio de outro pregão, e a tela precisa dizer isso — a descrição
-    CATMAT é ampla e o item de outro pregão pode ser outro SKU.
+    Uma consulta para muitas descrições: é o que permite a listagem inteira
+    resolver o produto de cada item sem uma consulta por card.
 
     Degrada em silêncio se a v45 ainda não foi rodada: sem de-para a tela volta
     a perguntar, que é o comportamento anterior, e não um erro.
     """
-    chaves = sorted({_chave_da_descricao(d) for d in descricoes if _chave_da_descricao(d)})
+    chaves = sorted({k for k in (_chave_da_descricao(d) for d in chaves) if k})
     if not chaves:
         return {}
     db = get_service_db()
+    por: dict = {}
     try:
-        linhas = db.table("licitacao_item_produto")\
-            .select("descricao_norm, contrato, produto_id, vezes, produtos(codigo, descricao)")\
-            .in_("descricao_norm", chaves).limit(2000).execute().data
+        for i in range(0, len(chaves), 60):
+            linhas = db.table("licitacao_item_produto")\
+                .select("descricao_norm, contrato, produto_id, vezes, "
+                        "produtos(codigo, descricao)")\
+                .in_("descricao_norm", chaves[i:i + 60]).limit(1000).execute().data
+            for r in linhas:
+                por.setdefault(r["descricao_norm"], []).append(r)
     except Exception:
         return {}
+    return por
 
+
+def _escolhe_do_depara(linhas: list, contrato: Optional[str]) -> Optional[dict]:
+    """Qual candidato vence para este caso.
+
+    Escolha do MESMO contrato vence qualquer outra, por mais usada que seja: é o
+    pregão que define qual item é qual. Empatado o escopo, vence a mais
+    confirmada. `mesmo_contrato` falso vai para a tela dizer que a escolha veio
+    de outro pregão — a descrição CATMAT é ampla e lá pode ser outro SKU.
+    """
     ct = (contrato or "").strip().upper() or None
-    melhor: dict = {}
-    for r in linhas:
-        k = r["descricao_norm"]
+    melhor = None
+    for r in linhas or ():
         mesmo = bool(ct) and (r.get("contrato") or "").strip().upper() == ct
         cand = {
             "produto_id": r["produto_id"],
@@ -1746,14 +1779,54 @@ def produto_do_documento(descricoes: list, contrato: Optional[str] = None) -> di
             "vezes": r.get("vezes") or 1,
             "mesmo_contrato": mesmo,
         }
-        atual = melhor.get(k)
-        # Escolha do MESMO contrato vence qualquer outra, por mais usada que
-        # seja: é o pregão que define qual item é qual. Empatado o escopo,
-        # vence a mais confirmada.
-        if not atual or (cand["mesmo_contrato"], cand["vezes"]) > \
-                (atual["mesmo_contrato"], atual["vezes"]):
-            melhor[k] = cand
+        if not melhor or (cand["mesmo_contrato"], cand["vezes"]) > \
+                (melhor["mesmo_contrato"], melhor["vezes"]):
+            melhor = cand
     return melhor
+
+
+def produto_do_documento(descricoes: list, contrato: Optional[str] = None) -> dict:
+    """{chave_da_descricao: candidato vencedor} — a forma usada pela janela."""
+    cru = _depara_cru(descricoes)
+    saida = {}
+    for k, linhas in cru.items():
+        esc = _escolhe_do_depara(linhas, contrato)
+        if esc:
+            saida[k] = esc
+    return saida
+
+
+def informar_produto(chave: str, descricao: str, produto_id: str,
+                     usuario: UsuarioOut) -> dict:
+    """Diz qual produto é uma descrição do órgão, sem gerar demanda (v45).
+
+    Pedido pelo Tássio em 10/09/2026: ele quer informar o item no próprio card e
+    ver o número aparecer ali, e depois procurar por esse número e achar onde o
+    caso está parado. Antes, a única porta para o de-para era a janela de gerar
+    demanda — e num caso que ainda não está pronto para virar demanda o
+    conhecimento ficava de fora.
+
+    Vale para a DESCRIÇÃO, e não para este card: é o mesmo aprendizado da janela,
+    então todo caso com o mesmo descritivo no mesmo contrato passa a mostrar o
+    produto. É por isso que existe o escopo de contrato.
+    """
+    regs = _emails_do_grupo(chave, "*")
+    if not regs:
+        raise HTTPException(404, "nenhum e-mail para a chave %s" % chave)
+    if not _chave_da_descricao(descricao):
+        raise HTTPException(422, "descrição vazia: não dá para aprender nada dela")
+
+    prod = get_service_db().table("produtos").select("id, codigo, descricao")\
+        .eq("id", str(produto_id)).execute().data
+    if not prod:
+        raise HTTPException(404, "produto %s não existe" % produto_id)
+
+    contrato = next((r.get("contrato") for r in regs if r.get("contrato")), None)
+    cliente_id = next((r.get("cliente_id") for r in regs if r.get("cliente_id")), None)
+    _aprende_produto([{"produto_id": str(produto_id), "catmat": descricao}],
+                     str(contrato or "").split(" / ")[0].strip() or None,
+                     cliente_id, usuario)
+    return {"produto": prod[0], "descricao": descricao}
 
 
 def sugestoes_de_produto(chave: str) -> dict:
