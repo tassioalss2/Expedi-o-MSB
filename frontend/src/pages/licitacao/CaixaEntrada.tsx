@@ -11,7 +11,7 @@
  * a quantidade e o valor, e grava aqui. Nada nesta tela sobrescreve o que o
  * motor traz, e o motor não sobrescreve o que se decide aqui.
  */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -1450,9 +1450,12 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  *  serve para vários itens — por isso o produto não sai de regra nenhuma e
  *  precisa de quem conhece o pregão. Filtra sobre o catálogo já carregado (são
  *  ~187 SKUs) em vez de ir ao servidor a cada letra. */
-function EscolheProduto({ produtos, escolhido, onEscolher }: {
+function EscolheProduto({ produtos, escolhido, sugerido, onEscolher }: {
   produtos: any[]
   escolhido: { produto_id: string | null; codigo: string | null; descricao: string | null }
+  /** Veio do de-para (v45), não de um clique agora. Fica dito na tela: escolha
+   *  de outro pregão pode ser outro SKU, porque a descrição CATMAT é ampla. */
+  sugerido?: { vezes: number; mesmo_contrato: boolean } | null
   onEscolher: (p: any | null) => void
 }) {
   const [q, setQ] = useState('')
@@ -1464,15 +1467,28 @@ function EscolheProduto({ produtos, escolhido, onEscolher }: {
   }, [q, produtos])
 
   if (escolhido.produto_id) {
+    // Sugestão do de-para tem cor própria: quem olha precisa saber que ninguém
+    // confirmou este produto NESTE caso ainda.
+    const cor = sugerido
+      ? 'border-sky-200 bg-sky-50 text-sky-900'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-900'
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5">
-        <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-        <span className="font-mono text-xs font-semibold text-emerald-900">{escolhido.codigo}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-emerald-800">{escolhido.descricao}</span>
-        <button onClick={() => { onEscolher(null); setQ('') }}
-          className="shrink-0 text-emerald-700 hover:text-emerald-900" title="trocar o produto">
-          <X className="h-3.5 w-3.5" />
-        </button>
+      <div>
+        <div className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${cor}`}>
+          <Check className="h-3.5 w-3.5 shrink-0 opacity-70" />
+          <span className="font-mono text-xs font-semibold">{escolhido.codigo}</span>
+          <span className="min-w-0 flex-1 truncate text-xs opacity-90">{escolhido.descricao}</span>
+          <button onClick={() => { onEscolher(null); setQ('') }}
+            className="shrink-0 opacity-70 hover:opacity-100" title="trocar o produto">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {sugerido && (
+          <p className="mt-0.5 text-[11px] text-sky-700">
+            sugestão: já escolhido {sugerido.vezes}× para esta descrição
+            {sugerido.mesmo_contrato ? ' neste contrato' : ' — mas em OUTRO pregão, confira'}
+          </p>
+        )}
       </div>
     )
   }
@@ -1545,7 +1561,7 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
     qtd: i.qtd || 0, valor: i.valor_unitario || 0,
     // A descrição do órgão fica à vista, e não no campo: é o que permite
     // reconhecer o produto, mas não é o nome dele no nosso catálogo.
-    catmat: i.descricao, do_email: true,
+    catmat: i.descricao, chave_desc: i.chave_desc, do_email: true,
   })))
 
   const { data: produtos = [] } = useQuery<any[]>({
@@ -1553,6 +1569,26 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
     queryFn: () => api.get('/cadastros/produtos?limite=2000').then(r => r.data),
     staleTime: 5 * 60 * 1000,
   })
+
+  // O que já foi escolhido antes para estas mesmas descrições (v45). A chave da
+  // comparação vem do backend em `chave_desc`: a regra de normalizar descrição
+  // de órgão vive num lugar só, e não em duas linguagens.
+  const { data: sugeridos = {} } = useQuery<Record<string, any>>({
+    queryKey: ['produto-sugerido', c.chave],
+    queryFn: () => api.get('/licitacoes/entrada/grupo/produto-sugerido' +
+      `?chave=${encodeURIComponent(c.chave)}`).then(r => r.data),
+  })
+  // Preenche o que ainda está vazio quando a sugestão chega. Não sobrescreve
+  // escolha feita à mão — o de-para sugere, quem decide é quem está na tela.
+  useEffect(() => {
+    if (!Object.keys(sugeridos).length) return
+    setItens(atual => atual.map(i => {
+      const s = i.chave_desc && sugeridos[i.chave_desc]
+      if (!s || i.produto_id || i.mexido) return i
+      return { ...i, produto_id: s.produto_id, codigo: s.codigo,
+               descricao: s.descricao, sugerido: s }
+    }))
+  }, [sugeridos])
 
   const comProduto = itens.filter(i => i.produto_id && Number(i.qtd) > 0)
   const precisaItem = tipo === 'VENDA_DIRETA' || tipo === 'AMOSTRA'
@@ -1704,11 +1740,15 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
                     </label>
                     <div className="min-w-[220px] flex-1">
                       <EscolheProduto produtos={produtos} escolhido={i}
+                        sugerido={i.sugerido}
                         onEscolher={p => setItens(itens.map((x, m) => m === n ? {
                           ...x,
                           produto_id: p?.id || null,
                           codigo: p?.codigo || null,
                           descricao: p?.descricao || null,
+                          // `mexido` impede a sugestão de voltar por cima de
+                          // quem acabou de tirá-la de propósito.
+                          sugerido: null, mexido: true,
                         } : x))} />
                     </div>
                     {!i.do_email && (

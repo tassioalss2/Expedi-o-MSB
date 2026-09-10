@@ -1033,7 +1033,11 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
                 if assinatura in vistos:
                     continue
                 vistos.add(assinatura)
-                itens.append(i)
+                # A descrição do órgão normalizada acompanha o item. É a chave do
+                # de-para da v45, e ela é calculada AQUI para a regra de
+                # normalização existir num lugar só — a tela não precisa saber
+                # como se compara descrição de órgão.
+                itens.append({**i, "chave_desc": _chave_da_descricao(i.get("descricao"))})
 
         situacoes = {m.get("situacao") for m in membros}
         cliente = next((m["clientes"]["nome"] for m in membros
@@ -1614,6 +1618,116 @@ def _produto_por_codigo(db, codigos: list[str]) -> dict:
     return achados
 
 
+def _chave_da_descricao(descricao) -> str:
+    """A descrição do órgão como chave de comparação. Uma regra, um lugar."""
+    return re.sub(r"\s+", " ", _norm(descricao)).strip()
+
+
+def produto_do_documento(descricoes: list, contrato: Optional[str] = None) -> dict:
+    """Qual produto já foi escolhido antes para cada descrição do órgão (v45).
+
+    Devolve {chave_da_descricao: {produto_id, codigo, descricao, vezes,
+    mesmo_contrato}}. É SUGESTÃO: `mesmo_contrato` falso quer dizer que a
+    escolha veio de outro pregão, e a tela precisa dizer isso — a descrição
+    CATMAT é ampla e o item de outro pregão pode ser outro SKU.
+
+    Degrada em silêncio se a v45 ainda não foi rodada: sem de-para a tela volta
+    a perguntar, que é o comportamento anterior, e não um erro.
+    """
+    chaves = sorted({_chave_da_descricao(d) for d in descricoes if _chave_da_descricao(d)})
+    if not chaves:
+        return {}
+    db = get_service_db()
+    try:
+        linhas = db.table("licitacao_item_produto")\
+            .select("descricao_norm, contrato, produto_id, vezes, produtos(codigo, descricao)")\
+            .in_("descricao_norm", chaves).limit(2000).execute().data
+    except Exception:
+        return {}
+
+    ct = (contrato or "").strip().upper() or None
+    melhor: dict = {}
+    for r in linhas:
+        k = r["descricao_norm"]
+        mesmo = bool(ct) and (r.get("contrato") or "").strip().upper() == ct
+        cand = {
+            "produto_id": r["produto_id"],
+            "codigo": (r.get("produtos") or {}).get("codigo"),
+            "descricao": (r.get("produtos") or {}).get("descricao"),
+            "vezes": r.get("vezes") or 1,
+            "mesmo_contrato": mesmo,
+        }
+        atual = melhor.get(k)
+        # Escolha do MESMO contrato vence qualquer outra, por mais usada que
+        # seja: é o pregão que define qual item é qual. Empatado o escopo,
+        # vence a mais confirmada.
+        if not atual or (cand["mesmo_contrato"], cand["vezes"]) > \
+                (atual["mesmo_contrato"], atual["vezes"]):
+            melhor[k] = cand
+    return melhor
+
+
+def sugestoes_de_produto(chave: str) -> dict:
+    """O de-para deste caso: descrição do órgão → produto já escolhido antes.
+
+    Consultado quando a janela de gerar demanda abre, e não na listagem: só
+    interessa a quem vai promover, e o escopo é o contrato DESTE caso — o mesmo
+    hospital compra por pregões diferentes.
+    """
+    regs = _emails_do_grupo(chave, "*")
+    if not regs:
+        raise HTTPException(404, "nenhum e-mail para a chave %s" % chave)
+    descricoes = [i.get("descricao") for r in regs for i in (r.get("itens") or [])]
+    contrato = next((r.get("contrato") for r in regs if r.get("contrato")), None)
+    return produto_do_documento(
+        descricoes, str(contrato or "").split(" / ")[0].strip() or None)
+
+
+def _aprende_produto(itens: list, contrato: Optional[str],
+                     cliente_id: Optional[str], usuario: UsuarioOut) -> None:
+    """Guarda a escolha de produto que acabou de virar demanda (v45).
+
+    Só aprende do que uma pessoa confirmou gerando demanda — palpite de máquina
+    não entra aqui, senão o de-para passaria a ensinar o próprio erro.
+
+    Nunca derruba o promover: a demanda já foi criada quando isto roda, e falhar
+    ao aprender não pode desfazer trabalho. Sem a v45, não faz nada.
+    """
+    candidatos = [(_chave_da_descricao(i.get("catmat")), i) for i in itens
+                  if i.get("produto_id") and _chave_da_descricao(i.get("catmat"))]
+    if not candidatos:
+        return
+    db = get_service_db()
+    ct = (contrato or "").strip().upper() or None
+    try:
+        for chave, i in candidatos:
+            achado = db.table("licitacao_item_produto").select("id, vezes, contrato")\
+                .eq("descricao_norm", chave).eq("produto_id", str(i["produto_id"]))\
+                .execute().data
+            # O contrato é comparado em Python porque contrato NULO faz parte da
+            # chave e o wrapper não expõe `.is_()`. São poucas linhas por
+            # descrição, então filtrar aqui não custa nada.
+            iguais = [a for a in achado
+                      if (a.get("contrato") or "").strip().upper() == (ct or "")]
+            if iguais:
+                db.table("licitacao_item_produto").update({
+                    "vezes": (iguais[0].get("vezes") or 1) + 1,
+                    "usado_em": _agora(),
+                }).eq("id", iguais[0]["id"]).execute()
+                continue
+            db.table("licitacao_item_produto").insert({
+                "descricao": str(i.get("catmat"))[:2000],
+                "descricao_norm": chave,
+                "contrato": ct,
+                "cliente_id": cliente_id,
+                "produto_id": str(i["produto_id"]),
+                "criado_por": str(usuario.id),
+            }).execute()
+    except Exception as e:
+        # Anota e segue: a demanda existe, e o de-para é conveniência.
+        print("nao consegui gravar o de-para de produto: %s" % e)
+
+
 def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> dict:
     """Cria a demanda a partir do que já está na caixa de entrada.
 
@@ -1676,7 +1790,11 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
     # outros o produto só sai de quem conhece o pregão.
     escolhidos = extra.get("itens")
     if escolhidos:
-        itens = [i if isinstance(i, DemandaItem) else DemandaItem(**i) for i in escolhidos]
+        # `catmat` (o texto do órgão) fica de fora da demanda de propósito: lá
+        # vale a descrição do nosso catálogo. Ele serve ao de-para, logo abaixo.
+        itens = [i if isinstance(i, DemandaItem) else DemandaItem(
+            **{k: v for k, v in i.items() if k in DemandaItem.model_fields})
+            for i in escolhidos]
     else:
         catalogo = _produto_por_codigo(db, [i.get("codigo_msb") for i in itens_brutos])
         itens = []
@@ -1722,6 +1840,12 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
             "demanda_id": demanda["id"], "situacao": "PARCIAL",
             "cliente_id": cliente_id, "atualizado_em": _agora(),
         }).eq("id", r["id"]).execute()
+
+    # Depois de a demanda existir: a escolha de produto que a pessoa acabou de
+    # confirmar vira sugestão para a próxima vez que o mesmo órgão escrever a
+    # mesma descrição. Só do que veio da tela — palpite de máquina não ensina.
+    if escolhidos:
+        _aprende_produto(escolhidos, base.get("contrato"), cliente_id, usuario)
 
     return {"demanda": demanda, "emails_ligados": len(regs)}
 

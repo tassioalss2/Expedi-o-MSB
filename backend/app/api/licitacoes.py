@@ -238,6 +238,17 @@ class EntradaTriar(BaseModel):
     estoque_obs: Optional[str] = None
 
 
+class ItemPromovido(DemandaItem):
+    """O item com o produto escolhido na tela E o texto que o originou.
+
+    `catmat` é a descrição como o órgão escreveu. Ela não vai para a demanda —
+    lá vale a descrição do nosso catálogo — mas é a chave do de-para da v45:
+    é por ela que a próxima vez que o mesmo órgão escrever o mesmo descritivo a
+    tela já vem com o produto sugerido.
+    """
+    catmat: Optional[str] = None
+
+
 class EntradaPromover(BaseModel):
     """O que a tela preenche e o anexo não tinha.
 
@@ -262,7 +273,7 @@ class EntradaPromover(BaseModel):
     # Sem este campo, a venda direta batia em "informe os itens e quantidades
     # da NE" mesmo com o item lido e visível na tela — o que faltava não era o
     # item, era saber qual produto ele é.
-    itens: Optional[list[DemandaItem]] = None
+    itens: Optional[list[ItemPromovido]] = None
     # Segunda demanda para a mesma NE só quando alguém pede de propósito: duas
     # demandas para o mesmo empenho é o pedido duplicado que o processo evita.
     permitir_segunda: bool = False
@@ -412,6 +423,12 @@ def triar_grupo(chave: str, payload: EntradaTriar,
         chave, usuario, payload.situacao, payload.observacao,
         str(payload.cliente_id) if payload.cliente_id else None,
         payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs)
+
+
+@router.get("/entrada/grupo/produto-sugerido")
+def produto_sugerido(chave: str, _: UsuarioOut = Depends(get_current_user)):
+    """O que já foi escolhido antes para as descrições deste caso (v45)."""
+    return licitacao_entrada_service.sugestoes_de_produto(chave)
 
 
 @router.post("/entrada/grupo/promover")
