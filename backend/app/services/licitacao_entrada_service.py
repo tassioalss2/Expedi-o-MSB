@@ -1277,6 +1277,11 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
                 "entry_id": m.get("entry_id"),
                 "anexos": m.get("anexos") or [],
                 "itens": m.get("itens") or [],
+                # Só os números, que são leves. É o que `_nf_citada_e_nossa`
+                # cruza com `pedidos` — sem este campo aqui o selo nunca via a
+                # nota que veio da CONVERSA, porque o dict do e-mail é montado
+                # com campos escolhidos e não com o registro cru.
+                "nf_citada": m.get("nf_citada") or [],
             } for m in membros],
         })
 
