@@ -293,6 +293,9 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
             l["cotado"] = bool(achados_iguais)
             l["cotado_em"] = sorted({v["data"] for v in achados_iguais})[:3] or None
             l["cotado_emergencial"] = any(v["emergencial"] for v in achados_iguais)
+            # A FRASE da transportadora. É a evidência do número, e sem ela a
+            # tela pede confiança em vez de mostrar de onde o "cotado" saiu.
+            l["cotado_trecho"] = achados_iguais[0]["trecho"] if achados_iguais else None
 
     # ── 5 · NF nossa sem CT-e ───────────────────────────────────────────────
     datas = sorted(c["emissao"] for c in ctes if c["emissao"])

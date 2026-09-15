@@ -97,8 +97,22 @@ export default function ConferenciaFrete() {
   const a = resultado?.achados || {}
   const bate = Math.abs(Number(a.diferenca_soma) || 0) < 0.01
   const ctes: any[] = resultado?.ctes || []
-  const visiveis = filtro ? ctes.filter(c => c.situacao === filtro) : ctes
+
+  /** O que cada filtro mostra. Alem das situacoes, dois recortes da conversa —
+   *  porque "5 cobrancas sem cotacao" e um numero que so vale se der para ver
+   *  QUAIS sao sem sair da tela. */
+  const RECORTE: Record<string, (c: any) => boolean> = {
+    SEM_COTACAO: c => c.situacao === 'VALOR_DIFERENTE' && c.cotado === false,
+    COTADO: c => c.situacao === 'VALOR_DIFERENTE' && c.cotado === true,
+  }
+  const filtra = (c: any) => RECORTE[filtro] ? RECORTE[filtro](c) : c.situacao === filtro
+  const visiveis = filtro ? ctes.filter(filtra) : ctes
   const contagem = (s: string) => ctes.filter(c => c.situacao === s).length
+  const alterna = (chave: string) => setFiltro(f => (f === chave ? '' : chave))
+  const ROTULO_FILTRO: Record<string, string> = {
+    SEM_COTACAO: 'cobranças sem cotação na conversa',
+    COTADO: 'cobranças que a conversa confirma',
+  }
 
   return (
     <div className="space-y-5">
@@ -198,20 +212,37 @@ export default function ConferenciaFrete() {
               segundo grupo se contesta com a transportadora. */}
           {a.conversa && (
             <div className="rounded-xl border border-gray-200 bg-white p-4">
-              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-800">
+              <button onClick={() => alterna('COTADO')}
+                disabled={!a.conversa.cobrado_confirmado}
+                className={`flex flex-wrap items-center gap-2 rounded-lg px-2 py-1 text-left text-sm font-semibold transition ${
+                  a.conversa.cobrado_confirmado
+                    ? filtro === 'COTADO'
+                      ? 'bg-blue-100 text-blue-900 ring-2 ring-blue-300'
+                      : 'text-gray-800 hover:bg-gray-100'
+                    : 'text-gray-800'}`}>
                 <MessageSquare className="h-4 w-4 text-gray-400" />
                 A conversa explica {a.conversa.cobrado_confirmado} das {a.valor_diferente} cobranças diferentes do previsto
-              </p>
+                {!!a.conversa.cobrado_confirmado && (
+                  <span className="text-xs font-normal text-blue-600">— ver quais</span>
+                )}
+              </button>
               <p className="mt-1 text-xs text-gray-600">
                 {a.conversa.valores_citados} valores citados pela transportadora em{' '}
                 {a.conversa.mensagens} mensagens, de {fmtDia(a.conversa.de)} a {fmtDia(a.conversa.ate)}.
                 Nesses casos o cobrado foi cotado — o desatualizado é o frete previsto na OV.
               </p>
               {a.conversa.cobrado_sem_cotacao > 0 && (
-                <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+                <button onClick={() => alterna('SEM_COTACAO')}
+                  className={`mt-2 w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+                    filtro === 'SEM_COTACAO'
+                      ? 'border-red-400 bg-red-100 text-red-900 ring-2 ring-red-200'
+                      : 'border-red-200 bg-red-50 text-red-900 hover:border-red-400'}`}>
                   <b>{a.conversa.cobrado_sem_cotacao} cobrança(s) sem cotação em lugar nenhum</b>
                   {' — '}{fmtBRL(a.conversa.valor_sem_cotacao)} a mais. É o que vale contestar.
-                </p>
+                  <span className="ml-1 text-xs font-medium text-red-700">
+                    {filtro === 'SEM_COTACAO' ? '(mostrando abaixo)' : '— clique para ver quais'}
+                  </span>
+                </button>
               )}
               <p className="mt-2 text-[11px] text-gray-400">
                 O cruzamento é por VALOR: o número cobrado aparece entre os que a
@@ -264,7 +295,7 @@ export default function ConferenciaFrete() {
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
             <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5">
               <span className="text-sm font-semibold text-gray-700">
-                {visiveis.length} CT-e{filtro && ` · ${SITUACAO[filtro]?.rotulo}`}
+                {visiveis.length} CT-e{filtro && ` · ${ROTULO_FILTRO[filtro] || SITUACAO[filtro]?.rotulo || ''}`}
               </span>
               {filtro && (
                 <button onClick={() => setFiltro('')}
@@ -293,6 +324,7 @@ export default function ConferenciaFrete() {
                     const s = SITUACAO[c.situacao] || SITUACAO.OK
                     const dif = c.previsto == null ? null : Number(c.valor) - Number(c.previsto)
                     return (
+                      <>
                       <tr key={c.chave || c.numero} className="border-t border-gray-100 hover:bg-gray-50">
                         <td className="px-3 py-2 font-mono text-xs">{c.numero}</td>
                         <td className="px-3 py-2 text-xs text-gray-600">{fmtDia(c.emissao)}</td>
@@ -322,6 +354,11 @@ export default function ConferenciaFrete() {
                             <span className="text-emerald-700"
                               title={`valor cotado em ${(c.cotado_em || []).join(', ')}`}>
                               cotado{c.cotado_emergencial ? ' (emerg.)' : ''}
+                              {(c.cotado_em || []).length > 0 && (
+                                <span className="ml-1 text-gray-500">
+                                  {(c.cotado_em || []).map(fmtDia).join(', ')}
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <span className="font-medium text-red-700"
@@ -337,6 +374,17 @@ export default function ConferenciaFrete() {
                           </span>
                         </td>
                       </tr>
+                      {/* A frase da transportadora, quando o recorte da conversa
+                          esta ligado: e a evidencia do "cotado", e sem ela a
+                          tela pediria confianca em vez de mostrar a origem. */}
+                      {filtro === 'COTADO' && c.cotado_trecho && (
+                        <tr key={`${c.chave || c.numero}-t`} className="bg-emerald-50/40">
+                          <td colSpan={9} className="px-3 pb-2 text-[11px] italic leading-relaxed text-emerald-900">
+                            “{c.cotado_trecho}”
+                          </td>
+                        </tr>
+                      )}
+                      </>
                     )
                   })}
                 </tbody>
