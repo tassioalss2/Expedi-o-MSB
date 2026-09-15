@@ -1648,6 +1648,68 @@ function EscolheProduto({ produtos, escolhido, sugerido, erro, onEscolher }: {
   )
 }
 
+/**
+ * Define o cliente de um caso sem sair de onde se está.
+ *
+ * A aba Órgãos resolve pelo CNPJ e é retroativa — é o caminho bom, e continua
+ * sendo o preferido aqui. Só que ela não alcança quem não tem CNPJ, e medido em
+ * 15/09/2026 são 190 dos 212 casos sem cliente (96 comunicados de uso, 26
+ * amostras, 23 vendas diretas). Para esses, o de-para nunca vai existir: o
+ * e-mail não traz o número.
+ *
+ * Por isso duas escritas diferentes, e a tela diz qual vai acontecer:
+ *   com CNPJ ... vira de-para e destrava todos os e-mails daquele órgão
+ *   sem CNPJ ... vale só para este caso, pela triagem do grupo
+ */
+function EscolheCliente({ c }: { c: Card }) {
+  const qc = useQueryClient()
+  const [escolha, setEscolha] = useState<{ id: string; nome: string } | null>(null)
+
+  const definir = useMutation({
+    mutationFn: ({ id }: { id: string }) =>
+      c.cnpj_orgao
+        ? api.post('/licitacoes/entrada/orgaos', {
+            cnpj: c.cnpj_orgao, cliente_id: id, nome_documento: c.orgao_texto })
+        : api.post(`/licitacoes/entrada/grupo/triar?chave=${encodeURIComponent(c.chave)}`,
+                   { cliente_id: id }),
+    onSuccess: (r) => {
+      const n = r.data?.entradas_atualizadas
+      toast.success(c.cnpj_orgao
+        ? `Órgão ligado — ${n ?? 0} pedido(s) destravado(s)`
+        : 'Cliente definido neste caso')
+      setEscolha(null)
+      for (const k of ['licitacao-entrada', 'licitacao-painel',
+                       'licitacao-orgaos', 'licitacao-orgaos-pendentes'])
+        qc.invalidateQueries({ queryKey: [k] })
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não consegui definir o cliente')),
+  })
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-[240px] flex-1">
+          <ClienteAutocomplete value={escolha?.id || ''} initialNome={escolha?.nome}
+            onChange={(id, nome) => setEscolha(id ? { id, nome } : null)} />
+        </div>
+        <button disabled={!escolha?.id || definir.isPending}
+          onClick={() => definir.mutate({ id: escolha!.id })}
+          className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40">
+          {definir.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Definir cliente
+        </button>
+      </div>
+      <p className="mt-1 text-[11px] text-gray-500">
+        {c.cnpj_orgao
+          ? <>Vale para o CNPJ <span className="font-mono">{c.cnpj_orgao}</span> — todo e-mail
+              desse órgão, os que já chegaram e os que vierem.</>
+          : <>Este e-mail não trouxe CNPJ, então vale <b>só para este caso</b>.</>}
+        {' '}Nome repetido no cadastro é normal (a EBSERH tem 24 unidades) — confira o código.
+      </p>
+    </div>
+  )
+}
+
 const CANAIS = [['LICITACAO_VASCULAR', 'Vascular'], ['LICITACAO_URO', 'Uro']] as const
 
 /**
@@ -1726,7 +1788,9 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   const precisaItem = tipo === 'VENDA_DIRETA' || tipo === 'AMOSTRA'
 
   const falta: string[] = []
-  if (!c.cliente_id) falta.push('o cliente — resolva o CNPJ na aba Órgãos')
+  // A mensagem mandava "resolva o CNPJ na aba Órgãos" e parava aí. Agora o
+  // campo está logo abaixo, nesta mesma janela — o aviso só diz que falta.
+  if (!c.cliente_id) falta.push('o cliente')
   if (tipo === 'OUTRO') falta.push('o tipo da operação — corrija no detalhe do caso')
   if (!numero.trim()) falta.push(eComunicado ? 'o número da AF' : 'a nota de empenho')
   if (eComunicado) {
@@ -1775,6 +1839,14 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
         </div>
 
         <div className="space-y-4 px-5 py-4">
+          {!c.cliente_id && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+              <div className="text-xs font-medium text-amber-900">
+                Cliente — {c.orgao_texto || 'o documento não trouxe o nome do órgão'}
+              </div>
+              <div className="mt-1.5"><EscolheCliente c={c} /></div>
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <Campo rotulo={eComunicado ? 'AF (autorização de fornecimento)' : 'Nota de empenho'}>
               <input value={numero} onChange={e => setNumero(e.target.value)}
@@ -2366,11 +2438,17 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
         <Secao titulo="Quem pediu">
           <Linha rotulo="Cliente">{c.cliente_nome}</Linha>
           {!c.cliente_nome && (
-            <Linha rotulo="Órgão no documento">
-              <span className="text-amber-700">
-                {c.orgao_texto || '(o documento não trouxe o nome)'} — sem cliente definido
-              </span>
-            </Linha>
+            <>
+              <Linha rotulo="Órgão no documento">
+                <span className="text-amber-700">
+                  {c.orgao_texto || '(o documento não trouxe o nome)'} — sem cliente definido
+                </span>
+              </Linha>
+              {/* O campo fica aqui, e não só na aba Órgãos: sem cliente o caso
+                  não vira demanda, e mandar a pessoa para outra tela no meio da
+                  triagem é onde ela perde o caso de vista. */}
+              <Linha rotulo="Definir o cliente"><EscolheCliente c={c} /></Linha>
+            </>
           )}
           <Linha rotulo="CNPJ do órgão">
             {c.cnpj_orgao ? <span className="font-mono text-xs">{c.cnpj_orgao}</span> : null}
