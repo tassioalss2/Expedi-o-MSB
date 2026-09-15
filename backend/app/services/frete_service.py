@@ -111,6 +111,76 @@ def _so_digitos(v) -> str:
     return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
 
+# ── a cotação, que acontece no WhatsApp ──────────────────────────────────────
+# O frete é cotado por WhatsApp com a transportadora: a MSB manda um bloco de
+# cubagem que já traz a OV, e ela responde com o valor. Sem isso, "cobrou
+# diferente do previsto" acusa cobrança que foi combinada — medido na conversa
+# de 19/08 a 15/09: das 32 OVs com CT-e, 11 tinham valor diferente do previsto
+# na OV E o valor cobrado estava cotado no chat. Ou seja: a cobrança estava
+# certa e o desatualizado era o nosso registro.
+_MSG = re.compile(
+    r"^\[(\d{1,2})/(\d{1,2})/(\d{2}), ([\d:]+\s*[AP]M)\]\s*([^:]+):\s*(.*)$")
+_REAIS = re.compile(r"R\$\s*([\d]{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})")
+_OV_NO_TEXTO = re.compile(r"\bOV\s*0*(\d{5,6})\b", re.I)
+
+
+def ler_conversa(conteudo: bytes, nome: str = "") -> dict:
+    """Os valores que a transportadora citou na conversa, com data e contexto.
+
+    Aceita o .txt da exportação do WhatsApp ou o zip que a exportação gera.
+
+    Guarda VALOR e não "a cotação da OV X": a conversa é contínua e entre uma
+    cubagem e a próxima passam várias negociações — amarrar cada valor a uma OV
+    pela ordem erraria. O cruzamento é feito por valor, que é indício forte e
+    honesto, e a tela diz que é indício.
+    """
+    texto = ""
+    if nome.lower().endswith(".zip") or conteudo[:2] == b"PK":
+        try:
+            z = zipfile.ZipFile(io.BytesIO(conteudo))
+            for interno in z.namelist():
+                if interno.lower().endswith(".txt"):
+                    texto = z.read(interno).decode("utf-8", "replace")
+                    break
+        except zipfile.BadZipFile:
+            texto = ""
+    else:
+        texto = conteudo.decode("utf-8", "replace")
+    if not texto.strip():
+        raise HTTPException(422, "não encontrei o texto da conversa — exporte o "
+                                 "chat pelo WhatsApp e mande o .txt ou o .zip")
+
+    mensagens = []
+    for linha in texto.splitlines():
+        m = _MSG.match(linha)
+        if m:
+            mes, dia, ano, _hora, autor, resto = m.groups()
+            mensagens.append({"data": "20%s-%02d-%02d" % (ano, int(mes), int(dia)),
+                              "autor": autor.strip(), "texto": resto})
+        elif mensagens:
+            mensagens[-1]["texto"] += "\n" + linha
+
+    valores, ovs = [], {}
+    for m in mensagens:
+        for n in _OV_NO_TEXTO.findall(m["texto"]):
+            ovs.setdefault("OV0%s" % n, m["data"])
+        # Só o que a TRANSPORTADORA disse: valor que nós mesmos escrevemos não é
+        # cotação, é o que pedimos ou repetimos.
+        if not ("RR" in m["autor"].upper() or "ALEX" in m["autor"].upper()):
+            continue
+        for v in _REAIS.findall(m["texto"]):
+            valores.append({
+                "data": m["data"],
+                "valor": float(v.replace(".", "").replace(",", ".")),
+                "emergencial": "emergenc" in m["texto"].lower(),
+                "trecho": " ".join(m["texto"].split())[:120],
+            })
+    return {"mensagens": len(mensagens), "valores": valores,
+            "ovs_citadas": ovs,
+            "de": mensagens[0]["data"] if mensagens else None,
+            "ate": mensagens[-1]["data"] if mensagens else None}
+
+
 def ler_pacote(conteudo: bytes) -> dict:
     """Abre o zip e devolve os CT-e e os boletos que encontrou."""
     try:
@@ -141,8 +211,15 @@ def ler_pacote(conteudo: bytes) -> dict:
 
 
 def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None,
-             gravar: bool = True, usuario: Optional[UsuarioOut] = None) -> dict:
-    """A conferência inteira. `gravar=False` só analisa, sem tocar no banco."""
+             gravar: bool = True, usuario: Optional[UsuarioOut] = None,
+             conversa: Optional[bytes] = None, conversa_nome: str = "") -> dict:
+    """A conferência inteira. `gravar=False` só analisa, sem tocar no banco.
+
+    `conversa` é a exportação do WhatsApp onde o frete é cotado. Com ela, uma
+    cobrança diferente do previsto deixa de ser acusação e ganha resposta: ou o
+    valor foi cotado — e aí o desatualizado é o NOSSO registro —, ou não foi
+    cotado em lugar nenhum, e esse é o caso que vale contestar.
+    """
     pacote = ler_pacote(conteudo)
     ctes, boletos = pacote["ctes"], pacote["boletos"]
 
@@ -201,6 +278,22 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
         linhas.append({**c, "situacao": situacao, "previsto": previsto,
                        "ov": p.get("numero_pedido") if p else None})
 
+    # ── a cotação do WhatsApp ────────────────────────────────────────────────
+    # Cruza por VALOR: o número cobrado aparece entre os que a transportadora
+    # citou? É indício forte, não prova — dois fretes podem ter o mesmo valor —,
+    # e a tela diz isso. Mas separa o que foi combinado do que não foi, que é a
+    # diferença entre "cobrança a mais" e "nosso registro desatualizado".
+    cot = None
+    if conversa:
+        cot = ler_conversa(conversa, conversa_nome)
+        citados = cot["valores"]
+        for l in linhas:
+            achados_iguais = [v for v in citados
+                              if abs(v["valor"] - l["valor"]) < 0.01]
+            l["cotado"] = bool(achados_iguais)
+            l["cotado_em"] = sorted({v["data"] for v in achados_iguais})[:3] or None
+            l["cotado_emergencial"] = any(v["emergencial"] for v in achados_iguais)
+
     # ── 5 · NF nossa sem CT-e ───────────────────────────────────────────────
     datas = sorted(c["emissao"] for c in ctes if c["emissao"])
     de, ate = (datas[0], datas[-1]) if datas else (None, None)
@@ -249,6 +342,22 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
         "sem_cte": sem_cte,
         "ignorados": len(pacote["ignorados"]),
     }
+
+    # O que a conversa acrescenta, e que muda a leitura dos achados acima: uma
+    # cobrança diferente do previsto E cotada não é problema; a mesma cobrança
+    # SEM cotação é o que se contesta com a transportadora.
+    if cot is not None:
+        divergentes = [l for l in linhas if l["situacao"] == "VALOR_DIFERENTE"]
+        sem_cotacao = [l for l in divergentes if not l.get("cotado")]
+        achados["conversa"] = {
+            "mensagens": cot["mensagens"],
+            "valores_citados": len(cot["valores"]),
+            "de": cot["de"], "ate": cot["ate"],
+            "cobrado_confirmado": len(divergentes) - len(sem_cotacao),
+            "cobrado_sem_cotacao": len(sem_cotacao),
+            "valor_sem_cotacao": round(sum(
+                l["valor"] - (l["previsto"] or 0) for l in sem_cotacao), 2),
+        }
 
     resultado = {
         "transportadora": (ctes[0].get("emitente") if ctes else None) or transportadora,

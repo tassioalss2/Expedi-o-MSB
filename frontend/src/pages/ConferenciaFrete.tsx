@@ -23,7 +23,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  AlertTriangle, Check, FileText, Loader2, Truck, Upload, X,
+  AlertTriangle, Check, FileText, Loader2, MessageSquare, Truck, Upload, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -61,6 +61,10 @@ export default function ConferenciaFrete() {
   const qc = useQueryClient()
   const [resultado, setResultado] = useState<any | null>(null)
   const [filtro, setFiltro] = useState<string>('')
+  // A conversa do WhatsApp onde o frete e cotado. Opcional de proposito: sem
+  // ela a conferencia roda igual, so nao consegue dizer se a cobranca a mais
+  // foi combinada — e essa e a diferenca entre acusar e contestar com razao.
+  const [conversa, setConversa] = useState<File | null>(null)
 
   const { data: historico = [] } = useQuery<any[]>({
     queryKey: ['frete-conferencias'],
@@ -71,6 +75,7 @@ export default function ConferenciaFrete() {
     mutationFn: (arquivo: File) => {
       const fd = new FormData()
       fd.append('arquivo', arquivo)
+      if (conversa) fd.append('conversa', conversa)
       return api.post('/frete/conferencia', fd,
         { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
     },
@@ -106,6 +111,25 @@ export default function ConferenciaFrete() {
           A conferência lê o XML dos CT-e e a linha digitável do boleto.
         </p>
       </div>
+
+      {/* A conversa entra ANTES do pacote: e escolhida uma vez e vale para a
+          conferencia que vem em seguida. O zip e que dispara o trabalho. */}
+      <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm transition hover:border-gray-400">
+        <MessageSquare className="h-4 w-4 shrink-0 text-gray-400" />
+        {conversa ? (
+          <>
+            <span className="min-w-0 flex-1 truncate text-gray-800">{conversa.name}</span>
+            <button type="button" onClick={e => { e.preventDefault(); setConversa(null) }}
+              className="text-xs text-gray-500 hover:text-red-600">tirar</button>
+          </>
+        ) : (
+          <span className="flex-1 text-gray-600">
+            conversa do WhatsApp com a transportadora <span className="text-gray-400">(opcional — .txt ou .zip da exportação)</span>
+          </span>
+        )}
+        <input type="file" accept=".txt,.zip" className="hidden"
+          onChange={e => { setConversa(e.target.files?.[0] || null); e.target.value = '' }} />
+      </label>
 
       {/* Subir o pacote */}
       <label className={`flex cursor-pointer items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-10 transition ${
@@ -169,6 +193,34 @@ export default function ConferenciaFrete() {
               ativo={filtro === 'VALOR_DIFERENTE'} onClick={() => setFiltro(f => f === 'VALOR_DIFERENTE' ? '' : 'VALOR_DIFERENTE')} />
           </div>
 
+          {/* O que a conversa respondeu. Sem ela, "cobrou a mais" e acusacao;
+              com ela, separa o que foi combinado do que nao foi — e so o
+              segundo grupo se contesta com a transportadora. */}
+          {a.conversa && (
+            <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-800">
+                <MessageSquare className="h-4 w-4 text-gray-400" />
+                A conversa explica {a.conversa.cobrado_confirmado} das {a.valor_diferente} cobranças diferentes do previsto
+              </p>
+              <p className="mt-1 text-xs text-gray-600">
+                {a.conversa.valores_citados} valores citados pela transportadora em{' '}
+                {a.conversa.mensagens} mensagens, de {fmtDia(a.conversa.de)} a {fmtDia(a.conversa.ate)}.
+                Nesses casos o cobrado foi cotado — o desatualizado é o frete previsto na OV.
+              </p>
+              {a.conversa.cobrado_sem_cotacao > 0 && (
+                <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+                  <b>{a.conversa.cobrado_sem_cotacao} cobrança(s) sem cotação em lugar nenhum</b>
+                  {' — '}{fmtBRL(a.conversa.valor_sem_cotacao)} a mais. É o que vale contestar.
+                </p>
+              )}
+              <p className="mt-2 text-[11px] text-gray-400">
+                O cruzamento é por VALOR: o número cobrado aparece entre os que a
+                transportadora citou. É indício forte, não prova — dois fretes
+                podem ter o mesmo valor.
+              </p>
+            </div>
+          )}
+
           {/* 5 · o outro lado: nota nossa que a transportadora não cobrou */}
           {a.sem_cte?.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
@@ -213,6 +265,7 @@ export default function ConferenciaFrete() {
                     <th className="px-3 py-2 text-right">Previsto</th>
                     <th className="px-3 py-2 text-right">Cobrado</th>
                     <th className="px-3 py-2 text-right">Diferença</th>
+                    <th className="px-3 py-2 text-left">Cotação</th>
                     <th className="px-3 py-2 text-left">Situação</th>
                   </tr>
                 </thead>
@@ -242,6 +295,21 @@ export default function ConferenciaFrete() {
                             : dif > 0 ? 'font-semibold text-red-700'
                             : dif < 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
                           {dif == null ? '—' : `${dif > 0 ? '+' : ''}${fmtBRL(dif)}`}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {c.cotado === undefined || c.cotado === null ? (
+                            <span className="text-gray-300">—</span>
+                          ) : c.cotado ? (
+                            <span className="text-emerald-700"
+                              title={`valor cotado em ${(c.cotado_em || []).join(', ')}`}>
+                              cotado{c.cotado_emergencial ? ' (emerg.)' : ''}
+                            </span>
+                          ) : (
+                            <span className="font-medium text-red-700"
+                              title="este valor não aparece na conversa">
+                              sem cotação
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2">
                           <span className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${s.cor}`}

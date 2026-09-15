@@ -18,6 +18,9 @@ TETO = 40 * 1024 * 1024
 @router.post("/frete/conferencia")
 async def conferir(
     arquivo: UploadFile = File(...),
+    # A conversa onde o frete e cotado. Opcional: sem ela a conferencia roda
+    # igual, so nao consegue dizer se a cobranca a mais foi combinada.
+    conversa: Optional[UploadFile] = File(None),
     transportadora: Optional[str] = Form(None),
     gravar: bool = Form(True),
     usuario: UsuarioOut = Depends(get_current_user),
@@ -28,9 +31,16 @@ async def conferir(
         raise HTTPException(422, "arquivo vazio")
     if len(conteudo) > TETO:
         raise HTTPException(413, "arquivo acima de 40 MB")
+    bytes_conversa, nome_conversa = None, ""
+    if conversa is not None:
+        bytes_conversa = await conversa.read()
+        nome_conversa = conversa.filename or ""
+        if len(bytes_conversa) > TETO:
+            raise HTTPException(413, "a conversa esta acima de 40 MB")
     return frete_service.conferir(
         conteudo, arquivo.filename or "pacote.zip",
-        transportadora=transportadora, gravar=gravar, usuario=usuario)
+        transportadora=transportadora, gravar=gravar, usuario=usuario,
+        conversa=bytes_conversa, conversa_nome=nome_conversa)
 
 
 @router.get("/frete/conferencias")
