@@ -499,9 +499,9 @@ def gastos(meses: int = 6) -> dict:
         pedidos += b
         if len(b) < 1000:
             break
-    transp = {t["id"]: t.get("nome") for t in
-              db.table("transportadoras").select("id, nome, ativo")
-              .limit(500).execute().data}
+    cadastro = db.table("transportadoras").select("id, nome, ativo")\
+        .limit(500).execute().data
+    transp = {t["id"]: t.get("nome") for t in cadastro}
     clientes = {}
     for off in range(0, 40000, 1000):
         b = db.table("clientes").select("id, codigo, nome").limit(1000)\
@@ -545,6 +545,19 @@ def gastos(meses: int = 6) -> dict:
     # nossa: eles foram pagos do mesmo jeito. Na fatura de 16-31/08 isso são
     # R$ 10.137,85 de notas que o app não conhece mais R$ 823,24 de devolução —
     # 43% do boleto que sumiria se eu contasse só o que casa.
+    #
+    # A ordem em que procuro o nome importa: o emitente "RR CARGO EXPRESS" casa
+    # com qualquer linha que tenha "RR". Isto varria um `set`, cuja ordem muda a
+    # cada execução, e o cobrado da RR foi parar numa linha "Rr" desativada.
+    # Agora: só transportadoras ativas, a mais usada primeiro, e ordem estável.
+    usos: dict = {}
+    for p in cif:
+        n = transp.get(p.get("transportadora_id"))
+        if n:
+            usos[n] = usos.get(n, 0) + 1
+    candidatos = sorted({t.get("nome") for t in cadastro
+                         if t.get("ativo") and t.get("nome")},
+                        key=lambda n: (-usos.get(n, 0), n.upper()))
     try:
         confs = {c["id"]: c for c in db.table("frete_conferencias")
                  .select("id, transportadora").limit(500).execute().data}
@@ -564,7 +577,7 @@ def gastos(meses: int = 6) -> dict:
             emitente = (confs.get(l.get("conferencia_id")) or {}).get("transportadora")
             # Casa o emitente do CT-e com a transportadora cadastrada, para o
             # cobrado cair na mesma linha do previsto.
-            nome = next((n for n in {v for v in transp.values() if v}
+            nome = next((n for n in candidatos
                          if _mesma_transportadora(emitente or "", n)), None)
             chave = (mes, nome or "")
             alvo = linhas.setdefault(chave, {"mes": mes, "transportadora": nome,
@@ -606,8 +619,11 @@ def gastos(meses: int = 6) -> dict:
         "sem_transportadora": sem_transportadora,
         "total_sem_transportadora": round(
             sum(x["valor_frete"] for x in sem_transportadora), 2),
+        # Só as ativas: a lista "quem levou?" mostrava a mesma empresa seis
+        # vezes e não havia como saber qual escolher.
         "transportadoras": sorted(
-            [{"id": i, "nome": n} for i, n in transp.items() if n],
+            [{"id": t["id"], "nome": t["nome"]} for t in cadastro
+             if t.get("ativo") and t.get("nome")],
             key=lambda x: str(x["nome"]).upper()),
     }
 
@@ -626,10 +642,15 @@ def definir_transportadora(numero_pedido: str, transportadora_id: str,
         .eq("numero_pedido", alvo).execute().data
     if not achado:
         raise HTTPException(404, "OV %s não existe" % alvo)
-    t = db.table("transportadoras").select("id, nome")\
+    t = db.table("transportadoras").select("id, nome, ativo")\
         .eq("id", str(transportadora_id)).execute().data
     if not t:
         raise HTTPException(404, "transportadora não encontrada")
+    if not t[0].get("ativo"):
+        # As 21 linhas duplicadas de 15/09/2026 viraram inativas; apontar um
+        # pedido para uma delas recriaria a divisão que a junção desfez.
+        raise HTTPException(409, "%s está inativa — escolha a ativa com esse nome"
+                            % t[0].get("nome"))
     db.table("pedidos").update({"transportadora_id": str(transportadora_id)})\
         .eq("id", achado[0]["id"]).execute()
     return {"ov": achado[0]["numero_pedido"], "transportadora": t[0]["nome"]}
