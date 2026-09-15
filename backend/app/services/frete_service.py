@@ -1,0 +1,341 @@
+# -*- coding: utf-8 -*-
+"""Confere a fatura de frete da transportadora contra as nossas OVs.
+
+A transportadora manda a cada 15 dias um zip com os CT-e do período (XML e
+DACTE em PDF) e o boleto. A operadora abria DACTE por DACTE, somava à mão e
+comparava — procurando CT-e repetido e CT-e que não é da MSB.
+
+Cinco testes, e os dois últimos são os que a conferência manual não consegue
+fazer, porque ela não tem o frete previsto da OV do lado:
+
+  1 a soma dos CT-e bate com a soma dos boletos?
+  2 algum CT-e repetido? (pela CHAVE, não pelo número)
+  3 algum CT-e sem a MSB nas pontas?
+  4 o frete cobrado bate com o previsto na OV daquela NF?
+  5 saiu NF pela transportadora no período e não tem CT-e?
+
+Medido no período de 16 a 31/08 da RR: 42 CT-e, R$ 25.505,75, soma exata com os
+boletos, zero duplicado, zero de terceiro — e mesmo assim 16 cobranças diferentes
+do previsto (R$ 1.826,39 a mais) e 7 CT-e de NF que o app não conhece
+(R$ 11.277,59, um deles de R$ 8.304,20 com destino Biomedical). A soma fechar
+não quer dizer que está certo.
+
+LÊ O XML, NÃO O PDF. O CT-e eletrônico é o documento fiscal; o DACTE é só a
+representação impressa dele. O PDF entra apenas para o boleto, e de lá sai só o
+que a LINHA DIGITÁVEL garante — ver `_boleto`.
+"""
+import io
+import re
+import zipfile
+from datetime import date, timedelta
+from typing import Optional
+from xml.etree import ElementTree as ET
+
+from fastapi import HTTPException
+
+from app.core.database import get_service_db
+from app.models.schemas import UsuarioOut
+
+NS = {"c": "http://www.portalfiscal.inf.br/cte"}
+# O CNPJ da MSB. É por ele que se separa "frete nosso" de "frete de outro
+# cliente da transportadora", que é uma das coisas que a operadora procura.
+CNPJ_MSB = "06167295000171"
+MESES_DE_HISTORICO = 3
+
+
+def _texto(no, caminho: str) -> Optional[str]:
+    achado = no.find(caminho, NS) if no is not None else None
+    return (achado.text or "").strip() if achado is not None and achado.text else None
+
+
+def _le_cte(conteudo: bytes) -> Optional[dict]:
+    """Um CT-e a partir do XML. None quando o arquivo não é um CT-e."""
+    try:
+        inf = ET.fromstring(conteudo).find(".//c:infCte", NS)
+    except ET.ParseError:
+        return None
+    if inf is None:
+        return None
+    ide, rem, dest = (inf.find("c:ide", NS), inf.find("c:rem", NS),
+                      inf.find("c:dest", NS))
+    return {
+        "numero": _texto(ide, "c:nCT"),
+        "chave": (inf.get("Id") or "").replace("CTe", ""),
+        "emissao": (_texto(ide, "c:dhEmi") or "")[:10] or None,
+        "valor": float(_texto(inf.find("c:vPrest", NS), "c:vTPrest") or 0),
+        "remetente": _texto(rem, "c:xNome"),
+        "rem_cnpj": _texto(rem, "c:CNPJ"),
+        "destinatario": _texto(dest, "c:xNome"),
+        "dest_cnpj": _texto(dest, "c:CNPJ"),
+        "emitente": _texto(inf.find("c:emit", NS), "c:xNome"),
+        "emit_cnpj": _texto(inf.find("c:emit", NS), "c:CNPJ"),
+        # A NF-e transportada vem pela chave de 44 dígitos; as posições 25..34
+        # são o número da nota. É daí que sai o cruzamento com as nossas OVs.
+        "notas": [n.text[25:34].lstrip("0")
+                  for n in inf.findall(".//c:infNFe/c:chave", NS) if n.text],
+    }
+
+
+# A linha digitável do boleto: 5 campos, e o último traz fator de vencimento (4
+# dígitos) + valor em centavos (10). Ler daqui e não de "Valor do Documento" é
+# o que torna a leitura independente do layout do PDF — o texto extraído muda
+# conforme a biblioteca, a linha digitável é regra do sistema bancário.
+_LINHA_DIGITAVEL = re.compile(
+    r"\b\d{3}-?\d\s+\d{5}\.\d{5}\s+\d{5}\.\d{6}\s+\d{5}\.\d{6}\s+\d\s+(\d{14})\b")
+# Fator de vencimento: 1000 = 22/02/2025 (o fator reiniciou nessa data).
+_BASE_FATOR = date(2025, 2, 22)
+
+
+def _boleto(conteudo: bytes, nome: str) -> Optional[dict]:
+    """Valor e vencimento de um boleto, pela linha digitável."""
+    try:
+        from pypdf import PdfReader
+        leitor = PdfReader(io.BytesIO(conteudo))
+        texto = "\n".join((p.extract_text() or "") for p in leitor.pages)
+    except Exception:
+        return None
+    m = _LINHA_DIGITAVEL.search(texto)
+    if not m:
+        return None
+    campo = m.group(1)
+    fator, centavos = int(campo[:4]), int(campo[4:])
+    return {
+        "arquivo": nome,
+        "valor": round(centavos / 100.0, 2),
+        "vencimento": (_BASE_FATOR + timedelta(days=fator - 1000)).isoformat()
+        if fator >= 1000 else None,
+    }
+
+
+def _so_digitos(v) -> str:
+    return re.sub(r"\D", "", str(v or "")).lstrip("0")
+
+
+def ler_pacote(conteudo: bytes) -> dict:
+    """Abre o zip e devolve os CT-e e os boletos que encontrou."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(conteudo))
+    except zipfile.BadZipFile:
+        raise HTTPException(422, "o arquivo não é um zip — mande o pacote que a "
+                                 "transportadora enviou, sem descompactar")
+    ctes, boletos, ignorados = [], [], []
+    for nome in z.namelist():
+        if nome.endswith("/"):
+            continue
+        baixo = nome.lower()
+        dados = z.read(nome)
+        if baixo.endswith(".xml"):
+            cte = _le_cte(dados)
+            (ctes if cte else ignorados).append(cte or nome)
+        elif baixo.endswith(".pdf") and "boleto" in baixo:
+            b = _boleto(dados, nome.rsplit("/", 1)[-1])
+            (boletos if b else ignorados).append(b or nome)
+        else:
+            # DACTE em PDF e relatórios não são lidos: o XML já tem tudo, e ler
+            # a versão impressa do mesmo documento só acrescentaria risco.
+            ignorados.append(nome)
+    if not ctes:
+        raise HTTPException(422, "nenhum CT-e (XML) no pacote — a conferência lê "
+                                 "o XML, não o DACTE em PDF")
+    return {"ctes": ctes, "boletos": boletos, "ignorados": ignorados}
+
+
+def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None,
+             gravar: bool = True, usuario: Optional[UsuarioOut] = None) -> dict:
+    """A conferência inteira. `gravar=False` só analisa, sem tocar no banco."""
+    pacote = ler_pacote(conteudo)
+    ctes, boletos = pacote["ctes"], pacote["boletos"]
+
+    total_ctes = round(sum(c["valor"] for c in ctes), 2)
+    total_bol = round(sum(b["valor"] for b in boletos), 2)
+
+    # ── 2 · repetidos ────────────────────────────────────────────────────────
+    vezes_chave: dict = {}
+    for c in ctes:
+        vezes_chave[c["chave"]] = vezes_chave.get(c["chave"], 0) + 1
+    duplicados = {k: v for k, v in vezes_chave.items() if v > 1}
+    # A mesma NF cobrada em dois CT-e diferentes é o outro jeito de cobrar duas
+    # vezes, e não aparece na contagem de chaves.
+    nota_em: dict = {}
+    for c in ctes:
+        for n in c["notas"]:
+            nota_em.setdefault(n, []).append(c["numero"])
+    notas_repetidas = {n: v for n, v in nota_em.items() if len(v) > 1}
+
+    # ── 3 · é nosso? ─────────────────────────────────────────────────────────
+    de_terceiro = [c for c in ctes
+                   if CNPJ_MSB not in str(c["rem_cnpj"])
+                   and CNPJ_MSB not in str(c["dest_cnpj"])]
+
+    # ── 4 e 5 · contra as nossas OVs ────────────────────────────────────────
+    db = get_service_db()
+    pedidos = []
+    for off in range(0, 40000, 1000):
+        b = db.table("pedidos").select(
+            "numero_pedido, numero_nf, valor_frete, tipo_frete, "
+            "transportadora_id, data_faturamento, criado_em")\
+            .limit(1000).offset(off).execute().data
+        pedidos += b
+        if len(b) < 1000:
+            break
+    por_nf: dict = {}
+    for p in pedidos:
+        n = _so_digitos(p.get("numero_nf"))
+        if n:
+            por_nf.setdefault(n, p)
+
+    linhas = []
+    for c in ctes:
+        p = next((por_nf[n] for n in c["notas"] if n in por_nf), None)
+        previsto = float(p.get("valor_frete") or 0) if p else None
+        if duplicados.get(c["chave"]):
+            situacao = "DUPLICADO"
+        elif c in de_terceiro:
+            situacao = "NAO_E_NOSSO"
+        elif p is None:
+            situacao = "NF_DESCONHECIDA"
+        elif abs((previsto or 0) - c["valor"]) >= 0.01:
+            situacao = "VALOR_DIFERENTE"
+        else:
+            situacao = "OK"
+        linhas.append({**c, "situacao": situacao, "previsto": previsto,
+                       "ov": p.get("numero_pedido") if p else None})
+
+    # ── 5 · NF nossa sem CT-e ───────────────────────────────────────────────
+    datas = sorted(c["emissao"] for c in ctes if c["emissao"])
+    de, ate = (datas[0], datas[-1]) if datas else (None, None)
+    cobradas = {n for c in ctes for n in c["notas"]}
+    nome_transp = (transportadora or "").strip().upper()
+    transportadoras = {x["id"]: str(x.get("nome") or "").upper() for x in
+                       db.table("transportadoras").select("id, nome")
+                       .limit(500).execute().data}
+
+    def _dia(p) -> str:
+        for k in ("data_faturamento", "criado_em"):
+            v = str(p.get(k) or "")[:10]
+            if v:
+                return v
+        return ""
+
+    sem_cte = []
+    if de and ate:
+        for p in pedidos:
+            if (p.get("tipo_frete") or "") != "CIF_SEM_VALOR":
+                continue
+            if not (de <= _dia(p) <= ate):
+                continue
+            if nome_transp and nome_transp not in transportadoras.get(
+                    p.get("transportadora_id"), ""):
+                continue
+            if _so_digitos(p.get("numero_nf")) in cobradas:
+                continue
+            sem_cte.append({"ov": p.get("numero_pedido"), "nf": p.get("numero_nf"),
+                            "previsto": float(p.get("valor_frete") or 0)})
+
+    def _soma(sit):
+        return round(sum(l["valor"] for l in linhas if l["situacao"] == sit), 2)
+
+    achados = {
+        "diferenca_soma": round(total_ctes - total_bol, 2),
+        "duplicados": duplicados,
+        "notas_repetidas": notas_repetidas,
+        "de_terceiro": len(de_terceiro),
+        "valor_diferente": len([l for l in linhas if l["situacao"] == "VALOR_DIFERENTE"]),
+        "soma_das_diferencas": round(sum(
+            l["valor"] - (l["previsto"] or 0)
+            for l in linhas if l["situacao"] == "VALOR_DIFERENTE"), 2),
+        "nf_desconhecida": len([l for l in linhas if l["situacao"] == "NF_DESCONHECIDA"]),
+        "valor_nf_desconhecida": _soma("NF_DESCONHECIDA"),
+        "sem_cte": sem_cte,
+        "ignorados": len(pacote["ignorados"]),
+    }
+
+    resultado = {
+        "transportadora": (ctes[0].get("emitente") if ctes else None) or transportadora,
+        "periodo_de": de, "periodo_ate": ate,
+        "vencimento": next((b["vencimento"] for b in boletos if b.get("vencimento")), None),
+        "total_ctes": total_ctes, "total_boletos": total_bol,
+        "qtd_ctes": len(ctes), "qtd_boletos": len(boletos),
+        "boletos": boletos, "achados": achados, "ctes": linhas,
+        "arquivo": arquivo,
+    }
+    if gravar:
+        resultado["id"] = _grava(resultado, usuario)
+    return resultado
+
+
+def _grava(r: dict, usuario: Optional[UsuarioOut]) -> Optional[str]:
+    """Guarda a conferência e apaga o que passou de 3 meses.
+
+    A limpeza roda aqui, e não num job: não há agendador no servidor, e o que
+    não roda junto com o uso não roda nunca. Retenção pedida pelo Tássio para o
+    app não pesar.
+    """
+    db = get_service_db()
+    try:
+        linha = db.table("frete_conferencias").insert({
+            "transportadora": r["transportadora"],
+            "periodo_de": r["periodo_de"], "periodo_ate": r["periodo_ate"],
+            "vencimento": r["vencimento"],
+            "total_boletos": r["total_boletos"], "total_ctes": r["total_ctes"],
+            "qtd_ctes": r["qtd_ctes"], "qtd_boletos": r["qtd_boletos"],
+            "achados": r["achados"], "arquivo": r["arquivo"],
+            "criado_por": str(usuario.id) if usuario else None,
+        }).execute().data[0]
+    except Exception as e:
+        # Sem a v47 a conferência continua valendo na tela — ela só não fica
+        # guardada. Melhor isso do que recusar o trabalho.
+        print("conferencia de frete nao foi gravada: %s" % str(e)[:160])
+        return None
+
+    for c in r["ctes"]:
+        try:
+            db.table("frete_conferencia_ctes").insert({
+                "conferencia_id": linha["id"], "numero": c["numero"],
+                "chave": c["chave"], "emissao": c["emissao"], "valor": c["valor"],
+                "remetente": c["remetente"], "destinatario": c["destinatario"],
+                "notas": c["notas"], "situacao": c["situacao"],
+                "previsto": c["previsto"], "ov": c["ov"],
+            }).execute()
+        except Exception as e:
+            print("CT-e %s nao gravado: %s" % (c["numero"], str(e)[:100]))
+
+    _limpa_antigas(db)
+    return linha["id"]
+
+
+def _limpa_antigas(db) -> int:
+    from datetime import datetime, timezone
+    corte = (datetime.now(timezone.utc) - timedelta(days=30 * MESES_DE_HISTORICO))
+    try:
+        velhas = db.table("frete_conferencias").select("id")\
+            .lt("criado_em", corte.isoformat()).limit(500).execute().data
+        for v in velhas:
+            db.table("frete_conferencias").delete().eq("id", v["id"]).execute()
+        return len(velhas)
+    except Exception:
+        return 0
+
+
+def listar(limite: int = 24) -> list[dict]:
+    """O histórico — os últimos 3 meses, do mais novo para o mais antigo."""
+    db = get_service_db()
+    try:
+        return db.table("frete_conferencias").select("*")\
+            .order("criado_em", desc=True).limit(limite).execute().data
+    except Exception:
+        return []
+
+
+def detalhe(conferencia_id: str) -> dict:
+    db = get_service_db()
+    cab = db.table("frete_conferencias").select("*").eq("id", conferencia_id)\
+        .execute().data
+    if not cab:
+        raise HTTPException(404, "conferência não encontrada")
+    ctes = db.table("frete_conferencia_ctes").select("*")\
+        .eq("conferencia_id", conferencia_id).limit(2000).execute().data
+    ordem = {"DUPLICADO": 0, "NAO_E_NOSSO": 1, "NF_DESCONHECIDA": 2,
+             "VALOR_DIFERENTE": 3, "OK": 4}
+    ctes.sort(key=lambda c: (ordem.get(c.get("situacao"), 9), -float(c.get("valor") or 0)))
+    return {**cab[0], "ctes": ctes}

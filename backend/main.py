@@ -8,6 +8,7 @@ from app.api.esterilizacao import router as esterilizacao_router
 from app.api.impressao import router as impressao_router
 from app.api.inventario import router as inventario_router
 from app.api.inventario_continuo import router as inventario_continuo_router
+from app.api.frete import router as frete_router
 from app.api.licitacoes import router as licitacoes_router
 from app.api.localidades import router as localidades_router
 from app.api.pedidos import router as pedidos_router
@@ -78,6 +79,7 @@ app.include_router(cadastros_router, prefix="/api/v1")
 app.include_router(inventario_router, prefix="/api/v1")
 app.include_router(inventario_continuo_router, prefix="/api/v1")
 app.include_router(licitacoes_router, prefix="/api/v1")
+app.include_router(frete_router, prefix="/api/v1")
 app.include_router(localidades_router, prefix="/api/v1")
 app.include_router(impressao_router, prefix="/api/v1")
 app.include_router(esterilizacao_router, prefix="/api/v1")

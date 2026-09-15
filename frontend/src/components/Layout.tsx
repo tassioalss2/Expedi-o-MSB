@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX,
+  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -44,6 +44,7 @@ const navComercial: NavItem[] = [
     ],
   },
   { to: '/pendencias', label: 'Pendências de OV', icone: PackageX, badge: 'pendencias' },
+  { to: '/frete',      label: 'Conferência de Frete', icone: Truck },
   { to: '/previsao', label: 'Previsão de Faturamento', icone: TrendingUp },
   { to: '/crm',      label: 'CRM',                     icone: Handshake },
   { to: '/inteligencia', label: 'Inteligência',        icone: Sparkles },
