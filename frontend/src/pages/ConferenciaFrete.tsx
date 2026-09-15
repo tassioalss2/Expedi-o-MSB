@@ -65,6 +65,10 @@ export default function ConferenciaFrete() {
   // ela a conferencia roda igual, so nao consegue dizer se a cobranca a mais
   // foi combinada — e essa e a diferenca entre acusar e contestar com razao.
   const [conversa, setConversa] = useState<File | null>(null)
+  // A OV aberta para analise. Nasceu da pergunta do Tassio sobre a OV016406
+  // ("o que ta de errado com essa OV nos fretes?"): a resposta era "nada, ela
+  // foi pela BRIX", e ele teve de perguntar para saber.
+  const [ovAberta, setOvAberta] = useState<string | null>(null)
 
   const { data: historico = [] } = useQuery<any[]>({
     queryKey: ['frete-conferencias'],
@@ -87,6 +91,12 @@ export default function ConferenciaFrete() {
     },
     onError: (e: any) =>
       toast.error(e?.response?.data?.detail || 'Não consegui ler o pacote'),
+  })
+
+  const { data: analise, isFetching: carregandoOv } = useQuery<any>({
+    queryKey: ['frete-ov', ovAberta],
+    queryFn: () => api.get(`/frete/ov/${ovAberta}`).then(r => r.data),
+    enabled: !!ovAberta,
   })
 
   const abrir = useMutation({
@@ -286,9 +296,10 @@ export default function ConferenciaFrete() {
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {a.sem_cte.map((s: any) => (
-                  <span key={s.ov} className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs">
+                  <button key={s.ov} onClick={() => setOvAberta(s.ov)}
+                    className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs transition hover:border-amber-500 hover:bg-amber-100">
                     <b className="font-mono">{s.ov}</b> · NF {s.nf} · previsto {fmtBRL(s.previsto)}
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -333,7 +344,12 @@ export default function ConferenciaFrete() {
                         <td className="px-3 py-2 text-xs text-gray-600">{fmtDia(c.emissao)}</td>
                         <td className="px-3 py-2 font-mono text-xs">
                           {(c.notas || []).join(', ') || '—'}
-                          {c.ov && <span className="ml-1 text-gray-400">({c.ov})</span>}
+                          {c.ov && (
+                            <button onClick={() => setOvAberta(c.ov)}
+                              className="ml-1 text-blue-600 hover:underline">
+                              ({c.ov})
+                            </button>
+                          )}
                         </td>
                         <td className="max-w-[16rem] truncate px-3 py-2 text-xs text-gray-600">
                           {c.destinatario}
@@ -397,6 +413,81 @@ export default function ConferenciaFrete() {
         </div>
       )}
 
+      {/* A analise de UMA OV, com o veredito escrito. O que a tela responde
+          aqui e "isto esta certo?" — e nao "aqui estao os numeros, interprete". */}
+      {ovAberta && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+          onClick={() => setOvAberta(null)}>
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
+              <div>
+                <h3 className="font-mono text-lg font-semibold text-gray-900">{ovAberta}</h3>
+                {analise && (
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    NF {analise.nf || '—'} · {analise.cliente || 'sem cliente'}
+                    {analise.local_entrega && <> · {analise.local_entrega}</>}
+                  </p>
+                )}
+              </div>
+              <button onClick={() => setOvAberta(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {carregandoOv || !analise ? (
+              <div className="py-12 text-center">
+                <Loader2 className="mx-auto h-6 w-6 animate-spin text-gray-400" />
+              </div>
+            ) : (
+              <div className="space-y-4 px-5 py-4">
+                <div className={`rounded-xl border p-3 ${
+                  analise.tudo_certo
+                    ? 'border-emerald-200 bg-emerald-50'
+                    : 'border-red-200 bg-red-50'}`}>
+                  <p className={`flex items-center gap-2 text-sm font-semibold ${
+                    analise.tudo_certo ? 'text-emerald-900' : 'text-red-900'}`}>
+                    {analise.tudo_certo ? <Check className="h-4 w-4" />
+                                        : <AlertTriangle className="h-4 w-4" />}
+                    {analise.tudo_certo
+                      ? 'Nada de errado com esta OV no frete'
+                      : 'Tem coisa para olhar nesta OV'}
+                  </p>
+                </div>
+
+                <div className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+                  <Dado rotulo="Valor da nota" valor={fmtBRL(analise.valor_nf)} />
+                  <Dado rotulo="Frete previsto" valor={fmtBRL(analise.previsto)} />
+                  <Dado rotulo="Tipo de frete" valor={analise.tipo_frete} />
+                  <Dado rotulo="Transportadora" valor={analise.transportadora || '—'} />
+                  <Dado rotulo="Situação" valor={analise.status} />
+                  <Dado rotulo="Faturada em" valor={fmtDia(analise.faturada_em)} />
+                </div>
+
+                <div className="space-y-2">
+                  {analise.pontos.map((pt: any, n: number) => (
+                    <div key={n} className={`rounded-lg border p-2.5 ${
+                      pt.ok === false ? 'border-red-200 bg-red-50'
+                        : pt.ok === true ? 'border-emerald-200 bg-emerald-50/50'
+                        : 'border-gray-200 bg-gray-50'}`}>
+                      <p className={`flex items-start gap-2 text-sm font-medium ${
+                        pt.ok === false ? 'text-red-900'
+                          : pt.ok === true ? 'text-emerald-900' : 'text-gray-800'}`}>
+                        {pt.ok === false ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          : pt.ok === true ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          : <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />}
+                        {pt.titulo}
+                      </p>
+                      <p className="mt-0.5 pl-5 text-xs text-gray-600">{pt.detalhe}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Histórico — 3 meses, como o Tássio pediu, para o app não pesar */}
       {historico.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-white">
@@ -429,6 +520,15 @@ export default function ConferenciaFrete() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function Dado({ rotulo, valor }: { rotulo: string; valor: any }) {
+  return (
+    <div className="flex gap-2 border-b border-gray-100 py-1">
+      <span className="w-32 shrink-0 text-gray-500">{rotulo}</span>
+      <span className="min-w-0 flex-1 font-medium text-gray-900">{valor || '—'}</span>
     </div>
   )
 }

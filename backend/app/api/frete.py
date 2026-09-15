@@ -43,6 +43,12 @@ async def conferir(
         conversa=bytes_conversa, conversa_nome=nome_conversa)
 
 
+@router.get("/frete/ov/{numero}")
+def analise_ov(numero: str, _: UsuarioOut = Depends(get_current_user)):
+    """O que a conferência sabe de uma OV, com o veredito escrito."""
+    return frete_service.analise_ov(numero)
+
+
 @router.get("/frete/conferencias")
 def listar(limite: int = 24, _: UsuarioOut = Depends(get_current_user)):
     """O histórico guardado — os últimos 3 meses."""

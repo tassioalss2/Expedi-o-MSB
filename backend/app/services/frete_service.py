@@ -455,6 +455,128 @@ def _limpa_antigas(db) -> int:
         return 0
 
 
+def analise_ov(numero: str) -> dict:
+    """O que a conferência sabe de UMA OV, com o veredito em palavras.
+
+    Nasceu de uma pergunta do Tássio sobre a OV016406: "o que tá de errado com
+    essa OV nos fretes?". A resposta era "nada — ela foi pela BRIX", e ele teve
+    de me perguntar para saber. Cada ponto aqui devolve `ok` (verdadeiro, falso
+    ou nulo quando não dá para dizer) e a frase que explica, para a tela não
+    precisar interpretar número nenhum.
+    """
+    db = get_service_db()
+    alvo = str(numero or "").strip().upper()
+    pedidos = []
+    for off in range(0, 40000, 1000):
+        b = db.table("pedidos").select("*").limit(1000).offset(off).execute().data
+        pedidos += b
+        if len(b) < 1000:
+            break
+    p = next((x for x in pedidos
+              if str(x.get("numero_pedido") or "").strip().upper() == alvo), None)
+    if not p:
+        raise HTTPException(404, "OV %s não existe no app" % alvo)
+
+    transp = ""
+    if p.get("transportadora_id"):
+        achado = db.table("transportadoras").select("nome")\
+            .eq("id", p["transportadora_id"]).execute().data
+        transp = (achado[0]["nome"] if achado else "") or ""
+    cliente = ""
+    if p.get("cliente_id"):
+        achado = db.table("clientes").select("codigo, nome")\
+            .eq("id", p["cliente_id"]).execute().data
+        if achado:
+            cliente = "%s · %s" % (achado[0].get("codigo"), achado[0].get("nome"))
+
+    nf = _so_digitos(p.get("numero_nf"))
+    previsto = float(p.get("valor_frete") or 0)
+    tipo = (p.get("tipo_frete") or "").upper()
+
+    # Os CT-e que já cobraram esta nota, em qualquer conferência guardada (v47).
+    # Um CT-e por CHAVE, e não um por linha: a mesma fatura pode ter sido
+    # conferida mais de uma vez, e aí o mesmo CT-e existe em várias
+    # conferências. Sem isto a análise repetia "CT-e 94113 cobrou R$ 383,42"
+    # seis vezes, como se fossem seis cobranças.
+    cobrancas = []
+    try:
+        vistos = set()
+        linhas = db.table("frete_conferencia_ctes").select("*")\
+            .limit(4000).execute().data
+        for l in linhas:
+            notas = [str(x).lstrip("0") for x in (l.get("notas") or [])]
+            ident = l.get("chave") or l.get("numero")
+            if nf and nf in notas and ident not in vistos:
+                vistos.add(ident)
+                cobrancas.append(l)
+    except Exception:
+        cobrancas = []
+
+    pontos = []
+    # 1 · o frete é nosso?
+    if tipo == "CIF_SEM_VALOR":
+        pontos.append({"ok": True, "titulo": "Frete pago pela MSB",
+                       "detalhe": "CIF sem valor — entra na conferência da fatura."})
+    else:
+        pontos.append({"ok": None, "titulo": "Não é frete pago pela MSB",
+                       "detalhe": "Tipo %s. A fatura da transportadora não cobre "
+                                  "esta OV." % (tipo or "não informado")})
+    # 2 · quem levou
+    pontos.append({
+        "ok": None if not transp else True,
+        "titulo": "Transportadora: %s" % (transp or "não informada"),
+        "detalhe": "A conferência de uma transportadora não mostra OV de outra — "
+                   "cada fatura cobre só o que ela levou."
+        if transp else "Sem transportadora no pedido, não dá para dizer em qual "
+                       "fatura esta OV deveria aparecer.",
+    })
+    # 3 · foi cobrada?
+    if not nf:
+        pontos.append({"ok": None, "titulo": "Sem nota fiscal",
+                       "detalhe": "Sem NF não há como casar com CT-e nenhum."})
+    elif not cobrancas:
+        pontos.append({
+            "ok": None, "titulo": "Nenhum CT-e cobrou esta nota ainda",
+            "detalhe": "Não apareceu em nenhuma conferência guardada. Ou entra "
+                       "no próximo boleto, ou a transportadora não cobrou.",
+        })
+    else:
+        for c in cobrancas:
+            valor = float(c.get("valor") or 0)
+            dif = round(valor - previsto, 2)
+            if abs(dif) < 0.01:
+                pontos.append({
+                    "ok": True,
+                    "titulo": "CT-e %s cobrou %s — igual ao previsto"
+                              % (c.get("numero"), _reais(valor)),
+                    "detalhe": "Confere com o frete da OV.",
+                })
+            else:
+                pontos.append({
+                    "ok": False,
+                    "titulo": "CT-e %s cobrou %s, previsto %s (%s%s)"
+                              % (c.get("numero"), _reais(valor), _reais(previsto),
+                                 "+" if dif > 0 else "", _reais(dif)),
+                    "detalhe": "Confira se este valor foi cotado com a "
+                               "transportadora — se não foi, é o que se contesta.",
+                })
+    tudo_certo = all(pt["ok"] is not False for pt in pontos)
+    return {
+        "ov": p.get("numero_pedido"), "nf": p.get("numero_nf"),
+        "valor_nf": p.get("valor_nf"), "previsto": previsto,
+        "tipo_frete": p.get("tipo_frete"), "transportadora": transp,
+        "cliente": cliente, "local_entrega": p.get("local_entrega"),
+        "status": p.get("status"),
+        "faturada_em": str(p.get("data_faturamento") or "")[:10] or None,
+        "cobrancas": cobrancas, "pontos": pontos, "tudo_certo": tudo_certo,
+    }
+
+
+def _reais(v) -> str:
+    return "R$ %s" % format(float(v or 0), ",.2f").replace(",", "X")\
+        .replace(".", ",").replace("X", ".")
+
+
 def listar(limite: int = 24) -> list[dict]:
     """O histórico — os últimos 3 meses, do mais novo para o mais antigo."""
     db = get_service_db()
