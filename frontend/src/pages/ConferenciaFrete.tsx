@@ -221,6 +221,25 @@ export default function ConferenciaFrete() {
             </div>
           )}
 
+          {/* A RR cota por WhatsApp. Sem a conversa, as cobrancas acima do
+              previsto aparecem como problema mesmo tendo sido combinadas — foi
+              o que aconteceu na primeira leitura: 16 divergencias viraram 5
+              quando a conversa entrou. */}
+          {!a.conversa && a.valor_diferente > 0 && (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-sky-900">
+                <MessageSquare className="h-4 w-4" />
+                Falta a conversa do WhatsApp
+              </p>
+              <p className="mt-1 text-xs text-sky-800">
+                {a.valor_diferente} cobrança(s) vieram diferentes do previsto na OV.
+                Com esta transportadora a cotação é feita por WhatsApp — sem a
+                conversa não dá para saber quais foram combinadas. Escolha o
+                arquivo lá em cima e suba o pacote de novo.
+              </p>
+            </div>
+          )}
+
           {/* 5 · o outro lado: nota nossa que a transportadora não cobrou */}
           {a.sem_cte?.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
