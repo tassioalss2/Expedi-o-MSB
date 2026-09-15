@@ -74,6 +74,7 @@ export default function ConferenciaFrete() {
   // ("o que ta de errado com essa OV nos fretes?"): a resposta era "nada, ela
   // foi pela BRIX", e ele teve de perguntar para saber.
   const [ovAberta, setOvAberta] = useState<string | null>(null)
+  const [aba, setAba] = useState<'conferir' | 'gastos'>('conferir')
 
   const { data: historico = [] } = useQuery<any[]>({
     queryKey: ['frete-conferencias'],
@@ -102,6 +103,24 @@ export default function ConferenciaFrete() {
     queryKey: ['frete-ov', ovAberta],
     queryFn: () => api.get(`/frete/ov/${ovAberta}`).then(r => r.data),
     enabled: !!ovAberta,
+  })
+
+  const { data: gastos } = useQuery<any>({
+    queryKey: ['frete-gastos'],
+    queryFn: () => api.get('/frete/gastos?meses=6').then(r => r.data),
+    enabled: aba === 'gastos',
+  })
+
+  const definirTransp = useMutation({
+    mutationFn: ({ ov, id }: { ov: string; id: string }) =>
+      api.patch(`/frete/pedido/${ov}/transportadora`, { transportadora_id: id })
+        .then(r => r.data),
+    onSuccess: (r: any) => {
+      toast.success(`${r.ov} → ${r.transportadora}`)
+      qc.invalidateQueries({ queryKey: ['frete-gastos'] })
+    },
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.detail || 'Não consegui gravar'),
   })
 
   const abrir = useMutation({
@@ -144,6 +163,20 @@ export default function ConferenciaFrete() {
         </p>
       </div>
 
+      <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
+        {([['conferir', 'Conferir a fatura'], ['gastos', 'Gasto por transportadora']] as const)
+          .map(([v, label]) => (
+            <button key={v} onClick={() => setAba(v)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                aba === v ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+              {label}
+            </button>
+          ))}
+      </div>
+
+      {aba === 'gastos' && <Gastos dados={gastos} onDefinir={definirTransp} />}
+
+      {aba === 'conferir' && <>
       {/* A conversa entra ANTES do pacote: e escolhida uma vez e vale para a
           conferencia que vem em seguida. O zip e que dispara o trabalho. */}
       <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm transition hover:border-gray-400">
@@ -421,6 +454,8 @@ export default function ConferenciaFrete() {
         </div>
       )}
 
+      </>}
+
       {/* A analise de UMA OV, com o veredito escrito. O que a tela responde
           aqui e "isto esta certo?" — e nao "aqui estao os numeros, interprete". */}
       {ovAberta && (
@@ -525,6 +560,127 @@ export default function ConferenciaFrete() {
                 </button>
               )
             })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Quanto a MSB gasta de frete, por transportadora e por mes.
+ *
+ *  So CIF SEM VALOR: e o frete que a MSB paga. FOB e do cliente e
+ *  NAO_UTILIZAR_TERCEIROS nao gera fatura — misturar daria um numero que nao
+ *  corresponde a nenhuma conta a pagar.
+ *
+ *  Os pedidos SEM transportadora aparecem em destaque e podem ser preenchidos
+ *  aqui: sao 78 e R$ 17.896,13 hoje, quase um terco do gasto. Sem isso o
+ *  relatorio mostraria menos do que a empresa gasta e ninguem saberia por que. */
+function Gastos({ dados, onDefinir }: { dados: any; onDefinir: any }) {
+  if (!dados) {
+    return (
+      <div className="py-12 text-center">
+        <Loader2 className="mx-auto h-6 w-6 animate-spin text-gray-400" />
+      </div>
+    )
+  }
+  const meses: string[] = dados.meses || []
+  const nomes: string[] = Array.from(new Set(
+    (dados.linhas || []).map((l: any) => l.transportadora || '(sem transportadora)')))
+  const valor = (mes: string, nome: string) => {
+    const l = (dados.linhas || []).find((x: any) =>
+      x.mes === mes && (x.transportadora || '(sem transportadora)') === nome)
+    return l ? l.valor : 0
+  }
+  const totalMes = (mes: string) => (dados.linhas || [])
+    .filter((l: any) => l.mes === mes)
+    .reduce((s: number, l: any) => s + Number(l.valor || 0), 0)
+
+  return (
+    <div className="space-y-4">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <div className="border-b border-gray-100 px-4 py-2.5">
+          <span className="text-sm font-semibold text-gray-700">
+            Frete pago pela MSB
+          </span>
+          <span className="ml-2 text-xs text-gray-500">
+            só CIF sem valor — FOB é do cliente e não entra
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Transportadora</th>
+                {meses.map(m => (
+                  <th key={m} className="px-3 py-2 text-right">
+                    {m.slice(5)}/{m.slice(2, 4)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {nomes.map(nome => (
+                <tr key={nome} className={`border-t border-gray-100 ${
+                  nome === '(sem transportadora)' ? 'bg-amber-50' : ''}`}>
+                  <td className={`px-3 py-2 ${
+                    nome === '(sem transportadora)'
+                      ? 'font-medium text-amber-900' : 'text-gray-800'}`}>
+                    {nome}
+                  </td>
+                  {meses.map(m => (
+                    <td key={m} className="px-3 py-2 text-right tabular-nums">
+                      {valor(m, nome) ? fmtBRL(valor(m, nome))
+                        : <span className="text-gray-300">—</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
+                <td className="px-3 py-2">Total</td>
+                {meses.map(m => (
+                  <td key={m} className="px-3 py-2 text-right tabular-nums">
+                    {fmtBRL(totalMes(m))}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {dados.sem_transportadora?.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-white">
+          <div className="border-b border-amber-100 bg-amber-50 px-4 py-2.5">
+            <p className="text-sm font-semibold text-amber-900">
+              {dados.sem_transportadora.length} pedido(s) sem transportadora
+              {' — '}{fmtBRL(dados.total_sem_transportadora)} de frete
+            </p>
+            <p className="text-xs text-amber-800">
+              Enquanto ficarem assim, esse valor não entra em nenhuma
+              transportadora e a conferência da fatura não sabe onde procurá-los.
+            </p>
+          </div>
+          <div className="max-h-[28rem] overflow-y-auto divide-y divide-gray-100">
+            {dados.sem_transportadora.map((x: any) => (
+              <div key={x.ov} className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm">
+                <span className="font-mono font-medium text-gray-900">{x.ov}</span>
+                <span className="text-xs text-gray-500">NF {x.nf || '—'}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-gray-600">
+                  {x.cliente} {x.local_entrega && <>· {x.local_entrega}</>}
+                </span>
+                <span className="tabular-nums text-gray-700">{fmtBRL(x.valor_frete)}</span>
+                <select defaultValue="" disabled={onDefinir.isPending}
+                  onChange={e => e.target.value &&
+                    onDefinir.mutate({ ov: x.ov, id: e.target.value })}
+                  className="rounded-lg border border-gray-200 px-2 py-1 text-xs">
+                  <option value="">quem levou?</option>
+                  {(dados.transportadoras || []).map((t: any) => (
+                    <option key={t.id} value={t.id}>{t.nome}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
           </div>
         </div>
       )}

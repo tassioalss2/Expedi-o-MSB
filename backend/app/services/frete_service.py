@@ -111,6 +111,18 @@ def _so_digitos(v) -> str:
     return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
 
+def _numeros_de_nf(v) -> list:
+    """Os numeros de NF de um campo que pode ter mais de um.
+
+    A OV016455 guarda "20540 / 20541" — duas notas no mesmo campo. Limpando os
+    nao-digitos de uma vez sai "2054020541", que nao casa com nota nenhuma: foi
+    assim que o CT-e 94000 apareceu como "NF nao esta no app" quando a OV existe
+    e o frete previsto bate exatamente com o cobrado.
+    """
+    partes = re.split(r"[^0-9]+", str(v or ""))
+    return [x.lstrip("0") for x in partes if x.strip("0")]
+
+
 # Sufixo societário não identifica ninguém: "RR CARGO - EIRELI - ME" é a mesma
 # transportadora que "RR CARGO" e que "Rr" no cadastro.
 _SO_SOCIETARIO = {"EIRELI", "ME", "LTDA", "SA", "EPP", "MEI", "TRANSPORTES",
@@ -277,8 +289,7 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
             break
     por_nf: dict = {}
     for p in pedidos:
-        n = _so_digitos(p.get("numero_nf"))
-        if n:
+        for n in _numeros_de_nf(p.get("numero_nf")):
             por_nf.setdefault(n, p)
 
     linhas = []
@@ -358,7 +369,7 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
             if nome_transp and not _mesma_transportadora(
                     nome_transp, transportadoras.get(p.get("transportadora_id"), "")):
                 continue
-            if _so_digitos(p.get("numero_nf")) in cobradas:
+            if any(n in cobradas for n in _numeros_de_nf(p.get("numero_nf"))):
                 continue
             sem_cte.append({"ov": p.get("numero_pedido"), "nf": p.get("numero_nf"),
                             "previsto": float(p.get("valor_frete") or 0)})
@@ -466,6 +477,112 @@ def _limpa_antigas(db) -> int:
         return 0
 
 
+def gastos(meses: int = 6) -> dict:
+    """Quanto a MSB gasta de frete, por transportadora e por mês.
+
+    Só CIF SEM VALOR: é o frete que a MSB paga. FOB é do cliente e
+    NAO_UTILIZAR_TERCEIROS não gera fatura — misturar os três daria um número
+    que não corresponde a nenhuma conta a pagar.
+
+    Devolve junto os pedidos SEM transportadora, porque eles não somem do gasto:
+    medido em 15/09/2026 são 78 pedidos e R$ 17.896,13, quase um terço do total.
+    Sem essa lista, o relatório mostraria menos do que a empresa gasta e ninguém
+    saberia por quê.
+    """
+    db = get_service_db()
+    pedidos = []
+    for off in range(0, 40000, 1000):
+        b = db.table("pedidos").select(
+            "numero_pedido, numero_nf, valor_nf, valor_frete, tipo_frete, "
+            "transportadora_id, cliente_id, local_entrega, status, "
+            "data_faturamento, criado_em").limit(1000).offset(off).execute().data
+        pedidos += b
+        if len(b) < 1000:
+            break
+    transp = {t["id"]: t.get("nome") for t in
+              db.table("transportadoras").select("id, nome, ativo")
+              .limit(500).execute().data}
+    clientes = {}
+    for off in range(0, 40000, 1000):
+        b = db.table("clientes").select("id, codigo, nome").limit(1000)\
+            .offset(off).execute().data
+        clientes.update({c["id"]: c for c in b})
+        if len(b) < 1000:
+            break
+
+    def _quando(p) -> str:
+        for k in ("data_faturamento", "criado_em"):
+            v = str(p.get(k) or "")[:10]
+            if v:
+                return v
+        return ""
+
+    cif = [p for p in pedidos if (p.get("tipo_frete") or "") == "CIF_SEM_VALOR"]
+    meses_vistos = sorted({_quando(p)[:7] for p in cif if _quando(p)}, reverse=True)
+    janela = meses_vistos[:max(1, meses)]
+
+    linhas: dict = {}
+    for p in cif:
+        mes = _quando(p)[:7]
+        if mes not in janela:
+            continue
+        nome = transp.get(p.get("transportadora_id")) or None
+        chave = (mes, nome or "")
+        alvo = linhas.setdefault(chave, {"mes": mes, "transportadora": nome,
+                                         "notas": 0, "valor": 0.0})
+        alvo["notas"] += 1
+        alvo["valor"] = round(alvo["valor"] + float(p.get("valor_frete") or 0), 2)
+
+    sem_transportadora = []
+    for p in cif:
+        if p.get("transportadora_id"):
+            continue
+        cli = clientes.get(p.get("cliente_id")) or {}
+        sem_transportadora.append({
+            "ov": p.get("numero_pedido"), "nf": p.get("numero_nf"),
+            "valor_frete": float(p.get("valor_frete") or 0),
+            "valor_nf": float(p.get("valor_nf") or 0),
+            "cliente": cli.get("nome"), "local_entrega": p.get("local_entrega"),
+            "quando": _quando(p), "status": p.get("status"),
+        })
+    sem_transportadora.sort(key=lambda x: (x["quando"] or ""), reverse=True)
+
+    return {
+        "meses": janela,
+        "linhas": sorted(linhas.values(),
+                         key=lambda x: (x["mes"], -x["valor"]), reverse=True),
+        "sem_transportadora": sem_transportadora,
+        "total_sem_transportadora": round(
+            sum(x["valor_frete"] for x in sem_transportadora), 2),
+        "transportadoras": sorted(
+            [{"id": i, "nome": n} for i, n in transp.items() if n],
+            key=lambda x: str(x["nome"]).upper()),
+    }
+
+
+def definir_transportadora(numero_pedido: str, transportadora_id: str,
+                           usuario: Optional[UsuarioOut] = None) -> dict:
+    """Diz qual transportadora levou um pedido que estava sem.
+
+    Só preenche o que falta e só isso: não mexe em valor de frete, tipo nem
+    status. Quem informa é quem sabe, e o resto do pedido não é assunto desta
+    tela.
+    """
+    db = get_service_db()
+    alvo = str(numero_pedido or "").strip().upper()
+    achado = db.table("pedidos").select("id, numero_pedido, transportadora_id")\
+        .eq("numero_pedido", alvo).execute().data
+    if not achado:
+        raise HTTPException(404, "OV %s não existe" % alvo)
+    t = db.table("transportadoras").select("id, nome")\
+        .eq("id", str(transportadora_id)).execute().data
+    if not t:
+        raise HTTPException(404, "transportadora não encontrada")
+    db.table("pedidos").update({"transportadora_id": str(transportadora_id)})\
+        .eq("id", achado[0]["id"]).execute()
+    return {"ov": achado[0]["numero_pedido"], "transportadora": t[0]["nome"]}
+
+
 def analise_ov(numero: str) -> dict:
     """O que a conferência sabe de UMA OV, com o veredito em palavras.
 
@@ -500,7 +617,8 @@ def analise_ov(numero: str) -> dict:
         if achado:
             cliente = "%s · %s" % (achado[0].get("codigo"), achado[0].get("nome"))
 
-    nf = _so_digitos(p.get("numero_nf"))
+    nfs = _numeros_de_nf(p.get("numero_nf"))
+    nf = nfs[0] if nfs else ""
     previsto = float(p.get("valor_frete") or 0)
     tipo = (p.get("tipo_frete") or "").upper()
 
@@ -517,7 +635,7 @@ def analise_ov(numero: str) -> dict:
         for l in linhas:
             notas = [str(x).lstrip("0") for x in (l.get("notas") or [])]
             ident = l.get("chave") or l.get("numero")
-            if nf and nf in notas and ident not in vistos:
+            if nfs and (set(nfs) & set(notas)) and ident not in vistos:
                 vistos.add(ident)
                 cobrancas.append(l)
     except Exception:

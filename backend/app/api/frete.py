@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Conferência da fatura de frete — sobe o zip da transportadora e confere."""
 from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
@@ -41,6 +44,24 @@ async def conferir(
         conteudo, arquivo.filename or "pacote.zip",
         transportadora=transportadora, gravar=gravar, usuario=usuario,
         conversa=bytes_conversa, conversa_nome=nome_conversa)
+
+
+class DefinirTransportadora(BaseModel):
+    transportadora_id: UUID
+
+
+@router.get("/frete/gastos")
+def gastos(meses: int = 6, _: UsuarioOut = Depends(get_current_user)):
+    """Quanto a MSB gasta de frete, por transportadora e por mês."""
+    return frete_service.gastos(meses)
+
+
+@router.patch("/frete/pedido/{numero}/transportadora")
+def definir_transportadora(numero: str, payload: DefinirTransportadora,
+                           usuario: UsuarioOut = Depends(get_current_user)):
+    """Diz qual transportadora levou um pedido que estava sem."""
+    return frete_service.definir_transportadora(
+        numero, str(payload.transportadora_id), usuario)
 
 
 @router.get("/frete/ov/{numero}")
