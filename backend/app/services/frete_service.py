@@ -285,10 +285,19 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
     for c in ctes:
         p = next((por_nf[n] for n in c["notas"] if n in por_nf), None)
         previsto = float(p.get("valor_frete") or 0) if p else None
+        # A MSB como DESTINATARIO e o remetente sendo outro: frete de
+        # ENTRADA — devolucao ou retorno. A nota ai e do remetente, entao ela
+        # nunca vai estar em `pedidos`, e chamar isso de "NF desconhecida" faz
+        # parecer falha de cadastro. Foi o Tassio quem apontou: "tem um frete de
+        # devolucao da Arquimed pra MSB que a gente nao registrou no app".
+        de_entrada = (CNPJ_MSB in str(c["dest_cnpj"])
+                      and CNPJ_MSB not in str(c["rem_cnpj"]))
         if duplicados.get(c["chave"]):
             situacao = "DUPLICADO"
         elif c in de_terceiro:
             situacao = "NAO_E_NOSSO"
+        elif de_entrada:
+            situacao = "FRETE_DE_ENTRADA"
         elif p is None:
             situacao = "NF_DESCONHECIDA"
         elif abs((previsto or 0) - c["valor"]) >= 0.01:
@@ -368,6 +377,8 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
             for l in linhas if l["situacao"] == "VALOR_DIFERENTE"), 2),
         "nf_desconhecida": len([l for l in linhas if l["situacao"] == "NF_DESCONHECIDA"]),
         "valor_nf_desconhecida": _soma("NF_DESCONHECIDA"),
+        "frete_de_entrada": len([l for l in linhas if l["situacao"] == "FRETE_DE_ENTRADA"]),
+        "valor_frete_de_entrada": _soma("FRETE_DE_ENTRADA"),
         "sem_cte": sem_cte,
         "ignorados": len(pacote["ignorados"]),
     }
@@ -596,6 +607,6 @@ def detalhe(conferencia_id: str) -> dict:
     ctes = db.table("frete_conferencia_ctes").select("*")\
         .eq("conferencia_id", conferencia_id).limit(2000).execute().data
     ordem = {"DUPLICADO": 0, "NAO_E_NOSSO": 1, "NF_DESCONHECIDA": 2,
-             "VALOR_DIFERENTE": 3, "OK": 4}
+             "FRETE_DE_ENTRADA": 3, "VALOR_DIFERENTE": 4, "OK": 5}
     ctes.sort(key=lambda c: (ordem.get(c.get("situacao"), 9), -float(c.get("valor") or 0)))
     return {**cab[0], "ctes": ctes}

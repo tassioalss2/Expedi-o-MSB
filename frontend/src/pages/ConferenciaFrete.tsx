@@ -47,6 +47,11 @@ const SITUACAO: Record<string, { rotulo: string; cor: string; ajuda: string }> =
     rotulo: 'NF não está no app', cor: 'bg-amber-100 text-amber-900 border-amber-200',
     ajuda: 'o CT-e cobra uma nota que não existe no sistema — confira se é venda nossa',
   },
+  FRETE_DE_ENTRADA: {
+    rotulo: 'entrada / devolução', cor: 'bg-violet-100 text-violet-900 border-violet-200',
+    ajuda: 'a MSB é o destinatário: alguém mandou material PARA nós. A nota é do '
+      + 'remetente, então ela nunca vai estar no app',
+  },
   VALOR_DIFERENTE: {
     rotulo: 'valor diferente', cor: 'bg-sky-100 text-sky-900 border-sky-200',
     ajuda: 'o frete cobrado não bate com o previsto na OV',
@@ -205,7 +210,7 @@ export default function ConferenciaFrete() {
           </div>
 
           {/* 2 a 5 · os achados. Cada um é clicável e filtra a lista. */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <Achado titulo="Repetidos" n={contagem('DUPLICADO')} grave
               sub="mesmo CT-e duas vezes"
               ativo={filtro === 'DUPLICADO'} onClick={() => setFiltro(f => f === 'DUPLICADO' ? '' : 'DUPLICADO')} />
@@ -215,6 +220,9 @@ export default function ConferenciaFrete() {
             <Achado titulo="NF não está no app" n={contagem('NF_DESCONHECIDA')}
               sub={fmtBRL(a.valor_nf_desconhecida)}
               ativo={filtro === 'NF_DESCONHECIDA'} onClick={() => setFiltro(f => f === 'NF_DESCONHECIDA' ? '' : 'NF_DESCONHECIDA')} />
+            <Achado titulo="Entrada / devolução" n={contagem('FRETE_DE_ENTRADA')}
+              sub={fmtBRL(a.valor_frete_de_entrada)}
+              ativo={filtro === 'FRETE_DE_ENTRADA'} onClick={() => alterna('FRETE_DE_ENTRADA')} />
             <Achado titulo="Valor diferente do previsto" n={contagem('VALOR_DIFERENTE')}
               sub={`${Number(a.soma_das_diferencas) >= 0 ? '+' : ''}${fmtBRL(a.soma_das_diferencas)}`}
               ativo={filtro === 'VALOR_DIFERENTE'} onClick={() => setFiltro(f => f === 'VALOR_DIFERENTE' ? '' : 'VALOR_DIFERENTE')} />
