@@ -111,6 +111,26 @@ def _so_digitos(v) -> str:
     return re.sub(r"\D", "", str(v or "")).lstrip("0")
 
 
+# Sufixo societário não identifica ninguém: "RR CARGO - EIRELI - ME" é a mesma
+# transportadora que "RR CARGO" e que "Rr" no cadastro.
+_SO_SOCIETARIO = {"EIRELI", "ME", "LTDA", "SA", "EPP", "MEI", "TRANSPORTES",
+                  "TRANSPORTE", "LOGISTICA", "EXPRESS", "CARGO", "DO", "DE", "DA"}
+
+
+def _tokens_transportadora(nome: str) -> set:
+    palavras = re.findall(r"[A-Z0-9]{2,}", str(nome or "").upper())
+    uteis = {p for p in palavras if p not in _SO_SOCIETARIO}
+    # Se sobrar vazio (o nome era só genérico), vale o que havia — melhor
+    # comparar por palavra fraca do que não comparar.
+    return uteis or set(palavras)
+
+
+def _mesma_transportadora(emitente: str, cadastro: str) -> bool:
+    """O emitente do CT-e e a transportadora do pedido são a mesma empresa?"""
+    a, b = _tokens_transportadora(emitente), _tokens_transportadora(cadastro)
+    return bool(a and b and (a & b))
+
+
 # ── a cotação, que acontece no WhatsApp ──────────────────────────────────────
 # O frete é cotado por WhatsApp com a transportadora: a MSB manda um bloco de
 # cubagem que já traz a OV, e ela responde com o valor. Sem isso, "cobrou
@@ -301,7 +321,13 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
     datas = sorted(c["emissao"] for c in ctes if c["emissao"])
     de, ate = (datas[0], datas[-1]) if datas else (None, None)
     cobradas = {n for c in ctes for n in c["notas"]}
-    nome_transp = (transportadora or "").strip().upper()
+    # A transportadora vem do EMITENTE do CT-e, e não de um campo que a tela
+    # precisa preencher. Sem isso a lista de "saiu e não tem CT-e" trazia notas
+    # de TODAS as transportadoras: na fatura da RR apareciam 15 notas, entre
+    # elas a OV016406, que foi pela BRIX — e o Tássio perguntou, com razão, o
+    # que ela estava fazendo ali. São 3 quando só a RR entra.
+    nome_transp = str(transportadora or (ctes[0].get("emitente") if ctes else "")
+                      or "").strip().upper()
     transportadoras = {x["id"]: str(x.get("nome") or "").upper() for x in
                        db.table("transportadoras").select("id, nome")
                        .limit(500).execute().data}
@@ -320,8 +346,8 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
                 continue
             if not (de <= _dia(p) <= ate):
                 continue
-            if nome_transp and nome_transp not in transportadoras.get(
-                    p.get("transportadora_id"), ""):
+            if nome_transp and not _mesma_transportadora(
+                    nome_transp, transportadoras.get(p.get("transportadora_id"), "")):
                 continue
             if _so_digitos(p.get("numero_nf")) in cobradas:
                 continue

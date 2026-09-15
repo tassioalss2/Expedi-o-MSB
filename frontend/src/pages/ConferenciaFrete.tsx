@@ -102,8 +102,11 @@ export default function ConferenciaFrete() {
    *  porque "5 cobrancas sem cotacao" e um numero que so vale se der para ver
    *  QUAIS sao sem sair da tela. */
   const RECORTE: Record<string, (c: any) => boolean> = {
-    SEM_COTACAO: c => c.situacao === 'VALOR_DIFERENTE' && c.cotado === false,
-    COTADO: c => c.situacao === 'VALOR_DIFERENTE' && c.cotado === true,
+    // `!c.cotado` e nao `=== false`: se o backend nao mandar o campo, `false`
+    // estrito nao casa e o filtro devolve zero — que foi o que aconteceu. Aqui
+    // e seguro porque estes dois recortes so existem quando ha conversa.
+    SEM_COTACAO: c => c.situacao === 'VALOR_DIFERENTE' && !c.cotado,
+    COTADO: c => c.situacao === 'VALOR_DIFERENTE' && !!c.cotado,
   }
   const filtra = (c: any) => RECORTE[filtro] ? RECORTE[filtro](c) : c.situacao === filtro
   const visiveis = filtro ? ctes.filter(filtra) : ctes
