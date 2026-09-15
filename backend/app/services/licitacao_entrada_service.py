@@ -1719,10 +1719,20 @@ def mapear_orgao(cnpj: str, cliente_id: str, usuario: UsuarioOut,
 
     # Só onde ninguém escolheu ainda: uma correção de de-para não pode desfazer
     # a escolha que alguém fez a mão para um caso específico.
-    afetados = db.table("licitacao_entrada").update(
-        {"cliente_id": cliente_id, "atualizado_em": _agora()}
-    ).eq("cnpj_orgao", cnpj).is_("cliente_id", "null").execute().data
-    return {"cnpj": cnpj, "cliente_id": cliente_id, "entradas_atualizadas": len(afetados or [])}
+    #
+    # O filtro tem que ser feito na LEITURA, não no update: o MutationBuilder do
+    # nosso wrapper só tem .eq(), e `.update(...).is_(...)` estourava
+    # AttributeError — 500 na cara de quem clicava, com a mensagem genérica
+    # "Não consegui ligar o órgão ao cliente". A tela de Órgãos inteira estava
+    # parada por isto (medido em 15/09/2026: 1 CNPJ ligado, 22 esperando).
+    esperando = db.table("licitacao_entrada").select("id, cliente_id")\
+        .eq("cnpj_orgao", cnpj).limit(2000).execute().data
+    alvos = [r["id"] for r in esperando if not r.get("cliente_id")]
+    for eid in alvos:
+        db.table("licitacao_entrada").update(
+            {"cliente_id": cliente_id, "atualizado_em": _agora()}
+        ).eq("id", eid).execute()
+    return {"cnpj": cnpj, "cliente_id": cliente_id, "entradas_atualizadas": len(alvos)}
 
 
 def listar_orgaos() -> list[dict]:
