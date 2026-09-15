@@ -529,9 +529,61 @@ def gastos(meses: int = 6) -> dict:
         nome = transp.get(p.get("transportadora_id")) or None
         chave = (mes, nome or "")
         alvo = linhas.setdefault(chave, {"mes": mes, "transportadora": nome,
-                                         "notas": 0, "valor": 0.0})
+                                         "notas": 0, "valor": 0.0,
+                                         "cobrado": 0.0, "ctes": 0,
+                                         "conferido_de": None, "conferido_ate": None})
         alvo["notas"] += 1
         alvo["valor"] = round(alvo["valor"] + float(p.get("valor_frete") or 0), 2)
+
+    # ── o COBRADO, das conferências guardadas ────────────────────────────────
+    # `valor` acima é o que a OV PREVIA — estimativa nossa. O Tássio estranhou,
+    # com razão, que a RR aparecesse com R$ 10.828,66 em agosto quando a fatura
+    # da quinzena sozinha deu R$ 25.505,75. São coisas diferentes: uma é palpite,
+    # a outra é dinheiro. Agora as duas ficam lado a lado.
+    #
+    # O cobrado soma TODOS os CT-e do mês, inclusive os que não casam com OV
+    # nossa: eles foram pagos do mesmo jeito. Na fatura de 16-31/08 isso são
+    # R$ 10.137,85 de notas que o app não conhece mais R$ 823,24 de devolução —
+    # 43% do boleto que sumiria se eu contasse só o que casa.
+    try:
+        confs = {c["id"]: c for c in db.table("frete_conferencias")
+                 .select("id, transportadora").limit(500).execute().data}
+        vistos = set()
+        for l in db.table("frete_conferencia_ctes")\
+                .select("conferencia_id, chave, numero, emissao, valor")\
+                .limit(8000).execute().data:
+            # Por CHAVE: a mesma fatura pode ter sido conferida duas vezes, e
+            # sem isto o cobrado dobraria.
+            ident = l.get("chave") or l.get("numero")
+            if ident in vistos:
+                continue
+            vistos.add(ident)
+            mes = str(l.get("emissao") or "")[:7]
+            if mes not in janela:
+                continue
+            emitente = (confs.get(l.get("conferencia_id")) or {}).get("transportadora")
+            # Casa o emitente do CT-e com a transportadora cadastrada, para o
+            # cobrado cair na mesma linha do previsto.
+            nome = next((n for n in {v for v in transp.values() if v}
+                         if _mesma_transportadora(emitente or "", n)), None)
+            chave = (mes, nome or "")
+            alvo = linhas.setdefault(chave, {"mes": mes, "transportadora": nome,
+                                             "notas": 0, "valor": 0.0,
+                                             "cobrado": 0.0, "ctes": 0,
+                                             "conferido_de": None,
+                                             "conferido_ate": None})
+            alvo["ctes"] += 1
+            alvo["cobrado"] = round(alvo["cobrado"] + float(l.get("valor") or 0), 2)
+            dia = str(l.get("emissao") or "")[:10]
+            if dia:
+                if not alvo["conferido_de"] or dia < alvo["conferido_de"]:
+                    alvo["conferido_de"] = dia
+                if not alvo["conferido_ate"] or dia > alvo["conferido_ate"]:
+                    alvo["conferido_ate"] = dia
+    except Exception as e:
+        # Sem a v47 não há cobrado, e a tabela mostra só o previsto — que é o
+        # comportamento anterior, não um erro.
+        print("cobrado nao entrou no relatorio de gastos: %s" % str(e)[:120])
 
     sem_transportadora = []
     for p in cif:

@@ -587,14 +587,11 @@ function Gastos({ dados, onDefinir }: { dados: any; onDefinir: any }) {
   const meses: string[] = dados.meses || []
   const nomes: string[] = Array.from(new Set(
     (dados.linhas || []).map((l: any) => l.transportadora || '(sem transportadora)')))
-  const valor = (mes: string, nome: string) => {
-    const l = (dados.linhas || []).find((x: any) =>
-      x.mes === mes && (x.transportadora || '(sem transportadora)') === nome)
-    return l ? l.valor : 0
-  }
-  const totalMes = (mes: string) => (dados.linhas || [])
+  const linha = (mes: string, nome: string) => (dados.linhas || []).find((x: any) =>
+    x.mes === mes && (x.transportadora || '(sem transportadora)') === nome)
+  const totalMes = (mes: string, campo: 'valor' | 'cobrado') => (dados.linhas || [])
     .filter((l: any) => l.mes === mes)
-    .reduce((s: number, l: any) => s + Number(l.valor || 0), 0)
+    .reduce((s: number, l: any) => s + Number(l[campo] || 0), 0)
 
   return (
     <div className="space-y-4">
@@ -606,16 +603,36 @@ function Gastos({ dados, onDefinir }: { dados: any; onDefinir: any }) {
           <span className="ml-2 text-xs text-gray-500">
             só CIF sem valor — FOB é do cliente e não entra
           </span>
+          {/* As duas colunas medem coisas diferentes, e confundi-las foi o que
+              fez o Tassio estranhar a RR com R$ 10.828,66 em agosto quando a
+              fatura da quinzena sozinha deu R$ 25.505,75. */}
+          <p className="mt-1 text-xs text-gray-600">
+            <b>Cobrado</b> é o que a transportadora faturou, das conferências
+            guardadas. <b>Previsto</b> é o frete estimado nas OVs — vale
+            enquanto a fatura não chega, e costuma ficar abaixo do real.
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
               <tr>
-                <th className="px-3 py-2 text-left">Transportadora</th>
+                <th rowSpan={2} className="px-3 py-2 text-left align-bottom">Transportadora</th>
                 {meses.map(m => (
-                  <th key={m} className="px-3 py-2 text-right">
+                  <th key={m} colSpan={2} className="border-l border-gray-200 px-3 py-1 text-center">
                     {m.slice(5)}/{m.slice(2, 4)}
                   </th>
+                ))}
+              </tr>
+              <tr>
+                {meses.map(m => (
+                  <>
+                    <th key={`${m}-c`} className="border-l border-gray-200 px-3 py-1 text-right font-semibold text-gray-700">
+                      cobrado
+                    </th>
+                    <th key={`${m}-p`} className="px-3 py-1 text-right font-normal">
+                      previsto
+                    </th>
+                  </>
                 ))}
               </tr>
             </thead>
@@ -628,20 +645,36 @@ function Gastos({ dados, onDefinir }: { dados: any; onDefinir: any }) {
                       ? 'font-medium text-amber-900' : 'text-gray-800'}`}>
                     {nome}
                   </td>
-                  {meses.map(m => (
-                    <td key={m} className="px-3 py-2 text-right tabular-nums">
-                      {valor(m, nome) ? fmtBRL(valor(m, nome))
-                        : <span className="text-gray-300">—</span>}
-                    </td>
-                  ))}
+                  {meses.map(m => {
+                    const l = linha(m, nome)
+                    return (
+                      <>
+                        <td key={`${m}-c`} className="border-l border-gray-200 px-3 py-2 text-right font-semibold tabular-nums text-gray-900"
+                          title={l?.conferido_de
+                            ? `fatura de ${fmtDia(l.conferido_de)} a ${fmtDia(l.conferido_ate)} · ${l.ctes} CT-e`
+                            : 'sem fatura conferida neste mês'}>
+                          {l?.cobrado ? fmtBRL(l.cobrado) : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td key={`${m}-p`} className="px-3 py-2 text-right tabular-nums text-gray-500">
+                          {l?.valor ? fmtBRL(l.valor) : <span className="text-gray-300">—</span>}
+                        </td>
+                      </>
+                    )
+                  })}
                 </tr>
               ))}
               <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
                 <td className="px-3 py-2">Total</td>
                 {meses.map(m => (
-                  <td key={m} className="px-3 py-2 text-right tabular-nums">
-                    {fmtBRL(totalMes(m))}
-                  </td>
+                  <>
+                    <td key={`${m}-c`} className="border-l border-gray-200 px-3 py-2 text-right tabular-nums">
+                      {totalMes(m, 'cobrado') ? fmtBRL(totalMes(m, 'cobrado'))
+                        : <span className="font-normal text-gray-300">—</span>}
+                    </td>
+                    <td key={`${m}-p`} className="px-3 py-2 text-right tabular-nums text-gray-600">
+                      {fmtBRL(totalMes(m, 'valor'))}
+                    </td>
+                  </>
                 ))}
               </tr>
             </tbody>
