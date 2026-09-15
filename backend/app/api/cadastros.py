@@ -158,8 +158,22 @@ def listar_transportadoras(_: UsuarioOut = Depends(get_current_user)):
 
 @router.post("/transportadoras", response_model=TransportadoraOut, status_code=201)
 def criar_transportadora(payload: TransportadoraCreate, _: UsuarioOut = Depends(lider_ou_superior)):
+    """Cadastra uma transportadora, recusando nome que já existe.
+
+    Cliente já era protegido pelo código; transportadora não tinha nada, e o
+    cadastro acabou com 6 linhas "RR CARGO", 6 "BRIX" e 6 "CORREIOS" — os
+    pedidos espalhados entre elas e a lista "quem levou?" mostrando a mesma
+    empresa seis vezes, sem como escolher a certa.
+    """
     db = get_service_db()
-    return db.table("transportadoras").insert({**payload.model_dump(), "ativo": True}).execute().data[0]
+    nome = (payload.nome or "").strip()
+    for t in db.table("transportadoras").select("id, nome, ativo").limit(500).execute().data:
+        if (t.get("nome") or "").strip().casefold() == nome.casefold():
+            estado = "" if t.get("ativo") else " (inativa — reative em vez de criar outra)"
+            raise HTTPException(status_code=409,
+                                detail=f"Já existe a transportadora {t.get('nome')}{estado}.")
+    return db.table("transportadoras").insert({**payload.model_dump(), "nome": nome,
+                                               "ativo": True}).execute().data[0]
 
 
 # ── Produtos ───────────────────────────────────────────────────────────────────
