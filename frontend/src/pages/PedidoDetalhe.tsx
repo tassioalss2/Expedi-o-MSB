@@ -17,6 +17,7 @@ import { ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueV
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
+import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, OPERACOES_EDITAVEIS, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
@@ -1122,50 +1123,6 @@ function ModalDevolverAoCrm({ pedido, onClose }: { pedido: Pedido; onClose: () =
  *  desfazer. Espelha _STATUS_ITENS_TRAVADOS no pedido_service — se divergir, o
  *  botao aparece e o backend recusa, que e pior que nao aparecer. */
 const STATUS_SEM_RESERVA = ['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO']
-
-/**
- * Um texto pronto para o cliente, com botao de copiar.
- *
- * Existe porque o app nao manda e-mail: quem manda e a pessoa, do Outlook. O
- * que o app pode fazer e montar o texto com os dados certos, para ninguem
- * redigitar cubagem e valor — que e onde nascem os erros que voltam do cliente.
- */
-function ModalTextoCliente({ titulo, subtitulo, texto, aviso, onFechar }: {
-  titulo: string
-  subtitulo: string
-  texto: string
-  /** Bloco ambar opcional: o que o texto NAO diz, e por que. */
-  aviso?: React.ReactNode
-  onFechar: () => void
-}) {
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-        <div className="p-5 border-b shrink-0">
-          <h2 className="text-lg font-bold">{titulo}</h2>
-          <p className="text-[13px] text-gray-500 mt-0.5">{subtitulo}</p>
-        </div>
-        <div className="p-5 space-y-3 flex-1 overflow-y-auto">
-          <textarea readOnly value={texto} rows={14}
-            className="w-full border rounded-lg p-3 text-sm font-mono leading-relaxed bg-gray-50" />
-          {aviso}
-        </div>
-        <div className="p-5 border-t flex gap-2 justify-end shrink-0">
-          <button onClick={onFechar} className="px-4 py-2 border rounded-lg text-sm">Fechar</button>
-          <button
-            onClick={() => {
-              navigator.clipboard.writeText(texto)
-                .then(() => toast.success('Texto copiado'))
-                .catch(() => toast.error('Nao consegui copiar'))
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
-            <Copy size={14} /> Copiar texto
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /** Devolve a OV para a pendencia do comercial — inteira ou em parte.
  *

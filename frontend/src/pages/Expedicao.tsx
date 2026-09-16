@@ -8,6 +8,7 @@ import api from '../lib/api'
 import type { Pedido, StatusPedido } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
+import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ORDEM_KANBAN, STATUS_CONFIG, resolveNomeTransportadora } from '../lib/statusConfig'
 import { hojeLocal, dataLocal } from '../lib/dataLocal'
 import toast from 'react-hot-toast'
@@ -167,7 +168,12 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
   )
 }
 
-function EntradaOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void }) {
+function EntradaOV({ pedido, onClick, onPedirTransportadora }: {
+  pedido: Pedido
+  onClick: () => void
+  /** So chega preenchido na coluna "Aguardando transportadora". */
+  onPedirTransportadora?: (p: Pedido) => void
+}) {
   const atrasado = pedido.atrasado
   const critica = pedido.prioridade === 'CRITICA'
   const alta = pedido.prioridade === 'ALTA'
@@ -244,6 +250,23 @@ function EntradaOV({ pedido, onClick }: { pedido: Pedido; onClick: () => void })
 
       {/* Tempo */}
       <span className="text-[10px] text-gray-300 flex-shrink-0 hidden xl:inline">{tempo}</span>
+
+      {/* O e-mail que pede a transportadora sai DAQUI: e nesta coluna que a
+          pessoa esta quando manda. SPAN e nao <button>, porque a linha inteira
+          ja e um botao e botao dentro de botao e HTML invalido. */}
+      {onPedirTransportadora && pedido.tipo_frete === 'FOB' && (
+        <span role="button" tabIndex={0}
+          title="Pedir ao cliente a transportadora da coleta"
+          onClick={e => { e.stopPropagation(); onPedirTransportadora(pedido) }}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.stopPropagation(); e.preventDefault(); onPedirTransportadora(pedido)
+            }
+          }}
+          className="flex-shrink-0 rounded border border-orange-300 bg-orange-50 px-1 text-[10px] leading-4 text-orange-700 hover:bg-orange-200">
+          ✉️
+        </span>
+      )}
     </button>
   )
 }
@@ -374,7 +397,11 @@ function InfoEtapaModal({ status, cfg, onClose }: { status: string; cfg: any; on
 // frete/transportadora → faturamento; linha 3: pós-faturamento.
 const KANBAN_COLS = 4
 
-function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedido: (p: Pedido) => void }) {
+function KanbanView({ pedidos, onClickPedido, onPedirTransportadora }: {
+  pedidos: Pedido[]
+  onClickPedido: (p: Pedido) => void
+  onPedirTransportadora: (p: Pedido) => void
+}) {
   const [infoAberta, setInfoAberta] = useState<string | null>(null)
   const hoje = hojeLocal()
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
@@ -430,7 +457,9 @@ function KanbanView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedi
                         <p className="text-xs text-gray-400 text-center py-3">—</p>
                       )}
                       {lista.map((p) => (
-                        <EntradaOV key={p.id} pedido={p} onClick={() => onClickPedido(p)} />
+                        <EntradaOV key={p.id} pedido={p} onClick={() => onClickPedido(p)}
+                          onPedirTransportadora={status === 'AGUARD_TRANSPORTADORA'
+                            ? onPedirTransportadora : undefined} />
                       ))}
                     </div>
               </div>
@@ -545,6 +574,18 @@ function ListaView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedid
 
 export function Expedicao() {
   const navigate = useNavigate()
+  // O texto que pede a transportadora ao cliente FOB. Vive aqui, e nao no card,
+  // porque o modal e da tela — o card so dispara.
+  const [avisoColeta, setAvisoColeta] = useState<any>(null)
+  async function pedirTransportadora(p: Pedido) {
+    try {
+      const { data } = await api.get(`/pedidos/${p.id}/aviso-coleta-fob`)
+      if (data?.tem) setAvisoColeta(data)
+      else toast(data?.motivo || 'Nao consegui montar o texto')
+    } catch {
+      toast.error('Nao consegui montar o texto')
+    }
+  }
   const [view, setView] = useState<View>('kanban')
   const [busca, setBusca] = useState('')
   const [statusFiltro, setStatusFiltro] = useState<string>('')
@@ -680,12 +721,28 @@ export function Expedicao() {
         <div className="flex-1 flex items-center justify-center text-gray-400">Carregando...</div>
       ) : view === 'kanban' ? (
         <div className="flex-1 overflow-hidden min-h-0">
-          <KanbanView pedidos={pedidosFiltrados} onClickPedido={(p) => navigate(`/expedicao/${p.id}`)} />
+          <KanbanView pedidos={pedidosFiltrados} onClickPedido={(p) => navigate(`/expedicao/${p.id}`)}
+            onPedirTransportadora={pedirTransportadora} />
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto min-h-0">
           <ListaView pedidos={pedidosFiltrados} onClickPedido={(p) => navigate(`/expedicao/${p.id}`)} />
         </div>
+      )}
+
+      {avisoColeta?.tem && (
+        <ModalTextoCliente
+          titulo="Pedir a transportadora ao cliente"
+          subtitulo={`${avisoColeta.ov} · frete FOB — envie antes de faturar e aguarde o cliente informar quem vai coletar.`}
+          texto={avisoColeta.texto}
+          onFechar={() => setAvisoColeta(null)}
+          aviso={avisoColeta.falta?.length ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              O texto saiu <strong>sem {avisoColeta.falta.join(', ')}</strong> porque o app nao tem esse
+              dado ainda. Preencha antes de enviar — o cliente cota o frete com esses numeros.
+            </div>
+          ) : undefined}
+        />
       )}
     </div>
   )
