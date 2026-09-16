@@ -67,6 +67,22 @@ export const OPERACAO_LABEL: Record<string, string> = {
   DEVOLUCAO: 'Devolução',
 }
 
+/**
+ * Naturezas que dá para escolher ao CORRIGIR uma OV que já existe.
+ *
+ * Bonificação, amostra e consignado saíram do formulário de OV nova, e a
+ * correção só oferecia venda normal e exportação. Só que uma OV lançada como
+ * venda pode se revelar outra coisa depois — a OV016752 é bonificação e ficou
+ * parada em AGUARD_FATURAMENTO porque não havia como dizer isso ao app.
+ *
+ * DEVOLUÇÃO fica de fora de propósito: ela tem fluxo próprio (nota de entrada,
+ * valor negativo no líquido) e virar devolução por um select desfaria a conta.
+ */
+export const OPERACOES_EDITAVEIS = [
+  'VENDA_NORMAL', 'EXPORTACAO', 'COMUNICADO_USO',
+  'BONIFICACAO_DOACAO', 'AMOSTRA', 'CONSIGNADO',
+]
+
 export const CANAL_LABEL: Record<string, string> = {
   URO: 'Uro',
   VASCULAR: 'Vascular',

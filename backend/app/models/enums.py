@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 
 
 class StatusPedido(str, Enum):
@@ -101,6 +102,16 @@ class TipoOperacao(str, Enum):
 # Operações que entram no faturamento. Exportação entra: é venda, com receita.
 OPERACOES_FATURAMENTO = {TipoOperacao.VENDA_NORMAL.value, TipoOperacao.EXPORTACAO.value,
                          TipoOperacao.COMUNICADO_USO.value}
+
+
+def conta_faturamento(tipo_operacao: Optional[str]) -> bool:
+    """A operação é receita? Legado sem natureza definida é venda normal.
+
+    Existe para a regra viver num lugar só: ela decide o que entra na meta e
+    também se a NF pode valer R$ 0 — numa bonificação zero é o valor certo, e
+    exigir valor ali trava a OV sem motivo.
+    """
+    return (tipo_operacao or TipoOperacao.VENDA_NORMAL.value) in OPERACOES_FATURAMENTO
 
 
 class CanalVenda(str, Enum):

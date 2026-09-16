@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 
 from app.core.database import get_service_db
 from app.models.enums import (
+    conta_faturamento,
     DecisaoTratativa,
     Prioridade,
     ResultadoConferencia,
@@ -2374,12 +2375,22 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
     # Faturar sem valor deixava a OV em FATURADO valendo R$ 0 — ela contava
     # como nota emitida no painel e sumia do radar, só aparecendo na
     # conciliação com o D365 no fim do mês.
+    #
+    # Mas isso vale para a venda. Numa bonificação, doação, amostra ou
+    # consignado, R$ 0 é o valor CERTO: a operação não é receita e nunca chega
+    # ao painel de faturamento, então não há radar de onde sumir. Exigir valor
+    # ali travava a OV sem motivo — foi o caso da OV016752, bonificação parada
+    # em AGUARD_FATURAMENTO por um campo que não se aplicava a ela.
+    receita = conta_faturamento(pedido.get("tipo_operacao"))
     faltando: list[str] = []
-    if not (payload.valor_nf or 0) > 0:
+    if receita and not (payload.valor_nf or 0) > 0:
         faltando.append("valor da NF")
     if pedido.get("tipo_frete") in ("CIF_COM_VALOR", "CIF_SEM_VALOR"):
-        if not (payload.valor_produtos or 0) > 0:
+        if receita and not (payload.valor_produtos or 0) > 0:
             faltando.append("valor dos produtos")
+        # O frete continua obrigatório mesmo sem receita: no CIF sem valor quem
+        # paga é a MSB, e esse custo é real — é o número do relatório de gasto
+        # por transportadora.
         if not (payload.valor_frete or 0) > 0:
             faltando.append("custo do frete")
     if faltando:

@@ -17,7 +17,7 @@ import { ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueV
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
-import { TIPO_FRETE_LABEL, OPERACAO_LABEL, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
+import { TIPO_FRETE_LABEL, OPERACAO_LABEL, OPERACOES_EDITAVEIS, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
 import { hojeLocal } from '../lib/dataLocal'
@@ -1478,15 +1478,15 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
                 <select value={form.tipo_operacao} onChange={e => setForm({ ...form, tipo_operacao: e.target.value })}
                   className="w-full border rounded-lg px-3 py-2 text-sm mt-1">
                   <option value="" disabled>Selecione…</option>
-                  <option value="VENDA_NORMAL">Venda normal</option>
-                  <option value="EXPORTACAO">Exportação</option>
-                  {/* Aqui é EDIÇÃO de OV que já existe. Se a natureza dela é uma
-                      das que saíram de uso, a opção continua na lista — senão o
-                      select abriria sem valor e salvar mudaria a natureza de uma
-                      OV antiga sem ninguém pedir. */}
-                  {!['VENDA_NORMAL', 'EXPORTACAO'].includes(form.tipo_operacao) && form.tipo_operacao && (
+                  {/* Aqui é EDIÇÃO de OV que já existe, e a natureza dela pode
+                      ser descoberta depois do lançamento — por isso a lista
+                      inteira, e não só as duas do formulário de OV nova. */}
+                  {OPERACOES_EDITAVEIS.map(op => (
+                    <option key={op} value={op}>{OPERACAO_LABEL[op] || op}</option>
+                  ))}
+                  {!OPERACOES_EDITAVEIS.includes(form.tipo_operacao) && form.tipo_operacao && (
                     <option value={form.tipo_operacao}>
-                      {OPERACAO_LABEL[form.tipo_operacao] || form.tipo_operacao} (não usar em OV nova)
+                      {OPERACAO_LABEL[form.tipo_operacao] || form.tipo_operacao}
                     </option>
                   )}
                 </select>
@@ -2273,13 +2273,14 @@ function ModalCorrigirDados({ pedido, onClose }: { pedido: Pedido; onClose: () =
             <select value={form.tipo_operacao} onChange={e => setForm({ ...form, tipo_operacao: e.target.value })}
               className={cls}>
               <option value="" disabled>Selecione…</option>
-              <option value="VENDA_NORMAL">Venda normal</option>
-              <option value="EXPORTACAO">Exportação</option>
-              {/* Natureza fora de uso continua na lista: sem isso o select abriria
-                  vazio e salvar mudaria a natureza de uma OV antiga sem ninguém pedir. */}
-              {!['VENDA_NORMAL', 'EXPORTACAO'].includes(form.tipo_operacao) && form.tipo_operacao && (
+              {OPERACOES_EDITAVEIS.map(op => (
+                <option key={op} value={op}>{OPERACAO_LABEL[op] || op}</option>
+              ))}
+              {/* Natureza fora da lista continua aparecendo: sem isso o select
+                  abriria vazio e salvar mudaria a natureza sem ninguém pedir. */}
+              {!OPERACOES_EDITAVEIS.includes(form.tipo_operacao) && form.tipo_operacao && (
                 <option value={form.tipo_operacao}>
-                  {OPERACAO_LABEL[form.tipo_operacao] || form.tipo_operacao} (não usar em OV nova)
+                  {OPERACAO_LABEL[form.tipo_operacao] || form.tipo_operacao}
                 </option>
               )}
             </select>
@@ -2778,12 +2779,18 @@ export function PedidoDetalhe() {
   // Faturar sem valor deixava a OV em FATURADO valendo R$ 0 — some do radar e
   // só reaparece na conciliação com o D365 no fim do mês. Mesma exigência do
   // backend, para o botão já dizer o que falta.
+  // Bonificação, doação, amostra e consignado não são receita: ali R$ 0 é o
+  // valor certo, e exigir valor trava a OV por um campo que não se aplica.
+  // O custo do frete continua obrigatório no CIF — quem paga é a MSB.
+  const ehReceita = ['VENDA_NORMAL', 'EXPORTACAO', 'COMUNICADO_USO']
+    .includes(pedido?.tipo_operacao || 'VENDA_NORMAL')
+
   const faltaParaFaturar: string[] = []
   if (!nf.trim()) faltaParaFaturar.push('número da NF')
   if (isCIF) {
-    if (!(Number(valorProdutos) > 0)) faltaParaFaturar.push('valor dos produtos')
+    if (ehReceita && !(Number(valorProdutos) > 0)) faltaParaFaturar.push('valor dos produtos')
     if (!(Number(valorFrete) > 0)) faltaParaFaturar.push('custo do frete')
-  } else if (!(Number(valorNf) > 0)) {
+  } else if (ehReceita && !(Number(valorNf) > 0)) {
     faltaParaFaturar.push('valor da NF')
   }
   const podeFaturar = faltaParaFaturar.length === 0
@@ -2815,7 +2822,9 @@ export function PedidoDetalhe() {
   const faturarMutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${id}/faturamento`, {
       numero_nf: nf,
-      valor_nf: valorNfCalculado || null,
+      // Sem receita o zero é resposta, não ausência: mandar null deixaria o
+      // registro dizendo "não sei quanto", que é outra coisa.
+      valor_nf: ehReceita ? (valorNfCalculado || null) : (valorNfCalculado || 0),
       valor_produtos: isCIF && valorProdutos ? Number(valorProdutos) : null,
       valor_frete: isCIF && valorFrete ? Number(valorFrete) : null,
       data_prevista_entrega: novaDataEntrega || null,
@@ -3641,10 +3650,23 @@ export function PedidoDetalhe() {
                 </div>
               )}
 
+              {/* A natureza muda o que é exigido, então ela fica dita aqui — e
+                  não escondida na aba de dados, onde ninguém olha na hora de
+                  registrar a nota. */}
+              {!ehReceita && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
+                  <b>{OPERACAO_LABEL[pedido.tipo_operacao!] || pedido.tipo_operacao}</b> — não é
+                  faturamento, então o valor da NF pode ficar em branco (fica R$ 0) e esta OV não
+                  entra na meta. Se a nota tiver valor, informe do mesmo jeito.
+                </div>
+              )}
+
               {/* FOB — campo único */}
               {!isCIF && (
                 <div>
-                  <label className="text-sm font-medium text-gray-700">Valor da NF (R$) *</label>
+                  <label className="text-sm font-medium text-gray-700">
+                    Valor da NF (R$) {ehReceita ? '*' : <span className="text-gray-400">(opcional)</span>}
+                  </label>
                   <input type="number" step="0.01" value={valorNf} onChange={e => setValorNf(e.target.value)}
                     className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
                   {sugestaoProdutos != null && (
