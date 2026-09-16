@@ -2949,3 +2949,89 @@ def detalhe(metrica: str, dias: Optional[int] = None) -> dict:
         "valor": round(sum(c["valor_total"] for c in casos), 2),
         "casos": casos,
     }
+
+
+# ── Fechamento automático pelo faturamento ───────────────────────────────────
+
+def resolver_por_faturamento(numero_pedido: str, numero_nf: str,
+                             usuario: Optional[UsuarioOut] = None) -> dict:
+    """Marca como resolvida a solicitação cuja OV acabou de ser faturada.
+
+    A nota emitida é a prova de que o pedido do órgão foi atendido, e era
+    trabalho manual repetir isso na caixa de entrada — o caso ficava "em
+    tratamento" com a OV já faturada, como o 2026NE3498 (OV016757, NF 20806).
+
+    Três cuidados, e cada um é uma coisa que daria errado sem ele:
+
+    - Aplica ao GRUPO inteiro, nunca a um e-mail só. A triagem é por nota de
+      empenho, e já houve caso de um clique pegar metade do grupo.
+    - NÃO toca em quem está como PARCIAL: alguém decidiu que a entrega foi
+      parcial, e a nota da primeira remessa não desmente isso.
+    - Nunca levanta exceção para quem chamou. Faturar é o ato principal; se o
+      fechamento da solicitação falhar, o faturamento continua valendo e o caso
+      apenas segue aberto como antes.
+    """
+    resultado = {"resolvidos": [], "erro": None}
+    try:
+        db = get_service_db()
+        ov = str(numero_pedido or "").strip().upper()
+        if not ov:
+            return resultado
+
+        # A ligação vive na demanda: `ovs` é uma lista de {id, numero}, e
+        # `gerado_ref` guarda a primeira. Leio as duas.
+        demandas = []
+        for off in range(0, 20000, 1000):
+            bloco = db.table("licitacao_demandas")\
+                .select("id, numero, ovs, gerado_ref").limit(1000).offset(off)\
+                .execute().data
+            demandas += bloco
+            if len(bloco) < 1000:
+                break
+        alvo = [d["id"] for d in demandas
+                if str(d.get("gerado_ref") or "").upper() == ov
+                or any(str((o or {}).get("numero") or "").upper() == ov
+                       for o in (d.get("ovs") or []))]
+        if not alvo:
+            return resultado
+
+        entradas = []
+        for off in range(0, 20000, 1000):
+            bloco = db.table("licitacao_entrada")\
+                .select("id, chave, assunto, situacao, demanda_id, ativo, "
+                        "empenhos, cnpj_orgao, cliente_id, pregao, contrato, "
+                        "orgao_texto, corpo")\
+                .limit(1000).offset(off).execute().data
+            entradas += bloco
+            if len(bloco) < 1000:
+                break
+
+        # A chave do BANCO não é a chave de grupo: o agrupamento é derivado
+        # (`NE:`, `DOC:`, `EM:`) e é ele que a tela e a triagem usam. Passar a
+        # chave crua dava "chave de grupo inválida" — e, pior que o erro, seria
+        # agir sobre um conjunto diferente do que a tela mostra.
+        chaves = {chave_do_grupo(e) for e in entradas
+                  if e.get("demanda_id") in alvo and e.get("ativo")
+                  and e.get("situacao") != "PARCIAL"}
+        if not chaves:
+            return resultado
+
+        nf = str(numero_nf or "").strip()
+        nota = ("Resolvido pelo app: a OV %s foi faturada%s." %
+                (ov, " com a NF %s" % nf if nf else ""))
+        for chave in chaves:
+            # Só fecha o que ainda não está fechado — sem isto, refaturar uma OV
+            # escreveria a mesma nota de novo em caso já resolvido.
+            abertos = [e for e in entradas
+                       if chave_do_grupo(e) == chave and e.get("ativo")
+                       and e.get("situacao") != "SIM"]
+            if not abertos:
+                continue
+            # A nota tem autor: sem usuário, fecha o caso sem escrever nota, em
+            # vez de estourar na hora de gravar o autor.
+            triar_grupo(chave, usuario, situacao="SIM",
+                        observacao=nota if usuario is not None else None)
+            resultado["resolvidos"].append(chave)
+    except Exception as exc:  # noqa: BLE001
+        resultado["erro"] = "%s: %s" % (type(exc).__name__, str(exc)[:160])
+    return resultado

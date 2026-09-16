@@ -2497,6 +2497,20 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
         db.table("pedidos").update(update_data).eq("id", pedido_id).execute()
 
     alterar_status(pedido_id, StatusPedido.FATURADO.value, usuario, f"NF {payload.numero_nf} emitida")
+
+    # A solicitação de licitação que originou esta OV fecha sozinha: a nota é a
+    # prova de que o pedido do órgão foi atendido, e repetir isso à mão na caixa
+    # de entrada era trabalho sem decisão. O 2026NE3498 ficou "em tratamento"
+    # com a OV016757 já faturada.
+    #
+    # Nunca falha para cá: faturar é o ato principal. A função devolve o erro em
+    # vez de levantá-lo, e se algo der errado o caso apenas segue aberto.
+    from app.services import licitacao_entrada_service
+    fechou = licitacao_entrada_service.resolver_por_faturamento(
+        pedido.get("numero_pedido"), payload.numero_nf, usuario)
+    if fechou.get("erro"):
+        print("solicitacao nao fechou sozinha apos o faturamento: %s" % fechou["erro"])
+
     return obter_pedido(pedido_id)
 
 
