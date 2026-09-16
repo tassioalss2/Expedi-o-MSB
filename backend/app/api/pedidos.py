@@ -516,6 +516,27 @@ def aviso_coleta_fob(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user))
     return pedido_service.aviso_coleta_fob(str(pedido_id))
 
 
+@router.get("/{pedido_id}/cotacao-cif")
+def aviso_cotacao_cif(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """A mensagem que pede cotação de frete à transportadora (CIF)."""
+    return pedido_service.aviso_cotacao_cif(str(pedido_id))
+
+
+class EnderecoEntrega(BaseModel):
+    endereco: str
+    # Guardar no cliente faz a próxima OV dele vir preenchida. Desmarcável para
+    # a entrega pontual em outro lugar (uma obra, outro hospital da rede).
+    lembrar_no_cliente: bool = True
+
+
+@router.patch("/{pedido_id}/endereco-entrega")
+def definir_endereco_entrega(pedido_id: UUID, payload: EnderecoEntrega,
+                             _: UsuarioOut = Depends(get_current_user)):
+    """Guarda o endereço de entrega copiado do D365."""
+    return pedido_service.definir_endereco_entrega(
+        str(pedido_id), payload.endereco, payload.lembrar_no_cliente)
+
+
 # ── Coleta ─────────────────────────────────────────────────────────────────────
 
 @router.post("/{pedido_id}/coleta/agendar")

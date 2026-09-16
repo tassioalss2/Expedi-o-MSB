@@ -18,6 +18,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
+import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, OPERACOES_EDITAVEIS, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
@@ -2725,6 +2726,7 @@ export function PedidoDetalhe() {
   const [avisoPendencia, setAvisoPendencia] = useState<any>(null)
   // O pedido de transportadora ao cliente FOB, antes do faturamento.
   const [avisoColeta, setAvisoColeta] = useState<any>(null)
+  const [cotacaoCif, setCotacaoCif] = useState<any>(null)
   const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
@@ -3507,6 +3509,21 @@ export function PedidoDetalhe() {
               {/* No FOB, este e-mail vem ANTES: o cliente so informa a
                   transportadora depois de saber cubagem, peso e valor da nota
                   — e a OV fica parada aqui ate ele responder. */}
+              {status === 'EM_COTACAO_FRETE' && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const { data } = await api.get(`/pedidos/${id}/cotacao-cif`)
+                      setCotacaoCif(data)
+                    } catch {
+                      toast.error('Nao consegui montar a mensagem')
+                    }
+                  }}
+                  className="w-full flex items-center gap-2 justify-center py-3 bg-white border-2 border-purple-500 text-purple-700 rounded-lg font-medium hover:bg-purple-50">
+                  💬 Mensagem de cotação para a transportadora
+                </button>
+              )}
+
               {status === 'AGUARD_TRANSPORTADORA' && pedido.tipo_frete === 'FOB' && (
                 <button
                   onClick={async () => {
@@ -3903,6 +3920,11 @@ export function PedidoDetalhe() {
             </>
           }
         />
+      )}
+
+      {cotacaoCif && (
+        <ModalCotacaoCIF pedidoId={id!} dados={cotacaoCif}
+          onFechar={() => setCotacaoCif(null)} onAtualizar={setCotacaoCif} />
       )}
 
       {/* FOB: o cliente contrata o frete, e so consegue cotar sabendo o que vai

@@ -3281,10 +3281,10 @@ def aviso_de_pendencia(pedido_id: str) -> dict:
                       % (qtd_txt, i.get("descricao") or "-", i.get("codigo") or "-"))
     linhas += [
         "",
-        "O saldo sera entregue em remessa complementar, com nota fiscal propria.",
-        "Informaremos a previsao de entrega assim que confirmada.",
+        "O saldo será entregue em remessa complementar, com nota fiscal própria.",
+        "Informaremos a previsão de entrega assim que confirmada.",
         "",
-        "Permanecemos a disposicao.",
+        "Permanecemos à disposição.",
     ]
 
     return {
@@ -3343,29 +3343,54 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
         if all(_qtd(i) > 0 and float(i.get("valor_unitario") or 0) > 0 for i in itens):
             valor = round(sum(_qtd(i) * float(i["valor_unitario"]) for i in itens), 2)
 
+    # Uma mensagem so, com tudo que o cliente precisa saber deste embarque:
+    # o que vai, quanto vale, o que falta e o que esperamos dele. Antes isso
+    # eram tres conversas em momentos diferentes — e a de saldo pendente so
+    # acontecia se alguem lembrasse.
+    ov = pedido.get("numero_pedido") or ""
     linhas = ["Prezados, bom dia!", "",
-              "O pedido %s está pronto para faturamento e coleta."
-              % (pedido.get("numero_pedido") or ""), "",
-              "Segue o volume para a contratação do frete:"]
+              "O pedido %s está pronto para faturamento e coleta." % ov, "",
+              "VOLUMES PARA A COLETA"]
+    resumo = []
     if cub.get("num_caixas"):
-        linhas.append("- Volumes: %s caixa(s)" % cub["num_caixas"])
+        resumo.append("%s caixa(s)" % cub["num_caixas"])
+    if cub.get("peso_kg"):
+        resumo.append("%s kg no total" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
+    if resumo:
+        linhas.append("- %s" % ", ".join(resumo))
     for c in caixas:
         desc = (c.get("tipos_caixa") or {}).get("descricao")
-        linhas.append("- %sx %s%s" % (c.get("quantidade") or 1,
-                                      c.get("tipo_caixa_nome") or "caixa",
-                                      " - %s" % desc if desc else ""))
-    if cub.get("peso_kg"):
-        linhas.append("- Peso total: %s kg" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
+        linhas.append("  - %sx %s%s" % (c.get("quantidade") or 1,
+                                        c.get("tipo_caixa_nome") or "caixa",
+                                        " - %s" % desc if desc else ""))
     if valor:
         linhas.append("- Valor da nota fiscal: R$ %s"
                       % format(valor, ",.2f").replace(",", "X").replace(".", ",").replace("X", "."))
-    linhas += [
-        "",
-        "Gentileza informar qual transportadora fará a coleta, para que possamos",
-        "programar a retirada e emitir a nota fiscal.",
-        "",
-        "Permanecemos à disposição.",
-    ]
+    if (pedido.get("local_entrega") or "").strip():
+        linhas.append("- Local de entrega: %s" % pedido["local_entrega"].strip())
+
+    linhas += ["", "TRANSPORTADORA",
+               "Gentileza informar qual transportadora fará a coleta, para que",
+               "possamos programar a retirada e emitir a nota fiscal."]
+
+    # O saldo pendente entra AQUI quando existe. E a mesma informacao do aviso
+    # que sai com a NF, mas dita antes: quem recebe a carga confere o que
+    # chegou, e descobrir a falta na conferencia comeca a conversa errada.
+    pend = pedido.get("pendencia") or {}
+    itens_pend = [i for i in (pend.get("itens") or [])
+                  if float(i.get("qtd_pendente") or 0) > 0] if not pend.get("resolvido_em") else []
+    if itens_pend:
+        linhas += ["", "SALDO PENDENTE",
+                   "Esta remessa atende parte do pedido. Ficou pendente:"]
+        for i in itens_pend:
+            linhas.append("- %s un - %s (cod. %s)"
+                          % ("%g" % float(i.get("qtd_pendente") or 0),
+                             i.get("descricao") or "-", i.get("codigo") or "-"))
+        linhas += ["",
+                   "O saldo será entregue em remessa complementar, com nota fiscal",
+                   "própria, e informaremos a previsão assim que confirmada."]
+
+    linhas += ["", "Permanecemos à disposição."]
 
     falta = []
     if not cub.get("num_caixas"):
@@ -3383,6 +3408,141 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
         "num_caixas": cub.get("num_caixas"),
         "peso_kg": cub.get("peso_kg"),
         "valor": valor,
+        "com_pendencia": bool(itens_pend),
         # O que o texto não pôde dizer, para a tela avisar antes do envio.
         "falta": falta,
     }
+
+
+def _endereco_de_entrega(db, pedido: dict) -> tuple:
+    """(endereco, de_onde_veio). Vazio é vazio — não invento endereço.
+
+    Ordem: o desta OV, depois o último usado para este cliente. A coluna pode
+    não existir ainda (migração v48 pendente): nesse caso o app funciona como
+    antes, só sem endereço na mensagem.
+    """
+    try:
+        if (pedido.get("endereco_entrega") or "").strip():
+            return pedido["endereco_entrega"].strip(), "ov"
+    except Exception:
+        pass
+    cid = pedido.get("cliente_id")
+    if cid:
+        try:
+            c = db.table("clientes").select("endereco_entrega").eq("id", cid).execute().data
+            if c and (c[0].get("endereco_entrega") or "").strip():
+                return c[0]["endereco_entrega"].strip(), "cliente"
+        except Exception:
+            pass
+    return "", ""
+
+
+def aviso_cotacao_cif(pedido_id: str) -> dict:
+    """A mensagem que pede cotação de frete à transportadora (CIF).
+
+    É o texto que o time já manda hoje pelo WhatsApp, montado pelo app: cliente,
+    caixas com dimensão, peso, valor da nota e o endereço de entrega.
+
+    O endereço é o ponto que fazia a mensagem ser montada à mão: o app só guarda
+    cidade/UF, e a transportadora precisa de logradouro e CEP. Ele agora é
+    guardado por OV e lembrado por cliente (v48) — mas só quando alguém colar o
+    do D365. Enquanto não colarem, a linha sai marcada como faltando, e não
+    inventada.
+    """
+    from app.services import inventario_service
+
+    pedido = obter_pedido(pedido_id)
+    db = get_service_db()
+    cub = inventario_service.obter_cubagem(pedido_id) or {}
+    try:
+        caixas = db.table("cubagem_itens").select("*, tipos_caixa(descricao)")\
+            .eq("pedido_id", pedido_id).execute().data or []
+    except Exception:
+        caixas = []
+
+    valor = float(pedido.get("valor_nf") or 0) or None
+    itens = pedido.get("itens") or []
+    if valor is None and itens:
+        def _qtd(i):
+            for k in ("qtd_conferida", "qtd_separada", "qtd_solicitada"):
+                if i.get(k):
+                    return float(i[k])
+            return 0.0
+        if all(_qtd(i) > 0 and float(i.get("valor_unitario") or 0) > 0 for i in itens):
+            valor = round(sum(_qtd(i) * float(i["valor_unitario"]) for i in itens), 2)
+
+    endereco, origem_end = _endereco_de_entrega(db, pedido)
+    cliente = pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome") or ""
+
+    linhas = ["Cliente: %s" % cliente, ""]
+    if caixas:
+        linhas.append("Caixas:")
+        for c in caixas:
+            desc = (c.get("tipos_caixa") or {}).get("descricao")
+            linhas.append("- %sx %s%s" % (c.get("quantidade") or 1,
+                                          c.get("tipo_caixa_nome") or "caixa",
+                                          " - %s" % desc if desc else ""))
+        linhas.append("")
+    if cub.get("num_caixas"):
+        linhas.append("Total: %s caixa(s)" % cub["num_caixas"])
+    if cub.get("peso_kg"):
+        linhas.append("Peso total: %s kg" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
+    if valor:
+        linhas.append("Valor NF: R$ %s"
+                      % format(valor, ",.2f").replace(",", "X").replace(".", ",").replace("X", "."))
+    if endereco:
+        linhas += ["", "Endereço: %s" % endereco]
+
+    falta = []
+    if not cub.get("num_caixas"):
+        falta.append("a cubagem")
+    if not cub.get("peso_kg"):
+        falta.append("o peso")
+    if not valor:
+        falta.append("o valor da NF")
+    if not endereco:
+        falta.append("o endereço de entrega")
+
+    return {
+        "tem": True,
+        "texto": "\n".join(linhas),
+        "ov": pedido.get("numero_pedido"),
+        "cliente": cliente,
+        "tipo_frete": pedido.get("tipo_frete"),
+        "endereco": endereco,
+        # "cliente" = veio do cadastro do cliente, não desta OV: quem manda
+        # precisa saber que aquele endereço é de uma entrega anterior.
+        "endereco_de": origem_end,
+        "local_entrega": pedido.get("local_entrega"),
+        "valor": valor,
+        "falta": falta,
+    }
+
+
+def definir_endereco_entrega(pedido_id: str, endereco: str,
+                             lembrar_no_cliente: bool = True) -> dict:
+    """Guarda o endereço de entrega copiado do D365.
+
+    Grava na OV e, por padrão, também no cliente — para a próxima OV dele já
+    vir preenchida. É assim que o cadastro se constrói: com o trabalho que a
+    pessoa já ia fazer de qualquer jeito.
+    """
+    db = get_service_db()
+    texto = (endereco or "").strip()
+    pedido = obter_pedido(pedido_id)
+    try:
+        db.table("pedidos").update({"endereco_entrega": texto or None,
+                                    "atualizado_em": _agora()})\
+            .eq("id", pedido_id).execute()
+    except Exception as exc:
+        raise HTTPException(
+            422, "a coluna de endereço ainda não existe — rode a migração v48 (%s)"
+                 % str(exc)[:80])
+    if lembrar_no_cliente and texto and pedido.get("cliente_id"):
+        try:
+            db.table("clientes").update({"endereco_entrega": texto})\
+                .eq("id", pedido["cliente_id"]).execute()
+        except Exception:
+            # Sem a coluna no cliente, a OV continua salva: o prefill é bônus.
+            pass
+    return {"ok": True, "endereco": texto}
