@@ -2774,6 +2774,17 @@ export function PedidoDetalhe() {
     ? ((Number(valorProdutos) || 0) + (Number(valorFrete) || 0))
     : (valorNf ? Number(valorNf) : null)
 
+  // CIF SEM valor: a MSB paga o frete e ele NÃO vai na nota. CIF COM valor: vai
+  // na nota e o cliente ressarce. O que se grava em `valor_nf` continua sendo
+  // produtos + frete nos dois casos — é a convenção que os relatórios esperam,
+  // e todos eles descontam o frete do CIF sem valor na hora de somar
+  // faturamento. Trocar isso é migração, não ajuste de tela. O que estava
+  // errado era MOSTRAR esse total como se fosse o da nota fiscal.
+  const freteForaDaNF = pedido?.tipo_frete === 'CIF_SEM_VALOR'
+  const totalDaNota = freteForaDaNF
+    ? (Number(valorProdutos) || 0)
+    : (valorNfCalculado || 0)
+
   const isCorreios = pedido?.transportadora?.nome === 'CORREIOS'
 
   // Faturar sem valor deixava a OV em FATURADO valendo R$ 0 — some do radar e
@@ -3103,10 +3114,21 @@ export function PedidoDetalhe() {
             {(pedido as any).valor_frete != null && (
               <Linha label="🚛 Custo Frete" valor={`R$ ${Number((pedido as any).valor_frete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
             )}
-            {pedido.valor_nf && (
-              <Linha label={`Total NF${(pedido as any).valor_produtos != null ? ' (Prod. + Frete)' : ''}`}
-                valor={`R$ ${pedido.valor_nf.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
-            )}
+            {/* No CIF sem valor o frete é custo nosso e não está na nota: o
+                total da NF é só o produto. O campo guardado soma os dois (é a
+                convenção que os relatórios descontam), mas mostrá-lo como
+                "Total NF" faria a tela discordar da nota do D365. */}
+            {pedido.valor_nf && (() => {
+              const foraDaNF = pedido.tipo_frete === 'CIF_SEM_VALOR'
+                && (pedido as any).valor_produtos != null
+              const total = foraDaNF
+                ? Number((pedido as any).valor_produtos)
+                : Number(pedido.valor_nf)
+              return (
+                <Linha label={`Total NF${!foraDaNF && (pedido as any).valor_produtos != null ? ' (Prod. + Frete)' : ''}`}
+                  valor={`R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
+              )
+            })()}
             {pedido.data_real_coleta && (
               <Linha label="Data Coleta" valor={format(new Date(pedido.data_real_coleta), 'dd/MM/yyyy HH:mm', { locale: ptBR })} />
             )}
@@ -3701,6 +3723,12 @@ export function PedidoDetalhe() {
                       <p className="text-xs text-gray-400 mt-1">Valor de controle interno — não consta na NF.</p>
                     )}
                   </div>
+                  {/* O total da NF depende de QUAL CIF:
+                        CIF com valor  → o frete está na nota, o cliente ressarce
+                        CIF sem valor  → o frete é custo nosso e NÃO está na nota
+                      Somar os dois no "Total NF" do CIF sem valor mostrava um
+                      número que a NF do D365 nunca teria — bem embaixo de um
+                      aviso que dizia o contrário. */}
                   {(valorProdutos || valorFrete) && (
                     <div className="bg-gray-50 rounded-lg p-3 text-sm">
                       <div className="flex justify-between text-gray-500">
@@ -3708,12 +3736,12 @@ export function PedidoDetalhe() {
                         <span>R$ {(Number(valorProdutos) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between text-gray-500 mt-1">
-                        <span>Frete</span>
+                        <span>Frete{freteForaDaNF && ' (custo nosso, fora da NF)'}</span>
                         <span>R$ {(Number(valorFrete) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
                       <div className="flex justify-between font-bold text-gray-800 border-t pt-2 mt-2">
                         <span>Total NF</span>
-                        <span>R$ {valorNfCalculado?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span>R$ {totalDaNota.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
                     </div>
                   )}
