@@ -3240,3 +3240,63 @@ def varredura_alertas(horas_parada: int = 24, enviar: bool = True) -> dict:
         _enviar_teams(f"🕗 **{len(paradas)} OV(s) paradas há +{horas_parada}h**\n\n{linhas}{extra}")
 
     return {"paradas": len(paradas), "horas_parada": horas_parada, "ovs": paradas}
+
+
+def aviso_de_pendencia(pedido_id: str) -> dict:
+    """O texto para avisar o cliente do que ficou pendente, junto com a NF.
+
+    Quando a OV sai parcial por falta de estoque, o cliente recebe a nota e não
+    sabe que falta material — descobre na conferência do recebimento, e aí a
+    conversa começa errada. Este texto vai no mesmo e-mail da nota.
+
+    É para o CLIENTE, então só o que é dele: produto, código e quantidade que
+    falta. Estoque, semiacabado e a fila do PCP ficam de fora.
+
+    A previsão NÃO entra no texto de propósito. `previsao_sa` é a data em que o
+    semiacabado vira produto acabado — cálculo interno do PCP, não compromisso
+    com ninguém. Escrever isso numa mensagem ao cliente transforma estimativa em
+    promessa. Ela é devolvida à parte, para quem escreve decidir se assume.
+    """
+    pedido = obter_pedido(pedido_id)
+    pend = pedido.get("pendencia") or {}
+    itens = [i for i in (pend.get("itens") or [])
+             if float(i.get("qtd_pendente") or 0) > 0]
+    if not itens:
+        return {"tem": False, "texto": None}
+
+    nf = str(pedido.get("numero_nf") or "").strip()
+    ov = pedido.get("numero_pedido") or ""
+    linhas = [
+        "Segue em anexo a nota fiscal %s referente ao pedido %s."
+        % (nf or "—", ov),
+        "",
+        "Informamos que o atendimento foi PARCIAL. Ficou pendente de entrega:",
+        "",
+    ]
+    for i in itens:
+        qtd = float(i.get("qtd_pendente") or 0)
+        # Quantidade sem casa decimal quando é inteira: "25 un", não "25.0 un".
+        qtd_txt = ("%g" % qtd)
+        linhas.append("- %s un - %s (cod. %s)"
+                      % (qtd_txt, i.get("descricao") or "-", i.get("codigo") or "-"))
+    linhas += [
+        "",
+        "O saldo sera entregue em remessa complementar, com nota fiscal propria.",
+        "Informaremos a previsao de entrega assim que confirmada.",
+        "",
+        "Permanecemos a disposicao.",
+    ]
+
+    return {
+        "tem": True,
+        "texto": "\n".join(linhas),
+        "ov": ov,
+        "nf": nf or None,
+        "valor_pendente": round(float(pend.get("valor") or 0), 2),
+        "itens": [{"codigo": i.get("codigo"), "descricao": i.get("descricao"),
+                   "qtd_pendente": float(i.get("qtd_pendente") or 0)}
+                  for i in itens],
+        # Para quem escreve decidir, fora do texto.
+        "previsao_interna": pend.get("previsao_pcp") or pend.get("previsao_sa"),
+        "resolvida": bool(pend.get("resolvido_em")),
+    }

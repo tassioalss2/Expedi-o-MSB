@@ -2719,6 +2719,9 @@ export function PedidoDetalhe() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
+  // O aviso de saldo pendente para o cliente. Fica fora do `modal` porque ele
+  // abre DEPOIS do faturamento, quando aquele ja fechou.
+  const [avisoPendencia, setAvisoPendencia] = useState<any>(null)
   const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
@@ -2864,6 +2867,16 @@ export function PedidoDetalhe() {
         toast.error('Erro ao enviar para impressão — verifique o Print Agent')
       }
       setModal(null)
+
+      // Saiu parcial? O cliente precisa saber disso no MESMO e-mail da nota —
+      // senão ele descobre na conferência do recebimento, e a conversa começa
+      // errada. O texto abre aqui, na hora, e não numa tela que ninguém volta.
+      try {
+        const { data } = await api.get(`/pedidos/${id}/aviso-pendencia`)
+        if (data?.tem) setAvisoPendencia(data)
+      } catch {
+        // Sem aviso a NF continua registrada: é informação a mais, não etapa.
+      }
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Erro'),
   })
@@ -3396,6 +3409,25 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
+              {/* O aviso de saldo pendente abre sozinho ao faturar. Este botao
+                  existe para quem fechou aquela janela e precisa do texto de
+                  novo — sem ele a informacao so passava uma vez. */}
+              {(pedido as any).pendencia && pedido.numero_nf && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const { data } = await api.get(`/pedidos/${id}/aviso-pendencia`)
+                      if (data?.tem) setAvisoPendencia(data)
+                      else toast('Esta OV nao tem saldo pendente.')
+                    } catch {
+                      toast.error('Nao consegui montar o aviso')
+                    }
+                  }}
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-amber-300 text-amber-700 rounded-lg text-sm hover:bg-amber-50">
+                  📄 Aviso de saldo pendente
+                </button>
+              )}
+
               {/* Corrigir tipo de frete — registra ocorrência */}
               {!['CANCELADO'].includes(status) && (
                 <button onClick={() => setModal('tipo_frete')}
@@ -3818,6 +3850,50 @@ export function PedidoDetalhe() {
                 title={podeFaturar ? undefined : `Falta informar: ${faltaParaFaturar.join(', ')}`}
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
                 {faturarMutation.isPending ? 'Salvando...' : 'Confirmar NF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Aviso de saldo pendente — abre logo depois de registrar a NF.
+          O texto e para o CLIENTE: produto, codigo e quantidade que falta, e
+          nada mais. Estoque, semiacabado e a fila do PCP nao saem daqui. */}
+      {avisoPendencia?.tem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div className="p-5 border-b shrink-0">
+              <h2 className="text-lg font-bold">Saldo pendente - avise o cliente</h2>
+              <p className="text-[13px] text-gray-500 mt-0.5">
+                Esta OV saiu parcial. Envie este texto no mesmo e-mail da nota fiscal.
+              </p>
+            </div>
+            <div className="p-5 space-y-3 flex-1 overflow-y-auto">
+              <textarea readOnly value={avisoPendencia.texto} rows={12}
+                className="w-full border rounded-lg p-3 text-sm font-mono leading-relaxed bg-gray-50" />
+              <div className="text-xs text-gray-500">
+                Saldo: <strong>{avisoPendencia.itens?.length}</strong> item(ns) -
+                R$ {Number(avisoPendencia.valor_pendente || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </div>
+              {avisoPendencia.previsao_interna && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  O PCP estima <strong>{avisoPendencia.previsao_interna.split('-').reverse().join('/')}</strong> para
+                  este saldo. <strong>Deixei essa data FORA do texto de proposito</strong>: e calculo interno, e
+                  escreve-la ao cliente vira compromisso. Inclua so se voce assumir o prazo.
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t flex gap-2 justify-end shrink-0">
+              <button onClick={() => setAvisoPendencia(null)}
+                className="px-4 py-2 border rounded-lg text-sm">Fechar</button>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(avisoPendencia.texto)
+                    .then(() => toast.success('Texto copiado - cole no e-mail da NF'))
+                    .catch(() => toast.error('Nao consegui copiar'))
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
+                <Copy size={14} /> Copiar texto
               </button>
             </div>
           </div>

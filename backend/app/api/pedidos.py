@@ -504,6 +504,12 @@ def registrar_faturamento(
     return pedido_service.registrar_faturamento(str(pedido_id), payload, usuario)
 
 
+@router.get("/{pedido_id}/aviso-pendencia")
+def aviso_pendencia(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """O texto para avisar o cliente do saldo que ficou, junto com a NF."""
+    return pedido_service.aviso_de_pendencia(str(pedido_id))
+
+
 # ── Coleta ─────────────────────────────────────────────────────────────────────
 
 @router.post("/{pedido_id}/coleta/agendar")
