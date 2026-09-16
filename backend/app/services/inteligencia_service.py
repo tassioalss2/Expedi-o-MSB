@@ -99,7 +99,9 @@ def _valor_liquido(p: dict) -> float:
     nunca entrou."""
     bruto = float(p.get("valor_nf") or 0)
     frete = float(p.get("valor_frete") or 0)
-    if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+    # So o CIF COM valor: no sem valor o frete nunca esteve na nota e, desde a
+    # migracao de 16/09/2026, tambem nao esta no valor_nf.
+    if p.get("tipo_frete") == "CIF_COM_VALOR":
         bruto -= frete
     return bruto
 

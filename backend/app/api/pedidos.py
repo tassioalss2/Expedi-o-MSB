@@ -760,8 +760,8 @@ def dashboard_financeiro(
     def _resumo(lista: list) -> dict:
         # Natureza do frete (DRE):
         # - CIF_COM_VALOR: frete embutido na NF, ressarcido pelo cliente -> neutro no resultado
-        # - CIF_SEM_VALOR: frete NÃO vai na NF; foi digitado dentro do valor_nf por
-        #   hábito, mas não é faturamento -> removido do bruto e do sem-frete.
+        # - CIF_SEM_VALOR: frete NÃO vai na NF e, desde a migração de 16/09/2026,
+        #   também não está dentro do valor_nf -> nada a remover do bruto.
         total_nf_bruto = sum(float(p["valor_nf"] or 0) for p in lista if p.get("valor_nf"))
         total_produtos = sum(float(p["valor_produtos"] or 0) for p in lista if p.get("valor_produtos"))
         total_frete = sum(float(p["valor_frete"] or 0) for p in lista if p.get("valor_frete"))
@@ -769,8 +769,8 @@ def dashboard_financeiro(
                                if p.get("valor_frete") and p.get("tipo_frete") == "CIF_COM_VALOR")
         frete_proprio = sum(float(p["valor_frete"] or 0) for p in lista
                             if p.get("valor_frete") and p.get("tipo_frete") == "CIF_SEM_VALOR")
-        # Faturamento = NF fiscal. Tira o frete CIF sem valor, que não está na NF.
-        total_nf = total_nf_bruto - frete_proprio
+        # Faturamento = NF fiscal, e o valor_nf JA e a nota fiscal.
+        total_nf = total_nf_bruto
         return {
             "total_nf": round(total_nf, 2),
             "total_produtos": round(total_produtos, 2),
@@ -899,11 +899,10 @@ def dashboard_financeiro_detalhe(
         valor_nf = float(p.get("valor_nf") or 0)
         valor_frete = float(p.get("valor_frete") or 0)
         tipo_frete = p.get("tipo_frete")
-        # CIF sem valor: frete não está na NF (foi digitado no valor_nf) -> tira do bruto.
-        frete_fora_nf = valor_frete if tipo_frete == "CIF_SEM_VALOR" else 0.0
+        # O valor_nf ja e a nota: o frete do CIF sem valor nao esta mais nele.
         # CIF com valor: frete está na NF, mas é frete -> tira só do "sem frete".
         frete_na_nf = valor_frete if tipo_frete == "CIF_COM_VALOR" else 0.0
-        bruto = valor_nf - frete_fora_nf
+        bruto = valor_nf
         linhas.append({
             "id": p["id"],
             "numero_pedido": p.get("numero_pedido"),
@@ -963,7 +962,9 @@ def vendas_por_cliente(
         if not _conta_faturamento(p):
             continue
         valor = float(p.get("valor_nf") or 0)
-        if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+        # Só o CIF COM valor: nele o frete está DENTRO da nota. No CIF sem
+        # valor o valor_nf já é só produtos (migração de 16/09/2026).
+        if p.get("tipo_frete") == "CIF_COM_VALOR":
             valor -= float(p.get("valor_frete") or 0)  # sem frete = só produtos
         g = agg.setdefault(nome, {"cliente": nome, "qtd": 0, "valor": 0.0})
         g["qtd"] += 1
@@ -1029,7 +1030,7 @@ def vendas_por_canal(
         if "ESTERILIZE" in nome or _eh_biomedical(p) or not _conta_faturamento(p):
             continue
         valor = float(p.get("valor_nf") or 0)
-        if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+        if p.get("tipo_frete") == "CIF_COM_VALOR":
             valor -= float(p.get("valor_frete") or 0)
 
         ck = _canal_base(p.get("canal"))
@@ -1116,7 +1117,7 @@ def faturamento_diario(
             if dia not in dias:
                 continue
             valor = float(p.get("valor_nf") or 0)
-            if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+            if p.get("tipo_frete") == "CIF_COM_VALOR":
                 valor -= float(p.get("valor_frete") or 0)
             dias[dia]["valor"] += valor
             dias[dia]["qtd"] += 1
@@ -1220,10 +1221,9 @@ def relatorio_faturamento(
                 continue
         elif st == "CANCELADO":
             continue
-        # CIF sem valor: o frete não está na NF — mostra o valor fiscal (sem esse frete).
+        # O valor fiscal é o próprio valor_nf: desde a migração de 16/09/2026
+        # o frete do CIF sem valor não está mais embutido nele.
         valor_nf = float(p.get("valor_nf") or 0)
-        if p.get("tipo_frete") == "CIF_SEM_VALOR":
-            valor_nf -= float(p.get("valor_frete") or 0)
         linhas.append({
             "id": p["id"],
             "numero_pedido": p.get("numero_pedido"),

@@ -2343,7 +2343,8 @@ def _notas_da_licitacao(db) -> list[dict]:
                           "receita": True, "demanda": demanda_da_ov.get(ov)})
             continue
         valor = float(ped.get("valor_nf") or 0)
-        if ped.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+        # So o CIF COM valor: no sem valor o valor_nf ja e a nota fiscal.
+        if ped.get("tipo_frete") == "CIF_COM_VALOR":
             valor -= float(ped.get("valor_frete") or 0)
         saida.append({
             "ov": ov,

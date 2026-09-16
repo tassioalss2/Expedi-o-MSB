@@ -2775,11 +2775,12 @@ export function PedidoDetalhe() {
     : (valorNf ? Number(valorNf) : null)
 
   // CIF SEM valor: a MSB paga o frete e ele NÃO vai na nota. CIF COM valor: vai
-  // na nota e o cliente ressarce. O que se grava em `valor_nf` continua sendo
-  // produtos + frete nos dois casos — é a convenção que os relatórios esperam,
-  // e todos eles descontam o frete do CIF sem valor na hora de somar
-  // faturamento. Trocar isso é migração, não ajuste de tela. O que estava
-  // errado era MOSTRAR esse total como se fosse o da nota fiscal.
+  // na nota e o cliente ressarce.
+  //
+  // Até 16/09/2026 o app gravava produtos + frete em `valor_nf` nos dois casos,
+  // e os oito pontos de relatório descontavam o frete do CIF sem valor na hora
+  // de somar faturamento. Os números fechavam, mas o campo guardava um valor
+  // que nota nenhuma teve. Agora `valor_nf` É a nota, e é ele que se envia.
   const freteForaDaNF = pedido?.tipo_frete === 'CIF_SEM_VALOR'
   const totalDaNota = freteForaDaNF
     ? (Number(valorProdutos) || 0)
@@ -2833,9 +2834,11 @@ export function PedidoDetalhe() {
   const faturarMutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${id}/faturamento`, {
       numero_nf: nf,
+      // O valor da NOTA, não produtos + frete: no CIF sem valor o frete é custo
+      // nosso e não está no documento fiscal.
       // Sem receita o zero é resposta, não ausência: mandar null deixaria o
       // registro dizendo "não sei quanto", que é outra coisa.
-      valor_nf: ehReceita ? (valorNfCalculado || null) : (valorNfCalculado || 0),
+      valor_nf: ehReceita ? (totalDaNota || null) : (totalDaNota || 0),
       valor_produtos: isCIF && valorProdutos ? Number(valorProdutos) : null,
       valor_frete: isCIF && valorFrete ? Number(valorFrete) : null,
       data_prevista_entrega: novaDataEntrega || null,
