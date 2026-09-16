@@ -605,6 +605,64 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     return pedido
 
 
+def _proposta_da_oportunidade(db, oportunidade_id) -> dict:
+    """As condições comerciais da proposta desta oportunidade.
+
+    A cotação ACEITA manda. Mas não dá para exigir status: a COT-0107 estava em
+    RASCUNHO e a venda foi ganha assim mesmo — o comercial fecha por telefone e
+    o status da proposta fica para trás. Então: aceita primeiro, depois a mais
+    recente que tenha condição de pagamento escrita.
+
+    Devolve {} quando não há proposta ou quando ela nada diz. Nunca inventa.
+    """
+    if not oportunidade_id:
+        return {}
+    try:
+        cots = db.table("crm_cotacoes").select(
+            "numero, status, condicao_pagamento, observacao, prazo_entrega, "
+            "endereco_cidade, endereco_uf, atualizado_em")\
+            .eq("oportunidade_id", str(oportunidade_id)).limit(50).execute().data
+    except Exception:
+        # Base sem o módulo de cotações: a OV nasce como nascia.
+        return {}
+    uteis = [c for c in cots if (c.get("condicao_pagamento") or "").strip()]
+    if not uteis:
+        uteis = cots
+    if not uteis:
+        return {}
+    uteis.sort(key=lambda c: (c.get("status") == "ACEITA",
+                              str(c.get("atualizado_em") or "")), reverse=True)
+    c = uteis[0]
+    cidade = (c.get("endereco_cidade") or "").strip()
+    uf = (c.get("endereco_uf") or "").strip()
+    return {
+        "numero": c.get("numero"),
+        "condicao_pagamento": (c.get("condicao_pagamento") or "").strip() or None,
+        "observacao": (c.get("observacao") or "").strip() or None,
+        "prazo_entrega": (c.get("prazo_entrega") or "").strip() or None,
+        # Mesmo formato que a tela de correção usa ("Fortaleza/CE").
+        "local_entrega": f"{cidade}/{uf}" if cidade and uf else None,
+    }
+
+
+def _observacoes_do_stub(oportunidade: dict, da_proposta: dict) -> str:
+    """A nota da OV recém-criada, com o que o vendedor combinou na proposta.
+
+    O texto da proposta é onde se escreve "frete FOB", "retira na MSB" e prazos
+    — quem separa e fatura precisa disso, e antes ele morria na cotação quando
+    a venda vinha pelo caminho do ganho.
+    """
+    linhas = ["Criado automaticamente pelo CRM ao ganhar: %s"
+              % (oportunidade.get("titulo") or "")]
+    detalhe = [x for x in (da_proposta.get("observacao"),
+                           "Prazo de entrega: %s" % da_proposta["prazo_entrega"]
+                           if da_proposta.get("prazo_entrega") else None) if x]
+    if detalhe:
+        linhas.append("Da proposta %s:" % (da_proposta.get("numero") or ""))
+        linhas += detalhe
+    return "\n".join(x.strip() for x in linhas if x).strip()
+
+
 def criar_pedido_stub_crm(oportunidade: dict, itens: list, usuario_id: str) -> dict:
     """OV-esqueleto criada no instante em que uma oportunidade é ganha no CRM.
 
@@ -623,6 +681,15 @@ def criar_pedido_stub_crm(oportunidade: dict, itens: list, usuario_id: str) -> d
     itens_validos = [i for i in itens if i.get("produto_id") and float(i.get("qtd") or 0) > 0]
     valor_estimado = float(oportunidade.get("valor_estimado") or 0)
 
+    # O que a proposta já combinou não pode ser redigitado aqui.
+    #
+    # A condição de pagamento vive na COTAÇÃO, não na oportunidade — e este
+    # caminho (ganhar no kanban) nunca olhava para ela. O outro caminho, gerar
+    # OV de uma cotação ACEITA, sempre carregou; então a mesma venda entregava
+    # a condição ou não dependendo de por onde passou. Na COT-0107 (ELEVEMED,
+    # 30/60/90 dias) o comercial escreveu e a OV nasceu com o campo vazio.
+    da_proposta = _proposta_da_oportunidade(db, oportunidade.get("id"))
+
     pedido_data = {
         "numero_pedido": numero_provisorio,
         "cliente_id": oportunidade.get("cliente_id"),
@@ -634,10 +701,16 @@ def criar_pedido_stub_crm(oportunidade: dict, itens: list, usuario_id: str) -> d
         # Sem itens com preço, ao menos o valor estimado aparece no card —
         # senão o kanban mostraria R$ 0 numa oportunidade que valia a pena.
         "valor_nf": valor_estimado if not itens_validos else None,
-        "observacoes": f"Criado automaticamente pelo CRM ao ganhar: {oportunidade.get('titulo') or ''}".strip(),
+        "observacoes": _observacoes_do_stub(oportunidade, da_proposta),
         "criado_em": agora,
         "atualizado_em": agora,
     }
+    # Só o que a proposta realmente diz: campo vazio na cotação não vira campo
+    # na OV. A operadora confirma tudo no card antes de liberar.
+    if da_proposta.get("condicao_pagamento"):
+        pedido_data["condicao_pagamento"] = da_proposta["condicao_pagamento"]
+    if da_proposta.get("local_entrega"):
+        pedido_data["local_entrega"] = da_proposta["local_entrega"]
     pedido = db.table("pedidos").insert(pedido_data).execute().data[0]
 
     if itens_validos:
