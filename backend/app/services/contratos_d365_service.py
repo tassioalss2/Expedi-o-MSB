@@ -192,6 +192,21 @@ def mapa_para_resolucao(db) -> tuple[dict, dict]:
     candidatos: dict = {}
     for r in rows:
         if r.get("pregao") and r.get("cliente_id"):
-            candidatos.setdefault(r["pregao"], set()).add(r["cliente_id"])
+            for forma in _formas_do_pregao(r["pregao"]):
+                candidatos.setdefault(forma, set()).add(r["cliente_id"])
     por_pregao = {p: next(iter(c)) for p, c in candidatos.items() if len(c) == 1}
     return por_contrato, por_pregao
+
+
+def _formas_do_pregao(pregao: str) -> set:
+    """O mesmo pregão escrito dos jeitos que aparecem na vida real.
+
+    O órgão escreve "90143/2024" e o HUCAM-UFES escreve "901432024" — mesmo
+    pregão, e a comparação por texto cru não os reconhecia como iguais. Indexar
+    pelas duas formas faz os dois lados se encontrarem sem ninguém ter que
+    adivinhar a pontuação.
+    """
+    cru = re.sub(r"\s+", "", str(pregao or ""))
+    if not cru:
+        return set()
+    return {cru, re.sub(r"\D", "", cru)}

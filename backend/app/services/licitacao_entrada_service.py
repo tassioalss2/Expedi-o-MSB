@@ -560,8 +560,10 @@ def sincronizar(lote: list[dict]) -> dict:
         # ha pregao compartilhado por contratos de clientes diferentes, e
         # escolher um seria atribuir a venda ao hospital errado.
         if not cli:
+            # Com e sem a pontuação: o índice guarda as duas formas, porque
+            # "90143/2024" e "901432024" são o mesmo pregão escrito diferente.
             pg = re.sub(r'\s+', '', str(e.get('pregao') or ''))
-            cli = por_pregao.get(pg)
+            cli = por_pregao.get(pg) or por_pregao.get(re.sub(r'\D', '', pg))
         return cli, dem
 
     tem_conversa = _suporta_conversa(db)
