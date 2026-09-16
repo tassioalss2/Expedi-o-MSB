@@ -1123,6 +1123,50 @@ function ModalDevolverAoCrm({ pedido, onClose }: { pedido: Pedido; onClose: () =
  *  botao aparece e o backend recusa, que e pior que nao aparecer. */
 const STATUS_SEM_RESERVA = ['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO']
 
+/**
+ * Um texto pronto para o cliente, com botao de copiar.
+ *
+ * Existe porque o app nao manda e-mail: quem manda e a pessoa, do Outlook. O
+ * que o app pode fazer e montar o texto com os dados certos, para ninguem
+ * redigitar cubagem e valor — que e onde nascem os erros que voltam do cliente.
+ */
+function ModalTextoCliente({ titulo, subtitulo, texto, aviso, onFechar }: {
+  titulo: string
+  subtitulo: string
+  texto: string
+  /** Bloco ambar opcional: o que o texto NAO diz, e por que. */
+  aviso?: React.ReactNode
+  onFechar: () => void
+}) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="p-5 border-b shrink-0">
+          <h2 className="text-lg font-bold">{titulo}</h2>
+          <p className="text-[13px] text-gray-500 mt-0.5">{subtitulo}</p>
+        </div>
+        <div className="p-5 space-y-3 flex-1 overflow-y-auto">
+          <textarea readOnly value={texto} rows={14}
+            className="w-full border rounded-lg p-3 text-sm font-mono leading-relaxed bg-gray-50" />
+          {aviso}
+        </div>
+        <div className="p-5 border-t flex gap-2 justify-end shrink-0">
+          <button onClick={onFechar} className="px-4 py-2 border rounded-lg text-sm">Fechar</button>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(texto)
+                .then(() => toast.success('Texto copiado'))
+                .catch(() => toast.error('Nao consegui copiar'))
+            }}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
+            <Copy size={14} /> Copiar texto
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Devolve a OV para a pendencia do comercial — inteira ou em parte.
  *
  *  O contrario do "liberar". Existia so item por item, e so na tela de Estoque:
@@ -2722,6 +2766,8 @@ export function PedidoDetalhe() {
   // O aviso de saldo pendente para o cliente. Fica fora do `modal` porque ele
   // abre DEPOIS do faturamento, quando aquele ja fechou.
   const [avisoPendencia, setAvisoPendencia] = useState<any>(null)
+  // O pedido de transportadora ao cliente FOB, antes do faturamento.
+  const [avisoColeta, setAvisoColeta] = useState<any>(null)
   const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
@@ -3501,6 +3547,25 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
+              {/* No FOB, este e-mail vem ANTES: o cliente so informa a
+                  transportadora depois de saber cubagem, peso e valor da nota
+                  — e a OV fica parada aqui ate ele responder. */}
+              {status === 'AGUARD_TRANSPORTADORA' && pedido.tipo_frete === 'FOB' && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const { data } = await api.get(`/pedidos/${id}/aviso-coleta-fob`)
+                      if (data?.tem) setAvisoColeta(data)
+                      else toast(data?.motivo || 'Nao consegui montar o texto')
+                    } catch {
+                      toast.error('Nao consegui montar o texto')
+                    }
+                  }}
+                  className="w-full flex items-center gap-2 justify-center py-3 bg-white border-2 border-orange-500 text-orange-700 rounded-lg font-medium hover:bg-orange-50">
+                  ✉️ Pedir a transportadora ao cliente
+                </button>
+              )}
+
               {status === 'AGUARD_TRANSPORTADORA' && (
                 <button onClick={() => setModal('transportadora_cliente')}
                   className="w-full flex items-center gap-2 justify-center py-3 bg-orange-600 text-white rounded-lg font-medium hover:bg-orange-500">
@@ -3860,44 +3925,44 @@ export function PedidoDetalhe() {
           O texto e para o CLIENTE: produto, codigo e quantidade que falta, e
           nada mais. Estoque, semiacabado e a fila do PCP nao saem daqui. */}
       {avisoPendencia?.tem && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-            <div className="p-5 border-b shrink-0">
-              <h2 className="text-lg font-bold">Saldo pendente - avise o cliente</h2>
-              <p className="text-[13px] text-gray-500 mt-0.5">
-                Esta OV saiu parcial. Envie este texto no mesmo e-mail da nota fiscal.
-              </p>
-            </div>
-            <div className="p-5 space-y-3 flex-1 overflow-y-auto">
-              <textarea readOnly value={avisoPendencia.texto} rows={12}
-                className="w-full border rounded-lg p-3 text-sm font-mono leading-relaxed bg-gray-50" />
+        <ModalTextoCliente
+          titulo="Saldo pendente - avise o cliente"
+          subtitulo="Esta OV saiu parcial. Envie este texto no mesmo e-mail da nota fiscal."
+          texto={avisoPendencia.texto}
+          onFechar={() => setAvisoPendencia(null)}
+          aviso={
+            <>
               <div className="text-xs text-gray-500">
                 Saldo: <strong>{avisoPendencia.itens?.length}</strong> item(ns) -
                 R$ {Number(avisoPendencia.valor_pendente || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </div>
               {avisoPendencia.previsao_interna && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                  O PCP estima <strong>{avisoPendencia.previsao_interna.split('-').reverse().join('/')}</strong> para
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 mt-2">
+                  O PCP estima <strong>{String(avisoPendencia.previsao_interna).split('-').reverse().join('/')}</strong> para
                   este saldo. <strong>Deixei essa data FORA do texto de proposito</strong>: e calculo interno, e
                   escreve-la ao cliente vira compromisso. Inclua so se voce assumir o prazo.
                 </div>
               )}
+            </>
+          }
+        />
+      )}
+
+      {/* FOB: o cliente contrata o frete, e so consegue cotar sabendo o que vai
+          ser coletado. Este e-mail sai ANTES do faturamento. */}
+      {avisoColeta?.tem && (
+        <ModalTextoCliente
+          titulo="Pedir a transportadora ao cliente"
+          subtitulo="Frete FOB: envie antes de faturar e aguarde o cliente informar quem vai coletar."
+          texto={avisoColeta.texto}
+          onFechar={() => setAvisoColeta(null)}
+          aviso={avisoColeta.falta?.length ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              O texto saiu <strong>sem {avisoColeta.falta.join(', ')}</strong> porque o app nao tem esse
+              dado ainda. Preencha antes de enviar - o cliente cota o frete com esses numeros.
             </div>
-            <div className="p-5 border-t flex gap-2 justify-end shrink-0">
-              <button onClick={() => setAvisoPendencia(null)}
-                className="px-4 py-2 border rounded-lg text-sm">Fechar</button>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(avisoPendencia.texto)
-                    .then(() => toast.success('Texto copiado - cole no e-mail da NF'))
-                    .catch(() => toast.error('Nao consegui copiar'))
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
-                <Copy size={14} /> Copiar texto
-              </button>
-            </div>
-          </div>
-        </div>
+          ) : undefined}
+        />
       )}
     </div>
   )

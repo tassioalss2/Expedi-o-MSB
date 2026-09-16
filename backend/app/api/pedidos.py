@@ -510,6 +510,12 @@ def aviso_pendencia(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     return pedido_service.aviso_de_pendencia(str(pedido_id))
 
 
+@router.get("/{pedido_id}/aviso-coleta-fob")
+def aviso_coleta_fob(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """O texto que pede ao cliente FOB a transportadora da coleta."""
+    return pedido_service.aviso_coleta_fob(str(pedido_id))
+
+
 # ── Coleta ─────────────────────────────────────────────────────────────────────
 
 @router.post("/{pedido_id}/coleta/agendar")
