@@ -3266,19 +3266,20 @@ def aviso_de_pendencia(pedido_id: str) -> dict:
 
     nf = str(pedido.get("numero_nf") or "").strip()
     ov = pedido.get("numero_pedido") or ""
-    linhas = [
-        "Segue em anexo a nota fiscal %s referente ao pedido %s."
-        % (nf or "—", ov),
-        "",
-        "Informamos que o atendimento foi PARCIAL. Ficou pendente de entrega:",
-        "",
-    ]
+    # Mesmo formato do e-mail de coleta e da mensagem de cubagem: quem lê
+    # reconhece de longe o que é cada bloco. Sem *asterisco*, que em e-mail
+    # aparece literal.
+    cliente = pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome") or ""
+    linhas = ["Prezados, bom dia!", "",
+              "🧾 Nota fiscal %s — pedido %s" % (nf or "—", ov)]
+    if cliente:
+        linhas.append("👤 Cliente: %s" % cliente)
+    linhas += ["", "⏳ Atendimento PARCIAL — ficou pendente de entrega:"]
     for i in itens:
-        qtd = float(i.get("qtd_pendente") or 0)
         # Quantidade sem casa decimal quando é inteira: "25 un", não "25.0 un".
-        qtd_txt = ("%g" % qtd)
-        linhas.append("- %s un - %s (cod. %s)"
-                      % (qtd_txt, i.get("descricao") or "-", i.get("codigo") or "-"))
+        linhas.append("• %s un — %s (cód. %s)"
+                      % ("%g" % float(i.get("qtd_pendente") or 0),
+                         i.get("descricao") or "—", i.get("codigo") or "—"))
     linhas += [
         "",
         "O saldo será entregue em remessa complementar, com nota fiscal própria.",
@@ -3348,44 +3349,52 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
     # eram tres conversas em momentos diferentes — e a de saldo pendente so
     # acontecia se alguem lembrasse.
     ov = pedido.get("numero_pedido") or ""
+    cliente = pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome") or ""
+    # Mesma cara da mensagem de cubagem que o time já usa no Teams — foi o
+    # Tássio quem pediu, e faz sentido: quem lê reconhece o formato.
+    #
+    # SEM os *asteriscos* daquela, porém. Eles viram negrito no Teams e no
+    # WhatsApp; num e-mail aparecem como asterisco mesmo, e o cliente recebe
+    # "*Caixas:*" na cara.
     linhas = ["Prezados, bom dia!", "",
-              "O pedido %s está pronto para faturamento e coleta." % ov, "",
-              "VOLUMES PARA A COLETA"]
-    resumo = []
+              "📦 Pedido %s — pronto para faturamento e coleta" % ov]
+    if cliente:
+        linhas.append("👤 Cliente: %s" % cliente)
+    linhas.append("")
+
+    if caixas:
+        linhas.append("📦 Caixas:")
+        for c in caixas:
+            desc = (c.get("tipos_caixa") or {}).get("descricao")
+            linhas.append("• %sx %s%s" % (c.get("quantidade") or 1,
+                                          c.get("tipo_caixa_nome") or "caixa",
+                                          " — %s" % desc if desc else ""))
+        linhas.append("")
     if cub.get("num_caixas"):
-        resumo.append("%s caixa(s)" % cub["num_caixas"])
+        linhas.append("📊 Total: %s caixa(s)" % cub["num_caixas"])
     if cub.get("peso_kg"):
-        resumo.append("%s kg no total" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
-    if resumo:
-        linhas.append("- %s" % ", ".join(resumo))
-    for c in caixas:
-        desc = (c.get("tipos_caixa") or {}).get("descricao")
-        linhas.append("  - %sx %s%s" % (c.get("quantidade") or 1,
-                                        c.get("tipo_caixa_nome") or "caixa",
-                                        " - %s" % desc if desc else ""))
+        linhas.append("⚖️ Peso total: %s kg" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
     if valor:
-        linhas.append("- Valor da nota fiscal: R$ %s"
+        linhas.append("💰 Valor da NF: R$ %s"
                       % format(valor, ",.2f").replace(",", "X").replace(".", ",").replace("X", "."))
     if (pedido.get("local_entrega") or "").strip():
-        linhas.append("- Local de entrega: %s" % pedido["local_entrega"].strip())
+        linhas.append("📍 Entrega: %s" % pedido["local_entrega"].strip())
 
-    linhas += ["", "TRANSPORTADORA",
-               "Gentileza informar qual transportadora fará a coleta, para que",
+    linhas += ["", "🚚 Gentileza informar qual transportadora fará a coleta, para que",
                "possamos programar a retirada e emitir a nota fiscal."]
 
-    # O saldo pendente entra AQUI quando existe. E a mesma informacao do aviso
+    # O saldo pendente entra AQUI quando existe. É a mesma informação do aviso
     # que sai com a NF, mas dita antes: quem recebe a carga confere o que
-    # chegou, e descobrir a falta na conferencia comeca a conversa errada.
+    # chegou, e descobrir a falta na conferência começa a conversa errada.
     pend = pedido.get("pendencia") or {}
     itens_pend = [i for i in (pend.get("itens") or [])
                   if float(i.get("qtd_pendente") or 0) > 0] if not pend.get("resolvido_em") else []
     if itens_pend:
-        linhas += ["", "SALDO PENDENTE",
-                   "Esta remessa atende parte do pedido. Ficou pendente:"]
+        linhas += ["", "⏳ Saldo pendente — esta remessa atende parte do pedido:"]
         for i in itens_pend:
-            linhas.append("- %s un - %s (cod. %s)"
+            linhas.append("• %s un — %s (cód. %s)"
                           % ("%g" % float(i.get("qtd_pendente") or 0),
-                             i.get("descricao") or "-", i.get("codigo") or "-"))
+                             i.get("descricao") or "—", i.get("codigo") or "—"))
         linhas += ["",
                    "O saldo será entregue em remessa complementar, com nota fiscal",
                    "própria, e informaremos a previsão assim que confirmada."]
@@ -3474,24 +3483,34 @@ def aviso_cotacao_cif(pedido_id: str) -> dict:
     endereco, origem_end = _endereco_de_entrega(db, pedido)
     cliente = pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome") or ""
 
-    linhas = ["Cliente: %s" % cliente, ""]
+    # Esta vai por WhatsApp, onde *asterisco* É negrito — então aqui ele entra,
+    # igual à mensagem de cubagem que o time já manda pelo Teams.
+    linhas = ["📦 *Cotação de frete — %s*" % (pedido.get("numero_pedido") or "")]
+    if cliente:
+        linhas.append("👤 Cliente: %s" % cliente)
+    linhas.append("")
+
     if caixas:
-        linhas.append("Caixas:")
+        linhas.append("📦 *Caixas:*")
         for c in caixas:
             desc = (c.get("tipos_caixa") or {}).get("descricao")
-            linhas.append("- %sx %s%s" % (c.get("quantidade") or 1,
+            linhas.append("• %sx %s%s" % (c.get("quantidade") or 1,
                                           c.get("tipo_caixa_nome") or "caixa",
-                                          " - %s" % desc if desc else ""))
+                                          " — %s" % desc if desc else ""))
         linhas.append("")
     if cub.get("num_caixas"):
-        linhas.append("Total: %s caixa(s)" % cub["num_caixas"])
+        linhas.append("📊 Total: %s caixa(s)" % cub["num_caixas"])
     if cub.get("peso_kg"):
-        linhas.append("Peso total: %s kg" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
+        linhas.append("⚖️ Peso total: %s kg" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
     if valor:
-        linhas.append("Valor NF: R$ %s"
+        linhas.append("💰 Valor NF: R$ %s"
                       % format(valor, ",.2f").replace(",", "X").replace(".", ",").replace("X", "."))
     if endereco:
-        linhas += ["", "Endereço: %s" % endereco]
+        linhas += ["", "📍 *Endereço de entrega:*", endereco]
+    elif (pedido.get("local_entrega") or "").strip():
+        # Cidade/UF sozinha não coto frete, mas some-la não ajuda ninguém: fica
+        # visível, e o `falta` avisa que o endereço completo não veio.
+        linhas += ["", "📍 Entrega: %s" % pedido["local_entrega"].strip()]
 
     falta = []
     if not cub.get("num_caixas"):
