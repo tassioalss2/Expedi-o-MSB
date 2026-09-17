@@ -3274,7 +3274,7 @@ def aviso_de_pendencia(pedido_id: str) -> dict:
               "🧾 Nota fiscal %s — pedido %s" % (nf or "—", ov)]
     if cliente:
         linhas.append("👤 Cliente: %s" % cliente)
-    linhas += ["", "⏳ Atendimento PARCIAL — ficou pendente de entrega:"]
+    linhas += ["", "⏳ Entrega parcial — os itens abaixo NÃO seguem nesta remessa:"]
     for i in itens:
         # Quantidade sem casa decimal quando é inteira: "25 un", não "25.0 un".
         linhas.append("• %s un — %s (cód. %s)"
@@ -3390,7 +3390,7 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
     itens_pend = [i for i in (pend.get("itens") or [])
                   if float(i.get("qtd_pendente") or 0) > 0] if not pend.get("resolvido_em") else []
     if itens_pend:
-        linhas += ["", "⏳ Saldo pendente — esta remessa atende parte do pedido:"]
+        linhas += ["", "⏳ Entrega parcial — os itens abaixo NÃO seguem nesta remessa:"]
         for i in itens_pend:
             linhas.append("• %s un — %s (cód. %s)"
                           % ("%g" % float(i.get("qtd_pendente") or 0),
