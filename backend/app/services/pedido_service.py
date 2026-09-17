@@ -3282,10 +3282,15 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
     712 OVs faturadas — nao da para escrever "segue pela" sem saber por quem.
     """
     pedido = obter_pedido(pedido_id)
+    db = get_service_db()
     nf = str(pedido.get("numero_nf") or "").strip()
     ov = pedido.get("numero_pedido") or ""
     cliente = pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome") or ""
     transp = _nome_da_transportadora(pedido)
+    # O endereco completo (v48) manda; cidade/UF e o que sobra quando ninguem
+    # colou o do D365 ainda. O cliente confere o recebimento pelo endereco, e
+    # "salvador/BA" nao confirma nada.
+    endereco, endereco_de = _endereco_de_entrega(db, pedido)
     previsao = _dia_br(pedido.get("data_prevista_entrega"))
     rastreio = str(pedido.get("codigo_rastreio") or "").strip()
 
@@ -3302,7 +3307,9 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
         linhas.append("🔎 Código de rastreio: %s" % rastreio)
     if previsao:
         linhas.append("📅 Previsão de entrega: %s" % previsao)
-    if (pedido.get("local_entrega") or "").strip():
+    if endereco:
+        linhas.append("📍 Entrega em: %s" % endereco)
+    elif (pedido.get("local_entrega") or "").strip():
         linhas.append("📍 Local de entrega: %s" % pedido["local_entrega"].strip())
 
     # O saldo pendente entra aqui quando existe — e a mesma informacao que antes
@@ -3341,6 +3348,9 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
         "previsao": previsao or None,
         "rastreio": rastreio or None,
         "com_pendencia": bool(itens_pend),
+        "endereco": endereco,
+        "endereco_de": endereco_de,
+        "local_entrega": pedido.get("local_entrega"),
         "valor_pendente": round(float(pend.get("valor") or 0), 2) if itens_pend else 0.0,
         # Para quem escreve decidir, fora do texto: e estimativa interna do PCP.
         "previsao_interna": (pend.get("previsao_pcp") or pend.get("previsao_sa")) if itens_pend else None,

@@ -19,6 +19,7 @@ import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
+import { CampoEnderecoEntrega } from '../components/CampoEnderecoEntrega'
 import { MarcaEnviado } from '../components/MarcaEnviado'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, OPERACOES_EDITAVEIS, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
@@ -3905,6 +3906,12 @@ export function PedidoDetalhe() {
           subtitulo={`${avisoPendencia.ov} · envie junto com a nota fiscal`}
           texto={avisoPendencia.texto}
           onFechar={() => setAvisoPendencia(null)}
+          editor={<CampoEnderecoEntrega pedidoId={id!} endereco={avisoPendencia.endereco}
+            enderecoDe={avisoPendencia.endereco_de}
+            recarregar={async () => {
+              const { data } = await api.get(`/pedidos/${id}/aviso-nf`)
+              setAvisoPendencia(data)
+            }} />}
           marca={<MarcaEnviado pedidoId={id!} tipo="nf_emitida"
             enviado={avisoPendencia.enviado}
             onMudou={novo => setAvisoPendencia({ ...avisoPendencia, enviado: novo })} />}

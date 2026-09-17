@@ -11,10 +11,12 @@
 import { Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-export function ModalTextoCliente({ titulo, subtitulo, texto, aviso, marca, onFechar }: {
+export function ModalTextoCliente({ titulo, subtitulo, texto, editor, aviso, marca, onFechar }: {
   titulo: string
   subtitulo: string
   texto: string
+  /** Campo editável acima do texto — hoje, o endereço de entrega. */
+  editor?: React.ReactNode
   /** Bloco âmbar opcional: o que o texto NÃO diz, e por quê. */
   aviso?: React.ReactNode
   /** "Marcar como enviado" — fica no rodapé, ao lado de Copiar. */
@@ -31,6 +33,7 @@ export function ModalTextoCliente({ titulo, subtitulo, texto, aviso, marca, onFe
           <p className="text-[13px] text-gray-500 mt-0.5">{subtitulo}</p>
         </div>
         <div className="p-5 space-y-3 flex-1 overflow-y-auto">
+          {editor}
           <textarea readOnly value={texto} rows={14}
             className="w-full border rounded-lg p-3 text-sm font-mono leading-relaxed bg-gray-50" />
           {aviso}
