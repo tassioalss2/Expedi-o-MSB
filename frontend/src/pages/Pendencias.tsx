@@ -765,6 +765,14 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
                       <td className="py-1 pr-2">
                         <span className="font-mono text-gray-700">{i.codigo || '—'}</span>
                         <span className="text-gray-400 ml-1.5">{i.descricao}</span>
+                        {/* O numero somado nao pode aparecer do nada para quem
+                            lembra que a venda tinha o item em duas linhas. */}
+                        {Number((i as any).linhas) > 1 && (
+                          <span className="ml-1.5 text-[10px] text-gray-400"
+                            title="A venda lançou este produto em mais de uma linha; aqui elas estão somadas">
+                            ({(i as any).linhas} lançamentos somados)
+                          </span>
+                        )}
                         {naFila.length > 0 && (
                           <span className="block text-[11px] text-amber-700">
                             {agora?.disponivel} un existem, reservadas para{' '}

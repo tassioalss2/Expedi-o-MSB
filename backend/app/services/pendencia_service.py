@@ -61,6 +61,46 @@ def _provisorio(numero: Optional[str]) -> bool:
 
 
 # ── Montagem ──────────────────────────────────────────────────────────────────
+def agrupa_por_produto(itens: list) -> list:
+    """Uma linha por produto. Duas linhas do mesmo item não são só feias.
+
+    A venda pode lançar o mesmo produto duas vezes (a PROPOSTA LIMINE tinha
+    62038 em 6 + 1, e a cotação que a originou tinha uma linha de 7). A análise
+    de disponibilidade processa linha a linha, e a segunda via o estoque já
+    reservado pela primeira — o resultado somava certo, mas aparecia como dois
+    itens com números que pareciam errados.
+
+    E a correção à mão quebrava de verdade: ela casa por `produto_id` e
+    escrevia a quantidade corrigida em TODAS as linhas daquele produto. Corrigir
+    "falta 1" num item repetido gravava 1 em cada linha e a falta continuava 2.
+
+    Some as quantidades e o valor; guarda em `linhas` de quantas vieram, para o
+    número não aparecer do nada para quem lembra do pedido original.
+    """
+    saida: dict = {}
+    for i in itens:
+        chave = str(i.get("produto_id") or i.get("codigo") or id(i))
+        if chave not in saida:
+            novo = dict(i)
+            novo["linhas"] = 1
+            saida[chave] = novo
+            continue
+        acc = saida[chave]
+        acc["linhas"] = int(acc.get("linhas") or 1) + 1
+        for campo in ("qtd_pedida", "qtd_atendida", "qtd_pendente", "valor_pendente"):
+            acc[campo] = round(float(acc.get(campo) or 0) + float(i.get(campo) or 0), 3)
+        # O que o estoque tinha é do MOMENTO, não do item: somar daria o dobro.
+        # Fica o da primeira linha, que é a que viu a prateleira cheia.
+        for campo in ("disponivel", "estoque_sa", "reservado_antes"):
+            acc.setdefault(campo, i.get(campo))
+        # Basta uma linha em falta para o conjunto estar em falta.
+        if i.get("status") == "FALTA":
+            acc["status"] = "FALTA"
+        if not i.get("cobre_com_sa"):
+            acc["cobre_com_sa"] = False
+    return list(saida.values())
+
+
 def montar(analise: dict, decisao: str, usuario_id: str, origem: str,
            observacao: Optional[str] = None, previsao_pcp: Optional[str] = None) -> Optional[dict]:
     """O jsonb da pendência a partir da análise de disponibilidade.
@@ -71,7 +111,7 @@ def montar(analise: dict, decisao: str, usuario_id: str, origem: str,
     um retrato de propósito: quando o material chegar, o comercial precisa saber
     o que foi prometido, não o que o estoque diz hoje.
     """
-    pendentes = disponibilidade_service.itens_pendentes(analise)
+    pendentes = agrupa_por_produto(disponibilidade_service.itens_pendentes(analise))
     if not pendentes:
         return None
     return {
