@@ -504,10 +504,14 @@ def registrar_faturamento(
     return pedido_service.registrar_faturamento(str(pedido_id), payload, usuario)
 
 
-@router.get("/{pedido_id}/aviso-pendencia")
-def aviso_pendencia(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
-    """O texto para avisar o cliente do saldo que ficou, junto com a NF."""
-    return pedido_service.aviso_de_pendencia(str(pedido_id))
+@router.get("/{pedido_id}/aviso-nf")
+def aviso_nf_emitida(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """O e-mail que avisa o cliente da NF, da transportadora e da previsão.
+
+    Traz também o saldo pendente quando a OV saiu parcial: quem fatura manda um
+    e-mail, não dois.
+    """
+    return pedido_service.aviso_nf_emitida(str(pedido_id))
 
 
 @router.get("/{pedido_id}/aviso-coleta-fob")
@@ -538,7 +542,7 @@ def definir_endereco_entrega(pedido_id: UUID, payload: EnderecoEntrega,
 
 
 class AvisoEnviado(BaseModel):
-    # cotacao_cif | coleta_fob | pendencia_nf
+    # cotacao_cif | coleta_fob | nf_emitida
     tipo: str
     enviado: bool = True
 

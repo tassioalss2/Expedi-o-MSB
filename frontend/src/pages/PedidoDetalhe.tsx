@@ -2878,7 +2878,7 @@ export function PedidoDetalhe() {
       // senão ele descobre na conferência do recebimento, e a conversa começa
       // errada. O texto abre aqui, na hora, e não numa tela que ninguém volta.
       try {
-        const { data } = await api.get(`/pedidos/${id}/aviso-pendencia`)
+        const { data } = await api.get(`/pedidos/${id}/aviso-nf`)
         if (data?.tem) setAvisoPendencia(data)
       } catch {
         // Sem aviso a NF continua registrada: é informação a mais, não etapa.
@@ -3418,11 +3418,11 @@ export function PedidoDetalhe() {
               {/* O aviso de saldo pendente abre sozinho ao faturar. Este botao
                   existe para quem fechou aquela janela e precisa do texto de
                   novo — sem ele a informacao so passava uma vez. */}
-              {(pedido as any).pendencia && pedido.numero_nf && (
+              {pedido.numero_nf && (
                 <button
                   onClick={async () => {
                     try {
-                      const { data } = await api.get(`/pedidos/${id}/aviso-pendencia`)
+                      const { data } = await api.get(`/pedidos/${id}/aviso-nf`)
                       if (data?.tem) setAvisoPendencia(data)
                       else toast('Esta OV nao tem saldo pendente.')
                     } catch {
@@ -3430,7 +3430,7 @@ export function PedidoDetalhe() {
                     }
                   }}
                   className="w-full flex items-center gap-2 justify-center py-2 border border-amber-300 text-amber-700 rounded-lg text-sm hover:bg-amber-50">
-                  📄 Aviso de saldo pendente
+                  📄 Aviso de NF ao cliente
                 </button>
               )}
 
@@ -3901,11 +3901,11 @@ export function PedidoDetalhe() {
           nada mais. Estoque, semiacabado e a fila do PCP nao saem daqui. */}
       {avisoPendencia?.tem && (
         <ModalTextoCliente
-          titulo="Saldo pendente - avise o cliente"
-          subtitulo="Esta OV saiu parcial. Envie este texto no mesmo e-mail da nota fiscal."
+          titulo="Avise o cliente — NF emitida"
+          subtitulo={`${avisoPendencia.ov} · envie junto com a nota fiscal`}
           texto={avisoPendencia.texto}
           onFechar={() => setAvisoPendencia(null)}
-          marca={<MarcaEnviado pedidoId={id!} tipo="pendencia_nf"
+          marca={<MarcaEnviado pedidoId={id!} tipo="nf_emitida"
             enviado={avisoPendencia.enviado}
             onMudou={novo => setAvisoPendencia({ ...avisoPendencia, enviado: novo })} />}
           aviso={

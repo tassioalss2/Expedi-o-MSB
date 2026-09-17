@@ -13,7 +13,7 @@ import { Check, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
 
-export type TipoAviso = 'cotacao_cif' | 'coleta_fob' | 'pendencia_nf'
+export type TipoAviso = 'cotacao_cif' | 'coleta_fob' | 'nf_emitida'
 
 export function MarcaEnviado({ pedidoId, tipo, enviado, onMudou }: {
   pedidoId: string
