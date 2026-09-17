@@ -19,6 +19,7 @@ import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
+import { MarcaEnviado } from '../components/MarcaEnviado'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, OPERACOES_EDITAVEIS, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { imprimirEtiquetaNavegador } from '../lib/zebraPrint'
@@ -3904,6 +3905,9 @@ export function PedidoDetalhe() {
           subtitulo="Esta OV saiu parcial. Envie este texto no mesmo e-mail da nota fiscal."
           texto={avisoPendencia.texto}
           onFechar={() => setAvisoPendencia(null)}
+          marca={<MarcaEnviado pedidoId={id!} tipo="pendencia_nf"
+            enviado={avisoPendencia.enviado}
+            onMudou={novo => setAvisoPendencia({ ...avisoPendencia, enviado: novo })} />}
           aviso={
             <>
               <div className="text-xs text-gray-500">
@@ -3935,6 +3939,9 @@ export function PedidoDetalhe() {
           subtitulo="Frete FOB: envie antes de faturar e aguarde o cliente informar quem vai coletar."
           texto={avisoColeta.texto}
           onFechar={() => setAvisoColeta(null)}
+          marca={<MarcaEnviado pedidoId={id!} tipo="coleta_fob"
+            enviado={avisoColeta.enviado}
+            onMudou={novo => setAvisoColeta({ ...avisoColeta, enviado: novo })} />}
           aviso={avisoColeta.falta?.length ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
               O texto saiu <strong>sem {avisoColeta.falta.join(', ')}</strong> porque o app nao tem esse

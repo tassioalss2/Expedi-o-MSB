@@ -11,12 +11,14 @@
 import { Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-export function ModalTextoCliente({ titulo, subtitulo, texto, aviso, onFechar }: {
+export function ModalTextoCliente({ titulo, subtitulo, texto, aviso, marca, onFechar }: {
   titulo: string
   subtitulo: string
   texto: string
   /** Bloco âmbar opcional: o que o texto NÃO diz, e por quê. */
   aviso?: React.ReactNode
+  /** "Marcar como enviado" — fica no rodapé, ao lado de Copiar. */
+  marca?: React.ReactNode
   onFechar: () => void
 }) {
   return (
@@ -33,7 +35,9 @@ export function ModalTextoCliente({ titulo, subtitulo, texto, aviso, onFechar }:
             className="w-full border rounded-lg p-3 text-sm font-mono leading-relaxed bg-gray-50" />
           {aviso}
         </div>
-        <div className="p-5 border-t flex gap-2 justify-end shrink-0">
+        <div className="p-5 border-t flex flex-wrap gap-2 items-center justify-between shrink-0">
+          <div>{marca}</div>
+          <div className="flex gap-2">
           <button onClick={onFechar} className="px-4 py-2 border rounded-lg text-sm">Fechar</button>
           <button
             onClick={() => {
@@ -44,6 +48,7 @@ export function ModalTextoCliente({ titulo, subtitulo, texto, aviso, onFechar }:
             className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
             <Copy size={14} /> Copiar texto
           </button>
+          </div>
         </div>
       </div>
     </div>

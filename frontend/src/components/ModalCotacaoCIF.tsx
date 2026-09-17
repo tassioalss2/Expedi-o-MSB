@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import { Copy, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
+import { MarcaEnviado } from './MarcaEnviado'
 
 export function ModalCotacaoCIF({ pedidoId, dados, onFechar, onAtualizar }: {
   pedidoId: string
@@ -93,7 +94,10 @@ export function ModalCotacaoCIF({ pedidoId, dados, onFechar, onAtualizar }: {
           )}
         </div>
 
-        <div className="p-5 border-t flex gap-2 justify-end shrink-0">
+        <div className="p-5 border-t flex flex-wrap gap-2 items-center justify-between shrink-0">
+          <MarcaEnviado pedidoId={pedidoId} tipo="cotacao_cif" enviado={dados.enviado}
+            onMudou={novo => onAtualizar({ ...dados, enviado: novo })} />
+          <div className="flex gap-2">
           <button onClick={onFechar} className="px-4 py-2 border rounded-lg text-sm">Fechar</button>
           <button
             onClick={() => {
@@ -104,6 +108,7 @@ export function ModalCotacaoCIF({ pedidoId, dados, onFechar, onAtualizar }: {
             className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
             <Copy size={14} /> Copiar mensagem
           </button>
+          </div>
         </div>
       </div>
     </div>

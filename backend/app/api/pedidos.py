@@ -537,6 +537,20 @@ def definir_endereco_entrega(pedido_id: UUID, payload: EnderecoEntrega,
         str(pedido_id), payload.endereco, payload.lembrar_no_cliente)
 
 
+class AvisoEnviado(BaseModel):
+    # cotacao_cif | coleta_fob | pendencia_nf
+    tipo: str
+    enviado: bool = True
+
+
+@router.patch("/{pedido_id}/aviso-enviado")
+def marcar_aviso_enviado(pedido_id: UUID, payload: AvisoEnviado,
+                         usuario: UsuarioOut = Depends(get_current_user)):
+    """Marca (ou desmarca) que uma das mensagens do app já foi enviada."""
+    return pedido_service.marcar_aviso_enviado(
+        str(pedido_id), payload.tipo, payload.enviado, usuario)
+
+
 # ── Coleta ─────────────────────────────────────────────────────────────────────
 
 @router.post("/{pedido_id}/coleta/agendar")

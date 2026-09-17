@@ -3282,7 +3282,7 @@ def aviso_de_pendencia(pedido_id: str) -> dict:
                          i.get("descricao") or "—", i.get("codigo") or "—"))
     linhas += [
         "",
-        "O saldo será entregue em remessa complementar, com nota fiscal própria.",
+        "O saldo será entregue em remessa complementar, com nota fiscal própria. "
         "Informaremos a previsão de entrega assim que confirmada.",
         "",
         "Permanecemos à disposição.",
@@ -3300,6 +3300,8 @@ def aviso_de_pendencia(pedido_id: str) -> dict:
         # Para quem escreve decidir, fora do texto.
         "previsao_interna": pend.get("previsao_pcp") or pend.get("previsao_sa"),
         "resolvida": bool(pend.get("resolvido_em")),
+        "pedido_id": pedido_id,
+        "enviado": _avisos_do_pedido(pedido).get("pendencia_nf"),
     }
 
 
@@ -3380,8 +3382,10 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
     if (pedido.get("local_entrega") or "").strip():
         linhas.append("📍 Entrega: %s" % pedido["local_entrega"].strip())
 
-    linhas += ["", "🚚 Gentileza informar qual transportadora fará a coleta, para que",
-               "possamos programar a retirada e emitir a nota fiscal."]
+    # Uma linha só: a quebra aqui virava quebra no e-mail, e o cliente lia uma
+    # frase partida no meio. Quem quebra texto de e-mail é a janela de quem lê.
+    linhas += ["", "🚚 Gentileza informar qual transportadora fará a coleta, "
+                   "para que possamos programar a retirada e emitir a nota fiscal."]
 
     # O saldo pendente entra AQUI quando existe. É a mesma informação do aviso
     # que sai com a NF, mas dita antes: quem recebe a carga confere o que
@@ -3396,8 +3400,8 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
                           % ("%g" % float(i.get("qtd_pendente") or 0),
                              i.get("descricao") or "—", i.get("codigo") or "—"))
         linhas += ["",
-                   "O saldo será entregue em remessa complementar, com nota fiscal",
-                   "própria, e informaremos a previsão assim que confirmada."]
+                   "O saldo será entregue em remessa complementar, com nota fiscal própria, "
+                   "e informaremos a previsão assim que confirmada."]
 
     linhas += ["", "Permanecemos à disposição."]
 
@@ -3420,6 +3424,8 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
         "com_pendencia": bool(itens_pend),
         # O que o texto não pôde dizer, para a tela avisar antes do envio.
         "falta": falta,
+        "pedido_id": pedido_id,
+        "enviado": _avisos_do_pedido(pedido).get("coleta_fob"),
     }
 
 
@@ -3535,6 +3541,8 @@ def aviso_cotacao_cif(pedido_id: str) -> dict:
         "local_entrega": pedido.get("local_entrega"),
         "valor": valor,
         "falta": falta,
+        "pedido_id": pedido_id,
+        "enviado": _avisos_do_pedido(pedido).get("cotacao_cif"),
     }
 
 
@@ -3565,3 +3573,56 @@ def definir_endereco_entrega(pedido_id: str, endereco: str,
             # Sem a coluna no cliente, a OV continua salva: o prefill é bônus.
             pass
     return {"ok": True, "endereco": texto}
+
+
+# As mensagens que o app monta. A chave é curta porque vai para dentro de um
+# jsonb e aparece em log; o rótulo é o que a tela mostra.
+AVISOS = {
+    "cotacao_cif": "cotação de frete (transportadora)",
+    "coleta_fob": "pedido de transportadora (cliente)",
+    "pendencia_nf": "aviso de saldo pendente (cliente)",
+}
+
+
+def _avisos_do_pedido(pedido: dict) -> dict:
+    """O que já foi enviado. Vazio quando a v49 ainda não rodou."""
+    valor = pedido.get("avisos_enviados")
+    return valor if isinstance(valor, dict) else {}
+
+
+def marcar_aviso_enviado(pedido_id: str, tipo: str, enviado: bool,
+                         usuario: Optional[UsuarioOut] = None) -> dict:
+    """Marca (ou desmarca) que uma das mensagens do app já foi enviada.
+
+    Montar o texto não é enviar: quem envia é a pessoa, do Outlook ou do
+    WhatsApp. Sem esta marca não havia como saber, olhando a coluna do kanban,
+    o que já tinha saído — e a dúvida custa um e-mail repetido ou, pior, um que
+    nunca sai.
+
+    Desmarcar existe porque clique errado acontece, e porque a mensagem muda:
+    se a cubagem for corrigida depois do envio, o texto de antes não vale mais.
+    """
+    if tipo not in AVISOS:
+        raise HTTPException(400, "aviso desconhecido: %s" % tipo)
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+    atual = dict(_avisos_do_pedido(pedido))
+    if enviado:
+        atual[tipo] = {
+            "em": _agora(),
+            "por": str(usuario.id) if usuario else None,
+            "nome": (getattr(usuario, "nome", None)
+                     or getattr(usuario, "email", None)) if usuario else None,
+        }
+    else:
+        atual.pop(tipo, None)
+    try:
+        db.table("pedidos").update({"avisos_enviados": atual,
+                                    "atualizado_em": _agora()})\
+            .eq("id", pedido_id).execute()
+    except Exception as exc:
+        raise HTTPException(
+            422, "a coluna de avisos ainda não existe — rode a migração v49 (%s)"
+                 % str(exc)[:80])
+    return {"ok": True, "tipo": tipo, "enviado": enviado,
+            "avisos_enviados": atual}

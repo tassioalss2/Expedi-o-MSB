@@ -10,6 +10,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
+import { MarcaEnviado } from '../components/MarcaEnviado'
 import { ORDEM_KANBAN, STATUS_CONFIG, resolveNomeTransportadora } from '../lib/statusConfig'
 import { hojeLocal, dataLocal } from '../lib/dataLocal'
 import toast from 'react-hot-toast'
@@ -191,6 +192,10 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete }: {
   const transpLabel = transp ? (transp.match(/\(([^)]+)\)/)?.[1] ?? transp) : ''
   const tempo = formatDistanceToNow(parseISO(pedido.atualizado_em), { locale: ptBR, addSuffix: false })
   const clienteAbrev = (pedido.cliente_nome || pedido.cliente?.nome || '').split(' ').slice(0, 2).join(' ')
+  // O ✓ verde no lugar do icone: olhando a coluna da para ver o que ja saiu.
+  const avisos = ((pedido as any).avisos_enviados || {}) as Record<string, any>
+  const jaEnviouCotacao = avisos.cotacao_cif
+  const jaPediuTransportadora = avisos.coleta_fob
 
   return (
     <button
@@ -259,29 +264,39 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete }: {
           ja e um botao e botao dentro de botao e HTML invalido. */}
       {onCotarFrete && (
         <span role="button" tabIndex={0}
-          title="Montar a mensagem de cotacao para a transportadora"
+          title={jaEnviouCotacao
+            ? `Cotacao ja enviada em ${new Date(jaEnviouCotacao.em).toLocaleString('pt-BR')}`
+            : 'Montar a mensagem de cotacao para a transportadora'}
           onClick={e => { e.stopPropagation(); onCotarFrete(pedido) }}
           onKeyDown={e => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.stopPropagation(); e.preventDefault(); onCotarFrete(pedido)
             }
           }}
-          className="flex-shrink-0 rounded border border-purple-300 bg-purple-50 px-1 text-[10px] leading-4 text-purple-700 hover:bg-purple-200">
-          💬
+          className={`flex-shrink-0 rounded border px-1 text-[10px] leading-4 ${
+            jaEnviouCotacao
+              ? 'border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+              : 'border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-200'}`}>
+          {jaEnviouCotacao ? '✓' : '💬'}
         </span>
       )}
 
       {onPedirTransportadora && pedido.tipo_frete === 'FOB' && (
         <span role="button" tabIndex={0}
-          title="Pedir ao cliente a transportadora da coleta"
+          title={jaPediuTransportadora
+            ? `E-mail ja enviado em ${new Date(jaPediuTransportadora.em).toLocaleString('pt-BR')}`
+            : 'Pedir ao cliente a transportadora da coleta'}
           onClick={e => { e.stopPropagation(); onPedirTransportadora(pedido) }}
           onKeyDown={e => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.stopPropagation(); e.preventDefault(); onPedirTransportadora(pedido)
             }
           }}
-          className="flex-shrink-0 rounded border border-orange-300 bg-orange-50 px-1 text-[10px] leading-4 text-orange-700 hover:bg-orange-200">
-          ✉️
+          className={`flex-shrink-0 rounded border px-1 text-[10px] leading-4 ${
+            jaPediuTransportadora
+              ? 'border-emerald-300 bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+              : 'border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-200'}`}>
+          {jaPediuTransportadora ? '✓' : '✉️'}
         </span>
       )}
     </button>
@@ -772,6 +787,9 @@ export function Expedicao() {
           subtitulo={`${avisoColeta.ov} · frete FOB — envie antes de faturar e aguarde o cliente informar quem vai coletar.`}
           texto={avisoColeta.texto}
           onFechar={() => setAvisoColeta(null)}
+          marca={<MarcaEnviado pedidoId={avisoColeta.pedido_id} tipo="coleta_fob"
+            enviado={avisoColeta.enviado}
+            onMudou={novo => setAvisoColeta({ ...avisoColeta, enviado: novo })} />}
           aviso={avisoColeta.falta?.length ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
               O texto saiu <strong>sem {avisoColeta.falta.join(', ')}</strong> porque o app nao tem esse
