@@ -1457,3 +1457,64 @@ def _gerar_ov_do_saldo(db, oportunidade: dict, itens: list, usuario: UsuarioOut)
         "atualizado_em": _agora(),
     }).eq("id", oportunidade["id"]).execute()
     return stub
+
+
+def cancelar(fonte: str, registro_id: str, usuario: UsuarioOut,
+             motivo: str) -> dict:
+    """Encerra a pendência sem entregar nada: a venda não vai mais acontecer.
+
+    Acontece quando o cliente desiste ou quando a venda é cancelada do nosso
+    lado — inadimplência, por exemplo. Enquanto a pendência fica aberta ela
+    cobra o PCP por material que ninguém mais espera, ocupa lugar na fila à
+    frente de vendas vivas e infla o valor parado do relatório.
+
+    ENCERRA, não apaga. É o mesmo princípio do ajuste manual logo acima: houve
+    uma promessa e alguém a desfez, e daqui a um mês a pergunta vai ser "por que
+    esse material foi produzido?". O motivo é obrigatório por isso.
+
+    O que NÃO faz: mexer na venda. Cancelar a pendência não marca a
+    oportunidade como perdida nem cancela a OV — são decisões de outra pessoa,
+    em outra tela, e fazê-las junto aqui esconderia metade do efeito.
+    """
+    if fonte not in ("oportunidade", "pedido"):
+        raise HTTPException(status_code=400, detail="Origem de pendência inválida.")
+    texto = (motivo or "").strip()
+    if len(texto) < 3:
+        raise HTTPException(status_code=422,
+                            detail="Escreva o motivo do cancelamento.")
+
+    db = get_service_db()
+    reg, pend = _ler(db, fonte, registro_id)
+    agora = _agora()
+    base = dict(pend)
+    base["resolvido_em"] = agora
+    base["resolucao"] = "CANCELADA"
+    base["resolvido_por"] = str(usuario.id)
+    base["cancelamento"] = {
+        "motivo": texto,
+        "em": agora,
+        "por": str(usuario.id),
+        "nome": getattr(usuario, "nome", None) or getattr(usuario, "email", None),
+    }
+
+    tabela = "crm_oportunidades" if fonte == "oportunidade" else "pedidos"
+    db.table(tabela).update({"pendencia": base, "atualizado_em": agora})\
+        .eq("id", registro_id).execute()
+
+    # A anotação vai para o histórico que a pessoa já lê. Best-effort: registrar
+    # não pode derrubar o cancelamento.
+    try:
+        _log_ajuste(db, fonte, registro_id, reg, usuario, [], [], [],
+                    "Pendência cancelada — %s" % texto)
+    except Exception:
+        pass
+
+    itens = pend.get("itens") or []
+    return {
+        "ok": True,
+        "fonte": fonte,
+        "id": registro_id,
+        "motivo": texto,
+        "itens_cancelados": len(itens),
+        "valor_cancelado": round(float(pend.get("valor") or 0), 2),
+    }

@@ -84,6 +84,7 @@ export default function Pendencias() {
   const [verHistorico, setVerHistorico] = useState(false)
   const [liberando, setLiberando] = useState<Pendencia | null>(null)
   const [acompanhando, setAcompanhando] = useState<Pendencia | null>(null)
+  const [cancelando, setCancelando] = useState<Pendencia | null>(null)
   const [verFila, setVerFila] = useState(false)
 
   const { data, isLoading } = useQuery<PendenciasResp>({
@@ -261,7 +262,8 @@ export default function Pendencias() {
                 {lista.map(p => (
                   <Card key={`${p.fonte}-${p.id}`} p={p}
                     onLiberar={() => setLiberando(p)}
-                    onAcompanhar={() => setAcompanhando(p)} />
+                    onAcompanhar={() => setAcompanhando(p)}
+                    onCancelar={() => setCancelando(p)} />
                 ))}
               </div>
             </section>
@@ -311,6 +313,13 @@ export default function Pendencias() {
           p={acompanhando}
           onClose={() => setAcompanhando(null)}
           onSalvo={invalidar}
+        />
+      )}
+      {cancelando && (
+        <ModalCancelar
+          p={cancelando}
+          onClose={() => setCancelando(null)}
+          onCancelado={invalidar}
         />
       )}
     </div>
@@ -566,8 +575,8 @@ function IncluirItemPendencia({ onIncluir, onCancelar, salvando }: {
 }
 
 
-function Card({ p, onLiberar, onAcompanhar }: {
-  p: Pendencia; onLiberar: () => void; onAcompanhar: () => void
+function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
+  p: Pendencia; onLiberar: () => void; onAcompanhar: () => void; onCancelar: () => void
 }) {
   const [aberto, setAberto] = useState(false)
   const [ajustando, setAjustando] = useState<{ codigo: string; descricao?: string | null } | null>(null)
@@ -697,6 +706,14 @@ function Card({ p, onLiberar, onAcompanhar }: {
               p.estoque_agora?.status === 'NENHUM'
                 ? 'bg-gray-400 hover:bg-gray-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
             {p.pode_liberar ? 'Liberar' : 'Bloqueada'}
+          </button>
+          {/* A venda que nao vai acontecer precisa sair da fila: enquanto a
+              pendencia fica aberta ela cobra o PCP por material que ninguem
+              espera e passa na frente de venda viva. */}
+          <button onClick={onCancelar}
+            className="text-[11px] font-medium px-2 py-1 rounded-lg border border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-600 hover:bg-red-50 whitespace-nowrap"
+            title="A venda nao vai acontecer — encerrar esta pendencia">
+            Cancelar
           </button>
         </div>
       </div>
@@ -947,6 +964,69 @@ function Card({ p, onLiberar, onAcompanhar }: {
 
 /** Anota o que o PCP respondeu. Não libera nada — só registra o que se sabe da
  *  espera, para a próxima pessoa não cobrar de novo o que já tem resposta. */
+/**
+ * Encerrar a pendencia sem entregar: o cliente desistiu, a venda caiu.
+ *
+ * O motivo e obrigatorio de proposito. Daqui a um mes a pergunta vai ser "por
+ * que esse material foi produzido?", e a resposta precisa estar escrita.
+ */
+function ModalCancelar({ p, onClose, onCancelado }: {
+  p: Pendencia; onClose: () => void; onCancelado: () => void
+}) {
+  const [motivo, setMotivo] = useState('')
+  const SUGESTOES = ['Cliente desistiu', 'Cliente inadimplente', 'Venda cancelada']
+  const mut = useMutation({
+    mutationFn: () => api.post(`/crm/pendencias/${p.fonte}/${p.id}/cancelar`, { motivo: motivo.trim() }),
+    onSuccess: (r) => {
+      toast.success(`Pendencia encerrada — ${fmtBRL(r.data?.valor_cancelado || 0)} saem da fila`)
+      onCancelado(); onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Nao consegui cancelar'),
+  })
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b">
+          <h2 className="text-lg font-bold">Cancelar pendência</h2>
+          <p className="text-[13px] text-gray-500 mt-0.5">{p.cliente} · {fmtBRL(p.valor)} parados</p>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-[13px] text-gray-600">
+            A pendência sai da fila e deixa de cobrar o PCP. Ela é <strong>encerrada, não
+            apagada</strong> — o motivo fica no histórico.
+          </p>
+          <div>
+            <label className="text-xs font-medium text-gray-600">Motivo *</label>
+            <input value={motivo} onChange={e => setMotivo(e.target.value)} autoFocus
+              placeholder="Por que esta venda não vai acontecer?"
+              className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {SUGESTOES.map(t => (
+                <button key={t} onClick={() => setMotivo(t)}
+                  className="rounded-full border border-gray-200 px-2.5 py-1 text-[11px] text-gray-600 hover:border-gray-400">
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            Isto <strong>não</strong> cancela a venda nem a OV — só a pendência de estoque. Se a venda
+            também caiu, marque como perdida no CRM.
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Voltar</button>
+          <button onClick={() => mut.mutate()} disabled={motivo.trim().length < 3 || mut.isPending}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium disabled:opacity-40">
+            {mut.isPending ? 'Cancelando…' : 'Cancelar pendência'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ModalAcompanhar({ p, onClose, onSalvo }: {
   p: Pendencia; onClose: () => void; onSalvo: () => void
 }) {

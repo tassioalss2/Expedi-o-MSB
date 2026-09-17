@@ -22,7 +22,7 @@ from app.models.schemas import (
     DisponibilidadeRequest,
     AcompanharPendenciaRequest,
     ReordenarFilaRequest,
-    AjustarItensPendenciaRequest, LiberarPendenciaRequest,
+    AjustarItensPendenciaRequest, CancelarPendenciaRequest, LiberarPendenciaRequest,
     NotaCreate,
     OportunidadeCreate,
     OportunidadeUpdate,
@@ -183,6 +183,21 @@ def liberar_pendencia(fonte: str, registro_id: UUID,
         parcial=payload.parcial if payload else False,
         observacao=payload.observacao if payload else None,
         itens_escolhidos=payload.itens if payload else None)
+
+
+@router.post("/pendencias/{fonte}/{registro_id}/cancelar")
+def cancelar_pendencia(fonte: str, registro_id: UUID,
+                       payload: CancelarPendenciaRequest,
+                       usuario: UsuarioOut = Depends(get_current_user)):
+    """Encerra a pendência sem entregar nada — a venda não vai acontecer.
+
+    Enquanto aberta, ela cobra o PCP por material que ninguém espera e ocupa
+    lugar na fila à frente de vendas vivas. Encerra (não apaga): o motivo e o
+    autor ficam no histórico.
+
+    NÃO mexe na venda: a oportunidade não vira perdida e a OV não é cancelada.
+    """
+    return pendencia_service.cancelar(fonte, str(registro_id), usuario, payload.motivo)
 
 
 @router.post("/pendencias/ordem")

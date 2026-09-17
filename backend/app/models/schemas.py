@@ -995,6 +995,16 @@ class AjustarItensPendenciaRequest(BaseModel):
     observacao: Optional[str] = None
 
 
+class CancelarPendenciaRequest(BaseModel):
+    """Encerra a pendência sem entregar: o cliente desistiu, a venda caiu.
+
+    O motivo é obrigatório e fica no histórico — daqui a um mês a pergunta vai
+    ser "por que esse material foi produzido?", e a resposta precisa estar
+    escrita.
+    """
+    motivo: str
+
+
 class LiberarPendenciaRequest(BaseModel):
     # Libera só o que já chegou e mantém o resto pendente. Sem isso, uma
     # pendência de 8 unidades com 5 prontas ficaria travada esperando as 3.
