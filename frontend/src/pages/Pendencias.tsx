@@ -711,14 +711,22 @@ function Card({ p, onLiberar, onAcompanhar }: {
             <p className="text-[11px] uppercase text-gray-400 font-medium mb-1">
               {p.nada_entregue
                 ? 'A venda inteira está parada — nada desceu para a expedição'
-                : 'O que falta desta venda'}
+                : p.ov_ref
+                  ? `O que falta desta venda — o restante seguiu na ${p.ov_ref}`
+                  : 'O que falta desta venda'}
             </p>
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-gray-400 text-left">
                   <th className="font-medium py-1">Item</th>
                   <th className="font-medium py-1 text-right">Pedido</th>
-                  <th className="font-medium py-1 text-right">Já entregue</th>
+                  {/* "Ja entregue" so e verdade quando ALGO desceu. Na decisao
+                      AGUARDAR nenhuma OV foi aberta e `qtd_atendida` e outra
+                      coisa: o que HAVIA em estoque no dia. A coluna dizia que
+                      entregamos 5 unidades de material que nunca saiu. */}
+                  <th className="font-medium py-1 text-right">
+                    {p.nada_entregue ? 'Havia em estoque' : 'Já entregue'}
+                  </th>
                   <th className="font-medium py-1 text-right">Falta</th>
                   <th className="font-medium py-1 text-right">Em estoque hoje</th>
                   <th className="font-medium py-1 text-right">Valor un.</th>
@@ -753,7 +761,12 @@ function Card({ p, onLiberar, onAcompanhar }: {
                       </td>
                       <td className="py-1 text-right tabular-nums">
                         {Number(i.qtd_atendida) > 0 ? (
-                          <span className="text-emerald-700">{n(i.qtd_atendida)}</span>
+                          <span className={p.nada_entregue ? 'text-gray-400' : 'text-emerald-700'}
+                            title={p.nada_entregue
+                              ? 'Havia em estoque no dia da decisão — não foi entregue, a venda ficou aguardando'
+                              : p.ov_ref ? `Seguiu na ${p.ov_ref}` : 'Seguiu na OV desta venda'}>
+                            {n(i.qtd_atendida)}
+                          </span>
                         ) : (
                           <span className="text-gray-300">—</span>
                         )}
