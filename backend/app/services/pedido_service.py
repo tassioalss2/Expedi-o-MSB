@@ -3299,13 +3299,26 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
     if cliente:
         linhas.append("👤 Cliente: %s" % cliente)
     linhas.append("")
-    linhas.append("A nota fiscal deste pedido foi emitida e o material está em expedição.")
+    # Quando a NF sai, o material JÁ passou pela expedição: está separado,
+    # conferido, cubado e esperando quem vem buscar. "Em expedição" dizia que
+    # ainda estava sendo preparado.
+    #
+    # E no FOB não há previsão de entrega: quem contrata o frete é o cliente, e
+    # prometer data seria assumir prazo de transportadora que nem escolhemos.
+    # (`data_prevista_coleta` também não serviria — está vazia nas 242 OVs FOB
+    # faturadas.)
+    eh_fob = pedido.get("tipo_frete") == "FOB"
+    coletado = _dia_br(pedido.get("data_real_coleta"))
+    linhas.append("A nota fiscal deste pedido foi emitida e o material %s."
+                  % ("foi coletado em %s" % coletado if coletado
+                     else "está aguardando coleta"))
     linhas.append("")
     if transp:
-        linhas.append("🚚 Transportadora: %s" % transp)
+        linhas.append("🚚 Transportadora%s: %s"
+                      % (" indicada por vocês" if eh_fob else "", transp))
     if rastreio:
         linhas.append("🔎 Código de rastreio: %s" % rastreio)
-    if previsao:
+    if not eh_fob and previsao:
         linhas.append("📅 Previsão de entrega: %s" % previsao)
     if endereco:
         linhas.append("📍 Entrega em: %s" % endereco)
@@ -3335,7 +3348,8 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
         falta.append("o número da NF")
     if not transp:
         falta.append("a transportadora")
-    if not previsao:
+    # No FOB não falta previsão de entrega: ela não existe do nosso lado.
+    if not eh_fob and not previsao:
         falta.append("a previsão de entrega")
 
     return {
