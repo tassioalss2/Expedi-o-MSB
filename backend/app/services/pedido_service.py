@@ -3396,6 +3396,139 @@ def _endereco_de_entrega(db, pedido: dict) -> tuple:
     return "", ""
 
 
+# Onde e quando a transportadora busca. Fica aqui, e não solto no texto, para
+# mudar num lugar só no dia em que o endereço ou o horário mudarem.
+ENDERECO_COLETA = ("Rua Araponga, 364, qd 01, lt 19 — Lauro de Freitas/BA — "
+                   "CEP 42701-330")
+HORARIO_COLETA = ["Seg. a Qui. — 08h às 17h30", "Sex. — 08h às 16h30"]
+
+
+def aviso_coleta_fob(pedido_id: str) -> dict:
+    """O texto que pede ao cliente FOB a transportadora da coleta.
+
+    No FOB quem contrata o frete é o cliente, e ele não tem como escolher a
+    transportadora sem saber o que vai ser coletado: quantos volumes, que peso,
+    que dimensões e o valor da nota — que é o que a transportadora pede para
+    cotar e segurar a carga. Esse e-mail sai ANTES do faturamento, e enquanto
+    ele não é respondido a OV fica parada em AGUARD_TRANSPORTADORA.
+
+    O valor NÃO é inventado: se a OV ainda não tem valor e algum item está sem
+    preço, a linha do valor sai do texto e a resposta diz que falta. Mandar o
+    cliente cotar frete com um valor errado é pior do que perguntar.
+    """
+    from app.services import inventario_service
+
+    pedido = obter_pedido(pedido_id)
+    if pedido.get("tipo_frete") != "FOB":
+        return {"tem": False, "motivo": "esta OV não é FOB",
+                "tipo_frete": pedido.get("tipo_frete")}
+
+    cub = inventario_service.obter_cubagem(pedido_id) or {}
+    db = get_service_db()
+    try:
+        caixas = db.table("cubagem_itens").select("*, tipos_caixa(descricao)")\
+            .eq("pedido_id", pedido_id).execute().data or []
+    except Exception:
+        caixas = []
+
+    # O valor: o da nota quando já existe; senão o dos itens, e só quando TODOS
+    # têm preço e quantidade. Um item sem preço zera a soma sem avisar.
+    valor = float(pedido.get("valor_nf") or 0) or None
+    itens = pedido.get("itens") or []
+    if valor is None and itens:
+        def _qtd(i):
+            for k in ("qtd_conferida", "qtd_separada", "qtd_solicitada"):
+                if i.get(k):
+                    return float(i[k])
+            return 0.0
+        if all(_qtd(i) > 0 and float(i.get("valor_unitario") or 0) > 0 for i in itens):
+            valor = round(sum(_qtd(i) * float(i["valor_unitario"]) for i in itens), 2)
+
+    # Uma mensagem so, com tudo que o cliente precisa saber deste embarque:
+    # o que vai, quanto vale, o que falta e o que esperamos dele. Antes isso
+    # eram tres conversas em momentos diferentes — e a de saldo pendente so
+    # acontecia se alguem lembrasse.
+    ov = pedido.get("numero_pedido") or ""
+    cliente = pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome") or ""
+    # Mesma cara da mensagem de cubagem que o time já usa no Teams — foi o
+    # Tássio quem pediu, e faz sentido: quem lê reconhece o formato.
+    #
+    # SEM os *asteriscos* daquela, porém. Eles viram negrito no Teams e no
+    # WhatsApp; num e-mail aparecem como asterisco mesmo, e o cliente recebe
+    # "*Caixas:*" na cara.
+    linhas = ["Prezados, bom dia!", "",
+              "📦 Pedido %s — pronto para faturamento e coleta" % ov]
+    if cliente:
+        linhas.append("👤 Cliente: %s" % cliente)
+    linhas.append("")
+
+    if caixas:
+        linhas.append("📦 Caixas:")
+        for c in caixas:
+            desc = (c.get("tipos_caixa") or {}).get("descricao")
+            linhas.append("• %sx %s%s" % (c.get("quantidade") or 1,
+                                          c.get("tipo_caixa_nome") or "caixa",
+                                          " — %s" % desc if desc else ""))
+        linhas.append("")
+    if cub.get("num_caixas"):
+        linhas.append("📊 Total: %s caixa(s)" % cub["num_caixas"])
+    if cub.get("peso_kg"):
+        linhas.append("⚖️ Peso total: %s kg" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
+    if valor:
+        linhas.append("💰 Valor da NF: R$ %s"
+                      % format(valor, ",.2f").replace(",", "X").replace(".", ",").replace("X", "."))
+    if (pedido.get("local_entrega") or "").strip():
+        linhas.append("📍 Entrega: %s" % pedido["local_entrega"].strip())
+
+    linhas += ["", "🚚 Gentileza informar qual transportadora fará a coleta, "
+                   "para que possamos programar a retirada e emitir a nota fiscal."]
+
+    # Onde e quando buscar. Quem lê este e-mail repassa para a transportadora, e
+    # sem isto ela liga perguntando — ou aparece fora do horário e volta vazia.
+    linhas += ["", "📍 Coleta no nosso endereço:", ENDERECO_COLETA,
+               "", "🕒 Horário de funcionamento:"]
+    linhas += HORARIO_COLETA
+
+    # O saldo pendente entra AQUI quando existe. É a mesma informação do aviso
+    # que sai com a NF, mas dita antes: quem recebe a carga confere o que
+    # chegou, e descobrir a falta na conferência começa a conversa errada.
+    pend = pedido.get("pendencia") or {}
+    itens_pend = [i for i in (pend.get("itens") or [])
+                  if float(i.get("qtd_pendente") or 0) > 0] if not pend.get("resolvido_em") else []
+    if itens_pend:
+        linhas += ["", "⏳ Entrega parcial — os itens abaixo seguem pendentes de envio:"]
+        for i in itens_pend:
+            linhas.append("• %s un — %s (cód. %s)"
+                          % ("%g" % float(i.get("qtd_pendente") or 0),
+                             i.get("descricao") or "—", i.get("codigo") or "—"))
+        linhas += ["",
+                   "O saldo será entregue em remessa complementar, com nota fiscal própria, "
+                   "e informaremos a previsão assim que confirmada."]
+
+    linhas += ["", "Permanecemos à disposição."]
+
+    falta = []
+    if not cub.get("num_caixas"):
+        falta.append("a cubagem (nº de caixas)")
+    if not cub.get("peso_kg"):
+        falta.append("o peso")
+    if not valor:
+        falta.append("o valor da nota")
+
+    return {
+        "tem": True,
+        "texto": "\n".join(linhas),
+        "ov": pedido.get("numero_pedido"),
+        "cliente": pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome"),
+        "num_caixas": cub.get("num_caixas"),
+        "peso_kg": cub.get("peso_kg"),
+        "valor": valor,
+        "com_pendencia": bool(itens_pend),
+        # O que o texto não pôde dizer, para a tela avisar antes do envio.
+        "falta": falta,
+    }
+
+
 def aviso_cotacao_cif(pedido_id: str) -> dict:
     """A mensagem que pede cotação de frete à transportadora (CIF).
 
