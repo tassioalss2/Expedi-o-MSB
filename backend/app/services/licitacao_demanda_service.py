@@ -37,6 +37,36 @@ ETAPAS = ["RECEBIDO", "PROCESSANDO", "AGUARDANDO_ESTOQUE", "COTACAO_FRETE", "OV_
 _ETAPA_LEGADA = {"NOVO": "RECEBIDO", "ANALISE": "RECEBIDO"}
 # Etapas terminais (saem do painel do dia seguinte, vão para o histórico)
 ETAPAS_FINAIS = {"NF_ENVIADA", "CONCLUIDO"}
+
+
+def _so_letras(texto) -> str:
+    """Nome comparavel: sem acento, sem pontuacao, sem espaco duplo.
+
+    "Jose Carlos Machado" e "JOSÉ CARLOS  MACHADO" sao a mesma pessoa, e a
+    diferenca entre eles nao pode decidir se o lancamento passa ou trava.
+    """
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(texto or ""))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    return " ".join("".join(c if c.isalnum() else " " for c in t).split()).upper()
+
+
+def _mesmo_paciente(demanda: dict, payload) -> bool:
+    """A demanda existente e do mesmo paciente que se esta lancando?
+
+    Prontuario manda quando os dois tem: e o identificador do hospital. Sem ele,
+    compara o nome. Quando NENHUM dos dois identifica o paciente, responde True
+    — sem saber de quem e, o seguro e barrar e deixar a pessoa conferir.
+    """
+    pr_a = _so_letras(demanda.get("prontuario"))
+    pr_b = _so_letras(getattr(payload, "prontuario", None))
+    if pr_a and pr_b:
+        return pr_a == pr_b
+    nm_a = _so_letras(demanda.get("nome_paciente"))
+    nm_b = _so_letras(getattr(payload, "nome_paciente", None))
+    if nm_a and nm_b:
+        return nm_a == nm_b
+    return True
 TIPOS = ["VENDA_DIRETA", "CONSIGNACAO", "COMUNICADO_USO", "AMOSTRA"]
 _PRIORIDADE_PESO = {"CRITICA": 0, "ALTA": 1, "NORMAL": 2}
 
@@ -552,20 +582,39 @@ def criar_demanda(payload: DemandaCreate) -> dict:
     if num:
         candidatas = (
             db.table("licitacao_demandas")
-            .select("id, etapa, clientes(nome)")
+            .select("id, etapa, nome_paciente, prontuario, clientes(nome)")
             .eq("ativo", True).eq("numero", num).execute().data
         )
-        dup = [d for d in candidatas
-               if payload.tipo_operacao != "COMUNICADO_USO"
-               or _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) not in ETAPAS_FINAIS]
-        if dup:
-            cli = (dup[0].get("clientes") or {}).get("nome") or "cliente não informado"
-            campo = "AF" if payload.tipo_operacao == "COMUNICADO_USO" else "número"
-            raise HTTPException(
-                status_code=409,
-                detail=f"Já existe uma demanda em andamento com o {campo} '{num}' ({cli}). "
-                       f"Confira no painel/histórico antes de criar — risco de processar duas vezes.",
-            )
+        if payload.tipo_operacao == "COMUNICADO_USO":
+            # No comunicado de uso a AF NÃO é a unidade de trabalho — o paciente
+            # é. Uma AF atende vários pacientes ao mesmo tempo: a 22469/2026
+            # tinha nove, e bastou uma ficar parada em PROCESSANDO para travar o
+            # lançamento de todos os outros ("já existe demanda em andamento com
+            # a AF"). Era a regra certa aplicada à chave errada.
+            #
+            # Agora só bloqueia o MESMO paciente na mesma AF, que aí sim é o
+            # mesmo trabalho lançado duas vezes. Contra faturar em dobro quem
+            # protege é a NF, conferida logo abaixo — documento fiscal não se
+            # emite duas vezes.
+            dup = [d for d in candidatas
+                   if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) not in ETAPAS_FINAIS
+                   and _mesmo_paciente(d, payload)]
+            if dup:
+                quem = (dup[0].get("nome_paciente") or "").strip() or "o mesmo paciente"
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Já existe uma demanda em andamento da AF '{num}' para {quem}. "
+                           f"Se este é outro paciente, confira o nome e o prontuário.",
+                )
+        else:
+            dup = candidatas
+            if dup:
+                cli = (dup[0].get("clientes") or {}).get("nome") or "cliente não informado"
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Já existe uma demanda em andamento com o número '{num}' ({cli}). "
+                           f"Confira no painel/histórico antes de criar — risco de processar duas vezes.",
+                )
 
     # A NF é a trava de verdade: a mesma nota não sai duas vezes. Barrar aqui, e
     # não só na conclusão, poupa o operador de preencher o card inteiro para
