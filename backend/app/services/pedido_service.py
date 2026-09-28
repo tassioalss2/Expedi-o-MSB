@@ -3261,6 +3261,94 @@ def _nome_da_transportadora(pedido: dict) -> str:
     return nome.strip()
 
 
+# A razão social inteira não cabe num assunto de e-mail: "OMEGACLIN COMERCIO E
+# SERV LTDA" gasta 30 caracteres para dizer "OMEGACLIN". O cadastro não tem
+# campo de nome reduzido, então ele é derivado — e derivar tem risco, por isso as
+# duas listas abaixo só agem no FIM do nome.
+#
+# Forma jurídica: não identifica ninguém, sai sempre.
+_FORMA_JURIDICA = {"LTDA", "LTDA.", "LTDA-ME", "ME", "EPP", "EIRELI", "SA", "S/A",
+                   "S.A", "S.A.", "CIA", "CIA.", "&", "-", "–"}
+# Ramo: quase todo cliente nosso tem. Só sai do fim porque no começo identifica —
+# "HOSPITAL SANTA IZABEL" não pode virar "SANTA IZABEL".
+_RAMO = {"COMERCIO", "COMÉRCIO", "COM", "COM.", "COMERCIAL", "SERVICOS",
+         "SERVIÇOS", "SERV", "SERV.", "DISTRIBUIDORA", "DISTRIB", "DISTRIB.",
+         "IMPORTACAO", "IMPORTAÇÃO", "IMPORT", "IMPORT.", "EXPORTACAO",
+         "EXPORTAÇÃO", "EXPORT", "MATERIAIS", "MATERIAL", "MAT", "MAT.",
+         "HOSPITALARES", "HOSPITALAR", "HOSP", "HOSP.", "PRODUTOS", "PROD",
+         "PROD.", "MEDICOS", "MÉDICOS", "MEDICO", "MÉDICO", "MEDICA", "MÉDICA",
+         "MED", "MED.", "MÉD", "MÉD.", "EQUIPAMENTOS", "EQUIP", "EQUIP.",
+         "E", "DE", "DA", "DO", "DAS", "DOS"}
+_CONECTIVOS = {"E", "DE", "DA", "DO", "DAS", "DOS", "&", "-", "–", "EM"}
+
+
+def _nome_curto(nome, limite: int = 40) -> str:
+    """A razão social reduzida ao que identifica o cliente.
+
+    Corta só do fim, e nunca até o osso: um nome que sobrasse como uma palavra
+    de menos de 4 letras (o caso "EV MEDICA" → "EV") fica inteiro. Quando nada
+    dá para cortar com segurança, devolve o nome como está — cortado no limite,
+    em palavra inteira.
+    """
+    palavras = str(nome or "").split()
+    if not palavras:
+        return ""
+    while len(palavras) > 1:
+        ultimo = palavras[-1].upper().strip(".,")
+        if ultimo not in _FORMA_JURIDICA and ultimo not in _RAMO:
+            break
+        # Não deixar o cliente virar uma sigla curta demais para ser reconhecida.
+        if len(palavras) == 2 and len(palavras[0].strip(".,")) < 4:
+            break
+        palavras.pop()
+    # Quando o próprio cadastro já traz a sigla no fim ("EMPRESA BRASILEIRA DE
+    # SERVICOS HOSPITALARES - EBSERH"), ela É o nome reduzido — e é assim que os
+    # dois lados chamam a instituição. Melhor a sigla de verdade do que a razão
+    # social cortada no meio.
+    # Três coisas separam a sigla do lixo que também vem depois de um traço:
+    # ela tem ao menos 3 letras (mata o "- RJ" e o "- PR", que são a unidade e
+    # não a instituição), o que vem antes dela tem pelo menos 3 palavras (uma
+    # sigla resume um nome longo — em "CARDIO - ALIANCA" não há sigla nenhuma),
+    # e vale a PRIMEIRA que aparece: em "... - ASSEFAZ - PR", ASSEFAZ é a
+    # instituição e PR é o estado.
+    for i, p in enumerate(palavras):
+        if p not in ("-", "–") or i < 3 or i + 1 >= len(palavras):
+            continue
+        sigla = palavras[i + 1]
+        fim = i + 2 >= len(palavras) or palavras[i + 2] in ("-", "–")
+        if fim and sigla.isalpha() and sigla.isupper() and 3 <= len(sigla) <= 12:
+            return sigla
+    if len(" ".join(palavras)) > limite:
+        cortado = []
+        for p in palavras:
+            if len(" ".join(cortado + [p])) > limite:
+                break
+            cortado.append(p)
+        palavras = cortado or [" ".join(palavras)[:limite].strip()]
+    # Nome que termina em conectivo ficou pela metade: "SANTA CASA DE
+    # MISERICORDIA DE" pede a cidade que não coube. Corta o conectivo também.
+    while len(palavras) > 1 and palavras[-1].upper().strip(".,") in _CONECTIVOS:
+        palavras.pop()
+    return " ".join(palavras)
+
+
+def _assunto_do_pedido(ov, cliente, nf=None) -> str:
+    """O assunto de qualquer e-mail sobre uma OV. Um padrão só.
+
+    Pedido, cliente e — quando já existe — a nota. Nessa ordem e sem variação
+    por situação: as tratativas de uma OV se resolvem dentro de um e-mail, e
+    assunto que muda parte a conversa em várias. O pedido abre porque é a chave
+    que os dois lados têm desde antes da nota existir.
+    """
+    partes = ["Pedido %s" % ov if ov else "Pedido"]
+    curto = _nome_curto(cliente)
+    if curto:
+        partes.append(curto)
+    if nf:
+        partes.append("NF %s" % nf)
+    return " — ".join(partes)
+
+
 def _dia_br(iso) -> str:
     texto = str(iso or "")[:10]
     if len(texto) != 10:
@@ -3408,21 +3496,15 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
     linhas += ["", "Qualquer divergência no recebimento, por gentileza nos avise.",
                "", "Permanecemos à disposição."]
 
-    # O assunto. Sai junto com o texto porque quem digita assunto na mão digita
-    # um diferente a cada vez, e o cliente perde o e-mail na caixa dele — é por
-    # ele que se procura a nota meses depois. Número da nota e do pedido
-    # primeiro: são as duas coisas por que se busca.
+    # O assunto, num padrão só: pedido, cliente e nota, sempre nessa ordem, sem
+    # variar com o caso. Uma OV costuma se resolver dentro de um e-mail só — se
+    # o assunto mudasse conforme a situação, a conversa se partiria em vários
+    # e a busca por ela também.
     #
-    # E o que o cliente precisa FAZER entra no assunto, não só no corpo: e-mail
-    # com pedido de ação no título é lido; "NF emitida" é arquivado.
-    assunto = "NF %s — pedido %s" % (nf, ov) if nf else "Pedido %s — nota fiscal emitida" % ov
-    marcas = []
-    if cubagem_aqui:
-        marcas.append("material disponível para coleta")
-    if itens_pend:
-        marcas.append("entrega parcial")
-    if marcas:
-        assunto += " — %s" % " · ".join(marcas)
+    # O pedido vem primeiro porque é a chave que os dois lados têm desde antes
+    # da nota existir: o mesmo assunto serve ao e-mail que pede a transportadora
+    # e ao que avisa a NF, e a resposta do cliente cai na mesma conversa.
+    assunto = _assunto_do_pedido(ov, cliente, nf)
 
     falta = []
     if not nf:
@@ -3584,11 +3666,10 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
     if not valor:
         falta.append("o valor da nota")
 
-    # Este e-mail existe para ser RESPONDIDO — enquanto não é, a OV fica parada.
-    # O pedido de ação vai no assunto, senão ele espera na caixa do cliente como
-    # mais um aviso.
-    assunto = "Pedido %s — informar transportadora para coleta" % (
-        pedido.get("numero_pedido") or "")
+    # O MESMO assunto do e-mail da NF, de propósito: o cliente responde com a
+    # transportadora, a nota sai depois na mesma conversa e tudo daquela OV fica
+    # num lugar só. Aqui ainda não há nota, então ela simplesmente não entra.
+    assunto = _assunto_do_pedido(pedido.get("numero_pedido"), cliente)
 
     return {
         "tem": True,
