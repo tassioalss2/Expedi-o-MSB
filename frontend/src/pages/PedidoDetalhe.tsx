@@ -1877,20 +1877,24 @@ function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClo
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao alterar transportadora'),
   })
 
-  const transpAtual = pedido.transportadora?.nome || pedido.transportadora_nome || '—'
+  const transpAtual = pedido.transportadora?.nome || pedido.transportadora_nome || ''
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="p-5 border-b">
-          <h2 className="text-lg font-bold text-orange-700">🔄 Corrigir Transportadora</h2>
+          <h2 className="text-lg font-bold text-orange-700">
+            {transpAtual ? '🔄 Corrigir Transportadora' : '🚚 Definir Transportadora'}
+          </h2>
         </div>
         <div className="p-5 space-y-4">
 
           {/* Transportadora atual */}
           <div className="bg-gray-50 rounded-lg p-3 text-sm">
             <p className="text-gray-500 text-xs mb-1">Transportadora atual</p>
-            <p className="font-bold text-gray-800 text-base">{transpAtual}</p>
+            {transpAtual
+              ? <p className="font-bold text-gray-800 text-base">{transpAtual}</p>
+              : <p className="text-gray-500 text-base italic">nenhuma — esta OV ainda não tem transportadora</p>}
           </div>
 
           {/* Nova transportadora */}
@@ -3408,11 +3412,19 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
-              {/* Corrigir transportadora — visível após faturamento */}
-              {['AGUARD_FATURAMENTO','FATURADO','AGUARD_COLETA','COLETADO'].includes(status) && (
+              {/* Corrigir transportadora — em qualquer etapa do Kanban.
+                  Antes só aparecia da AGUARD_FATURAMENTO em diante, e a lista
+                  citava COLETADO, que saiu do Kanban: na prática o botão sumia
+                  justamente em EXPEDIDO, quando o erro de transportadora mais
+                  aparece (o CT-e chega depois). Corrigir cedo também importa —
+                  a transportadora define o pallet da separação. Só CANCELADO
+                  fica de fora, igual ao "Corrigir Frete". */}
+              {!['CANCELADO'].includes(status) && (
                 <button onClick={() => setModal('transportadora')}
                   className="w-full flex items-center gap-2 justify-center py-2 border border-orange-300 text-orange-600 rounded-lg text-sm hover:bg-orange-50">
-                  🔄 Corrigir Transportadora
+                  {pedido.transportadora?.nome || pedido.transportadora_nome
+                    ? '🔄 Corrigir Transportadora'
+                    : '🚚 Definir Transportadora'}
                 </button>
               )}
 
