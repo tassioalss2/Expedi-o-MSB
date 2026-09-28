@@ -3916,6 +3916,7 @@ export function PedidoDetalhe() {
         <ModalTextoCliente
           titulo="Avise o cliente — NF emitida"
           subtitulo={`${avisoPendencia.ov} · envie junto com a nota fiscal`}
+          assunto={avisoPendencia.assunto}
           texto={avisoPendencia.texto}
           onFechar={() => setAvisoPendencia(null)}
           editor={<CampoEnderecoEntrega pedidoId={id!} endereco={avisoPendencia.endereco}
@@ -3975,6 +3976,7 @@ export function PedidoDetalhe() {
         <ModalTextoCliente
           titulo="Pedir a transportadora ao cliente"
           subtitulo="Frete FOB: envie antes de faturar e aguarde o cliente informar quem vai coletar."
+          assunto={avisoColeta.assunto}
           texto={avisoColeta.texto}
           onFechar={() => setAvisoColeta(null)}
           marca={<MarcaEnviado pedidoId={id!} tipo="coleta_fob"

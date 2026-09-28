@@ -3408,6 +3408,22 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
     linhas += ["", "Qualquer divergência no recebimento, por gentileza nos avise.",
                "", "Permanecemos à disposição."]
 
+    # O assunto. Sai junto com o texto porque quem digita assunto na mão digita
+    # um diferente a cada vez, e o cliente perde o e-mail na caixa dele — é por
+    # ele que se procura a nota meses depois. Número da nota e do pedido
+    # primeiro: são as duas coisas por que se busca.
+    #
+    # E o que o cliente precisa FAZER entra no assunto, não só no corpo: e-mail
+    # com pedido de ação no título é lido; "NF emitida" é arquivado.
+    assunto = "NF %s — pedido %s" % (nf, ov) if nf else "Pedido %s — nota fiscal emitida" % ov
+    marcas = []
+    if cubagem_aqui:
+        marcas.append("material disponível para coleta")
+    if itens_pend:
+        marcas.append("entrega parcial")
+    if marcas:
+        assunto += " — %s" % " · ".join(marcas)
+
     falta = []
     if not nf:
         falta.append("o número da NF")
@@ -3422,6 +3438,7 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
 
     return {
         "tem": True,
+        "assunto": assunto,
         "texto": "\n".join(linhas),
         "ov": ov,
         "pedido_id": pedido_id,
@@ -3567,8 +3584,15 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
     if not valor:
         falta.append("o valor da nota")
 
+    # Este e-mail existe para ser RESPONDIDO — enquanto não é, a OV fica parada.
+    # O pedido de ação vai no assunto, senão ele espera na caixa do cliente como
+    # mais um aviso.
+    assunto = "Pedido %s — informar transportadora para coleta" % (
+        pedido.get("numero_pedido") or "")
+
     return {
         "tem": True,
+        "assunto": assunto,
         "texto": "\n".join(linhas),
         "ov": pedido.get("numero_pedido"),
         "cliente": pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome"),

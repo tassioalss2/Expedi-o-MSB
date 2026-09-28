@@ -11,9 +11,13 @@
 import { Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-export function ModalTextoCliente({ titulo, subtitulo, texto, editor, aviso, marca, onFechar }: {
+export function ModalTextoCliente({ titulo, subtitulo, assunto, texto, editor, aviso, marca, onFechar }: {
   titulo: string
   subtitulo: string
+  /** O assunto do e-mail. Montado pelo app pelo mesmo motivo que o corpo: quem
+   *  digita o assunto na mão digita um diferente a cada vez, e o cliente perde
+   *  o e-mail na caixa dele meses depois. */
+  assunto?: string
   texto: string
   /** Campo editável acima do texto — hoje, o endereço de entrega. */
   editor?: React.ReactNode
@@ -34,6 +38,25 @@ export function ModalTextoCliente({ titulo, subtitulo, texto, editor, aviso, mar
         </div>
         <div className="p-5 space-y-3 flex-1 overflow-y-auto">
           {editor}
+          {assunto && (
+            <div>
+              <label className="text-xs font-medium text-gray-500">Assunto</label>
+              <div className="flex gap-2 mt-1">
+                <input readOnly value={assunto}
+                  className="flex-1 border rounded-lg px-3 py-2 text-sm bg-gray-50 font-mono" />
+                <button
+                  title="Copiar o assunto"
+                  onClick={() => {
+                    navigator.clipboard.writeText(assunto)
+                      .then(() => toast.success('Assunto copiado'))
+                      .catch(() => toast.error('Não consegui copiar'))
+                  }}
+                  className="px-3 border rounded-lg text-gray-600 hover:bg-gray-50 shrink-0">
+                  <Copy size={14} />
+                </button>
+              </div>
+            </div>
+          )}
           <textarea readOnly value={texto} rows={14}
             className="w-full border rounded-lg p-3 text-sm font-mono leading-relaxed bg-gray-50" />
           {aviso}

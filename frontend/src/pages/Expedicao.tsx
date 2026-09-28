@@ -785,6 +785,7 @@ export function Expedicao() {
         <ModalTextoCliente
           titulo="Pedir a transportadora ao cliente"
           subtitulo={`${avisoColeta.ov} · frete FOB — envie antes de faturar e aguarde o cliente informar quem vai coletar.`}
+          assunto={avisoColeta.assunto}
           texto={avisoColeta.texto}
           onFechar={() => setAvisoColeta(null)}
           marca={<MarcaEnviado pedidoId={avisoColeta.pedido_id} tipo="coleta_fob"
