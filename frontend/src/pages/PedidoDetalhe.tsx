@@ -3929,10 +3929,29 @@ export function PedidoDetalhe() {
             onMudou={novo => setAvisoPendencia({ ...avisoPendencia, enviado: novo })} />}
           aviso={
             <>
-              <div className="text-xs text-gray-500">
-                Saldo: <strong>{avisoPendencia.itens?.length}</strong> item(ns) -
-                R$ {Number(avisoPendencia.valor_pendente || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </div>
+              {/* So aparece quando HA saldo: a resposta nao devolve `itens`, entao
+                  sem esta guarda a linha saia sempre como "Saldo: item(ns) — R$ 0,00". */}
+              {avisoPendencia.com_pendencia && (
+                <div className="text-xs text-gray-500">
+                  Saldo pendente: R$ {Number(avisoPendencia.valor_pendente || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </div>
+              )}
+              {/* FOB cuja transportadora o cliente ja tinha informado: a OV nao
+                  passou pela coluna de transportadora, entao e este e-mail que
+                  leva a cubagem e o endereco de coleta. */}
+              {avisoPendencia.com_cubagem && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900">
+                  Esta OV e FOB e ja tinha a transportadora do cliente, entao o
+                  e-mail que pede a transportadora nao foi preciso. Por isso
+                  <strong> a cubagem e o endereco de coleta vao aqui</strong> — e o
+                  unico e-mail que a transportadora vai receber.
+                  {avisoPendencia.falta?.length > 0 && (
+                    <div className="mt-1">
+                      Falta informar: <strong>{avisoPendencia.falta.join(', ')}</strong>.
+                    </div>
+                  )}
+                </div>
+              )}
               {avisoPendencia.previsao_interna && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 mt-2">
                   O PCP estima <strong>{String(avisoPendencia.previsao_interna).split('-').reverse().join('/')}</strong> para

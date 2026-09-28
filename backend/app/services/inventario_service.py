@@ -262,6 +262,15 @@ def registrar_cubagem(pedido_id: str, payload: CubagemCreate, usuario: UsuarioOu
         if eh_cif:
             alterar_status(pedido_id, StatusPedido.EM_COTACAO_FRETE.value, usuario,
                            "Cubagem registrada — CIF: aguardando cotação de frete")
+        elif pedido.get("transportadora_id"):
+            # FOB em que o cliente JÁ disse quem coleta, ainda no pedido. Não há
+            # o que esperar nesta coluna — o e-mail que pede a transportadora
+            # perguntaria algo que já foi respondido — e a OV pode faturar com o
+            # nome da transportadora na NF. A cubagem e o endereço de coleta,
+            # que sairiam naquele e-mail, saem no e-mail da NF emitida.
+            alterar_status(pedido_id, StatusPedido.AGUARD_FATURAMENTO.value, usuario,
+                           "Cubagem registrada — FOB com transportadora já informada "
+                           "pelo cliente: liberado para faturamento")
         else:
             alterar_status(pedido_id, StatusPedido.AGUARD_TRANSPORTADORA.value, usuario,
                            "Cubagem registrada — FOB: aguardando transportadora do cliente")

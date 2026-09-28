@@ -348,7 +348,7 @@ const INFO_ETAPAS: Record<string, {
   },
   AGUARD_TRANSPORTADORA: {
     responsavel: 'Operações de Vendas',
-    objetivo: 'OV FOB: aguardar o cliente informar qual transportadora vai coletar. A transportadora vai na NF, então só faturamos depois disso. CIF não passa por aqui.',
+    objetivo: 'OV FOB: aguardar o cliente informar qual transportadora vai coletar. A transportadora vai na NF, então só faturamos depois disso. CIF não passa por aqui — e FOB cuja transportadora o cliente já informou também não: essa vai direto para o faturamento, e a cubagem e o endereço de coleta saem no e-mail da NF.',
     inputs: ['Transportadora informada pelo cliente', 'Nome real (se OUTROS)', 'Observação (opcional)'],
     criterio: 'Transportadora informada → clicar em "Registrar transportadora do cliente" para liberar o faturamento',
   },

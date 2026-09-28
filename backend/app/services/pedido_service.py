@@ -3268,6 +3268,49 @@ def _dia_br(iso) -> str:
     return "%s/%s/%s" % (texto[8:10], texto[5:7], texto[:4])
 
 
+def _linhas_de_cubagem(db, pedido_id: str) -> tuple:
+    """(linhas, falta) — o que vai ser coletado, em palavras.
+
+    Nasceu para ser dito em dois e-mails diferentes: o que pede a transportadora
+    ao cliente FOB e o que avisa a NF emitida quando aquele primeiro não chegou
+    a existir. Escrever duas vezes é escrever duas versões — e elas divergem no
+    dia em que uma muda.
+
+    Vazio é vazio: cubagem não medida não vira linha, volta em `falta` para a
+    tela avisar antes do envio.
+    """
+    from app.services import inventario_service
+
+    cub = inventario_service.obter_cubagem(pedido_id) or {}
+    try:
+        caixas = db.table("cubagem_itens").select("*, tipos_caixa(descricao)")\
+            .eq("pedido_id", pedido_id).execute().data or []
+    except Exception:
+        caixas = []
+
+    linhas = []
+    if caixas:
+        linhas.append("📦 Caixas:")
+        for c in caixas:
+            desc = (c.get("tipos_caixa") or {}).get("descricao")
+            linhas.append("• %sx %s%s" % (c.get("quantidade") or 1,
+                                          c.get("tipo_caixa_nome") or "caixa",
+                                          " — %s" % desc if desc else ""))
+        linhas.append("")
+    if cub.get("num_caixas"):
+        linhas.append("📊 Total: %s caixa(s)" % cub["num_caixas"])
+    if cub.get("peso_kg"):
+        linhas.append("⚖️ Peso total: %s kg"
+                      % ("%g" % float(cub["peso_kg"])).replace(".", ","))
+
+    falta = []
+    if not cub.get("num_caixas"):
+        falta.append("a cubagem (nº de caixas)")
+    if not cub.get("peso_kg"):
+        falta.append("o peso")
+    return linhas, falta
+
+
 def aviso_nf_emitida(pedido_id: str) -> dict:
     """O e-mail que avisa o cliente de que a nota saiu.
 
@@ -3325,6 +3368,28 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
     elif (pedido.get("local_entrega") or "").strip():
         linhas.append("📍 Local de entrega: %s" % pedido["local_entrega"].strip())
 
+    # ── FOB cuja transportadora o cliente já tinha informado ──────────────────
+    # Essa OV não passou pela coluna "Aguard. transportadora", então o e-mail que
+    # leva cubagem e endereço de coleta nunca saiu — e a transportadora do
+    # cliente precisa saber o que buscar, onde e em que horário. Essa informação
+    # migra para cá: é o único e-mail que ela vai receber.
+    #
+    # O critério é o aviso de coleta ter sido MARCADO como enviado, não o status
+    # atual: quando ninguém marcou, repetir a cubagem custa algumas linhas;
+    # omitir custa uma transportadora parada no portão. O erro barato é repetir.
+    # E não sai quando a carga JÁ foi coletada: aí é um e-mail reenviado depois
+    # do fato, e mandar horário de coleta para quem já coletou confunde.
+    cubagem_aqui = (eh_fob and not coletado
+                    and not _avisos_do_pedido(pedido).get("coleta_fob"))
+    falta_cubagem = []
+    if cubagem_aqui:
+        linhas_cub, falta_cubagem = _linhas_de_cubagem(db, pedido_id)
+        linhas += ["", "Segue o que a transportadora deve retirar:", ""]
+        linhas += linhas_cub
+        linhas += ["", "📍 Coleta no nosso endereço:", ENDERECO_COLETA,
+                   "", "🕒 Horário de funcionamento:"]
+        linhas += HORARIO_COLETA
+
     # O saldo pendente entra aqui quando existe — e a mesma informacao que antes
     # saia em mensagem separada.
     pend = pedido.get("pendencia") or {}
@@ -3351,6 +3416,9 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
     # No FOB não falta previsão de entrega: ela não existe do nosso lado.
     if not eh_fob and not previsao:
         falta.append("a previsão de entrega")
+    # Só faz falta o que este e-mail ia dizer: a cubagem só entra na conta
+    # quando é aqui que ela sai.
+    falta += falta_cubagem
 
     return {
         "tem": True,
@@ -3362,6 +3430,9 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
         "previsao": previsao or None,
         "rastreio": rastreio or None,
         "com_pendencia": bool(itens_pend),
+        # A tela explica por que este e-mail veio maior: é ele que leva a
+        # cubagem e a coleta, porque o pedido de transportadora não foi preciso.
+        "com_cubagem": cubagem_aqui,
         "endereco": endereco,
         "endereco_de": endereco_de,
         "local_entrega": pedido.get("local_entrega"),
@@ -3425,11 +3496,7 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
 
     cub = inventario_service.obter_cubagem(pedido_id) or {}
     db = get_service_db()
-    try:
-        caixas = db.table("cubagem_itens").select("*, tipos_caixa(descricao)")\
-            .eq("pedido_id", pedido_id).execute().data or []
-    except Exception:
-        caixas = []
+    linhas_cub, falta_cub = _linhas_de_cubagem(db, pedido_id)
 
     # O valor: o da nota quando já existe; senão o dos itens, e só quando TODOS
     # têm preço e quantidade. Um item sem preço zera a soma sem avisar.
@@ -3462,18 +3529,7 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
         linhas.append("👤 Cliente: %s" % cliente)
     linhas.append("")
 
-    if caixas:
-        linhas.append("📦 Caixas:")
-        for c in caixas:
-            desc = (c.get("tipos_caixa") or {}).get("descricao")
-            linhas.append("• %sx %s%s" % (c.get("quantidade") or 1,
-                                          c.get("tipo_caixa_nome") or "caixa",
-                                          " — %s" % desc if desc else ""))
-        linhas.append("")
-    if cub.get("num_caixas"):
-        linhas.append("📊 Total: %s caixa(s)" % cub["num_caixas"])
-    if cub.get("peso_kg"):
-        linhas.append("⚖️ Peso total: %s kg" % ("%g" % float(cub["peso_kg"])).replace(".", ","))
+    linhas += linhas_cub
     if valor:
         linhas.append("💰 Valor da NF: R$ %s"
                       % format(valor, ",.2f").replace(",", "X").replace(".", ",").replace("X", "."))
@@ -3507,11 +3563,7 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
 
     linhas += ["", "Permanecemos à disposição."]
 
-    falta = []
-    if not cub.get("num_caixas"):
-        falta.append("a cubagem (nº de caixas)")
-    if not cub.get("peso_kg"):
-        falta.append("o peso")
+    falta = list(falta_cub)
     if not valor:
         falta.append("o valor da nota")
 

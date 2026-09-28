@@ -298,6 +298,10 @@ def alterar_tipo_frete(
     # esperando uma transportadora que nao vem. Aqui ela troca de ramo junto.
     etapa_refeita = None
     if not mesmo_tipo:
+        # Aqui NÃO vale o atalho do FOB-com-transportadora da cubagem: a OV
+        # vinha de CIF, e a transportadora no cadastro foi escolhida por NÓS
+        # para cotar o frete — não é a que o cliente mandou coletar. Pular a
+        # coluna faturaria uma NF com a transportadora errada.
         destino = (StatusPedido.EM_COTACAO_FRETE.value if eh_cif
                    else StatusPedido.AGUARD_TRANSPORTADORA.value)
         if pedido["status"] in (StatusPedido.EM_COTACAO_FRETE.value,
