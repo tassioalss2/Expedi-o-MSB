@@ -3466,6 +3466,18 @@ def _assunto_do_pedido(ov, cliente, nf=None) -> str:
     return " — ".join(partes)
 
 
+def _saudacao() -> str:
+    """"Bom dia" às 15h31 é o tipo de detalhe que denuncia texto automático.
+
+    A hora é a de Brasília, calculada aqui e não pelo relógio do servidor: o
+    Render roda em UTC, e lá "boa tarde" começaria às 9h da manhã daqui.
+    """
+    hora = (datetime.now(timezone.utc) - timedelta(hours=3)).hour
+    if hora < 12:
+        return "bom dia"
+    return "boa tarde" if hora < 18 else "boa noite"
+
+
 def _dia_br(iso) -> str:
     texto = str(iso or "")[:10]
     if len(texto) != 10:
@@ -3542,7 +3554,7 @@ def aviso_nf_emitida(pedido_id: str) -> dict:
     previsao = _dia_br(pedido.get("data_prevista_entrega"))
     rastreio = str(pedido.get("codigo_rastreio") or "").strip()
 
-    linhas = ["Prezados, bom dia!", ""]
+    linhas = ["Prezados, %s!" % _saudacao(), ""]
     linhas.append("🧾 Nota fiscal %s — pedido %s" % (nf or "—", ov))
     if cliente:
         linhas.append("👤 Cliente: %s" % cliente)
@@ -3739,7 +3751,7 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
     # SEM os *asteriscos* daquela, porém. Eles viram negrito no Teams e no
     # WhatsApp; num e-mail aparecem como asterisco mesmo, e o cliente recebe
     # "*Caixas:*" na cara.
-    linhas = ["Prezados, bom dia!", "",
+    linhas = ["Prezados, %s!" % _saudacao(), "",
               "📦 Pedido %s — pronto para faturamento e coleta" % ov]
     if cliente:
         linhas.append("👤 Cliente: %s" % cliente)
