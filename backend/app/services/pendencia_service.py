@@ -349,6 +349,33 @@ def natureza_do_saldo(origem: Optional[str]) -> str:
     return _MOTIVO_POR_ORIGEM.get((origem or "").upper(), "FALTA")
 
 
+# A frase que o card mostra embaixo do titulo. Escrita para quem chega na tela
+# sem ter acompanhado a venda: diz o que aquele saldo E e o que se faz com ele.
+#
+# Nasceu da OV016456, que mostrava tres linhas — "Nova OV", "Material liberado
+# da OV" e "Material liberado da OV" — e ninguem conseguia dizer o que
+# distinguia uma da outra.
+_EXPLICACAO_POR_ORIGEM = {
+    "NOVA_OV": "Não havia estoque quando a venda foi lançada. Depende da produção — "
+               "é este saldo que se cobra do PCP.",
+    "OUTBOUND": "Venda lançada direto na expedição sem estoque para tudo. Depende da "
+                "produção — é este saldo que se cobra do PCP.",
+    "EDICAO_ITENS": "A OV foi editada e a quantidade que saiu dela continua vendida ao "
+                    "cliente. Fica aqui até voltar numa remessa.",
+    "ITEM_ADICIONADO": "Item incluído na venda depois do lançamento, sem estoque na hora. "
+                       "Depende da produção.",
+    "DEVOLUCAO_ESTOQUE": "O material existia e foi solto desta OV de propósito, voltando "
+                         "para o estoque. Não depende da produção: dá para liberar quando "
+                         "quiser — não adianta cobrar o PCP.",
+}
+
+
+def explicacao_do_saldo(origem: Optional[str]) -> str:
+    return _EXPLICACAO_POR_ORIGEM.get(
+        (origem or "").upper(),
+        "Saldo desta venda ainda não entregue.")
+
+
 def titulo_da_pendencia(origem: Optional[str], numero: Optional[str]) -> str:
     """So a origem, sem o numero: o card ja mostra a OV como link logo acima, e
     repetir dava "Nova OV OV016456"."""
@@ -521,6 +548,31 @@ def _ov_por_ids(db, ids: list) -> dict:
         for r in rows:
             out[r["id"]] = r
     return out
+
+
+_USUARIOS: dict = {}
+
+
+def _nome_de_usuario(db, uid) -> Optional[str]:
+    """Quem decidiu este saldo, pelo nome.
+
+    O card precisa dizer "devolvido ao estoque em 23/09 por Cristiane" — sem o
+    nome e a data, "Material liberado da OV" não explica nada a quem chega na
+    tela três dias depois. O id já estava gravado em `decidido_por` desde o
+    início; só nunca tinha sido lido.
+
+    Lê a tabela inteira uma vez e guarda: são poucas dezenas de pessoas, e a
+    alternativa era uma consulta por pendência a cada abertura da tela.
+    """
+    if not uid:
+        return None
+    if not _USUARIOS:
+        try:
+            for r in db.table("usuarios").select("id, nome").limit(1000).execute().data:
+                _USUARIOS[str(r["id"])] = (r.get("nome") or "").strip()
+        except Exception:
+            return None
+    return _USUARIOS.get(str(uid)) or None
 
 
 def _nomes_clientes(db, ids: list) -> dict:
@@ -859,8 +911,19 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "ov_ref": (ov or {}).get("numero_pedido"),
         "ov_status": (ov or {}).get("status"),
         "ov_provisoria": _provisorio((ov or {}).get("numero_pedido")),
+        # A remessa é o que separa dois saldos que nasceram do mesmo ato: na
+        # OV016456, 32 un do 53053 ficaram na R4 e 28 un na R3, devolvidas pela
+        # mesma pessoa no mesmo minuto. Sem isto as duas linhas ficam idênticas.
+        "remessa_numero": (ov or {}).get("remessa_numero"),
         "decisao": pend.get("decisao"),
         "origem": pend.get("origem"),
+        # Quem criou este saldo, e a frase que diz o que ele é. Sem isso o card
+        # trazia só "Material liberado da OV", que não explica nada a quem chega
+        # na tela dias depois — e a OV016456 mostrava três linhas assim, de
+        # momentos diferentes, indistinguíveis entre si.
+        "decidido_por_nome": (pend.get("decidido_por_nome")
+                              or _nome_de_usuario(get_service_db(), pend.get("decidido_por"))),
+        "explicacao": explicacao_do_saldo(pend.get("origem")),
         # FALTA (o estoque nao tinha) x LIBERADO (existia e foi solto de
         # proposito). Muda o que o operador faz: LIBERADO nao se cobra do PCP.
         "natureza": natureza_do_saldo(pend.get("origem")),

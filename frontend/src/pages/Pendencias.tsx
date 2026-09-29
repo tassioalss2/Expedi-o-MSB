@@ -584,6 +584,30 @@ function IncluirItemPendencia({ onIncluir, onCancelar, salvando }: {
 }
 
 
+/** O título do saldo, com a data e quem decidiu.
+ *
+ *  "Material liberado da OV" repetido em duas linhas da mesma venda não diz o
+ *  que separa uma da outra — foi o caso da OV016456, com três saldos de três
+ *  momentos e nenhum jeito de distinguir. Data e autor resolvem: cada linha
+ *  passa a ser um fato datado. */
+function tituloDoSaldo(p: Pendencia): string {
+  const quando = p.decidido_em ? dataBR(p.decidido_em).slice(0, 5) : ''
+  const quem = (p.decidido_por_nome || '').split(' ')[0]
+  const base: Record<string, string> = {
+    NOVA_OV: 'Faltou no lançamento',
+    OUTBOUND: 'Faltou no lançamento',
+    EDICAO_ITENS: 'Itens editados na OV',
+    ITEM_ADICIONADO: 'Itens adicionados à OV',
+    DEVOLUCAO_ESTOQUE: 'Devolvido ao estoque',
+  }
+  const t = base[(p.origem || '').toUpperCase()] || 'Saldo da venda'
+  // A remessa fecha a conta: dois saldos devolvidos pela mesma pessoa no mesmo
+  // minuto so se distinguem por ela.
+  const rem = p.remessa_numero ? `· remessa ${p.remessa_numero}` : ''
+  return [t, quando && `— ${quando}`, quem && `· ${quem}`, rem]
+    .filter(Boolean).join(' ')
+}
+
 /** O que a foto do estoque diz deste saldo — em duas palavras, no card.
  *
  *  Substitui as três seções que a tela tinha. Aqui a informação continua, mas
@@ -736,7 +760,7 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo }: {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             {dentroDeGrupo ? (
-              <span className="font-medium text-gray-700 truncate">{p.titulo}</span>
+              <span className="font-medium text-gray-700 truncate">{tituloDoSaldo(p)}</span>
             ) : (
               <span className="font-medium text-gray-800 truncate">{p.cliente || '—'}</span>
             )}
@@ -768,22 +792,21 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo }: {
             {/* Fora do grupo o titulo vem aqui, sob o cliente. Dentro dele o
                 titulo JA e a primeira linha, e repeti-lo seria dizer duas vezes. */}
             {!dentroDeGrupo && (
-              <span className="text-[11px] text-gray-400 truncate">{p.titulo}</span>
+              <span className="text-[11px] text-gray-500 truncate">{tituloDoSaldo(p)}</span>
             )}
-            {/* Saldo que existe fisicamente e foi solto de propósito não se
-                cobra do PCP — sem isto o operador cobra produção de material
-                que está na prateleira. */}
-            {p.natureza === 'LIBERADO' && (
-              <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 shrink-0"
-                title="O material existe: alguém escolheu não prendê-lo nesta OV. Não depende da produção — dá para liberar assim que quiser.">
-                material existe
-              </span>
-            )}
-            {/* O que a última foto do PCP diz deste saldo. Era o que dividia a
-                tela em três blocos; virou etiqueta porque é informação sobre a
-                pendência, não uma gaveta onde ela mora. */}
+            {/* A etiqueta "material existe" saiu: ela dizia de onde o saldo veio
+                e ficava colada na "sem estoque na foto", que diz o que ha HOJE —
+                lado a lado as duas pareciam se contradizer. Quem explica a
+                origem agora e a frase abaixo, que tem espaco para dizer a coisa
+                inteira. */}
             <EtiquetaEstoque p={p} />
           </div>
+          {/* A explicacao do saldo, visivel sem abrir o card. O rotulo sozinho
+              nao bastava: "Material liberado da OV" em duas linhas da mesma
+              venda nao diz o que fazer com cada uma. */}
+          {p.explicacao && (
+            <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{p.explicacao}</p>
+          )}
         </div>
 
         <div className="text-xs text-gray-500 whitespace-nowrap">

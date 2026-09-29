@@ -92,6 +92,12 @@ export interface Pendencia {
   ov_provisoria: boolean
   decisao: 'PARCIAL' | 'AGUARDAR' | null
   origem: string | null
+  /** Quem decidiu este saldo e a frase que diz o que ele é — o card mostra as
+   *  duas, porque "Material liberado da OV" repetido não distingue nada. */
+  decidido_por_nome?: string | null
+  /** Qual remessa desta OV — e o que separa dois saldos do mesmo ato. */
+  remessa_numero?: number | null
+  explicacao?: string | null
   /** Por que este saldo existe: FALTA = o estoque não tinha; LIBERADO = o
    *  material existia e alguém escolheu não prendê-lo nesta OV. Muda o que se
    *  faz — LIBERADO não se cobra do PCP. */
