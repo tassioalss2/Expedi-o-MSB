@@ -98,12 +98,32 @@ export default function Pendencias() {
     }
   }, [todas, busca, linha])
 
-  // A mais parada primeiro: a espera longa é o que vira reclamação de cliente.
-  // Antes a lista era quebrada em filas por estoque; agora é uma só, e o estoque
-  // vira etiqueta no card.
-  const emOrdem = useMemo(
-    () => [...abertas].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0)),
-    [abertas])
+  // Uma VENDA, um card. A pendência é gravada na linha de `pedidos`, e uma OV
+  // com várias remessas tem uma linha por remessa: a OV016456 da SEVEN MEDIC
+  // tinha três, então a mesma venda aparecia três vezes seguidas, com o mesmo
+  // cliente e o mesmo número de OV. Aqui elas se juntam sob um cabeçalho só; os
+  // saldos continuam distintos DENTRO do card, porque liberar, cobrar e
+  // cancelar agem em cada um separadamente.
+  //
+  // A chave é a OV. Sem OV (venda do CRM que ainda não desceu), cada pendência
+  // é a sua própria venda e vira um grupo de um.
+  const grupos = useMemo(() => {
+    const m = new Map<string, Pendencia[]>()
+    for (const p of abertas) {
+      const k = p.ov_ref ? `ov:${p.ov_ref}` : `p:${p.fonte}-${p.id}`
+      m.set(k, [...(m.get(k) || []), p])
+    }
+    return [...m.entries()]
+      .map(([k, itens]) => ({
+        k,
+        itens: [...itens].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0)),
+        // O grupo se ordena pela espera mais longa que tem dentro: é ela que
+        // vira reclamação de cliente.
+        dias: Math.max(...itens.map(p => p.dias_parada || 0)),
+        valor: itens.reduce((a, p) => a + (p.valor || 0), 0),
+      }))
+      .sort((a, b) => b.dias - a.dias)
+  }, [abertas])
 
   // Continua servindo aos KPIs: quanto deste dinheiro a foto do estoque já cobre.
   const porFila = useMemo(() => {
@@ -233,7 +253,8 @@ export default function Pendencias() {
             <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
               <PackageCheck size={16} /> Pendências abertas
               <span className="text-xs font-normal text-gray-400">
-                {abertas.length} {abertas.length === 1 ? 'venda' : 'vendas'}
+                {grupos.length} {grupos.length === 1 ? 'venda' : 'vendas'}
+                {grupos.length !== abertas.length && ` · ${abertas.length} saldos`}
               </span>
             </h2>
             <span className="text-sm font-semibold tabular-nums text-gray-700">
@@ -245,11 +266,15 @@ export default function Pendencias() {
             foto do PCP diz — recomendação, não trava: dá para liberar mesmo assim.
           </p>
           <div className="space-y-2">
-            {emOrdem.map(p => (
-              <Card key={`${p.fonte}-${p.id}`} p={p}
-                onLiberar={() => setLiberando(p)}
-                onAcompanhar={() => setAcompanhando(p)}
-                onCancelar={() => setCancelando(p)} />
+            {grupos.map(g => g.itens.length === 1 ? (
+              <Card key={g.k} p={g.itens[0]}
+                onLiberar={() => setLiberando(g.itens[0])}
+                onAcompanhar={() => setAcompanhando(g.itens[0])}
+                onCancelar={() => setCancelando(g.itens[0])} />
+            ) : (
+              <GrupoDaVenda key={g.k} itens={g.itens} valor={g.valor}
+                onLiberar={setLiberando} onAcompanhar={setAcompanhando}
+                onCancelar={setCancelando} />
             ))}
           </div>
         </section>
@@ -597,8 +622,71 @@ function EtiquetaEstoque({ p }: { p: Pendencia }) {
   )
 }
 
-function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
+/** Uma venda com mais de um saldo aberto — a OV com várias remessas.
+ *
+ *  O cliente e a OV aparecem UMA vez, no topo; os saldos ficam dentro. Não dá
+ *  para fundir os saldos num só: cada um é uma linha de `pedidos` diferente, e
+ *  liberar, cobrar e cancelar agem em cada um. Juntar só o cabeçalho resolve o
+ *  que incomodava — ler três vezes o mesmo cliente e a mesma OV. */
+function GrupoDaVenda({ itens, valor, onLiberar, onAcompanhar, onCancelar }: {
+  itens: Pendencia[]; valor: number
+  onLiberar: (p: Pendencia) => void
+  onAcompanhar: (p: Pendencia) => void
+  onCancelar: (p: Pendencia) => void
+}) {
+  const p0 = itens[0]
+  const unTotal = itens.reduce((a, p) => a + (Number(p.qtd_total) || 0), 0)
+  const dias = Math.max(...itens.map(p => p.dias_parada || 0))
+  const corDias = dias >= DIAS_CRITICO ? 'text-red-600 font-semibold'
+    : dias >= DIAS_ATENCAO ? 'text-amber-700' : 'text-gray-500'
+
+  return (
+    <div className="rounded-lg border border-gray-300 bg-gray-50/70">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-gray-800 truncate">{p0.cliente || '—'}</span>
+            {p0.canal && (
+              <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p0.canal] || p0.canal}</span>
+            )}
+            {p0.ov_ref && (
+              <Link to={p0.ov_id ? `/expedicao/${p0.ov_id}` : '#'}
+                className="font-mono text-xs text-indigo-700 hover:underline">{p0.ov_ref}</Link>
+            )}
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600"
+              title="A mesma venda tem mais de um saldo aberto — normalmente uma remessa por saldo. Cada um se libera por si.">
+              {itens.length} saldos nesta venda
+            </span>
+          </div>
+        </div>
+        <div className="text-xs text-gray-500 whitespace-nowrap">{n(unTotal)} un no total</div>
+        <div className={`text-xs whitespace-nowrap tabular-nums ${corDias}`}
+          title="Espera mais longa desta venda">
+          <Clock size={12} className="inline mr-1 -mt-0.5" />{dias}d
+        </div>
+        <div className="text-sm font-semibold text-red-700 tabular-nums w-28 text-right">
+          {fmtBRL(valor)}
+        </div>
+        {/* Espaço dos botões, que aqui vivem em cada saldo. */}
+        <div className="w-[236px] shrink-0" />
+      </div>
+      <div className="space-y-1.5 px-2 pb-2">
+        {itens.map(p => (
+          <Card key={`${p.fonte}-${p.id}`} p={p} dentroDeGrupo
+            onLiberar={() => onLiberar(p)}
+            onAcompanhar={() => onAcompanhar(p)}
+            onCancelar={() => onCancelar(p)} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo }: {
   p: Pendencia; onLiberar: () => void; onAcompanhar: () => void; onCancelar: () => void
+  /** Dentro de GrupoDaVenda: cliente, linha e OV já estão no cabeçalho do grupo
+   *  e repeti-los em cada saldo era exatamente o ruído que o grupo desfaz. */
+  dentroDeGrupo?: boolean
 }) {
   const [aberto, setAberto] = useState(false)
   const [ajustando, setAjustando] = useState<{ codigo: string; descricao?: string | null } | null>(null)
@@ -647,8 +735,12 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-gray-800 truncate">{p.cliente || '—'}</span>
-            {p.canal && (
+            {dentroDeGrupo ? (
+              <span className="font-medium text-gray-700 truncate">{p.titulo}</span>
+            ) : (
+              <span className="font-medium text-gray-800 truncate">{p.cliente || '—'}</span>
+            )}
+            {!dentroDeGrupo && p.canal && (
               <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p.canal] || p.canal}</span>
             )}
             {p.prioridade_fila != null && (
@@ -667,13 +759,17 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
                 title="A OV existe no app, mas ainda não tem o número do D365">
                 sem nº D365
               </span>
-            ) : p.ov_ref ? (
+            ) : p.ov_ref && !dentroDeGrupo ? (
               <Link to={p.ov_id ? `/expedicao/${p.ov_id}` : '#'}
                 className="font-mono text-xs text-indigo-700 hover:underline">{p.ov_ref}</Link>
             ) : null}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span className="text-[11px] text-gray-400 truncate">{p.titulo}</span>
+            {/* Fora do grupo o titulo vem aqui, sob o cliente. Dentro dele o
+                titulo JA e a primeira linha, e repeti-lo seria dizer duas vezes. */}
+            {!dentroDeGrupo && (
+              <span className="text-[11px] text-gray-400 truncate">{p.titulo}</span>
+            )}
             {/* Saldo que existe fisicamente e foi solto de propósito não se
                 cobra do PCP — sem isto o operador cobra produção de material
                 que está na prateleira. */}

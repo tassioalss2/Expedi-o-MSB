@@ -367,6 +367,19 @@ def _dias(iso: Optional[str]) -> Optional[int]:
     return max(0, (datetime.now(timezone.utc) - d).days)
 
 
+def _morreu_com_a_ov(ov: Optional[dict], fonte: str) -> bool:
+    """A pendência acabou junto com a OV?
+
+    Só na venda outbound (`fonte == "pedido"`): ali a pendência MORA na OV, e OV
+    cancelada é venda cancelada. Na venda do CRM a OV cancelada é história — a
+    venda segue de pé e o saldo merece OV nova, que é o que `_acao` faz.
+
+    Mesma regra do bloqueio em `_acao`, dita uma vez só para as duas não
+    divergirem.
+    """
+    return bool(ov) and fonte == "pedido" and ov.get("status") == "CANCELADO"
+
+
 def _acao(ov: Optional[dict], fonte: str = "oportunidade") -> tuple:
     """(acao, motivo_bloqueio) para a pendência cuja OV é `ov` (None = sem OV)."""
     if not ov:
@@ -502,7 +515,8 @@ def _ov_por_ids(db, ids: list) -> dict:
         return {}
     out: dict = {}
     for i in range(0, len(ids), 40):
-        rows = db.table("pedidos").select("id, numero_pedido, status, remessa_numero, cliente_id")\
+        rows = db.table("pedidos").select("id, numero_pedido, status, remessa_numero, cliente_id, "
+                                   "atualizado_em")\
             .in_("id", ids[i:i + 40]).execute().data
         for r in rows:
             out[r["id"]] = r
@@ -539,7 +553,8 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         opps = []
     try:
         peds = db.table("pedidos").select(
-            "id, numero_pedido, status, cliente_id, canal, pendencia, remessa_numero, criado_em"
+            "id, numero_pedido, status, cliente_id, canal, pendencia, remessa_numero, criado_em, "
+            "atualizado_em"
         ).not_is("pendencia", "null").execute().data
     except Exception:
         peds = []
@@ -865,8 +880,18 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "prioridade_em": pend.get("prioridade_em"),
         "decidido_em": pend.get("decidido_em"),
         "dias_parada": _dias(pend.get("decidido_em")),
-        "resolvido_em": pend.get("resolvido_em"),
-        "resolucao": pend.get("resolucao"),
+        # OV cancelada encerra a pendência: a venda não existe mais, então não há
+        # saldo a entregar nem o que cobrar do PCP. Ela ficava na lista de
+        # abertas só para dizer "bloqueada" — ocupando a fila de material e
+        # somando R$ 6.350 ao "parado esperando material" que ninguém espera
+        # (caso da OV016609, DELTA). Vai para o histórico, não some.
+        #
+        # É derivado, não gravado: o dia em que a OV for reaberta a pendência
+        # volta sozinha, sem ninguém ter de desfazer nada.
+        "resolvido_em": (pend.get("resolvido_em")
+                         or (ov.get("atualizado_em") if _morreu_com_a_ov(ov, fonte) else None)),
+        "resolucao": (pend.get("resolucao")
+                      or ("OV_CANCELADA" if _morreu_com_a_ov(ov, fonte) else None)),
         "acao_liberar": acao,
         "pode_liberar": bool(acao),
         "motivo_bloqueio": bloqueio,
