@@ -1737,16 +1737,27 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
   const [motivo, setMotivo] = useState('')
   const [valorFrete, setValorFrete] = useState(pedido.valor_frete ? String(pedido.valor_frete) : '')
   const novoEhCif = tipoFrete === 'CIF_COM_VALOR' || tipoFrete === 'CIF_SEM_VALOR'
-  const valorFreteOk = !novoEhCif || Number(valorFrete) > 0
   const mesmoTipo = tipoFrete === tipoAtual
   const valorMudou = Number(valorFrete) !== Number(pedido.valor_frete || 0)
   const mudouAlgo = !mesmoTipo || (novoEhCif && valorMudou)
+  const temValor = Number(valorFrete) > 0
+  // No CIF o valor quase nunca existe na hora de trocar o tipo: quem troca para
+  // CIF troca porque VAI cotar. Exigir o numero aqui obrigava a inventar um ou a
+  // desistir da troca — e o tipo de frete ficava errado no controle.
+  //
+  // Continua obrigatorio em dois casos: quando so o valor mudaria (mesmo tipo) e
+  // quando a OV ja faturou, porque ai o frete esta na face da nota.
+  const jaFaturou = !!pedido.numero_nf
+  const valorObrigatorio = novoEhCif && (mesmoTipo || jaFaturou)
+  const valorFreteOk = !valorObrigatorio || temValor
+  const vaiCotarDepois = novoEhCif && !mesmoTipo && !jaFaturou && !temValor
 
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/alterar-tipo-frete`, {
       tipo_frete: tipoFrete,
       motivo: motivo.trim(),
-      valor_frete: novoEhCif ? Number(valorFrete) : null,
+      // Vazio vai como null, nao como 0: zero no CIF se le como frete de graca.
+      valor_frete: novoEhCif && temValor ? Number(valorFrete) : null,
     }),
     onSuccess: (res) => {
       const d = res.data
@@ -1796,15 +1807,25 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
 
           {novoEhCif && (
             <div>
-              <label className="text-sm font-medium text-gray-700">Valor do frete (R$) *</label>
+              <label className="text-sm font-medium text-gray-700">
+                Valor do frete (R$) {valorObrigatorio ? '*' : <span className="font-normal text-gray-400">— opcional</span>}
+              </label>
               <input type="number" step="0.01" min="0" value={valorFrete}
                 onChange={e => setValorFrete(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+                className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
+                placeholder={valorObrigatorio ? '0,00' : 'deixe em branco se ainda vai cotar'} />
               <p className="text-[11px] text-gray-400 mt-1">
                 {tipoFrete === 'CIF_COM_VALOR'
                   ? 'CIF com valor: o frete está embutido na NF e é ressarcido pelo cliente.'
                   : 'CIF sem valor: o frete não está na NF — é custo nosso e sai do faturamento.'}
               </p>
+              {valorObrigatorio && !temValor && (
+                <p className="text-[11px] text-amber-700 mt-1">
+                  {mesmoTipo
+                    ? 'O tipo não mudou, então só o valor teria o que alterar — informe-o.'
+                    : 'Esta OV já faturou: o frete entra no valor da nota, então ele é obrigatório aqui.'}
+                </p>
+              )}
             </div>
           )}
 
@@ -1814,6 +1835,16 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
               placeholder="Ex.: Tipo de frete informado incorretamente na OV..." autoFocus />
           </div>
+
+          {/* Sem valor a OV vai cotar — e ela PRECISA ir, senao ficaria pronta
+              para faturar e o faturamento a recusaria por falta do frete. */}
+          {vaiCotarDepois && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-900">
+              Sem o valor, a OV vai para <strong>Cotação de frete</strong> — que é onde ela
+              deve estar até você cotar. Nada fatura sem o frete do CIF, então o controle
+              não se perde.
+            </div>
+          )}
 
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
             {mesmoTipo

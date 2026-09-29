@@ -243,7 +243,14 @@ def alterar_tipo_frete(
         raise HTTPException(status_code=422, detail="Informe o motivo da alteração do tipo de frete")
 
     db = get_service_db()
-    pedido = db.table("pedidos").select("numero_pedido,status,tipo_frete,valor_frete").eq("id", str(pedido_id)).single().execute().data
+    # `numero_nf` e `valor_produtos` fazem parte da decisão, não são enfeite: é
+    # com eles que se sabe se a OV já faturou (aí o frete entra na face da nota).
+    # Sem eles no select, `pedido.get("numero_nf")` era sempre None e o recálculo
+    # de `valor_nf` abaixo — escrito justamente por causa da OV016168, que ficou
+    # R$ 102,01 fora do faturamento de agosto — nunca chegou a rodar.
+    pedido = db.table("pedidos").select(
+        "numero_pedido,status,tipo_frete,valor_frete,numero_nf,valor_produtos"
+    ).eq("id", str(pedido_id)).single().execute().data
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
 
@@ -251,17 +258,37 @@ def alterar_tipo_frete(
     frete_novo = payload.tipo_frete.value
     mesmo_tipo = frete_anterior == frete_novo
 
-    # Valor do frete: obrigatório para CIF; FOB zera (cliente paga, não vai na NF).
+    # Valor do frete no CIF: quase sempre ele ainda NÃO existe na hora de mudar o
+    # tipo. Quem muda para CIF muda porque vai cotar, e a cotação é o passo
+    # seguinte — exigir o valor aqui obrigava a inventar um número ou a desistir
+    # da mudança, e aí o tipo de frete da OV ficava errado no controle.
+    #
+    # Então o valor é opcional, e sem ele a OV vai para "Cotação de frete", que
+    # é onde ela deve estar. O controle não se perde: `registrar_faturamento`
+    # continua exigindo o frete do CIF, então nada fatura sem cotação.
+    #
+    # Duas exceções, onde o valor continua obrigatório:
+    #   - o tipo não mudou: aí só o valor teria o que alterar
+    #   - a OV já faturou: o frete entra na face da nota (`valor_nf`), e mexer
+    #     no tipo sem o valor deixaria o total brigando com o D365
     eh_cif = frete_novo in (TipoFrete.CIF_COM_VALOR.value, TipoFrete.CIF_SEM_VALOR.value)
+    valor_frete_novo = None
     if eh_cif:
-        if payload.valor_frete is None or payload.valor_frete <= 0:
-            raise HTTPException(status_code=422, detail="Informe o valor do frete para o tipo CIF")
-        valor_frete_novo = round(float(payload.valor_frete), 2)
+        if payload.valor_frete is not None and payload.valor_frete > 0:
+            valor_frete_novo = round(float(payload.valor_frete), 2)
+        elif mesmo_tipo:
+            raise HTTPException(status_code=422, detail=(
+                "O tipo de frete não mudou — informe o valor, que é o que sobraria "
+                "para alterar."))
+        elif pedido.get("numero_nf"):
+            raise HTTPException(status_code=422, detail=(
+                "Esta OV já faturou: o frete do CIF entra no valor da nota, então ele "
+                "é obrigatório aqui para o total não divergir do D365."))
     else:
         valor_frete_novo = 0.0
 
     frete_anterior_valor = float(pedido.get("valor_frete") or 0)
-    if mesmo_tipo and abs(valor_frete_novo - frete_anterior_valor) < 0.005:
+    if mesmo_tipo and abs((valor_frete_novo or 0) - frete_anterior_valor) < 0.005:
         raise HTTPException(status_code=400, detail="Nada foi alterado — mude o tipo ou o valor do frete.")
 
     uid = _get_usuario_real(str(usuario.id))
@@ -273,7 +300,11 @@ def alterar_tipo_frete(
     }
     agora = _agora()
 
-    def _brl(v: float) -> str:
+    def _brl(v) -> str:
+        # None = ainda não cotado. Dizer isso é melhor do que escrever "R$ 0,00",
+        # que no histórico se lê como frete de graça.
+        if v is None:
+            return "a cotar"
         return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     update_frete: dict = {
@@ -288,7 +319,7 @@ def alterar_tipo_frete(
     # e o valor_nf ficou no total antigo — R$ 102,01 a menos no faturamento de agosto
     # contra o D365.
     valor_produtos = float(pedido.get("valor_produtos") or 0)
-    if pedido.get("numero_nf") and valor_produtos > 0:
+    if pedido.get("numero_nf") and valor_produtos > 0 and valor_frete_novo is not None:
         update_frete["valor_nf"] = round(valor_produtos + valor_frete_novo, 2)
     db.table("pedidos").update(update_frete).eq("id", str(pedido_id)).execute()
 
@@ -304,9 +335,15 @@ def alterar_tipo_frete(
         # coluna faturaria uma NF com a transportadora errada.
         destino = (StatusPedido.EM_COTACAO_FRETE.value if eh_cif
                    else StatusPedido.AGUARD_TRANSPORTADORA.value)
-        if pedido["status"] in (StatusPedido.EM_COTACAO_FRETE.value,
-                                StatusPedido.AGUARD_TRANSPORTADORA.value) \
-                and pedido["status"] != destino:
+        # Virou CIF e o valor ficou para depois: a OV TEM de ir cotar, mesmo que
+        # estivesse pronta para faturar. Sem isso ela ficaria em "Aguardando
+        # faturamento" e o faturamento a recusaria por falta do frete — parada
+        # sem ninguém saber por quê.
+        origens = [StatusPedido.EM_COTACAO_FRETE.value,
+                   StatusPedido.AGUARD_TRANSPORTADORA.value]
+        if eh_cif and valor_frete_novo is None:
+            origens.append(StatusPedido.AGUARD_FATURAMENTO.value)
+        if pedido["status"] in origens and pedido["status"] != destino:
             from app.services.inventario_service import alterar_status
             alterar_status(
                 str(pedido_id), destino, usuario,
