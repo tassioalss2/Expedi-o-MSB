@@ -1228,6 +1228,12 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             "aguardando_estoque": any(m.get("aguardando_estoque") for m in membros),
             "estoque_obs": next((m.get("estoque_obs") for m in membros
                                  if m.get("aguardando_estoque") and m.get("estoque_obs")), None),
+            # O que falta, ligado ao cadastro (v51). Sai do primeiro e-mail do
+            # grupo que tiver: o caso é um só, e o `triar_grupo` grava igual em
+            # todos — pegar o primeiro não escolhe versão nenhuma.
+            "estoque_itens": next((m.get("estoque_itens") for m in membros
+                                   if m.get("aguardando_estoque")
+                                   and m.get("estoque_itens")), None),
             "estoque_nome": quem.get(next((m.get("estoque_por") for m in membros
                                            if m.get("aguardando_estoque")), None)),
             "estoque_em": next((m.get("estoque_em") for m in membros
@@ -1445,11 +1451,38 @@ def conversa(chave: str) -> list[dict]:
     return msgs
 
 
+def _itens_de_estoque(itens):
+    """Normaliza o que falta: so item com produto do cadastro.
+
+    Quantidade vazia fica None e nao 0: "falta o 51382, nao sei quanto" e uma
+    informacao legitima, e gravar 0 diria que nao falta nada.
+    """
+    if not itens:
+        return None
+    saida = []
+    for i in itens:
+        pid = str((i or {}).get("produto_id") or "").strip()
+        if not pid:
+            continue
+        try:
+            qtd = float((i or {}).get("qtd") or 0)
+        except (TypeError, ValueError):
+            qtd = 0
+        saida.append({
+            "produto_id": pid,
+            "codigo": (str((i or {}).get("codigo") or "").strip() or None),
+            "descricao": (str((i or {}).get("descricao") or "").strip() or None),
+            "qtd": qtd if qtd > 0 else None,
+        })
+    return saida or None
+
+
 def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
           observacao: Optional[str] = None, cliente_id: Optional[str] = None,
           em_tratativa: Optional[bool] = None,
           aguardando_estoque: Optional[bool] = None,
-          estoque_obs: Optional[str] = None) -> dict:
+          estoque_obs: Optional[str] = None,
+          estoque_itens: Optional[list] = None) -> dict:
     """O que uma pessoa decide sobre um e-mail. É o campo humano do registro."""
     db = get_service_db()
     reg = db.table("licitacao_entrada").select("*").eq("id", entrada_id).execute().data
@@ -1484,6 +1517,12 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
         # sobre um caso que ja recebeu material vira ruido.
         campos["estoque_obs"] = (estoque_obs or "").strip() or None \
             if aguardando_estoque else None
+        # O que falta, agora ligado ao cadastro (v51). Texto livre não dizia ao
+        # app QUE produto é — e sem isso não dá para somar no comprometido nem
+        # cruzar com o PCP. Continua opcional: marcar a falta sem detalhar é
+        # melhor do que não marcar.
+        campos["estoque_itens"] = _itens_de_estoque(estoque_itens) \
+            if aguardando_estoque else None
     if em_tratativa is not None:
         campos["em_tratativa"] = bool(em_tratativa)
         # `tratativa_manual` guarda que UMA PESSOA decidiu, e o que ela decidiu.
@@ -1494,7 +1533,18 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
         # alguem ainda esta com o caso.
         campos["tratativa_por"] = str(usuario.id) if em_tratativa else None
         campos["tratativa_em"] = _agora() if em_tratativa else None
-    db.table("licitacao_entrada").update(campos).eq("id", entrada_id).execute()
+    try:
+        db.table("licitacao_entrada").update(campos).eq("id", entrada_id).execute()
+    except Exception:
+        # Migração v51 pendente: a coluna `estoque_itens` ainda não existe no
+        # banco, e o deploy do código chega antes de alguém rodar o SQL. Sem
+        # este fallback, marcar "sem estoque" pararia de funcionar nesse
+        # intervalo — quebrar o que já existia para entregar o que é novo é o
+        # pior jeito de subir uma migração.
+        if "estoque_itens" not in campos:
+            raise
+        campos.pop("estoque_itens")
+        db.table("licitacao_entrada").update(campos).eq("id", entrada_id).execute()
     return db.table("licitacao_entrada").select("*").eq("id", entrada_id).execute().data[0]
 
 
@@ -1502,7 +1552,8 @@ def triar_grupo(chave: str, usuario: UsuarioOut, situacao: Optional[str] = None,
                 observacao: Optional[str] = None, cliente_id: Optional[str] = None,
                 em_tratativa: Optional[bool] = None,
                 aguardando_estoque: Optional[bool] = None,
-                estoque_obs: Optional[str] = None) -> dict:
+                estoque_obs: Optional[str] = None,
+                estoque_itens: Optional[list] = None) -> dict:
     """A mesma decisão, aplicada à nota de empenho inteira.
 
     É como o time trabalha: resolve a NE, não o e-mail. A observação fica no
@@ -1516,7 +1567,7 @@ def triar_grupo(chave: str, usuario: UsuarioOut, situacao: Optional[str] = None,
     for pos, r in enumerate(regs):
         triar(r["id"], usuario, situacao=situacao, cliente_id=cliente_id,
               em_tratativa=em_tratativa, aguardando_estoque=aguardando_estoque,
-              estoque_obs=estoque_obs,
+              estoque_obs=estoque_obs, estoque_itens=estoque_itens,
               observacao=observacao if pos == 0 else None)
     return {"chave": chave, "afetados": len(regs)}
 

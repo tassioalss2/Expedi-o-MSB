@@ -164,6 +164,8 @@ type Card = {
   /** Parado por falta de material — marca de gente, nao deduzida de saldo. */
   aguardando_estoque: boolean
   estoque_obs: string | null
+  /** O que falta, ligado ao cadastro: [{produto_id, codigo, descricao, qtd}]. */
+  estoque_itens: Array<{ produto_id: string; codigo: string | null; descricao: string | null; qtd: number | null }> | null
   estoque_nome: string | null
   estoque_em: string | null
   assunto: string
@@ -358,7 +360,13 @@ function DetalheNumero({ metrica, onFechar, onAbrirCaso }: {
                 title={[c.estoque_obs, c.estoque_nome && `marcado por ${c.estoque_nome}`,
                         c.estoque_em && fmtMomento(c.estoque_em)].filter(Boolean).join(' · ')}>
                 <Package className="h-3 w-3" />
-                {c.estoque_obs ? `sem estoque: ${c.estoque_obs}` : 'aguardando estoque'}
+                {/* O PRODUTO vem antes da observacao: ele e o que se cobra do
+                    PCP. A frase antiga ("Todos", "51394 - 25 UNID") fica como
+                    fallback dos casos marcados antes da v51. */}
+                {(c.estoque_itens || []).length > 0
+                  ? `sem estoque: ${(c.estoque_itens || []).map(i =>
+                      i.qtd ? `${i.codigo} (${i.qtd})` : i.codigo).join(', ')}`
+                  : c.estoque_obs ? `sem estoque: ${c.estoque_obs}` : 'aguardando estoque'}
               </span>
             )}
                     <span className={`text-[11px] ${c.dias_parados > 15 ? 'font-semibold text-red-700' : 'text-gray-500'}`}>
@@ -2391,10 +2399,11 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
    *  estoque nessa tela". O card tinha o botao e o detalhe nao — e o detalhe e
    *  onde a pessoa esta quando descobre que falta material, porque foi ler os
    *  itens do pedido. */
-  onEstoque: (v: boolean, obs?: string) => void
+  onEstoque: (v: boolean, obs?: string, itens?: any[]) => void
   salvando: boolean
 }) {
   const [nota, setNota] = useState('')
+  const [pedindoFalta, setPedindoFalta] = useState(false)
   const prio = PRIORIDADE[c.prioridade] || PRIORIDADE[5]!
   const hoje = new Date().toISOString().slice(0, 10)
 
@@ -2657,8 +2666,7 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
               <button
                 onClick={() => {
                   if (c.aguardando_estoque) return onEstoque(false)
-                  const obs = window.prompt('O que está faltando? (opcional)') ?? ''
-                  onEstoque(true, obs.trim() || undefined)
+                  setPedindoFalta(true)
                 }}
                 disabled={salvando}
                 title={c.aguardando_estoque
@@ -2701,6 +2709,12 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
           </div>
         </div>
       </div>
+
+      {pedindoFalta && (
+        <ModalFaltaDeMaterial
+          onFechar={() => setPedindoFalta(false)}
+          onConfirmar={(itens, obs) => { onEstoque(true, obs, itens); setPedindoFalta(false) }} />
+      )}
     </div>
   )
 }
@@ -2711,14 +2725,16 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
   onTriar: (situacao: string) => void
   onNota: (texto: string) => void
   onTratativa: (v: boolean) => void
-  /** Marca/desmarca "parado por falta de material", com o que falta em texto. */
-  onEstoque: (v: boolean, obs?: string) => void
+  /** Marca/desmarca "parado por falta de material", com o que falta ligado ao
+   *  cadastro (produto + quantidade) — texto livre nao dizia ao app que produto e. */
+  onEstoque: (v: boolean, obs?: string, itens?: any[]) => void
   onAbrir: () => void
   onPromover: () => void
   salvando: boolean
 }) {
   const sit = SITUACAO[c.situacao]
   const prio = PRIORIDADE[c.prioridade] || PRIORIDADE[5]!
+  const [pedindoFalta, setPedindoFalta] = useState(false)
 
   return (
     <div className={`rounded-xl border p-4 transition ${sit.cor}`}>
@@ -2982,8 +2998,7 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
         <button
           onClick={() => {
             if (c.aguardando_estoque) return onEstoque(false)
-            const obs = window.prompt('O que está faltando? (opcional)') ?? ''
-            onEstoque(true, obs.trim() || undefined)
+            setPedindoFalta(true)
           }}
           disabled={salvando}
           title={c.aguardando_estoque
@@ -3015,6 +3030,140 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
         </button>
       </div>
 
+      {pedindoFalta && (
+        <ModalFaltaDeMaterial
+          onFechar={() => setPedindoFalta(false)}
+          onConfirmar={(itens, obs) => { onEstoque(true, obs, itens); setPedindoFalta(false) }} />
+      )}
+    </div>
+  )
+}
+
+/** O que está faltando — produto do cadastro, e não uma frase.
+ *
+ *  Antes isto era um `window.prompt`, e o que sobrava no banco nos 10 casos
+ *  marcados era: "51382", "51394 - 25 UNID", "Todos", e duas vezes nada. O app
+ *  não sabia de que produto se tratava, então não conseguia somar no
+ *  comprometido, cruzar com o PCP nem mostrar a falta junto das pendências.
+ *
+ *  Escolher fica opcional de propósito: marcar "sem estoque" sem detalhar é
+ *  melhor do que não marcar. O campo de observação continua, para o que não é
+ *  produto ("aguardando posição do PCP"). */
+function ModalFaltaDeMaterial({ onFechar, onConfirmar }: {
+  onFechar: () => void
+  onConfirmar: (itens: any[], obs?: string) => void
+}) {
+  const [busca, setBusca] = useState('')
+  const [escolhidos, setEscolhidos] = useState<any[]>([])
+  const [obs, setObs] = useState('')
+
+  const { data: produtos = [], isError } = useQuery<any[]>({
+    queryKey: ['produtos-catalogo'],
+    queryFn: () => api.get('/produtos?limite=2000').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const achados = useMemo(() => {
+    const b = busca.trim().toLowerCase()
+    if (b.length < 2) return []
+    return (produtos as any[])
+      .filter(p => `${p.codigo || ''} ${p.descricao || ''}`.toLowerCase().includes(b))
+      .filter(p => !escolhidos.some(e => e.produto_id === p.id))
+      .slice(0, 8)
+  }, [produtos, busca, escolhidos])
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+      onClick={onFechar}>
+      <div className="w-full max-w-lg rounded-2xl bg-white" onClick={e => e.stopPropagation()}>
+        <div className="border-b p-5">
+          <h2 className="text-lg font-bold text-gray-800">O que está faltando?</h2>
+          <p className="mt-0.5 text-[13px] text-gray-500">
+            Escolha o produto do cadastro. É isso que permite ao app cruzar com o PCP
+            depois — e é opcional: dá para marcar a falta sem detalhar.
+          </p>
+        </div>
+
+        <div className="space-y-3 p-5">
+          {escolhidos.length > 0 && (
+            <div className="space-y-1.5">
+              {escolhidos.map((e, i) => (
+                <div key={e.produto_id} className="flex items-center gap-2 rounded-lg border border-gray-200 px-2.5 py-1.5">
+                  <div className="min-w-0 flex-1">
+                    <span className="font-mono text-sm font-medium text-gray-800">{e.codigo}</span>
+                    <span className="block truncate text-[11px] text-gray-500">{e.descricao}</span>
+                  </div>
+                  <input type="number" min="0" step="any" value={e.qtd ?? ''}
+                    onChange={ev => setEscolhidos(l => l.map((x, j) =>
+                      j === i ? { ...x, qtd: ev.target.value } : x))}
+                    placeholder="qtd"
+                    className="w-20 rounded-lg border border-gray-200 px-2 py-1 text-right text-sm" />
+                  <button onClick={() => setEscolhidos(l => l.filter((_, j) => j !== i))}
+                    className="text-gray-300 hover:text-red-500" title="tirar">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <p className="text-[11px] text-gray-400">
+                Quantidade em branco é legítima: "falta o 51382, não sei quanto".
+              </p>
+            </div>
+          )}
+
+          <div>
+            <input value={busca} onChange={e => setBusca(e.target.value)} autoFocus
+              placeholder="código ou descrição do produto…"
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+            {isError && (
+              <p className="mt-1 text-[11px] text-amber-700">
+                Não consegui ler o catálogo agora — dá para seguir só com a observação.
+              </p>
+            )}
+            {achados.length > 0 && (
+              <div className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-gray-200">
+                {achados.map(p => (
+                  <button key={p.id}
+                    onClick={() => {
+                      setEscolhidos(l => [...l, { produto_id: p.id, codigo: p.codigo,
+                                                  descricao: p.descricao, qtd: '' }])
+                      setBusca('')
+                    }}
+                    className="flex w-full items-baseline gap-2 border-b border-gray-50 px-2.5 py-1.5 text-left last:border-0 hover:bg-gray-50">
+                    <span className="font-mono text-sm text-gray-800">{p.codigo}</span>
+                    <span className="truncate text-[11px] text-gray-500">{p.descricao}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {busca.trim().length >= 2 && achados.length === 0 && !isError && (
+              <p className="mt-1 text-[11px] text-gray-400">
+                Nada com esse texto no catálogo.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="text-[11px] font-medium text-gray-500">
+              Observação <span className="font-normal text-gray-400">— opcional</span>
+            </label>
+            <input value={obs} onChange={e => setObs(e.target.value)}
+              placeholder="Ex.: aguardando posição do PCP"
+              className="mt-0.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t p-5">
+          <button onClick={onFechar} className="rounded-lg border px-4 py-2 text-sm">Cancelar</button>
+          <button
+            onClick={() => onConfirmar(
+              escolhidos.map(e => ({ produto_id: e.produto_id, codigo: e.codigo,
+                                     descricao: e.descricao, qtd: Number(e.qtd) || 0 })),
+              obs.trim() || undefined)}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500">
+            Marcar sem estoque
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -3078,7 +3227,7 @@ export function AbaCaixaEntrada() {
     mutationFn: ({ chave, situacao, observacao, em_tratativa, aguardando_estoque,
                    estoque_obs }:
       { chave: string; situacao?: string; observacao?: string; em_tratativa?: boolean
-        aguardando_estoque?: boolean; estoque_obs?: string }) =>
+        aguardando_estoque?: boolean; estoque_obs?: string; estoque_itens?: any[] }) =>
       api.post(`/licitacoes/entrada/grupo/triar?chave=${encodeURIComponent(chave)}`,
         { situacao: situacao || undefined, observacao, em_tratativa,
           aguardando_estoque, estoque_obs }),
@@ -3307,8 +3456,9 @@ export function AbaCaixaEntrada() {
                       onTriar={s => triar.mutate({ chave: c.chave, situacao: s })}
                       onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
                       onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
-                      onEstoque={(v, obs) => triar.mutate({
-                        chave: c.chave, aguardando_estoque: v, estoque_obs: obs })}
+                      onEstoque={(v, obs, itens) => triar.mutate({
+                        chave: c.chave, aguardando_estoque: v, estoque_obs: obs,
+                        estoque_itens: itens })}
                       onAbrir={() => setDetalhe(c.chave)}
                       onPromover={() => setPromovendo(c)} />
                   ))}
@@ -3336,8 +3486,9 @@ export function AbaCaixaEntrada() {
             onNota={t => triar.mutate({ chave: c.chave, observacao: t })}
             onTratativa={v => triar.mutate({ chave: c.chave, em_tratativa: v })}
             onApagarNota={id => apagarNota.mutate(id)}
-            onEstoque={(v, obs) => triar.mutate({
-              chave: c.chave, aguardando_estoque: v, estoque_obs: obs })}
+            onEstoque={(v, obs, itens) => triar.mutate({
+              chave: c.chave, aguardando_estoque: v, estoque_obs: obs,
+                        estoque_itens: itens })}
             onPromover={() => setPromovendo(c)} />
         )
       })()}

@@ -246,6 +246,8 @@ class EntradaTriar(BaseModel):
     # fora da caixa de entrada de proposito (decisao de 04/09/2026).
     aguardando_estoque: Optional[bool] = None
     estoque_obs: Optional[str] = None
+    # O que falta, ligado ao cadastro: [{produto_id, codigo, descricao, qtd}]
+    estoque_itens: Optional[list] = None
 
 
 class ItemPromovido(DemandaItem):
@@ -422,7 +424,8 @@ def triar_entrada(entrada_id: UUID, payload: EntradaTriar,
     return licitacao_entrada_service.triar(
         str(entrada_id), usuario, payload.situacao, payload.observacao,
         str(payload.cliente_id) if payload.cliente_id else None,
-        payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs)
+        payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs,
+        payload.estoque_itens)
 
 
 @router.post("/entrada/grupo/triar")
@@ -432,7 +435,8 @@ def triar_grupo(chave: str, payload: EntradaTriar,
     return licitacao_entrada_service.triar_grupo(
         chave, usuario, payload.situacao, payload.observacao,
         str(payload.cliente_id) if payload.cliente_id else None,
-        payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs)
+        payload.em_tratativa, payload.aguardando_estoque, payload.estoque_obs,
+        payload.estoque_itens)
 
 
 class EntradaItemProduto(BaseModel):
