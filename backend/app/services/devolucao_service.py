@@ -54,6 +54,29 @@ def _limpa(v):
     return (str(v or "").strip() or None)
 
 
+def _igual(campo: str, novo, atual) -> bool:
+    """O valor que chegou é o mesmo que já está guardado?
+
+    Existe por causa da data: o motor manda "2026-09-16T08:51:19-03:00" e o
+    banco devolve "2026-09-16T11:51:19+00:00" — o mesmo instante escrito de
+    outro jeito. Comparando como texto, TODA rodada via mudança e escrevia uma
+    linha de histórico falsa, duas vezes por dia, para sempre.
+
+    Lista compara como conjunto pelo mesmo motivo: a ordem não é informação.
+    """
+    if campo.endswith("_em"):
+        def inst(v):
+            try:
+                return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return None
+        a, b = inst(novo), inst(atual)
+        return a is not None and a == b
+    if isinstance(novo, list) or isinstance(atual, list):
+        return set(novo or []) == set(atual or [])
+    return novo == atual
+
+
 def registrar_do_email(dados: dict) -> dict:
     """O motor entrega uma conversa; aqui ela vira (ou atualiza) um caso.
 
@@ -97,7 +120,7 @@ def registrar_do_email(dados: dict) -> dict:
         for k in ("assunto", "remetente", "recebido_em", "numeros_nf",
                   "cliente_codigo", "cliente_cnpj", "produtos"):
             novo = campos.get(k)
-            if novo and novo != atual.get(k):
+            if novo and not _igual(k, novo, atual.get(k)):
                 update[k] = novo
                 mudou.append(k)
         if campos["mensagens"] > int(atual.get("mensagens") or 0):
