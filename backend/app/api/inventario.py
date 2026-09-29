@@ -223,7 +223,10 @@ class AlterarTransportadoraRequest(BaseModel):
 
 class AlterarTipoFreteRequest(BaseModel):
     tipo_frete: TipoFrete
-    motivo: str
+    # Opcional: exigir texto para toda troca de frete fazia a pessoa digitar
+    # "correcao" so para o botao liberar, e um campo assim nao informa nada a
+    # quem le depois. Quando ha motivo de verdade ele entra na ocorrencia.
+    motivo: Optional[str] = None
     valor_frete: Optional[float] = None  # obrigatório quando o novo tipo é CIF
 
 
@@ -238,9 +241,7 @@ def alterar_tipo_frete(
     from app.core.database import get_service_db
     from app.services.inventario_service import _agora, _get_usuario_real
 
-    motivo = payload.motivo.strip()
-    if not motivo:
-        raise HTTPException(status_code=422, detail="Informe o motivo da alteração do tipo de frete")
+    motivo = (payload.motivo or "").strip()
 
     db = get_service_db()
     # `numero_nf` e `valor_produtos` fazem parte da decisão, não são enfeite: é
@@ -354,13 +355,18 @@ def alterar_tipo_frete(
             etapa_refeita = destino
 
     linha_valor = f"\n• Valor do frete: {_brl(valor_frete_novo)}" if eh_cif else ""
+    # Sem motivo a linha inteira sai do texto: "• Motivo:" vazio na ocorrência
+    # parece campo que alguém esqueceu de preencher, e não escolha de não
+    # escrever nada.
+    linha_motivo = f"• Motivo: {motivo}" if motivo else ""
+    sufixo_motivo = f" {motivo}" if motivo else ""
     if mesmo_tipo:
         tipo_ocorrencia = "Correção de Valor do Frete"
         titulo_desc = (
             f"Valor do frete corrigido na OV {pedido['numero_pedido']} (tipo {labels.get(frete_novo, frete_novo)} mantido).\n"
             f"• De: {_brl(frete_anterior_valor)}\n"
             f"• Para: {_brl(valor_frete_novo)}\n"
-            f"• Motivo: {motivo}"
+            f"{linha_motivo}"
         )
     else:
         tipo_ocorrencia = "Alteração de Tipo de Frete"
@@ -368,12 +374,13 @@ def alterar_tipo_frete(
             f"Tipo de frete alterado na OV {pedido['numero_pedido']}.\n"
             f"• De: {labels.get(frete_anterior, frete_anterior)} ({_brl(frete_anterior_valor)})\n"
             f"• Para: {labels.get(frete_novo, frete_novo)}{linha_valor}\n"
-            f"• Motivo: {motivo}"
+            f"{linha_motivo}"
         )
     db.table("ocorrencias").insert({
         "pedido_id": str(pedido_id),
         "tipo": tipo_ocorrencia,
-        "descricao": titulo_desc,
+        # rstrip: sem motivo a descricao terminava numa linha em branco.
+        "descricao": titulo_desc.rstrip(),
         "responsavel_id": uid,
         "status": "ABERTA",
         "criado_em": agora,
@@ -386,11 +393,11 @@ def alterar_tipo_frete(
         "usuario_id": uid,
         "observacao": (
             f"Valor do frete corrigido ({labels.get(frete_novo, frete_novo)}): "
-            f"{_brl(frete_anterior_valor)} → {_brl(valor_frete_novo)}. {motivo}"
+            f"{_brl(frete_anterior_valor)} → {_brl(valor_frete_novo)}.{sufixo_motivo}"
             if mesmo_tipo else
             f"Tipo de frete alterado: {labels.get(frete_anterior, frete_anterior)} "
             f"→ {labels.get(frete_novo, frete_novo)}"
-            f"{' (' + _brl(valor_frete_novo) + ')' if eh_cif else ''}. {motivo}"
+            f"{' (' + _brl(valor_frete_novo) + ')' if eh_cif else ''}.{sufixo_motivo}"
         ),
         "criado_em": agora,
     }).execute()

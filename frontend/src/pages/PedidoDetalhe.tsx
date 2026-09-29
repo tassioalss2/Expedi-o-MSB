@@ -1755,7 +1755,7 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/alterar-tipo-frete`, {
       tipo_frete: tipoFrete,
-      motivo: motivo.trim(),
+      motivo: motivo.trim() || null,
       // Vazio vai como null, nao como 0: zero no CIF se le como frete de graca.
       valor_frete: novoEhCif && temValor ? Number(valorFrete) : null,
     }),
@@ -1830,10 +1830,16 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
           )}
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Motivo da alteração *</label>
+            <label className="text-sm font-medium text-gray-700">
+              Motivo da alteração <span className="font-normal text-gray-400">— opcional</span>
+            </label>
             <textarea rows={3} value={motivo} onChange={e => setMotivo(e.target.value)}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1"
               placeholder="Ex.: Tipo de frete informado incorretamente na OV..." autoFocus />
+            <p className="text-[11px] text-gray-400 mt-1">
+              A ocorrência é criada de qualquer jeito, com o tipo de antes e o de agora.
+              Escreva só quando houver algo que esses dois números não contem.
+            </p>
           </div>
 
           {/* Sem valor a OV vai cotar — e ela PRECISA ir, senao ficaria pronta
@@ -1855,7 +1861,7 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
         <div className="p-5 border-t flex gap-2 justify-end">
           <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
           <button onClick={() => mutation.mutate()}
-            disabled={mutation.isPending || !mudouAlgo || !motivo.trim() || !valorFreteOk}
+            disabled={mutation.isPending || !mudouAlgo || !valorFreteOk}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-500">
             {mutation.isPending ? 'Salvando...' : 'Confirmar Alteração'}
           </button>
