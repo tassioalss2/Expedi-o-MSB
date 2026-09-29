@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.deps import get_current_user
@@ -209,8 +209,18 @@ def liberar_estoque(demanda_id: UUID, payload: DemandaEstoqueLiberar, _: Usuario
 
 
 @router.delete("/demandas/{demanda_id}")
-def excluir_demanda(demanda_id: UUID, _: UsuarioOut = Depends(get_current_user)):
-    return licitacao_demanda_service.excluir_demanda(str(demanda_id))
+def excluir_demanda(demanda_id: UUID,
+                    motivo: str = Query("", description="Obrigatório quando já há NF"),
+                    cancelar_ovs: bool = Query(False),
+                    usuario: UsuarioOut = Depends(get_current_user)):
+    """Remove a demanda do painel.
+
+    Sem nota fiscal no caminho, remove direto. Com nota, devolve 409 listando as
+    OVs para a tela mostrar — e remove quando vier o motivo. `cancelar_ovs`
+    cancela também as OVs geradas, que é o "remover toda a informação".
+    """
+    return licitacao_demanda_service.excluir_demanda(
+        str(demanda_id), motivo=motivo, cancelar_ovs=cancelar_ovs, usuario=usuario)
 
 
 # ── Caixa de entrada da licitação (a triagem que saiu do Excel) ─────────────────

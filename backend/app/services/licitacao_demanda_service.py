@@ -1033,47 +1033,118 @@ def atualizar_demanda(demanda_id: str, payload: DemandaUpdate) -> dict:
     return obter_demanda(demanda_id)
 
 
-def excluir_demanda(demanda_id: str) -> dict:
-    """Apaga a demanda — MENOS quando ela já virou nota fiscal.
+def excluir_demanda(demanda_id: str, motivo: Optional[str] = None,
+                    cancelar_ovs: bool = False, usuario=None) -> dict:
+    """Apaga a demanda. Com nota fiscal no caminho, exige que se diga por quê.
 
-    Apagar era só `ativo = False`, sem olhar a OV gerada, e isso produziu um
-    estrago real em 09/09/2026: a demanda 19449/2026 nasceu com o item a R$ 385,
-    gerou a OV016674 com a NF 20730, foi apagada dois minutos depois e recriada
-    com o valor certo (R$ 387,85), gerando a OV016675 e a NF 20733. Resultado:
-    DUAS notas fiscais para o mesmo comunicado de uso, e os dois painéis
-    discordando — o da licitação segue o `ativo` e mostrava uma; o faturamento da
-    empresa lê `pedidos` e mostrava as duas.
+    A trava original recusava e ponto. Na prática isso não impedia o estrago —
+    impedia o trabalho: a operadora lançava um comunicado errado, clicava em
+    Remover, nada acontecia (a tela nem mostrava o erro) e alguém tinha de
+    apagar no banco. O card errado ficava dias no painel.
 
-    Apagar um card não cancela uma nota fiscal. Quando existe OV faturada, a
-    exclusão é recusada e a mensagem diz o que fazer: cancelar a OV (ato
-    consciente, com rastro) ou corrigir a demanda em vez de recriá-la.
+    Agora a regra é outra: a nota existir não bloqueia, mas obriga a olhar. A
+    resposta 409 lista as OVs e as notas, a tela mostra isso e pede o motivo, e
+    só então a exclusão acontece — com o motivo gravado na própria demanda.
+
+    `cancelar_ovs` fecha o ciclo que ela pediu ("remover toda a informação"):
+    apagar só o card deixava a OV e a NF vivas no faturamento, que é meia
+    remoção e confunde mais do que ajuda.
+
+    O que continua valendo do estrago de 09/09/2026 (a demanda 19449/2026 foi
+    apagada e RECRIADA, gerando NF 20730 e NF 20733 para o mesmo material): o
+    perigo nunca foi apagar, foi apagar e recriar. Por isso o motivo é
+    obrigatório e fica escrito — é ele que faz a próxima pessoa parar.
+
+    O caso, por extenso: a demanda 19449/2026 nasceu com o item a R$ 385, gerou
+    a OV016674 com a NF 20730, foi apagada dois minutos depois e recriada com o
+    valor certo (R$ 387,85), gerando a OV016675 e a NF 20733. Duas notas fiscais
+    para o mesmo comunicado de uso, e os dois painéis discordando — o da
+    licitação segue o `ativo` e mostrava uma; o faturamento lê `pedidos` e
+    mostrava as duas.
     """
     db = get_service_db()
-    d = db.table("licitacao_demandas").select("numero, gerado_ref, ovs")\
+    d = db.table("licitacao_demandas").select("numero, gerado_ref, ovs, observacao")\
         .eq("id", demanda_id).execute().data
-    if d:
-        refs = [str((o or {}).get("numero") or "") for o in (d[0].get("ovs") or [])
-                if isinstance(o, dict)]
-        if d[0].get("gerado_ref"):
-            refs.append(str(d[0]["gerado_ref"]))
-        refs = sorted({r for r in refs if r})
-        for k in range(0, len(refs), 100):
-            faturadas = [x for x in db.table("pedidos")
-                         .select("numero_pedido, numero_nf, status")
-                         .in_("numero_pedido", refs[k:k + 100]).execute().data
-                         if x.get("numero_nf") and x.get("status") != "CANCELADO"]
-            if faturadas:
-                nomes = ", ".join("%s (NF %s)" % (x["numero_pedido"], x["numero_nf"])
-                                  for x in faturadas)
-                raise HTTPException(
-                    409,
-                    "Esta demanda já virou nota fiscal: %s. Apagar o card não "
-                    "cancela a nota. Cancele a OV primeiro, ou corrija a demanda "
-                    "em vez de recriá-la — recriar gera uma segunda nota para o "
-                    "mesmo material." % nomes)
-    db.table("licitacao_demandas").update({"ativo": False, "atualizado_em": _agora()})\
-        .eq("id", demanda_id).execute()
-    return {"ok": True}
+    if not d:
+        raise HTTPException(404, "Demanda não encontrada.")
+
+    refs = [str((o or {}).get("numero") or "") for o in (d[0].get("ovs") or [])
+            if isinstance(o, dict)]
+    if d[0].get("gerado_ref"):
+        refs.append(str(d[0]["gerado_ref"]))
+    refs = sorted({r for r in refs if r})
+
+    faturadas = []
+    for k in range(0, len(refs), 100):
+        faturadas += [x for x in db.table("pedidos")
+                      .select("id, numero_pedido, numero_nf, status")
+                      .in_("numero_pedido", refs[k:k + 100]).execute().data
+                      if x.get("numero_nf") and x.get("status") != "CANCELADO"]
+
+    motivo = (motivo or "").strip()
+    if faturadas and len(motivo) < 5:
+        # 409 ESTRUTURADO, e não só uma frase: a tela precisa LISTAR o que
+        # existe para a pessoa decidir com o que está na mão. A versão antiga
+        # devolvia texto, o front não tinha onError, e o clique virava silêncio.
+        raise HTTPException(409, {
+            "tipo": "TEM_NOTA",
+            "msg": "Esta demanda já virou nota fiscal. Apagar o card não cancela "
+                   "a nota — para isso é preciso cancelar no D365. Diga o motivo "
+                   "para remover mesmo assim.",
+            "ovs": [{"numero": x["numero_pedido"], "nf": x["numero_nf"],
+                     "status": x["status"]} for x in faturadas],
+        })
+
+    canceladas = []
+    if cancelar_ovs and faturadas:
+        # "Remover toda a informação": o card sozinho deixava a OV contando no
+        # faturamento. Aqui elas saem juntas — e a movimentação diz de onde veio.
+        from app.services.inventario_service import _get_usuario_real
+        uid = None
+        try:
+            uid = _get_usuario_real(str(usuario.id)) if usuario else None
+        except Exception:
+            uid = None
+        for x in faturadas:
+            try:
+                db.table("pedidos").update({
+                    "status": "CANCELADO", "atualizado_em": _agora(),
+                }).eq("id", x["id"]).execute()
+            except Exception as exc:
+                print("nao cancelou a OV %s: %s" % (x.get("numero_pedido"), exc))
+                continue
+            # A OV JÁ está cancelada aqui. O registro entra depois e em try
+            # próprio: no ensaio a movimentação falhou por falta de usuario_id,
+            # a OV foi cancelada mesmo assim e o retorno disse que não — a tela
+            # teria mostrado "removida" sem contar que cancelou uma nota.
+            canceladas.append(x["numero_pedido"])
+            try:
+                db.table("movimentacoes").insert({
+                    "pedido_id": x["id"],
+                    "status_anterior": x.get("status"),
+                    "status_novo": "CANCELADO",
+                    "usuario_id": uid,
+                    "observacao": ("Cancelada junto com a remoção do comunicado de uso "
+                                   "%s. Motivo: %s" % (d[0].get("numero") or "—", motivo)),
+                    "criado_em": _agora(),
+                }).execute()
+            except Exception as exc:
+                print("OV %s cancelada, mas sem movimentacao: %s"
+                      % (x.get("numero_pedido"), exc))
+
+    # O motivo fica NA demanda, não só num log: é ele que faz a próxima pessoa
+    # parar antes de recriar o mesmo lançamento — que foi o erro de 09/09.
+    nota = "[removido em %s: %s%s]" % (
+        _agora()[:10], motivo or "sem nota fiscal envolvida",
+        (" — OV cancelada: %s" % ", ".join(canceladas)) if canceladas else "")
+    obs = (str(d[0].get("observacao") or "").strip() + " " + nota).strip()
+
+    db.table("licitacao_demandas").update({
+        "ativo": False, "observacao": obs, "atualizado_em": _agora(),
+    }).eq("id", demanda_id).execute()
+    return {"ok": True, "ovs_canceladas": canceladas,
+            "notas_que_seguem_validas": [x["numero_nf"] for x in faturadas
+                                         if x["numero_pedido"] not in canceladas]}
 
 
 def _itens_pedido(itens, rotulo: str) -> list:

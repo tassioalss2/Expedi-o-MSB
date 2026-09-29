@@ -1073,9 +1073,36 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
     staleTime: 300000,
     retry: false,
   })
+  // A recusa por nota fiscal vira uma SEGUNDA tela, com o que existe a vista.
+  // Antes a mutation nao tinha onError: o backend recusava com 409 e o clique
+  // virava silencio — a operadora achava o botao quebrado e pedia para alguem
+  // apagar no banco.
+  const [bloqueio, setBloqueio] = useState<{ msg: string; ovs: any[] } | null>(null)
   const excluir = useMutation({
-    mutationFn: () => api.delete(`/licitacoes/demandas/${id}`),
-    onSuccess: () => { toast.success('Demanda removida'); onChanged(); onClose() },
+    mutationFn: (opcoes?: { motivo?: string; cancelarOvs?: boolean }) =>
+      api.delete(`/licitacoes/demandas/${id}`, {
+        params: {
+          motivo: opcoes?.motivo || '',
+          cancelar_ovs: opcoes?.cancelarOvs ? true : false,
+        },
+      }),
+    onSuccess: (r: any) => {
+      const canceladas = r?.data?.ovs_canceladas || []
+      toast.success(canceladas.length
+        ? `Demanda removida e OV cancelada: ${canceladas.join(', ')}`
+        : 'Demanda removida')
+      setBloqueio(null)
+      onChanged()
+      onClose()
+    },
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      if (d && typeof d === 'object' && d.tipo === 'TEM_NOTA') {
+        setBloqueio({ msg: d.msg, ovs: d.ovs || [] })
+        return
+      }
+      toast.error(msgErro(e, 'Nao consegui remover a demanda'))
+    },
   })
   const [ovNum, setOvNum] = useState('')
   const vincular = useMutation({
@@ -1334,8 +1361,9 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
       </div>
 
       <div className="p-4 border-t flex items-center justify-between gap-2">
-        <button onClick={() => { if (confirm('Remover esta demanda do painel?')) excluir.mutate() }}
-          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600"><Trash2 size={15} /> Remover</button>
+        <button onClick={() => { if (confirm('Remover esta demanda do painel?')) excluir.mutate(undefined) }}
+          disabled={excluir.isPending}
+          className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-red-600 disabled:opacity-50"><Trash2 size={15} /> Remover</button>
         {!concluida && (
           <div className="flex gap-2">
             {d.tipo_operacao === 'COMUNICADO_USO' && (
@@ -1366,7 +1394,89 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
           </div>
         )}
       </div>
+
+      {bloqueio && (
+        <ConfirmaRemocaoComNota dados={bloqueio} onFechar={() => setBloqueio(null)}
+          removendo={excluir.isPending}
+          onConfirmar={(motivo, cancelarOvs) => excluir.mutate({ motivo, cancelarOvs })} />
+      )}
     </ModalBase>
+  )
+}
+
+/** A demanda ja virou nota. Em vez de recusar em silencio, mostra o que existe.
+ *
+ *  A trava antiga vinha do estrago de 09/09/2026: uma demanda apagada e
+ *  RECRIADA gerou duas notas para o mesmo material. Mas recusar nao impediu
+ *  aquilo — impediu o trabalho de quem lancou errado hoje. O perigo e apagar e
+ *  RECRIAR, entao o que esta tela faz e o certo: deixa apagar, mostra as notas,
+ *  pede o motivo por escrito e diz, com todas as letras, que nota fiscal se
+ *  cancela no D365 e nao aqui. */
+function ConfirmaRemocaoComNota({ dados, onFechar, onConfirmar, removendo }: {
+  dados: { msg: string; ovs: Array<{ numero: string; nf: string; status: string }> }
+  onFechar: () => void
+  onConfirmar: (motivo: string, cancelarOvs: boolean) => void
+  removendo: boolean
+}) {
+  const [motivo, setMotivo] = useState('')
+  const [cancelarOvs, setCancelarOvs] = useState(true)
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4"
+      onClick={onFechar}>
+      <div className="bg-white rounded-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b">
+          <h2 className="text-lg font-bold text-red-700">Esta demanda ja virou nota fiscal</h2>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+            <p className="text-xs font-medium text-red-900 mb-1.5">O que existe hoje:</p>
+            {dados.ovs.map(o => (
+              <p key={o.numero} className="text-sm font-mono text-red-900">
+                {o.numero} · NF {o.nf} <span className="text-[11px] font-sans text-red-700">({o.status})</span>
+              </p>
+            ))}
+          </div>
+
+          <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+            <input type="checkbox" checked={cancelarOvs}
+              onChange={e => setCancelarOvs(e.target.checked)} className="mt-0.5 rounded" />
+            <span>
+              Cancelar tambem a(s) OV(s) no app
+              <span className="block text-[11px] text-gray-500">
+                Sem isso o card sai do painel mas a OV continua contando no faturamento —
+                meia remocao, que confunde mais do que ajuda.
+              </span>
+            </span>
+          </label>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <strong>Isto nao cancela a nota fiscal.</strong> A NF existe na SEFAZ e so se
+            cancela no D365. Se a nota estava errada, cancele-a la primeiro.
+            E <strong>nao recrie</strong> o mesmo comunicado: corrigir o lancamento existente
+            evita a segunda nota para o mesmo material.
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Por que esta removendo? *</label>
+            <input value={motivo} onChange={e => setMotivo(e.target.value)} autoFocus
+              placeholder="Ex.: lancado no paciente errado, sera refeito pela operadora"
+              className="w-full border rounded-lg px-3 py-2 text-sm mt-1" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              Fica gravado na demanda — e o que faz a proxima pessoa parar antes de recriar.
+            </p>
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-2 justify-end">
+          <button onClick={onFechar} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
+          <button onClick={() => onConfirmar(motivo.trim(), cancelarOvs)}
+            disabled={motivo.trim().length < 5 || removendo}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium disabled:opacity-40 hover:bg-red-500">
+            {removendo ? 'Removendo...' : 'Remover mesmo assim'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
