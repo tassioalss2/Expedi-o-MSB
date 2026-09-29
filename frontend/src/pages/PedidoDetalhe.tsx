@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText, Truck, Pencil } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText, Truck, Pencil, AlertTriangle } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -1835,6 +1835,94 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
 }
 
 // ── Modal Alterar Transportadora ─────────────────────────────────────────────
+/** A SEFAZ rejeitou a nota: a OV troca de número e a logística fica de pé.
+ *
+ *  O que o D365 faz é matar a OV rejeitada e abrir outra. O que ele NÃO faz é
+ *  devolver o material para a prateleira — ele já está separado, conferido,
+ *  cubado e no pallet. Por isso aqui troca só o número: o registro é o mesmo,
+ *  então nada precisa ser copiado nem refeito.
+ */
+function ModalRejeicaoSefaz({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [novoNumero, setNovoNumero] = useState('')
+  const [motivo, setMotivo] = useState('')
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/rejeicao-sefaz`, {
+      novo_numero: novoNumero.trim().toUpperCase(),
+      motivo: motivo.trim(),
+    }),
+    onSuccess: () => {
+      toast.success(`OV trocada para ${novoNumero.trim().toUpperCase()} — separação e pallet mantidos.`)
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['ocorrencias'] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Não consegui trocar a OV'),
+  })
+
+  const pode = novoNumero.trim().length >= 3 && motivo.trim().length >= 5
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b">
+          <h2 className="text-lg font-bold text-rose-700">NF rejeitada pela SEFAZ</h2>
+          <p className="text-[13px] text-gray-500 mt-0.5">
+            A OV muda de número. A expedição não se refaz.
+          </p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-gray-50 rounded-lg p-3 text-sm">
+            <p className="text-gray-500 text-xs mb-1">OV atual</p>
+            <p className="font-bold text-gray-800 text-base">{pedido.numero_pedido}</p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Número da nova OV *</label>
+            <input value={novoNumero} onChange={e => setNovoNumero(e.target.value)}
+              placeholder="OV016952"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono uppercase" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              O número que o D365 gerou ao refazer a OV.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Motivo da rejeição *</label>
+            <input value={motivo} onChange={e => setMotivo(e.target.value)}
+              placeholder="Ex.: rejeição 539 — duplicidade de NF-e"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              Vai para o histórico da OV e abre uma ocorrência — é assim que dá para
+              saber depois quantas rejeições houve e por quê.
+            </p>
+          </div>
+
+          {/* O que NÃO acontece é tão importante quanto o que acontece: sem isto
+              a pessoa hesita, achando que vai perder a separação. */}
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+            <p className="font-medium mb-1">Continua tudo como está:</p>
+            <p>
+              itens, inventário, conferência, cubagem, caixas, pallet, transportadora e
+              frete. A OV segue em <strong>Aguardando faturamento</strong>, pronta para
+              registrar a nota nova — nada volta para a separação.
+            </p>
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-2">
+          <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Fechar</button>
+          <button onClick={() => mutation.mutate()} disabled={!pode || mutation.isPending}
+            className="flex-1 bg-rose-600 hover:bg-rose-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl py-2.5 text-sm font-medium">
+            {mutation.isPending ? 'Trocando…' : 'Trocar a OV'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ModalAlterarTransportadora({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [transportadoraId, setTransportadoraId] = useState('')
@@ -2733,7 +2821,7 @@ export function PedidoDetalhe() {
   // O pedido de transportadora ao cliente FOB, antes do faturamento.
   const [avisoColeta, setAvisoColeta] = useState<any>(null)
   const [cotacaoCif, setCotacaoCif] = useState<any>(null)
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'rejeicao_sefaz' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -3568,6 +3656,17 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
+              {/* A nota voltou rejeitada da SEFAZ. O D365 abre uma OV nova, mas
+                  o material já está separado, cubado e no pallet — refazer a
+                  expedição por um erro fiscal é trabalho jogado fora. Aqui só o
+                  NÚMERO troca; o resto fica onde está. */}
+              {status === 'AGUARD_FATURAMENTO' && (
+                <button onClick={() => setModal('rejeicao_sefaz')}
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-rose-300 text-rose-700 rounded-lg text-sm hover:bg-rose-50">
+                  <AlertTriangle size={14} /> NF rejeitada pela SEFAZ — trocar a OV
+                </button>
+              )}
+
               {status === 'FATURADO' && (
                 <button onClick={() => setModal('pallet')}
                   className="w-full flex items-center gap-2 justify-center py-3 bg-teal-600 text-white rounded-lg font-medium hover:bg-teal-500">
@@ -3719,6 +3818,7 @@ export function PedidoDetalhe() {
       {modal === 'editar_itens' && <ModalEditarItens pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'adicionar_itens' && <ModalAdicionarItens pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'corrigir_dados' && <ModalCorrigirDados pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'rejeicao_sefaz' && <ModalRejeicaoSefaz pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (

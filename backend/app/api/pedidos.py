@@ -28,6 +28,7 @@ from app.models.schemas import (
     PedidoCreate,
     PedidoOutboundCreate,
     ReclassificarCanalRequest,
+    RejeicaoSefazRequest,
     TratativaRequest,
     UsuarioOut,
     DevolverPendenciaRequest, DevolverReservaRequest,
@@ -502,6 +503,21 @@ def registrar_faturamento(
     usuario: UsuarioOut = Depends(get_current_user),
 ):
     return pedido_service.registrar_faturamento(str(pedido_id), payload, usuario)
+
+
+@router.post("/{pedido_id}/rejeicao-sefaz")
+def trocar_ov_por_rejeicao(
+    pedido_id: UUID,
+    payload: RejeicaoSefazRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    """A SEFAZ rejeitou a nota: troca o número da OV e mantém a logística.
+
+    O D365 abre uma OV nova, mas o material já está separado, cubado e no
+    pallet — refazer a expedição por um erro fiscal é trabalho jogado fora.
+    """
+    return pedido_service.trocar_numero_por_rejeicao(
+        str(pedido_id), payload.novo_numero, payload.motivo, usuario)
 
 
 @router.get("/{pedido_id}/aviso-nf")

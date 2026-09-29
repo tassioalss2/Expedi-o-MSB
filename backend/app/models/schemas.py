@@ -1350,6 +1350,15 @@ class FaturamentoRequest(BaseModel):
     codigo_rastreio: Optional[str] = None  # só Correios
 
 
+class RejeicaoSefazRequest(BaseModel):
+    """A nota foi rejeitada: o D365 abre uma OV nova e o app troca o número.
+
+    A logística não se refaz — o material já está separado e no pallet.
+    """
+    novo_numero: str
+    motivo: str
+
+
 # ── Coleta ────────────────────────────────────────────────────────────────────
 
 class AgendarColetaRequest(BaseModel):

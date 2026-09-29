@@ -2434,6 +2434,123 @@ def registrar_transportadora_cliente(pedido_id: str, payload: "TransportadoraCli
     return obter_pedido(pedido_id)
 
 
+def trocar_numero_por_rejeicao(pedido_id: str, novo_numero: str, motivo: str,
+                               usuario: UsuarioOut) -> dict:
+    """A SEFAZ rejeitou a nota: a OV troca de número, a logística fica.
+
+    O que acontece no D365 é que a OV rejeitada morre e uma nova nasce. O que
+    NÃO acontece é o material voltar para a prateleira: ele já foi separado,
+    conferido, cubado e alocado no pallet. Refazer a OV no app custava tudo isso
+    de novo, e a expedição não tinha por que pagar por um erro fiscal.
+
+    Por isso a troca é o número, e não uma OV nova: o registro é o mesmo, então
+    itens, cubagem, caixas, pallet, inventário, transportadora e pendência
+    continuam onde estão, sem cópia e sem risco de ficar algo para trás.
+
+    E isso é seguro justamente porque a nota foi REJEITADA — ela não existe
+    fiscalmente. Não há NF, valor nem competência presos ao número antigo para
+    conciliar com o D365 depois; o que precisa sobreviver é só o rastro de que a
+    OV mudou de número e por quê, e ele fica no histórico e numa ocorrência.
+
+    Só vale em AGUARD_FATURAMENTO: é onde a rejeição aparece. Depois de FATURADO
+    a nota passou, e aí o caminho é outro — cancelar a nota no D365 e relançar.
+    """
+    from app.models.schemas import validar_numero_ov, _OPERACOES_SEM_NUMERO_OV
+    from app.services.inventario_service import _get_usuario_real
+
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+    if pedido["status"] != StatusPedido.AGUARD_FATURAMENTO.value:
+        raise HTTPException(
+            status_code=422,
+            detail="A troca por rejeição da SEFAZ só vale em 'Aguardando faturamento'. "
+                   "Se a nota já foi emitida, cancele-a no D365 e relance com número novo.")
+
+    motivo = (motivo or "").strip()
+    if len(motivo) < 5:
+        raise HTTPException(status_code=422,
+                            detail="Diga o motivo da rejeição (mín. 5 caracteres) — é o que "
+                                   "explica a troca para quem ler depois.")
+
+    antigo = pedido.get("numero_pedido") or ""
+    op = pedido.get("tipo_operacao") or "VENDA_NORMAL"
+    alvo = str(novo_numero or "").strip().upper()
+    if op not in _OPERACOES_SEM_NUMERO_OV:
+        try:
+            alvo = validar_numero_ov(alvo)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    if not alvo:
+        raise HTTPException(status_code=422, detail="Informe o número da nova OV.")
+    if alvo == antigo:
+        raise HTTPException(status_code=422,
+                            detail="O número informado é o mesmo da OV atual.")
+    conflito = db.table("pedidos").select("id, status").eq("numero_pedido", alvo)\
+        .neq("status", StatusPedido.CANCELADO.value).neq("id", pedido_id).execute().data
+    if conflito:
+        raise HTTPException(status_code=409,
+                            detail="Já existe uma OV ativa com o número '%s'." % alvo)
+
+    agora = _agora()
+    uid = _get_usuario_real(str(usuario.id))
+    obs_nova = "[OV anterior: %s — NF rejeitada pela SEFAZ]" % antigo
+    observacoes = re.sub(r"\[OV anterior:[^\]]*\]", "",
+                         str(pedido.get("observacoes") or "")).strip()
+    db.table("pedidos").update({
+        "numero_pedido": alvo,
+        "observacoes": ("%s %s" % (observacoes, obs_nova)).strip(),
+        "atualizado_em": agora,
+    }).eq("id", pedido_id).execute()
+
+    # O painel de licitação guarda {id, numero} da OV. O id é que liga as duas
+    # pontas, então o vínculo sobrevive — mas o número ficaria na tela com o
+    # valor velho, e quem procurasse a OV no D365 não a acharia.
+    try:
+        demandas = db.table("licitacao_demandas").select("id, ovs").limit(3000).execute().data
+        for d in demandas:
+            ovs = d.get("ovs") or []
+            if not any(isinstance(o, dict) and o.get("numero") == antigo for o in ovs):
+                continue
+            db.table("licitacao_demandas").update({
+                "ovs": [{**o, "numero": alvo}
+                        if isinstance(o, dict) and o.get("numero") == antigo else o
+                        for o in ovs],
+                "atualizado_em": agora,
+            }).eq("id", d["id"]).execute()
+    except Exception as exc:
+        # Nunca derruba a troca: o vínculo real é por id e continua de pé.
+        print("numero da OV nao atualizado no painel de licitacao: %s" % exc)
+
+    db.table("movimentacoes").insert({
+        "pedido_id": pedido_id,
+        "status_anterior": pedido["status"],
+        "status_novo": pedido["status"],
+        "usuario_id": uid,
+        "observacao": ("NF rejeitada pela SEFAZ — OV trocada: %s → %s. Motivo: %s. "
+                       "Separação, cubagem e pallet mantidos." % (antigo, alvo, motivo)),
+        "criado_em": agora,
+    }).execute()
+
+    # Ocorrência sempre, sem perguntar: rejeição da SEFAZ é falha de processo, e
+    # saber quantas houve e por quê é o que permite atacar a causa.
+    try:
+        db.table("ocorrencias").insert({
+            "pedido_id": pedido_id,
+            "tipo": "NF rejeitada pela SEFAZ",
+            "descricao": ("A nota da OV %s foi rejeitada e a OV foi trocada por %s.\n"
+                          "• Motivo: %s\n"
+                          "• Material não voltou para a separação: cubagem e pallet mantidos."
+                          % (antigo, alvo, motivo)),
+            "responsavel_id": uid,
+            "status": "ABERTA",
+            "criado_em": agora,
+        }).execute()
+    except Exception as exc:
+        print("ocorrencia de rejeicao nao registrada: %s" % exc)
+
+    return obter_pedido(pedido_id)
+
+
 def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: UsuarioOut) -> dict:
     db = get_service_db()
     pedido = obter_pedido(pedido_id)
