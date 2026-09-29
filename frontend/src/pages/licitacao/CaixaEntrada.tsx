@@ -2800,7 +2800,7 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
   )
 }
 
-function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
+function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onConfirmarEntrega, onAbrir,
   onPromover, salvando }: {
   c: Card
   onTriar: (situacao: string) => void
@@ -2809,6 +2809,10 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
   /** Marca/desmarca "parado por falta de material", com o que falta ligado ao
    *  cadastro (produto + quantidade) — texto livre nao dizia ao app que produto e. */
   onEstoque: (v: boolean, obs?: string, itens?: any[]) => void
+  /** "Foi esta entrega": fecha o caso E tira da coluna Aguardando estoque.
+   *  O app acha a NF e mostra; quem confirma que ela atende ESTE pedido e
+   *  quem esta lendo a conversa. */
+  onConfirmarEntrega: () => void
   onAbrir: () => void
   onPromover: () => void
   salvando: boolean
@@ -3015,6 +3019,20 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onAbrir,
                 })()
               : '— citada neste e-mail e encontrada no sistema'}
           </span>
+          {/* O app ACHA a nota e mostra aqui — mas fechar o caso sozinho por
+              causa dela seria chute. Medi: uma regra automatica fecharia 112
+              casos e 34 apontariam para OV de OUTRO cliente. Uma conversa cita
+              NF por muitos motivos ("recebi a 20774, mas falta X"), e o valor
+              tambem nao desempata: os coincidentes sao quase todos R$ 151,99,
+              item unico que se repete em dezenas de vendas.
+              Entao o app propoe e a pessoa confirma — um clique, sem garimpo. */}
+          {c.situacao !== 'SIM' && (
+            <button onClick={onConfirmarEntrega} disabled={salvando}
+              title="Fecha o caso e tira da coluna Aguardando estoque"
+              className="ml-auto rounded-lg border border-emerald-400 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-50">
+              foi esta entrega — resolver
+            </button>
+          )}
         </div>
       )}
 
@@ -3540,6 +3558,9 @@ export function AbaCaixaEntrada() {
                       onEstoque={(v, obs, itens) => triar.mutate({
                         chave: c.chave, aguardando_estoque: v, estoque_obs: obs,
                         estoque_itens: itens })}
+                      onConfirmarEntrega={() => triar.mutate({
+                        chave: c.chave, situacao: 'SIM', aguardando_estoque: false,
+                        observacao: `Resolvido: entrega confirmada pela nota ${(c.nf_emitida || []).map((n: any) => n.numero).join(', ')}.` })}
                       onAbrir={() => setDetalhe(c.chave)}
                       onPromover={() => setPromovendo(c)} />
                   ))}

@@ -1507,6 +1507,12 @@ def triar(entrada_id: str, usuario: UsuarioOut, situacao: Optional[str] = None,
         raise HTTPException(404, "entrada não encontrada")
 
     campos = {"atualizado_em": _agora()}
+    # Resolver o caso tira a marca de "sem estoque". Ela e manual e NADA a
+    # limpava: a 2171.26.0112 seguia na coluna "Aguardando estoque" com a
+    # entrega feita e a NF 20943 emitida. O que a pessoa marcou continua valendo
+    # enquanto o caso esta aberto; fechado, nao ha mais material a esperar.
+    if situacao == "SIM" and aguardando_estoque is None:
+        aguardando_estoque = False
     if situacao is not None:
         if situacao not in SITUACOES:
             raise HTTPException(400, "situação inválida: %s" % situacao)
@@ -3183,22 +3189,34 @@ def reconciliar_solicitacoes(usuario: Optional[UsuarioOut] = None,
                              aplicar: bool = True) -> dict:
     """Varre as OVs de licitação já faturadas e fecha a solicitação que ficou aberta.
 
-    `resolver_por_faturamento` dispara no INSTANTE do faturamento, e isso deixa
-    um buraco que a medição mostrou: das 6 solicitações abertas com OV já
-    faturada, 5 TINHAM o vínculo com a demanda — ele só apareceu depois. A
-    OV016912 faturou em 25/09 e a solicitação seguia aberta em 29/09.
+    `resolver_por_faturamento` dispara no INSTANTE do faturamento. A ordem dos
+    eventos varia e sempre vai variar — a demanda nasce antes, o e-mail do órgão
+    chega depois da entrega, alguém liga as pontas na semana seguinte — e um
+    gatilho de instante único não cobre isso. Uma varredura cobre.
 
-    A ordem dos eventos varia e sempre vai variar: às vezes a demanda nasce
-    antes, às vezes o e-mail do órgão chega depois da entrega, às vezes alguém
-    liga as pontas na semana seguinte. Um gatilho de instante único não cobre
-    isso; uma varredura cobre.
+    TRÊS caminhos para achar a OV, e cada um existe por um caso que os outros
+    não pegaram:
 
-    Carrega tudo UMA vez e cruza em memória. A primeira versão chamava
-    `resolver_por_faturamento` por OV — 354 OVs relendo todas as demandas e
-    todas as entradas, milhares de idas ao banco, e passou de 10 minutos sem
-    terminar. O trabalho é o mesmo; o que mudou foi ler uma vez.
+      A. `demanda_id` — o vínculo direto. Só existe quando a demanda nasceu do
+         botão "Gerar demanda" naquela solicitação.
 
-    `aplicar=False` devolve o que faria sem escrever — é como se confere antes.
+      B. a nota de empenho, que as duas pontas têm. Pega a demanda criada por
+         fora (caso 2026NE004288).
+
+      C. a NF citada na conversa. É o mais forte de todos, e era o que faltava:
+         o app JÁ lia a NF que alguém citou no e-mail, JÁ conferia que ela
+         existe e JÁ mostrava "NF 20943 · OV016712" no card — e a varredura
+         ignorava esse campo. Documento que não é nota de empenho (ORDEM DE
+         FORNECIMENTO Nº 2171.26.0112/2026.03) não tem NE nenhuma, então A e B
+         nunca o alcançariam.
+
+    Sobre PARCIAL: a regra antiga era nunca tocar, porque alguém decidiu que a
+    entrega foi parcial. Mas quando a OV ligada está entregue e SEM pendência
+    aberta, não sobrou nada a entregar — a marca de parcial é de antes e a
+    entrega a desmente. Nesse caso fecha, dizendo na nota que era PARCIAL.
+
+    E limpa `aguardando_estoque`: era marca manual que nada nunca tirava, então
+    o caso seguia na coluna "Aguardando estoque" mesmo entregue e faturado.
     """
     db = get_service_db()
 
@@ -3211,18 +3229,21 @@ def reconciliar_solicitacoes(usuario: Optional[UsuarioOut] = None,
                 break
         return linhas
 
-    peds = _tudo("pedidos", "numero_pedido, numero_nf, status, forma_venda, canal")
-    faturadas = {}
+    peds = _tudo("pedidos", "id, numero_pedido, numero_nf, status, forma_venda, "
+                            "canal, pendencia")
+    faturadas, por_nf = {}, {}
     for p in peds:
         if not p.get("numero_nf") or p.get("status") == "CANCELADO":
             continue
-        if not (p.get("forma_venda") == "LICITACAO"
+        # Toda OV faturada entra no índice por NF: a NF citada na conversa pode
+        # ser de uma OV que o app não classificou como licitação.
+        for n in _numeros_de_nf(p.get("numero_nf")):
+            por_nf.setdefault(n, p)
+        if (p.get("forma_venda") == "LICITACAO"
                 or str(p.get("canal") or "").upper().startswith("LICITACAO")):
-            continue
-        faturadas[str(p["numero_pedido"]).upper()] = p
+            faturadas[str(p["numero_pedido"]).upper()] = p
 
     demandas = _tudo("licitacao_demandas", "id, numero, ovs, gerado_ref")
-    # Demanda → a OV faturada que a atende, se houver.
     por_demanda, nes_faturadas = {}, {}
     for d in demandas:
         refs = [str(d.get("gerado_ref") or "").upper()]
@@ -3236,26 +3257,67 @@ def reconciliar_solicitacoes(usuario: Optional[UsuarioOut] = None,
 
     entradas = _tudo("licitacao_entrada",
                      "id, chave, assunto, situacao, demanda_id, ativo, empenhos, "
-                     "cnpj_orgao, cliente_id, pregao, contrato, orgao_texto, corpo")
+                     "cnpj_orgao, cliente_id, pregao, contrato, orgao_texto, corpo, "
+                     "nf_citada, aguardando_estoque")
 
-    # Uma chave de grupo, uma decisão. `chave_do_grupo` é derivada — a coluna
-    # `chave` do banco não serve aqui, e passá-la daria "chave inválida".
-    fechar = {}
+    def _entregue(p) -> bool:
+        """A OV entregou tudo o que devia?
+
+        Pendência aberta significa saldo a entregar — e aí PARCIAL continua de
+        pé. Sem pendência, não sobrou nada.
+        """
+        pen = p.get("pendencia") or {}
+        if pen.get("resolvido_em"):
+            return True
+        return not [i for i in (pen.get("itens") or [])
+                    if float(i.get("qtd_pendente") or 0) > 0]
+
+    fechar, motivos = {}, {}
     for e in entradas:
-        if not e.get("ativo") or e.get("situacao") in ("SIM", "PARCIAL"):
+        if not e.get("ativo") or e.get("situacao") == "SIM":
             continue
         ov = por_demanda.get(e.get("demanda_id"))
+        caminho = "vínculo com a demanda"
         if not ov:
-            # Caminho B: a nota de empenho, que as duas pontas têm. Vale quando
-            # a demanda nasceu por fora do botão "Gerar demanda" e o vínculo por
-            # id nunca existiu — foi o caso da 2026NE004288.
             nes = {str(x).upper().strip() for x in (e.get("empenhos") or [])}
             nes |= _nes_do_texto(e.get("assunto"))
             ov = next((nes_faturadas[n] for n in nes if n in nes_faturadas), None)
-        if ov:
-            fechar.setdefault(chave_do_grupo(e), ov)
+            caminho = "nota de empenho"
+        if not ov:
+            # Caminho C: a NF que alguém citou na conversa e o app confirmou.
+            #
+            # E SÓ quando o cliente da OV é o mesmo da solicitação. Sem essa
+            # corroboração a varredura fecharia 112 casos e 34 deles apontam
+            # para OV de OUTRO cliente — uma conversa cita NF por muitos
+            # motivos ("recebi a 20774, mas falta X") e a nota existir não quer
+            # dizer que ela atende ESTE pedido. Fechar 34 casos errados é muito
+            # pior do que deixá-los abertos.
+            for c in (e.get("nf_citada") or []):
+                for n in _numeros_de_nf((c or {}).get("numero")):
+                    achada = por_nf.get(n)
+                    if not achada:
+                        continue
+                    if not e.get("cliente_id") or not achada.get("cliente_id"):
+                        continue
+                    if str(e["cliente_id"]) != str(achada["cliente_id"]):
+                        continue
+                    ov = achada
+                    caminho = "NF citada na conversa (mesmo cliente)"
+                    break
+                if ov:
+                    break
+        if not ov:
+            continue
+        # PARCIAL só cai quando a OV não deve mais nada.
+        if e.get("situacao") == "PARCIAL" and not _entregue(ov):
+            continue
+        chave = chave_do_grupo(e)
+        fechar.setdefault(chave, ov)
+        motivos.setdefault(chave, (caminho, e.get("situacao")))
 
-    fechados = [{"chave": c, "ov": p["numero_pedido"], "nf": p.get("numero_nf")}
+    fechados = [{"chave": c, "ov": p["numero_pedido"], "nf": p.get("numero_nf"),
+                 "por": motivos.get(c, ("?", None))[0],
+                 "era": motivos.get(c, ("?", None))[1]}
                 for c, p in fechar.items()]
     if not aplicar:
         return {"conferidas": len(faturadas), "fechados": fechados, "erros": [],
@@ -3263,16 +3325,40 @@ def reconciliar_solicitacoes(usuario: Optional[UsuarioOut] = None,
 
     erros = []
     for chave, p in fechar.items():
-        nota = ("Resolvido pelo app: a OV %s foi faturada%s."
+        caminho, era = motivos.get(chave, ("?", None))
+        nota = ("Resolvido pelo app: a OV %s foi faturada%s — encontrada pela %s.%s"
                 % (p["numero_pedido"],
-                   " com a NF %s" % p["numero_nf"] if p.get("numero_nf") else ""))
+                   " com a NF %s" % p["numero_nf"] if p.get("numero_nf") else "",
+                   caminho,
+                   " O caso estava como PARCIAL, e a OV não tem saldo pendente."
+                   if era == "PARCIAL" else ""))
         try:
             triar_grupo(chave, usuario, situacao="SIM",
                         observacao=nota if usuario is not None else None)
+            # A marca de "sem estoque" é manual e nada a tirava: o caso seguia na
+            # coluna Aguardando estoque com a entrega feita e a nota emitida.
+            for e in _emails_do_grupo(chave, "id, aguardando_estoque"):
+                if e.get("aguardando_estoque"):
+                    db.table("licitacao_entrada").update({
+                        "aguardando_estoque": False, "estoque_por": None,
+                        "estoque_em": None, "estoque_obs": None,
+                        "estoque_itens": None, "atualizado_em": _agora(),
+                    }).eq("id", e["id"]).execute()
         except Exception as exc:  # noqa: BLE001
             erros.append("%s: %s" % (chave, str(exc)[:110]))
     return {"conferidas": len(faturadas), "fechados": fechados, "erros": erros,
             "aplicado": True}
+
+
+def _numeros_de_nf(v) -> list:
+    """Os numeros de NF de um campo que pode ter mais de um.
+
+    Mesma regra de `frete_service`: a OV016455 guarda "20540 / 20541", e limpar
+    os nao-digitos de uma vez daria "2054020541", que nao casa com nota nenhuma.
+    Os zeros a esquerda caem porque "000020943" e "20943" sao a mesma nota.
+    """
+    partes = re.split(r"[^0-9]+", str(v or ""))
+    return [x.lstrip("0") for x in partes if x.strip("0")]
 
 
 def _nes_do_texto(texto) -> set:
