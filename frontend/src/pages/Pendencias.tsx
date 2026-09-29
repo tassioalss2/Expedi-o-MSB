@@ -68,6 +68,10 @@ export default function Pendencias() {
   const [cancelando, setCancelando] = useState<Pendencia | null>(null)
   const [verFila, setVerFila] = useState(false)
   const [recorte, setRecorte] = useState<Recorte>(null)
+  // Licitacao e comercial sao dois mundos: na licitacao o atraso tem multa
+  // contratual, no comercial tem cliente ligando. Quem cuida de um raramente
+  // cuida do outro, e a lista misturada obrigava a garimpar.
+  const [origem, setOrigem] = useState<'' | 'LICITACAO' | 'COMERCIAL'>('')
 
   const { data, isLoading } = useQuery<PendenciasResp>({
     queryKey: ['crm-pendencias', verHistorico],
@@ -89,6 +93,7 @@ export default function Pendencias() {
   const { abertas, resolvidas } = useMemo(() => {
     const b = busca.trim().toLowerCase()
     const passa = (p: Pendencia) => {
+      if (origem && p.origem_venda !== origem) return false
       if (linha && LINHA_DO_CANAL[p.canal || ''] !== LINHA_DO_CANAL[linha]) return false
       if (!b) return true
       const itens = (p.itens || []).map(i => `${i.codigo || ''} ${i.descricao || ''}`).join(' ')
@@ -100,7 +105,7 @@ export default function Pendencias() {
       abertas: f.filter(p => !p.resolvido_em),
       resolvidas: f.filter(p => !!p.resolvido_em),
     }
-  }, [todas, busca, linha])
+  }, [todas, busca, linha, origem])
 
   // Uma VENDA, um card. A pendência é gravada na linha de `pedidos`, e uma OV
   // com várias remessas tem uma linha por remessa: a OV016456 da SEVEN MEDIC
@@ -245,6 +250,13 @@ export default function Pendencias() {
             placeholder="Cliente, OV ou código do item…"
             className="w-full border rounded-lg pl-9 pr-3 py-2 text-sm" />
         </div>
+        <select value={origem} onChange={e => setOrigem(e.target.value as any)}
+          title="Licitacao e venda do comercial sao fluxos diferentes"
+          className="border rounded-lg px-3 py-2 text-sm">
+          <option value="">Licitação e comercial</option>
+          <option value="LICITACAO">Só licitação</option>
+          <option value="COMERCIAL">Só comercial</option>
+        </select>
         <select value={linha} onChange={e => setLinha(e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm">
           <option value="">Todas as linhas</option>
@@ -704,6 +716,26 @@ function tituloDoSaldo(p: Pendencia): string {
     .filter(Boolean).join(' ')
 }
 
+/** Licitação ou comercial. Um traço quando o cadastro antigo não diz — chutar
+ *  "comercial" para o que não se sabe encheria o filtro de venda errada. */
+function SeloOrigem({ p }: { p: Pendencia }) {
+  if (!p.origem_venda) {
+    return (
+      <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-400 shrink-0"
+        title="O cadastro desta venda não diz se é licitação ou comercial">
+        origem —
+      </span>
+    )
+  }
+  const licit = p.origem_venda === 'LICITACAO'
+  return (
+    <span className={`text-[11px] px-1.5 py-0.5 rounded shrink-0 ${licit
+      ? 'bg-violet-100 text-violet-700' : 'bg-sky-100 text-sky-700'}`}>
+      {licit ? 'licitação' : 'comercial'}
+    </span>
+  )
+}
+
 /** O que a foto do estoque diz deste saldo — em duas palavras, no card.
  *
  *  Substitui as três seções que a tela tinha. Aqui a informação continua, mas
@@ -904,6 +936,7 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
                 lado a lado as duas pareciam se contradizer. Quem explica a
                 origem agora e a frase abaixo, que tem espaco para dizer a coisa
                 inteira. */}
+            <SeloOrigem p={p} />
             <EtiquetaEstoque p={p} />
           </div>
           {/* A explicacao do saldo, visivel sem abrir o card. O rotulo sozinho
@@ -911,6 +944,16 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
               venda nao diz o que fazer com cada uma. */}
           {p.explicacao && (
             <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{p.explicacao}</p>
+          )}
+          {/* Solicitacao marcada como sem estoque, mas sem dizer O QUE falta.
+              Sem isso o valor fica em zero e o caso nao entra em nenhuma conta —
+              a tela precisa cobrar, nao fingir que esta completo. */}
+          {p.sem_detalhe && (
+            <p className="text-[11px] text-amber-700 mt-0.5">
+              Ninguém disse o que está faltando — por isso o valor aparece zerado.
+              {p.valor_do_pedido ? ` O pedido inteiro vale ${fmtBRL(p.valor_do_pedido)}.` : ''}
+              {' '}Abra a solicitação e detalhe o produto.
+            </p>
           )}
         </div>
 
@@ -944,12 +987,24 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {!p.somente_leitura && (
           <button onClick={onAcompanhar}
             className="text-[11px] font-medium px-2 py-1 rounded-lg border text-gray-600 hover:bg-gray-50 whitespace-nowrap"
             title="Anotar o que o PCP respondeu e para quando">
             <Send size={11} className="inline mr-1 -mt-0.5" />
             Cobrar{acomp.length > 0 && ` (${acomp.length})`}
           </button>
+          )}
+          {/* Solicitacao de licitacao que ainda nao virou OV: nao ha venda, entao
+              liberar, cobrar e cancelar nao se aplicam. Em vez de tres botoes
+              desabilitados, um link para onde o trabalho acontece. */}
+          {p.somente_leitura ? (
+            <Link to={p.link || '/solicitacoes'}
+              className="text-[11px] font-medium px-2 py-1 rounded-lg border border-violet-300
+                         text-violet-700 hover:bg-violet-50 whitespace-nowrap">
+              abrir na solicitação →
+            </Link>
+          ) : (<>
           {/* Verde em todos: a falta de estoque na foto nao e impedimento, e o
               botao cinza dizia que era. So o bloqueio de verdade (OV cancelada,
               venda sem OV possivel) desabilita. */}
@@ -968,6 +1023,7 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
             title="A venda nao vai acontecer — encerrar esta pendencia">
             Cancelar
           </button>
+          </>)}
         </div>
       </div>
 

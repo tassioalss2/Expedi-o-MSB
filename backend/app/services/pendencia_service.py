@@ -543,7 +543,7 @@ def _ov_por_ids(db, ids: list) -> dict:
     out: dict = {}
     for i in range(0, len(ids), 40):
         rows = db.table("pedidos").select("id, numero_pedido, status, remessa_numero, cliente_id, "
-                                   "atualizado_em")\
+                                   "atualizado_em, forma_venda, canal")\
             .in_("id", ids[i:i + 40]).execute().data
         for r in rows:
             out[r["id"]] = r
@@ -573,6 +573,181 @@ def _nome_de_usuario(db, uid) -> Optional[str]:
         except Exception:
             return None
     return _USUARIOS.get(str(uid)) or None
+
+
+def _solicitacoes_sem_ov(db, clientes: dict) -> list:
+    """As solicitações de licitação marcadas "sem estoque" e que ainda não viraram OV.
+
+    Elas são material que a empresa deve e não tem — a mesma coisa que uma
+    pendência de OV é. Só que ficavam invisíveis aqui porque a tela lia
+    `pedidos` e `crm_oportunidades`, e uma solicitação não é nenhum dos dois
+    ainda. O Tássio marcava a falta na caixa de entrada e o número não entrava
+    em "parado esperando material".
+
+    Duas escolhas que valem explicação:
+
+    Só as SEM demanda gerada. Quando a solicitação vira demanda e depois OV, a
+    pendência real passa a ser a da OV — contar as duas somaria o mesmo material
+    duas vezes.
+
+    Somente leitura. Liberar, cobrar e cancelar agem sobre uma venda, e aqui
+    ainda não há venda: o que existe é um pedido do órgão esperando material. O
+    card leva para a solicitação, que é onde o trabalho acontece.
+    """
+    try:
+        regs = []
+        for off in range(0, 20000, 1000):
+            b = db.table("licitacao_entrada").select(
+                "id, chave, assunto, cliente_id, itens, recebido_em, estoque_em, "
+                "estoque_obs, estoque_itens, demanda_id, situacao, ativo, tipo"
+            ).eq("aguardando_estoque", True).limit(1000).offset(off).execute().data
+            regs += b
+            if len(b) < 1000:
+                break
+    except Exception:
+        # Coluna nova ainda não migrada, ou tabela indisponível: a tela das
+        # pendências de OV não pode cair por causa da licitação.
+        return []
+
+    abertos = [r for r in regs
+               if r.get("ativo") and not r.get("demanda_id")
+               and (r.get("situacao") or "NAO") != "SIM"]
+    if not abertos:
+        return []
+
+    faltando = [r.get("cliente_id") for r in abertos if r.get("cliente_id")
+                and r.get("cliente_id") not in clientes]
+    if faltando:
+        clientes.update(_nomes_clientes(db, faltando))
+
+    # Uma solicitação é o GRUPO de e-mails da mesma nota de empenho — a `chave`.
+    # Sem agrupar, a mesma NE com três e-mails viraria três linhas, que é o erro
+    # que esta tela acabou de corrigir nas pendências da SEVEN.
+    grupos: dict = {}
+    for r in abertos:
+        grupos.setdefault(r.get("chave") or r["id"], []).append(r)
+
+    saida = []
+    for chave, membros in grupos.items():
+        membros.sort(key=lambda x: x.get("recebido_em") or "")
+        base = membros[0]
+        itens_falta = next((m.get("estoque_itens") for m in membros
+                            if m.get("estoque_itens")), None) or []
+        obs = next((m.get("estoque_obs") for m in membros if m.get("estoque_obs")), None)
+        marcado_em = next((m.get("estoque_em") for m in membros if m.get("estoque_em")), None)
+
+        # O VALOR é o do que falta, e não o do pedido inteiro. A diferença não é
+        # detalhe: num caso real o pedido vale R$ 52.857,94 e ninguém disse
+        # ainda quanto dele está faltando — somar tudo em "parado esperando
+        # material" diria que a empresa deve 52 mil que talvez ela tenha.
+        #
+        # O preço vem da linha do pedido que casa pelo código. Quando não casa,
+        # fica sem preço: item faltante não carrega valor, e estimá-lo seria
+        # inventar. `valor_do_pedido` vai junto, como contexto.
+        itens_pedido = [i for m in membros for i in (m.get("itens") or [])]
+        preco = {}
+        for i in itens_pedido:
+            cod = str(i.get("codigo") or "").strip()
+            qtd = float(i.get("qtd") or 0)
+            total = float(i.get("valor_total") or 0)
+            if cod and qtd > 0 and total > 0:
+                preco[cod] = total / qtd
+
+        linhas = []
+        valor = 0.0
+        for n, i in enumerate(itens_falta):
+            cod = str(i.get("codigo") or "").strip()
+            qtd = float(i.get("qtd") or 0) or None
+            unit = preco.get(cod)
+            sub = round(unit * qtd, 2) if (unit and qtd) else None
+            if sub:
+                valor += sub
+            linhas.append({
+                "ref": n,
+                "codigo": i.get("codigo"),
+                "descricao": i.get("descricao"),
+                "produto_id": i.get("produto_id"),
+                "qtd_pedida": qtd,
+                "qtd_atendida": 0,
+                "qtd_pendente": qtd,
+                "valor_unitario": round(unit, 2) if unit else None,
+                "valor_pendente": sub,
+            })
+        valor = round(valor, 2)
+        valor_do_pedido = round(sum(float(i.get("valor_total") or 0)
+                                    for i in itens_pedido), 2)
+
+        saida.append({
+            "fonte": "licitacao",
+            "id": base["id"],
+            "chave": chave,
+            "titulo": "Solicitação de licitação — ainda sem OV",
+            "cliente": clientes.get(base.get("cliente_id")),
+            "cliente_id": base.get("cliente_id"),
+            "canal": None,
+            "origem_venda": "LICITACAO",
+            "ov_id": None,
+            "ov_ref": None,
+            "ov_status": None,
+            "ov_provisoria": False,
+            "decisao": "AGUARDAR",
+            "origem": "SOLICITACAO_LICITACAO",
+            "natureza": "FALTA",
+            "valor": valor,
+            "qtd_total": round(sum(float(i.get("qtd") or 0) for i in itens_falta), 3),
+            "itens": linhas,
+            "previsao_sa": None,
+            "previsao_pcp": None,
+            "cobre_com_sa": None,
+            "observacao": obs,
+            "acompanhamentos": [],
+            "prioridade_fila": None,
+            "prioridade_por_nome": None,
+            "prioridade_em": None,
+            # A espera conta de quando ALGUÉM MARCOU a falta, não de quando o
+            # e-mail chegou: o e-mail pode ser de junho e a falta de ontem.
+            "decidido_em": marcado_em or base.get("recebido_em"),
+            "dias_parada": _dias(marcado_em or base.get("recebido_em")),
+            "resolvido_em": None,
+            "resolucao": None,
+            "acao_liberar": None,
+            "pode_liberar": False,
+            "motivo_bloqueio": ("Ainda não é venda — é uma solicitação esperando material. "
+                                "Resolva na Caixa de entrada das solicitações."),
+            # A tela usa isto para trocar os três botões por um link: liberar,
+            # cobrar e cancelar agem sobre venda, e aqui não há venda ainda.
+            "somente_leitura": True,
+            "link": "/solicitacoes",
+            "assunto": base.get("assunto"),
+            "itens_do_pedido": len(itens_pedido),
+            # O pedido inteiro, como contexto. NAO entra no "parado esperando
+            # material" — ali so vai o que se sabe que falta.
+            "valor_do_pedido": valor_do_pedido,
+            # Ninguem detalhou o que falta: o card cobra isso, e o valor fica
+            # em zero em vez de fingir que o pedido inteiro esta faltando.
+            "sem_detalhe": not itens_falta,
+        })
+    return saida
+
+
+def origem_da_venda(forma_venda, canal) -> Optional[str]:
+    """LICITACAO ou COMERCIAL — de onde a venda veio.
+
+    Duas fontes porque uma só não cobre: `forma_venda` é o campo certo, mas 330
+    pedidos antigos estão com ele nulo. Nesses, o canal desempata — canal que
+    começa com LICITACAO_ é licitação, sem margem para dúvida.
+
+    Quando nenhum dos dois diz, devolve None e a tela mostra "—". Chutar
+    "comercial" para o que não se sabe encheria o filtro de venda errada, que é
+    pior do que um traço honesto.
+    """
+    f = (forma_venda or "").strip().upper()
+    if f in ("LICITACAO", "DIRETA"):
+        return "LICITACAO" if f == "LICITACAO" else "COMERCIAL"
+    c = (canal or "").strip().upper()
+    if c.startswith("LICITACAO"):
+        return "LICITACAO"
+    return None
 
 
 def _nomes_clientes(db, ids: list) -> dict:
@@ -606,7 +781,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
     try:
         peds = db.table("pedidos").select(
             "id, numero_pedido, status, cliente_id, canal, pendencia, remessa_numero, criado_em, "
-            "atualizado_em"
+            "atualizado_em, forma_venda"
         ).not_is("pendencia", "null").execute().data
     except Exception:
         peds = []
@@ -642,6 +817,8 @@ def listar(incluir_resolvidas: bool = False) -> dict:
             cliente=clientes.get(p.get("cliente_id")), cliente_id=p.get("cliente_id"),
             canal=p.get("canal"), ov=p, pend=pend, acao=acao, bloqueio=bloqueio,
             extra={"oportunidade_id": None}))
+
+    saida += _solicitacoes_sem_ov(db, clientes)
 
     estoque = _estoque_agora(saida)
 
@@ -917,6 +1094,13 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "remessa_numero": (ov or {}).get("remessa_numero"),
         "decisao": pend.get("decisao"),
         "origem": pend.get("origem"),
+        # De onde a venda veio: licitação ou comercial. São dois mundos com
+        # dinâmicas diferentes — na licitação o atraso tem multa contratual, no
+        # comercial tem cliente ligando. Misturar os dois na mesma lista
+        # escondia isso.
+        "origem_venda": origem_da_venda(
+            (ov or {}).get("forma_venda") or (extra or {}).get("forma_venda"),
+            canal),
         # Quem criou este saldo, e a frase que diz o que ele é. Sem isso o card
         # trazia só "Material liberado da OV", que não explica nada a quem chega
         # na tela dias depois — e a OV016456 mostrava três linhas assim, de

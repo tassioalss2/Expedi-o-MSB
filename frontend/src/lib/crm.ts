@@ -92,6 +92,16 @@ export interface Pendencia {
   ov_provisoria: boolean
   decisao: 'PARCIAL' | 'AGUARDAR' | null
   origem: string | null
+  /** LICITACAO ou COMERCIAL — de onde a venda veio. null quando o cadastro
+   *  antigo nao diz; a tela mostra "—" em vez de chutar. */
+  origem_venda?: 'LICITACAO' | 'COMERCIAL' | null
+  /** Solicitacao de licitacao que ainda nao virou OV: nao ha o que liberar,
+   *  cobrar ou cancelar aqui — o trabalho acontece na caixa de entrada. */
+  somente_leitura?: boolean
+  link?: string | null
+  assunto?: string | null
+  valor_do_pedido?: number | null
+  sem_detalhe?: boolean
   /** Quem decidiu este saldo e a frase que diz o que ele é — o card mostra as
    *  duas, porque "Material liberado da OV" repetido não distingue nada. */
   decidido_por_nome?: string | null
