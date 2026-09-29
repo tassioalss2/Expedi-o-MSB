@@ -3041,7 +3041,12 @@ def assinatura_do_item(item: dict) -> str:
     desc = _norm_desc(item.get("descricao"))
     if desc:
         return "D:%s" % desc
-    cod = str(item.get("codigo") or "").strip().upper()
+    # `codigo_msb` tambem conta: na linha ruim da 2026NE003966 o `codigo` vem
+    # vazio e o `codigo_msb` traz "003966" — o sufixo da nota de empenho que o
+    # leitor confundiu com produto. Sem ele a assinatura virava "S:|11|6.00",
+    # que casaria com qualquer item de 11 unidades a R$ 6,00.
+    cod = (str(item.get("codigo") or "").strip()
+           or str(item.get("codigo_msb") or "").strip()).upper()
     qtd = float(item.get("qtd") or 0)
     vu = float(item.get("valor_unitario") or 0)
     return "S:%s|%g|%.2f" % (cod, qtd, vu)
@@ -3104,9 +3109,11 @@ def rejeitar_item(entrada_id: str, item: dict, motivo: str,
 
     alvo = dict(item or {})
     assinatura = assinatura_do_item(alvo)
-    if assinatura in ("D:", "S:||0.00"):
-        raise HTTPException(422, "esta linha não tem nada que a identifique — "
-                                 "sem isso a rejeição pegaria qualquer item.")
+    # Sem codigo E sem descricao, so sobram quantidade e valor — e uma rejeicao
+    # assim casaria com qualquer item que por acaso tivesse os mesmos numeros.
+    if assinatura.startswith("S:|"):
+        raise HTTPException(422, "esta linha não tem código nem descrição — não há "
+                                 "como identificá-la sem arriscar tirar outro item.")
     try:
         db.table("licitacao_itens_rejeitados").insert({
             "assinatura": assinatura,
