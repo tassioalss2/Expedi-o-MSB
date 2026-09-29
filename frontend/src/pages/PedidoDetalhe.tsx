@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText, Truck, Pencil, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, CheckCircle, XCircle, Copy, Package, FileText, Truck, Pencil } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
@@ -3662,8 +3662,9 @@ export function PedidoDetalhe() {
                   NÚMERO troca; o resto fica onde está. */}
               {status === 'AGUARD_FATURAMENTO' && (
                 <button onClick={() => setModal('rejeicao_sefaz')}
+                  title="A SEFAZ rejeitou a nota: troca o número da OV e mantém separação, cubagem e pallet"
                   className="w-full flex items-center gap-2 justify-center py-2 border border-rose-300 text-rose-700 rounded-lg text-sm hover:bg-rose-50">
-                  <AlertTriangle size={14} /> NF rejeitada pela SEFAZ — trocar a OV
+                  ⚠️ NF Rejeitada na SEFAZ
                 </button>
               )}
 
