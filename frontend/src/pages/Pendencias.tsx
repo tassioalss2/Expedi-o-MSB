@@ -46,32 +46,10 @@ const dataBR = (iso?: string | null) =>
 
 type FilaKey = 'COMPLETO' | 'PARCIAL' | 'NENHUM' | 'BLOQUEADA'
 
-const FILAS: Array<{
-  key: FilaKey; titulo: string; explica: string; icone: any
-  cor: string; borda: string; fundo: string
-}> = [
-  {
-    key: 'COMPLETO', titulo: 'Chegou tudo', icone: PackageCheck,
-    explica: 'O material está em estoque. Liberar aqui manda a venda para a expedição.',
-    cor: 'text-emerald-700', borda: 'border-emerald-200', fundo: 'bg-emerald-50/60',
-  },
-  {
-    key: 'PARCIAL', titulo: 'Chegou parte', icone: PackageCheck,
-    explica: 'Dá para liberar o que já existe; o saldo continua pendente nesta mesma venda.',
-    cor: 'text-amber-700', borda: 'border-amber-200', fundo: 'bg-amber-50/60',
-  },
-  {
-    key: 'NENHUM', titulo: 'Sem material', icone: PackageX,
-    explica: 'Nada em estoque ainda. O que dá para fazer é cobrar o PCP e anotar a resposta.',
-    cor: 'text-gray-600', borda: 'border-gray-200', fundo: 'bg-white',
-  },
-  {
-    key: 'BLOQUEADA', titulo: 'Bloqueada', icone: AlertTriangle,
-    explica: 'Tem impedimento antes do estoque — o motivo está em cada card.',
-    cor: 'text-red-700', borda: 'border-red-200', fundo: 'bg-red-50/50',
-  },
-]
-
+// As tres filas por estoque ("chegou tudo / parte / sem material") viraram uma
+// etiqueta no card: separavam o mesmo cliente em blocos diferentes, e a foto do
+// PCP nao decide onde a pendencia mora. `filaDe` ficou, porque os KPIs do topo
+// ainda contam quanto deste dinheiro o estoque ja cobre.
 function filaDe(p: Pendencia): FilaKey {
   if (!p.pode_liberar) return 'BLOQUEADA'
   return (p.estoque_agora?.status as FilaKey) || 'NENHUM'
@@ -120,14 +98,17 @@ export default function Pendencias() {
     }
   }, [todas, busca, linha])
 
-  // Dentro de cada fila, a mais parada primeiro: a espera longa é o que vira
-  // reclamação de cliente.
+  // A mais parada primeiro: a espera longa é o que vira reclamação de cliente.
+  // Antes a lista era quebrada em filas por estoque; agora é uma só, e o estoque
+  // vira etiqueta no card.
+  const emOrdem = useMemo(
+    () => [...abertas].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0)),
+    [abertas])
+
+  // Continua servindo aos KPIs: quanto deste dinheiro a foto do estoque já cobre.
   const porFila = useMemo(() => {
     const m: Record<FilaKey, Pendencia[]> = { COMPLETO: [], PARCIAL: [], NENHUM: [], BLOQUEADA: [] }
     for (const p of abertas) m[filaDe(p)].push(p)
-    for (const k of Object.keys(m) as FilaKey[]) {
-      m[k].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0))
-    }
     return m
   }, [abertas])
 
@@ -241,34 +222,37 @@ export default function Pendencias() {
           </p>
         </div>
       ) : (
-        FILAS.map(f => {
-          const lista = porFila[f.key]
-          if (lista.length === 0) return null
-          const total = lista.reduce((a, p) => a + (p.valor || 0), 0)
-          const Icone = f.icone
-          return (
-            <section key={f.key} className={`rounded-xl border ${f.borda} ${f.fundo} p-4`}>
-              <div className="flex items-baseline justify-between gap-2 mb-1">
-                <h2 className={`text-sm font-semibold flex items-center gap-1.5 ${f.cor}`}>
-                  <Icone size={16} /> {f.titulo}
-                  <span className="text-xs font-normal text-gray-400">
-                    {lista.length} {lista.length === 1 ? 'venda' : 'vendas'}
-                  </span>
-                </h2>
-                <span className={`text-sm font-semibold tabular-nums ${f.cor}`}>{fmtBRL(total)}</span>
-              </div>
-              <p className="text-xs text-gray-500 mb-3">{f.explica}</p>
-              <div className="space-y-2">
-                {lista.map(p => (
-                  <Card key={`${p.fonte}-${p.id}`} p={p}
-                    onLiberar={() => setLiberando(p)}
-                    onAcompanhar={() => setAcompanhando(p)}
-                    onCancelar={() => setCancelando(p)} />
-                ))}
-              </div>
-            </section>
-          )
-        })
+        /* Uma lista só. Separar em "chegou tudo / chegou parte / sem material"
+           quebrava o mesmo cliente em três blocos — a SEVEN MEDIC aparecia em
+           dois deles, com a mesma OV, e ninguém lia aquilo como uma venda. E a
+           foto do estoque é recomendação: não é ela quem decide em que caixa a
+           pendência mora. O que o estoque diz continua em cada card, como
+           etiqueta. */
+        <section className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="flex items-baseline justify-between gap-2 mb-1">
+            <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+              <PackageCheck size={16} /> Pendências abertas
+              <span className="text-xs font-normal text-gray-400">
+                {abertas.length} {abertas.length === 1 ? 'venda' : 'vendas'}
+              </span>
+            </h2>
+            <span className="text-sm font-semibold tabular-nums text-gray-700">
+              {fmtBRL(abertas.reduce((a, p) => a + (p.valor || 0), 0))}
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            As mais paradas primeiro. A etiqueta de estoque em cada card é o que a última
+            foto do PCP diz — recomendação, não trava: dá para liberar mesmo assim.
+          </p>
+          <div className="space-y-2">
+            {emOrdem.map(p => (
+              <Card key={`${p.fonte}-${p.id}`} p={p}
+                onLiberar={() => setLiberando(p)}
+                onAcompanhar={() => setAcompanhando(p)}
+                onCancelar={() => setCancelando(p)} />
+            ))}
+          </div>
+        </section>
       )}
 
       {verHistorico && (
@@ -575,6 +559,44 @@ function IncluirItemPendencia({ onIncluir, onCancelar, salvando }: {
 }
 
 
+/** O que a foto do estoque diz deste saldo — em duas palavras, no card.
+ *
+ *  Substitui as três seções que a tela tinha. Aqui a informação continua, mas
+ *  sem decidir onde a pendência aparece nem se ela pode ser liberada. */
+function EtiquetaEstoque({ p }: { p: Pendencia }) {
+  if (!p.pode_liberar) {
+    return (
+      <span className="text-[11px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 shrink-0"
+        title={p.motivo_bloqueio || 'Há impedimento antes do estoque'}>
+        bloqueada
+      </span>
+    )
+  }
+  const st = p.estoque_agora?.status
+  if (st === 'COMPLETO') {
+    return (
+      <span className="text-[11px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0"
+        title="A foto do PCP cobre o saldo inteiro">
+        estoque cobre tudo
+      </span>
+    )
+  }
+  if (st === 'PARCIAL') {
+    return (
+      <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0"
+        title="A foto do PCP cobre parte do saldo — o resto continua pendente nesta mesma venda">
+        estoque cobre parte
+      </span>
+    )
+  }
+  return (
+    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 shrink-0"
+      title="A última foto do PCP não mostra material para este saldo. É recomendação: se a prateleira disser outra coisa, dá para liberar assim mesmo.">
+      sem estoque na foto
+    </span>
+  )
+}
+
 function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
   p: Pendencia; onLiberar: () => void; onAcompanhar: () => void; onCancelar: () => void
 }) {
@@ -661,6 +683,10 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
                 material existe
               </span>
             )}
+            {/* O que a última foto do PCP diz deste saldo. Era o que dividia a
+                tela em três blocos; virou etiqueta porque é informação sobre a
+                pendência, não uma gaveta onde ela mora. */}
+            <EtiquetaEstoque p={p} />
           </div>
         </div>
 
@@ -700,11 +726,14 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar }: {
             <Send size={11} className="inline mr-1 -mt-0.5" />
             Cobrar{acomp.length > 0 && ` (${acomp.length})`}
           </button>
+          {/* Verde em todos: a falta de estoque na foto nao e impedimento, e o
+              botao cinza dizia que era. So o bloqueio de verdade (OV cancelada,
+              venda sem OV possivel) desabilita. */}
           <button onClick={onLiberar} disabled={!p.pode_liberar}
             title={p.motivo_bloqueio || undefined}
-            className={`text-[11px] font-medium px-2 py-1 rounded-lg text-white disabled:bg-gray-100 disabled:text-gray-400 whitespace-nowrap ${
-              p.estoque_agora?.status === 'NENHUM'
-                ? 'bg-gray-400 hover:bg-gray-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
+            className="text-[11px] font-medium px-2 py-1 rounded-lg text-white whitespace-nowrap
+                       bg-emerald-600 hover:bg-emerald-500
+                       disabled:bg-gray-100 disabled:text-gray-400">
             {p.pode_liberar ? 'Liberar' : 'Bloqueada'}
           </button>
           {/* A venda que nao vai acontecer precisa sair da fila: enquanto a

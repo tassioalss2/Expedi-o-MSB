@@ -283,7 +283,8 @@ export function ModalDecisaoEstoque({ analise, titulo, pendente, permiteAguardar
  *
  *  Os itens COM estoque ficam no topo: são os únicos em que há o que decidir, e a
  *  lista costuma ser longa o bastante para eles sumirem no meio dos que faltam. */
-function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, comBloqueio }: {
+function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, comBloqueio,
+                             tetoNaDivida }: {
   itens: ItemDisponibilidade[]
   qtds: Record<string, string>
   onQtd: (produtoId: string, valor: string) => void
@@ -300,6 +301,12 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, c
    *  outro cliente". Vale na decisão; na liberação da pendência não faz sentido,
    *  porque ali o ato É pegar o material. */
   comBloqueio?: boolean
+  /** Na LIBERAÇÃO de pendência o estoque só recomenda: o teto é a dívida e todo
+   *  item é digitável, inclusive o que a foto do PCP mostra zerado. Quem abre o
+   *  modal está com a peça na mão; o app conhece a última foto, não a
+   *  prateleira. Na DECISÃO continua valendo o estoque como teto — lá o ato é
+   *  justamente repartir o que existe. */
+  tetoNaDivida?: boolean
 }) {
   const ordenados = [...itens].sort((a, b) => {
     const da = (a.qtd_atendida || 0) > 0 ? 0 : 1
@@ -327,7 +334,10 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, c
             const disp = i.qtd_atendida || 0
             const tem = disp > 0
             const valor = qtds[pid] ?? ''
-            const excedeu = Number(valor) > disp
+            const teto = tetoNaDivida ? (i.qtd_pedida || 0) : disp
+            const excedeu = Number(valor) > teto
+            const passouDaFoto = !!tetoNaDivida && Number(valor) > disp + 0.001
+            const digitavel = tem || !!tetoNaDivida
             return (
               <tr key={pid || idx} className={tem ? 'bg-emerald-50/60' : ''}>
                 <td className="py-2 px-3">
@@ -365,11 +375,20 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, c
                   </td>
                 )}
                 <td className="py-2 px-3 text-right">
-                  {tem ? (
-                    <input type="number" min={0} max={disp} step="any" value={valor}
-                      onChange={e => onQtd(pid, e.target.value)}
-                      className={`w-24 border rounded-lg px-2 py-1 text-sm text-right tabular-nums ${
-                        excedeu ? 'border-red-400 bg-red-50' : 'border-emerald-300'}`} />
+                  {digitavel ? (
+                    <>
+                      <input type="number" min={0} max={teto} step="any" value={valor}
+                        onChange={e => onQtd(pid, e.target.value)}
+                        className={`w-24 border rounded-lg px-2 py-1 text-sm text-right tabular-nums ${
+                          excedeu ? 'border-red-400 bg-red-50'
+                            : passouDaFoto ? 'border-amber-400 bg-amber-50'
+                            : tem ? 'border-emerald-300' : 'border-gray-200'}`} />
+                      {passouDaFoto && (
+                        <span className="block text-[11px] text-amber-700 mt-0.5">
+                          acima da foto ({n(disp)})
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <span className="text-[11px] text-gray-400">sem estoque</span>
                   )}
@@ -440,7 +459,6 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
     },
   })
 
-  const podeParcial = !!faltaAinda?.itens?.some(i => (i.qtd_atendida || 0) > 0)
   // Situação já conhecida: parte em estoque, parte faltando. Vai direto ao parcial.
   const situacao = faltaAinda || analise || null
   const parcialDireto = !faltaAinda && !!analise?.tem_falta
@@ -456,12 +474,17 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
       .map(i => [i.produto_id as string, String(i.qtd_atendida)])))
   }, [situacao])
 
-  // O que vai ser enviado: só item com quantidade > 0, nunca acima do disponível.
+  // O que vai ser enviado: todo item com quantidade digitada > 0. Antes o filtro
+  // exigia estoque na foto, então digitar num item zerado não surtia efeito — a
+  // liberação saía sem ele, calada.
   const escolha = (situacao?.itens || [])
-    .filter(i => i.produto_id && (i.qtd_atendida || 0) > 0)
+    .filter(i => i.produto_id)
     .map(i => ({ produto_id: i.produto_id as string, qtd: Number(qtds[i.produto_id as string] ?? 0) }))
     .filter(i => i.qtd > 0)
+  // Teto é a dívida, não o estoque: o estoque só recomenda.
   const excedeuAlgum = (situacao?.itens || []).some(i =>
+    i.produto_id && Number(qtds[i.produto_id] ?? 0) > (i.qtd_pedida || 0) + 0.001)
+  const acimaDaFoto = (situacao?.itens || []).filter(i =>
     i.produto_id && Number(qtds[i.produto_id] ?? 0) > (i.qtd_atendida || 0) + 0.001)
   const totalEscolhido = escolha.reduce((a, i) => a + i.qtd, 0)
 
@@ -471,14 +494,21 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
     .map(i => ({ produto_id: i.produto_id as string,
                  qtd: Number(String(qtdsSaldo[i.produto_id as string] ?? '').replace(',', '.')) || 0 }))
     .filter(i => i.qtd > 0)
-  /** Teto de cada item: o que existe agora, e na falta de informacao o devido. */
-  const tetoDe = (i: { codigo?: string | null; qtd_pendente?: number }) => {
+  /** Teto de cada item: a DÍVIDA da venda. O estoque nao e teto — e sugestao.
+   *  O app conhece a ultima foto do PCP, nao a prateleira; quem abre o modal
+   *  esta com a peca na mao. Entregar mais do que foi vendido continua fora. */
+  const tetoDe = (i: { qtd_pendente?: number }) => Number(i.qtd_pendente) || 0
+  /** O que a foto do estoque cobre deste item — o numero recomendado. */
+  const sugeridoDe = (i: { codigo?: string | null; qtd_pendente?: number }) => {
     const devido = Number(i.qtd_pendente) || 0
     const d = dispAgora(i.codigo)
     return d === null ? devido : Math.min(devido, d)
   }
   const excedeuSaldo = (p.itens || []).some(i => i.produto_id
     && (Number(String(qtdsSaldo[i.produto_id] ?? '').replace(',', '.')) || 0) > tetoDe(i) + 0.001)
+  /** Passou da foto do estoque: avisa, nao impede. */
+  const acimaDoEstoque = (p.itens || []).filter(i => i.produto_id
+    && (Number(String(qtdsSaldo[i.produto_id] ?? '').replace(',', '.')) || 0) > sugeridoDe(i) + 0.001)
   const totalSaldo = escolhaSaldo.reduce((a, i) => a + i.qtd, 0)
   // Nada em estoque para nenhum item: nao ha liberacao possivel, e o botao tem de
   // dizer isso em vez de tentar e voltar erro.
@@ -518,7 +548,7 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                 <strong>{n(faltaAinda.qtd_pendente_total)} un</strong>.
               </p>
             </div>
-            <EscolhaDeLiberacao itens={faltaAinda.itens} qtds={qtds} onQtd={setQtd} />
+            <EscolhaDeLiberacao itens={faltaAinda.itens} qtds={qtds} onQtd={setQtd} tetoNaDivida />
           </>
         ) : parcialDireto && analise ? (
           <>
@@ -531,7 +561,7 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                 continua pendente e entra depois na mesma OV.
               </p>
             </div>
-            <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} onQtd={setQtd} />
+            <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} onQtd={setQtd} tetoNaDivida />
             <div>
               <label className="text-sm text-gray-600">Observação (opcional)</label>
               <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />
@@ -549,10 +579,12 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                     const pid = i.produto_id as string | undefined
                     const devido = Number(i.qtd_pendente) || 0
                     const teto = tetoDe(i)
+                    const sugerido = sugeridoDe(i)
                     const escolhido = pid
                       ? (Number(String(qtdsSaldo[pid] ?? '').replace(',', '.')) || 0)
-                      : teto
+                      : sugerido
                     const excede = escolhido > teto + 0.001
+                    const passouDaFoto = escolhido > sugerido + 0.001
                     const naFila = (p.estoque_agora?.itens || [])
                       .find(x => (x.codigo || '') === (i.codigo || ''))?.reservado_para || []
                     return (
@@ -560,9 +592,18 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                         <td className="py-1.5">
                           <span className="font-medium text-gray-800">{i.codigo || '—'}</span>
                           {i.descricao && <span className="block text-[11px] text-gray-400">{i.descricao}</span>}
-                          {teto <= 0 ? (
+                          {passouDaFoto ? (
+                            <span className="block text-[11px] text-amber-700">
+                              a foto do PCP mostra {n(sugerido)} un — liberando {n(escolhido)}.
+                              Vale o que você está vendo na prateleira.
+                              {naFila.length > 0 && (
+                                <> · o que a foto mostra está reservado para{' '}
+                                  {naFila.map(d => `${d.ov || d.cliente || 'outra venda'} (${n(d.qtd)})`).join(', ')}</>
+                              )}
+                            </span>
+                          ) : sugerido <= 0 && escolhido <= 0 ? (
                             <span className="block text-[11px] text-gray-500">
-                              sem material para este item — segue pendente
+                              sem material na foto do PCP — digite a quantidade se houver na prateleira
                               {naFila.length > 0 && (
                                 <> · o que existe está reservado para{' '}
                                   {naFila.map(d => `${d.ov || d.cliente || 'outra venda'} (${n(d.qtd)})`).join(', ')}</>
@@ -581,21 +622,22 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                         <td className="py-1.5 text-right whitespace-nowrap">
                           {pid ? (
                             <>
+                              {/* Sempre editavel: item zerado na foto pode estar na
+                                  prateleira, e campo travado nao deixava nem tentar. */}
                               <input
                                 value={qtdsSaldo[pid] ?? ''}
-                                disabled={teto <= 0}
                                 onChange={e => setQtdsSaldo(q => ({ ...q, [pid]: e.target.value }))}
                                 className={`w-20 px-2 py-1 border rounded-lg text-right tabular-nums
-                                  disabled:bg-gray-50 disabled:text-gray-300
-                                  ${excede ? 'border-red-300 focus:ring-red-400' : 'border-gray-200 focus:ring-emerald-400'}
+                                  ${excede ? 'border-red-300 focus:ring-red-400'
+                                    : passouDaFoto ? 'border-amber-300 focus:ring-amber-400'
+                                    : 'border-gray-200 focus:ring-emerald-400'}
                                   focus:ring-1`} />
-                              {/* "de X" e o TETO, nao a divida: o numero ao lado do campo
-                                  precisa ser o que da para digitar. A divida vai abaixo,
-                                  quando as duas nao coincidem. */}
-                              <span className="text-gray-400 text-xs ml-1">de {n(teto)}</span>
-                              {teto < devido && (
+                              {/* "de X" e a DIVIDA: agora e ela o teto. O que a foto
+                                  cobre vai abaixo, quando os dois nao coincidem. */}
+                              <span className="text-gray-400 text-xs ml-1">de {n(devido)}</span>
+                              {sugerido < devido && (
                                 <span className="block text-[11px] text-gray-400">
-                                  devendo {n(devido)} un
+                                  foto do PCP: {n(sugerido)} un
                                 </span>
                               )}
                             </>
@@ -611,10 +653,16 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                   })}
                 </tbody>
               </table>
-              {excedeuSaldo && (
+              {excedeuSaldo ? (
                 <p className="text-[11px] text-red-600 mt-1">
-                  Há item acima do que existe em estoque hoje. Se a prateleira estiver
-                  diferente, use <strong>corrigir</strong> no card antes de liberar.
+                  Há item acima do que esta venda deve. Não dá para entregar mais do que
+                  foi vendido — use <strong>corrigir</strong> no card se a venda mudou.
+                </p>
+              ) : acimaDoEstoque.length > 0 && (
+                <p className="text-[11px] text-amber-700 mt-1">
+                  Você está liberando mais do que a última foto do PCP mostra
+                  ({acimaDoEstoque.map(i => i.codigo).join(', ')}). Não é impedimento — o app
+                  conhece a foto, você conhece a prateleira. Fica registrado na liberação.
                 </p>
               )}
             </div>
@@ -642,13 +690,13 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
         <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Fechar</button>
         {faltaAinda || parcialDireto ? (
           <button
-            disabled={liberar.isPending || excedeuAlgum || escolha.length === 0
-              || (!!faltaAinda && !podeParcial)}
+            disabled={liberar.isPending || excedeuAlgum || escolha.length === 0}
             onClick={() => liberar.mutate({ parcial: true, itens: escolha })}
-            title={excedeuAlgum ? 'Há item acima do que existe em estoque' : undefined}
+            title={excedeuAlgum ? 'Há item acima do que esta venda deve'
+              : acimaDaFoto.length ? 'Acima da foto do PCP — permitido, fica registrado' : undefined}
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl py-2.5 text-sm font-medium">
             {liberar.isPending ? 'Liberando…'
-              : excedeuAlgum ? 'Quantidade acima do estoque'
+              : excedeuAlgum ? 'Quantidade acima do que foi vendido'
               : escolha.length === 0 ? 'Escolha o que liberar'
               : `Liberar ${n(totalEscolhido)} un (${escolha.length} ${escolha.length === 1 ? 'item' : 'itens'})`}
           </button>
@@ -659,11 +707,15 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
             onClick={() => liberar.mutate(semLeituraDeEstoque
               ? { parcial: false }
               : { parcial: true, itens: escolhaSaldo })}
+            title={acimaDoEstoque.length
+              ? 'Acima da foto do PCP — permitido, fica registrado' : undefined}
             className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl py-2.5 text-sm font-medium">
             {liberar.isPending ? 'Liberando…'
-              : excedeuSaldo ? 'Quantidade acima do estoque'
+              : excedeuSaldo ? 'Quantidade acima do que foi vendido'
               : semLeituraDeEstoque ? 'Confirmar liberação'
-              : nadaParaLiberar ? 'Nada disponível para liberar'
+              /* Nao e mais "nada disponivel": o campo esta editavel e a foto do
+                 estoque so sugere. O que falta e alguem digitar a quantidade. */
+              : nadaParaLiberar ? 'Digite quanto vai agora'
               : `Liberar ${n(totalSaldo)} un (${escolhaSaldo.length} ${escolhaSaldo.length === 1 ? 'item' : 'itens'})`}
           </button>
         )}

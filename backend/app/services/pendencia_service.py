@@ -1238,12 +1238,16 @@ def _ler(db, fonte: str, registro_id: str) -> tuple:
 def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             parcial: bool = False, observacao: Optional[str] = None,
             itens_escolhidos: Optional[list] = None) -> dict:
-    """Manda o saldo para a expedição, agora que existe material.
+    """Manda o saldo para a expedição.
 
-    Confere o estoque OUTRA VEZ antes de liberar. Sem isso o app repetiria o erro
-    que esta feature existe para evitar: prometer material que não está lá — a
-    pendência pode ter ficado dias parada e outra OV pode ter consumido a
-    produção nesse meio tempo.
+    Confere o estoque OUTRA VEZ antes de liberar — a pendência pode ter ficado
+    dias parada e outra OV pode ter consumido a produção nesse meio tempo. Mas o
+    resultado dessa conferência é RECOMENDAÇÃO, não veto: o número do app é a
+    última foto do PCP, e quem está com a peça na mão é quem libera. Recusar
+    virava venda parada por divergência de cadastro.
+
+    O único teto é a dívida da venda: entregar mais do que foi vendido não é
+    divergência, é erro. Passar da foto do estoque fica registrado na observação.
 
     `parcial=True` libera só o que já dá e mantém o resto pendente.
     """
@@ -1300,26 +1304,33 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
     # ── Reconfere o estoque ───────────────────────────────────────────────────
     analise = disponibilidade_service.analisar(itens_entrada, sincronizar=True)
 
-    if analise.get("tem_falta") and not parcial:
-        raise HTTPException(status_code=409, detail={
-            "tipo": "ESTOQUE_INSUFICIENTE",
-            "msg": "Ainda não há material para tudo. Libere para operações de vendas o que "
-                   "já tem em estoque — o resto continua pendente.",
-            "analise": analise,
-        })
-
+    # O estoque RECOMENDA, não decide. O número que a análise devolve é a última
+    # foto do PCP mais o que este app já comprometeu — não é a prateleira. Quem
+    # está com a peça na mão é quem libera, e recusar a liberação transformava
+    # uma divergência de cadastro em venda parada: a pessoa via o material,
+    # clicava, e o app dizia que não existia.
+    #
+    # O que existe continua sendo dito, em cada item e na observação da
+    # liberação. Só não impede mais.
     a_liberar = disponibilidade_service.itens_atendidos(analise)
-    if not a_liberar:
+    if itens_escolhidos is None and not a_liberar:
         raise HTTPException(status_code=409, detail={
             "tipo": "ESTOQUE_INSUFICIENTE",
-            "msg": "Nenhuma unidade disponível ainda — não há o que liberar.",
+            "msg": "Nenhuma unidade disponível ainda — diga quanto de cada item vai "
+                   "agora se quiser liberar mesmo assim.",
             "analise": analise,
         })
 
-    # ── O comercial pode escolher quanto de cada item vai agora ───────────────
-    # Sem a lista, sai tudo o que há em estoque (como era). Com ela, respeita a
-    # escolha — mas nunca acima do que existe: o estoque acabou de ser reconferido
-    # e prometer mais do que tem é o erro que este fluxo inteiro existe para evitar.
+    # ── O comercial escolhe quanto de cada item vai agora ─────────────────────
+    # Sem a lista, sai o que a foto do estoque diz que existe — é a recomendação.
+    # Com ela, vale a escolha: o teto é a DÍVIDA daquele item, não o estoque.
+    # Passar do estoque é permitido e fica registrado; passar da dívida não, que
+    # aí não é divergência de cadastro, é entregar o que não foi vendido.
+    #
+    # E a lista percorre TODOS os itens da análise, não só os que têm saldo: um
+    # item com zero na foto não aparecia em `a_liberar`, então escolhê-lo não
+    # tinha efeito nenhum — a liberação saía silenciosamente sem ele.
+    acima_do_estoque: list[str] = []
     if itens_escolhidos is not None:
         pedido_por_produto: dict = {}
         for e in itens_escolhidos:
@@ -1329,22 +1340,33 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
                 pedido_por_produto[pid] = pedido_por_produto.get(pid, 0.0) + qtd
 
         escolhidos = []
-        for i in a_liberar:
+        for i in (analise.get("itens") or []):
             pid = str(i.get("produto_id") or "")
             if pid not in pedido_por_produto:
                 continue  # o comercial deixou este item para depois
+            devido = float(i.get("qtd_pedida") or 0)
             disponivel = float(i.get("qtd_atendida") or 0)
             querido = pedido_por_produto[pid]
-            if querido > disponivel + 0.001:
+            if querido > devido + 0.001:
                 raise HTTPException(status_code=422, detail=(
-                    f"Pedido {querido:g} un de {i.get('codigo') or 'um item'}, mas só há "
-                    f"{disponivel:g} em estoque agora."))
+                    f"Pedido {querido:g} un de {i.get('codigo') or 'um item'}, mas a venda "
+                    f"deve {devido:g} un — não dá para entregar mais do que foi vendido."))
+            if querido > disponivel + 0.001:
+                acima_do_estoque.append(
+                    "%s: %g un liberadas, %g na foto do estoque"
+                    % (i.get("codigo") or "item", querido, disponivel))
             escolhidos.append({**i, "qtd_atendida": querido,
-                               "qtd_pendente": float(i.get("qtd_pedida") or 0) - querido})
+                               "qtd_pendente": devido - querido})
         if not escolhidos:
             raise HTTPException(status_code=422,
                                 detail="Escolha ao menos um item (com quantidade) para liberar.")
         a_liberar = escolhidos
+
+    # Fica no rastro da liberação: quem conferir depois precisa saber que o
+    # número saiu da prateleira e não da foto.
+    if acima_do_estoque:
+        aviso = "Liberado acima do estoque da última foto — %s." % "; ".join(acima_do_estoque)
+        observacao = ("%s %s" % (observacao or "", aviso)).strip()
 
     itens_ov = [ItemPedidoCreate(
         produto_id=i["produto_id"],
