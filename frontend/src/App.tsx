@@ -14,6 +14,7 @@ import { VendaOutbound } from './pages/VendaOutbound'
 import { PainelComercial } from './pages/PainelComercial'
 import { PrevisaoFaturamento } from './pages/PrevisaoFaturamento'
 import Pendencias from './pages/Pendencias'
+import Devolucoes from './pages/Devolucoes'
 import ConferenciaFrete from './pages/ConferenciaFrete'
 import { Inicio } from './pages/Inicio'
 import { Pallets } from './pages/Pallets'
@@ -95,6 +96,7 @@ export default function App() {
             <Route path="comercial" element={<PainelComercial />} />
             <Route path="previsao" element={<PrevisaoFaturamento />} />
             <Route path="pendencias" element={<Pendencias />} />
+            <Route path="devolucoes" element={<Devolucoes />} />
             <Route path="frete" element={<ConferenciaFrete />} />
           </Route>
 
