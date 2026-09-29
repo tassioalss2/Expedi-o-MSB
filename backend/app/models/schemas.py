@@ -336,6 +336,14 @@ class EditarItensRequest(DecisaoEstoqueMixin):
     que existe e o saldo vira pendência. Herda `decisao_estoque` para o operador
     confirmar o parcial depois do 409, como em Nova OV."""
     itens: list[ItemPedidoCreate]
+    # Tirar quantidade da OV tem dois significados, e so quem esta na tela sabe
+    # qual: "vai depois" mantem a divida com o cliente e vira pendencia;
+    # "lancado errado" nao tem divida — o material nunca foi vendido.
+    #
+    # O padrao e False (vira pendencia) porque e o caso mais comum e o mais
+    # conservador: uma pendencia a mais se cancela; uma divida esquecida vira
+    # cliente sem receber.
+    retirada_e_correcao: bool = False
 
 
 class PedidoCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):

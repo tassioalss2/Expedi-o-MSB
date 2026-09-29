@@ -1026,7 +1026,8 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
                  decisao: Optional[str] = None,
                  observacao_estoque: Optional[str] = None,
                  previsao_pcp: Optional[str] = None,
-                 escolha_estoque: Optional[dict] = None) -> dict:
+                 escolha_estoque: Optional[dict] = None,
+                 retirada_e_correcao: bool = False) -> dict:
     """Substitui os itens de uma OV inteira — ex.: item sem estoque trocado por
     outro antes de faturar. Depois de FATURADO os itens são o que está na NF.
 
@@ -1174,6 +1175,22 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
             if antes - depois_por_produto.get(pid, 0.0) > 0.001}
 
     devolvidos_por_edicao = []
+    # Tirar quantidade da OV tem DOIS significados, e o app tratava os dois como
+    # um. "Vai depois" mantem a divida com o cliente e vira pendencia; "foi
+    # lancado errado" nao tem divida nenhuma — o material nunca foi vendido.
+    #
+    # Caso real (OV016920/OV016954, BIOVASCULAR): a operadora clicou em
+    # adicionar itens DUAS VEZES com 5 segundos de diferenca, a OV ficou com
+    # tudo em dobro, e ao corrigir o app criou uma pendencia de R$ 11.460,00
+    # que o D365 nunca teve. O cliente quase recebeu um e-mail cobrando saldo
+    # que nao existia.
+    removido_por_correcao = ""
+    if saiu and retirada_e_correcao:
+        rot = {r["id"]: r.get("codigo") for r in db.table("produtos")
+               .select("id, codigo").in_("id", list(saiu)).execute().data}
+        removido_por_correcao = "; ".join(
+            "%g un de %s" % (q, rot.get(pid) or "item") for pid, q in saiu.items())
+        saiu = {}
     if saiu:
         # Import aqui, e nao so no bloco do aumento: reducao pura nao tem delta,
         # entao naquele caminho `pendencia_service` nem existe — e reducao pura e
@@ -1219,6 +1236,11 @@ def editar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
                 f"(valor {anterior.get('valor')}, decidida em {anterior.get('decidido_em')}).")
 
     obs = f"Itens da OV editados por {usuario.nome}"
+    if retirada_e_correcao and removido_por_correcao:
+        # O historico precisa dizer que a quantidade saiu SEM virar divida —
+        # senao a auditoria le "sumiu material" e nao acha para onde foi.
+        obs += (" — correcao de lancamento: %s. Nao virou pendencia, este material"
+                " nao estava vendido." % removido_por_correcao)
     if devolvidos_por_edicao:
         # Sem isto o histórico não contava para onde foi o material retirado, e
         # ninguém conseguia auditar uma quantidade que "sumiu" da OV.

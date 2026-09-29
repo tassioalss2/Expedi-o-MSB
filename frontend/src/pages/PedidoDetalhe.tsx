@@ -2618,6 +2618,18 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   // salvava por cima do estoque e a OV seguia liberada com material que não
   // existe — foi o que motivou esta mudança.
   const [faltaEstoque, setFaltaEstoque] = useState<any | null>(null)
+  // Tirar quantidade da OV tem DOIS significados, e so quem esta na tela sabe
+  // qual. O app assumia sempre "vai depois" e criava pendencia — foi assim que
+  // a OV016920 da BIOVASCULAR ganhou R$ 11.460,00 de saldo que o D365 nunca
+  // teve, depois que a operadora corrigiu um lancamento duplicado.
+  const [correcao, setCorrecao] = useState(false)
+  // Quanto de cada item esta saindo agora. So com isso a pergunta faz sentido:
+  // perguntar "para onde vai o material?" numa edicao que so AUMENTA seria
+  // ruido.
+  const saindo = itensIniciais.filter(a => {
+    const agora = itens.find(b => b.produto_id === a.produto_id)
+    return (Number(agora?.qtd) || 0) < (Number(a.qtd) || 0)
+  })
 
   const corpo = (d?: DecisaoEstoque | null) => ({
     itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor || null })),
@@ -2625,6 +2637,7 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
     observacao_estoque: d?.observacao || null,
     previsao_pcp: d?.previsao_pcp || null,
     itens_escolhidos: d?.itens || null,
+    retirada_e_correcao: correcao,
   })
 
   const aoSalvar = (parcial: boolean) => {
@@ -2693,6 +2706,40 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
               com o que existe e o saldo vira <strong>pendência</strong> (2ª remessa quando o
               material chegar) — o app vai pedir sua confirmação.
             </p>
+          )}
+
+          {/* A pergunta que faltava. O app assumia que toda quantidade que sai
+              da OV continua vendida e virava pendencia — certo quando se adia
+              uma entrega, errado quando se desfaz um lancamento duplicado. Foi
+              assim que a OV016920 da BIOVASCULAR ganhou R$ 11.460,00 de saldo
+              que o D365 nunca teve. So aparece quando algo esta SAINDO. */}
+          {saindo.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+              <p className="text-xs font-medium text-amber-900">
+                Está saindo material da OV: {saindo.map(i => `${i.codigo}`).join(', ')}.
+                Para onde ele vai?
+              </p>
+              <label className="mt-2 flex items-start gap-2 text-xs text-gray-800 cursor-pointer">
+                <input type="radio" name="destino-retirada" checked={!correcao}
+                  onChange={() => setCorrecao(false)} className="mt-0.5" />
+                <span>
+                  <strong>Continua vendido — vai numa próxima remessa</strong>
+                  <span className="block text-[11px] text-gray-500">
+                    Vira pendência: o cliente ainda tem esse material a receber.
+                  </span>
+                </span>
+              </label>
+              <label className="mt-1.5 flex items-start gap-2 text-xs text-gray-800 cursor-pointer">
+                <input type="radio" name="destino-retirada" checked={correcao}
+                  onChange={() => setCorrecao(true)} className="mt-0.5" />
+                <span>
+                  <strong>Foi lançado errado — não estava vendido</strong>
+                  <span className="block text-[11px] text-gray-500">
+                    Não vira pendência. Use para desfazer duplicidade ou item errado.
+                  </span>
+                </span>
+              </label>
+            </div>
           )}
         </div>
         <div className="p-4 border-t flex justify-end gap-2">
