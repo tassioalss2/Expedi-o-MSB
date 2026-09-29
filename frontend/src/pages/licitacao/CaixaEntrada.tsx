@@ -1480,6 +1480,86 @@ function Secao({ titulo, children }: { titulo: string; children: any }) {
  *
  *  O catálogo é carregado sob demanda (só quando alguém abre o seletor), porque
  *  o detalhe de um caso não deveria pagar 187 produtos para nada. */
+/** "Esta linha nao e um item de pedido."
+ *
+ *  O leitor de anexos as vezes traz uma linha que nao e produto: na 2026NE003966
+ *  ele extraiu "11 un x R$ 6,00" com codigo 003966 e sem descricao — 003966 e o
+ *  sufixo da nota de empenho. O valor do pedido ficava R$ 66,00 mais caro e nao
+ *  havia como tirar.
+ *
+ *  Nao e so apagar: `itens` e reescrito pelo motor a cada rodada, entao a
+ *  remocao se desfaria em horas. O clique grava uma REJEICAO, que o app
+ *  reaplica em toda sincronizacao — e por isso que ele aprende. */
+function NaoEItem({ item, entradaId }: { item: any; entradaId: string }) {
+  const qc = useQueryClient()
+  const [confirmando, setConfirmando] = useState(false)
+  const [motivo, setMotivo] = useState('')
+
+  const rejeitar = useMutation({
+    mutationFn: () => api.post(`/licitacoes/entrada/${entradaId}/itens/rejeitar`,
+      { item, motivo: motivo.trim() || null }).then(r => r.data),
+    onSuccess: () => {
+      toast.success('Linha removida do pedido — e o app não vai trazer de novo.')
+      qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
+      setConfirmando(false)
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não consegui remover a linha')),
+  })
+
+  const restaurar = useMutation({
+    mutationFn: () => api.post('/licitacoes/entrada/itens/restaurar',
+      null, { params: { assinatura: item.assinatura || '' } }).then(r => r.data),
+    onSuccess: () => {
+      toast.success('Linha restaurada.')
+      qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
+    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não consegui restaurar')),
+  })
+
+  if (item.rejeitado) {
+    return (
+      <p className="mt-1 flex items-center gap-2 text-[11px] text-gray-500">
+        <span className="rounded bg-gray-200 px-1.5 py-0.5 font-medium">linha ignorada</span>
+        não conta no valor do pedido
+        <button onClick={() => restaurar.mutate()} disabled={restaurar.isPending}
+          className="text-blue-600 hover:underline disabled:opacity-50">desfazer</button>
+      </p>
+    )
+  }
+
+  if (!confirmando) {
+    return (
+      <button onClick={() => setConfirmando(true)}
+        title="O leitor trouxe esta linha do anexo, mas ela não é um item de pedido"
+        className="mt-1 text-[11px] text-gray-400 hover:text-red-600 hover:underline">
+        não é um item
+      </button>
+    )
+  }
+
+  return (
+    <div className="mt-1 rounded border border-red-200 bg-red-50 p-2">
+      <p className="text-[11px] text-red-900">
+        Esta linha sai do pedido e <strong>o app aprende a não trazê-la de novo</strong> —
+        o motor reescreve os itens a cada rodada, então só apagar não bastaria.
+      </p>
+      <div className="mt-1.5 flex gap-1.5">
+        <input value={motivo} onChange={e => setMotivo(e.target.value)} autoFocus
+          placeholder="por que não é item? (opcional)"
+          className="flex-1 rounded border border-red-200 px-2 py-1 text-[11px]" />
+        <button onClick={() => rejeitar.mutate()} disabled={rejeitar.isPending}
+          className="rounded bg-red-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-500 disabled:opacity-50">
+          {rejeitar.isPending ? '...' : 'Remover'}
+        </button>
+        <button onClick={() => setConfirmando(false)}
+          className="rounded border border-gray-200 bg-white px-2.5 py-1 text-[11px] text-gray-600">
+          cancelar
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function ProdutoDoItem({ item, chave }: { item: any; chave: string }) {
   const qc = useQueryClient()
   const [abrindo, setAbrindo] = useState(false)
@@ -2549,6 +2629,7 @@ function DetalheSolicitacao({ c, onFechar, onTriar, onNota, onTratativa, onApaga
                       esta serve ao caso que ainda não está pronto para virar
                       demanda, que é a maioria. */}
                   <ProdutoDoItem item={i} chave={c.chave} />
+                  <NaoEItem item={i} entradaId={c.emails?.[0]?.id} />
                   {i.fonte && <p className="text-[11px] text-gray-400">de {i.fonte}</p>}
                 </div>
               ))}

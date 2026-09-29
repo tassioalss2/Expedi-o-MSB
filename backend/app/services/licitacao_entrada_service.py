@@ -570,6 +570,11 @@ def sincronizar(lote: list[dict]) -> dict:
     tem_nf_citada = _suporta_nf_citada(db)
     conversa = _grava_mensagens(db, lote) if tem_conversa else {}
 
+    # O que o app ja aprendeu que NAO e item de pedido. Lido uma vez, aplicado
+    # em todo o lote: `itens` esta em _CAMPOS_DA_MAQUINA e e reescrito a cada
+    # rodada, entao sem isto a rejeicao de ontem sumiria hoje.
+    rejeitadas = _rejeicoes_ativas(db)
+
     criados = atualizados = sem_cliente = ligados = 0
     falharam: list[str] = []
     for e in lote:
@@ -591,6 +596,11 @@ def sincronizar(lote: list[dict]) -> dict:
             campos.pop("conversation_id", None)
         cnpj = _digitos(e.get("cnpj_orgao"))
         campos["cnpj_orgao"] = cnpj or None
+        # Reaplica o que ja foi rejeitado. Marca, nao apaga: se um dia a
+        # assinatura pegar um item de verdade, a tela mostra "linha ignorada" e
+        # da para desfazer — sumir em silencio seria o pior resultado.
+        if "itens" in campos:
+            campos["itens"] = marcar_itens_rejeitados(campos.get("itens"), rejeitadas)
 
         antes = existentes.get(chave)
         if antes is None:
@@ -1128,7 +1138,8 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
                 # de-para da v45, e ela é calculada AQUI para a regra de
                 # normalização existir num lugar só — a tela não precisa saber
                 # como se compara descrição de órgão.
-                itens.append({**i, "chave_desc": _chave_da_descricao(i.get("descricao"))})
+                itens.append({**i, "assinatura": assinatura_do_item(i),
+                              "chave_desc": _chave_da_descricao(i.get("descricao"))})
 
         situacoes = {m.get("situacao") for m in membros}
         cliente = next((m["clientes"]["nome"] for m in membros
@@ -1258,8 +1269,14 @@ def listar(situacao: Optional[str] = None, dias: Optional[int] = None,
             # movimento real da conversa: um caso de 40 dias que teve resposta
             # ontem não é o mesmo problema que um de 40 dias sem ninguém falar.
             "dias_sem_movimento": _dias_parados(ultima_msg) if ultima_msg else None,
+            # As linhas rejeitadas VAO no card, marcadas — a tela mostra
+            # "1 linha ignorada" com o que era. Some do total, nao da vista:
+            # se a assinatura um dia pegar um item de verdade, ninguem
+            # descobriria se a linha simplesmente desaparecesse.
             "itens": itens,
-            "valor_total": round(sum(float(i.get("valor_total") or 0) for i in itens), 2),
+            "valor_total": round(sum(float(i.get("valor_total") or 0)
+                                     for i in itens if not i.get("rejeitado")), 2),
+            "itens_ignorados": sum(1 for i in itens if i.get("rejeitado")),
             # Historico de anotacoes do caso — de todos os e-mails do grupo,
             # do mais recente para o mais antigo.
             "notas": sorted(
@@ -3004,6 +3021,156 @@ def detalhe(metrica: str, dias: Optional[int] = None) -> dict:
 
 
 # ── Fechamento automático pelo faturamento ───────────────────────────────────
+
+def assinatura_do_item(item: dict) -> str:
+    """O que identifica "a mesma linha do anexo" entre releituras.
+
+    Duas formas, nesta ordem:
+
+      Com descrição, é a descrição normalizada. É o que sobrevive a uma releitura
+      com OCR diferente, a uma quantidade corrigida e a um preço renegociado.
+
+      Sem descrição — que é justamente o caso das linhas ruins — só sobram
+      código, quantidade e valor. Mais frágil, mas é o que há: a linha que o
+      leitor trouxe da 2026NE003966 ("11 un × R$ 6,00", código 003966, sem
+      descrição) não tem outro sinal.
+
+    Deliberadamente NÃO entra a entrada de origem: o objetivo é o app aprender,
+    e uma rejeição que só valesse para um registro não ensina nada.
+    """
+    desc = _norm_desc(item.get("descricao"))
+    if desc:
+        return "D:%s" % desc
+    cod = str(item.get("codigo") or "").strip().upper()
+    qtd = float(item.get("qtd") or 0)
+    vu = float(item.get("valor_unitario") or 0)
+    return "S:%s|%g|%.2f" % (cod, qtd, vu)
+
+
+def _norm_desc(texto) -> str:
+    t = unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode()
+    t = re.sub(r"[^A-Za-z0-9]+", " ", t).strip().upper()
+    return " ".join(t.split())
+
+
+def _rejeicoes_ativas(db) -> set:
+    """As assinaturas que não são item. Vazio se a v52 ainda não rodou."""
+    try:
+        linhas = db.table("licitacao_itens_rejeitados").select("assinatura")\
+            .eq("ativo", True).limit(5000).execute().data
+        return {r["assinatura"] for r in linhas}
+    except Exception:
+        return set()
+
+
+def marcar_itens_rejeitados(itens, rejeitadas: set) -> list:
+    """Marca (não apaga) as linhas rejeitadas da lista que o motor trouxe.
+
+    Marcar em vez de apagar porque sumir em silêncio é o pior resultado
+    possível: se um dia a assinatura pegar um item de verdade, ninguém
+    descobriria. Assim a tela mostra "1 linha ignorada" e dá para desfazer.
+    """
+    if not itens:
+        return itens or []
+    if not rejeitadas:
+        return [{k: v for k, v in i.items() if k != "rejeitado"} for i in itens]
+    saida = []
+    for i in itens:
+        j = dict(i)
+        if assinatura_do_item(i) in rejeitadas:
+            j["rejeitado"] = True
+        else:
+            j.pop("rejeitado", None)
+        saida.append(j)
+    return saida
+
+
+def rejeitar_item(entrada_id: str, item: dict, motivo: str,
+                  usuario: UsuarioOut) -> dict:
+    """Esta linha do anexo não é um item de pedido.
+
+    Recebe a LINHA, não um índice. O card junta e deduplica os itens dos vários
+    e-mails da mesma nota de empenho, então a posição que a tela mostra não é a
+    posição no registro — rejeitar por índice apagaria a linha errada.
+
+    Grava a rejeição FORA do registro, porque `itens` é reescrito pelo motor a
+    cada rodada: apagar da linha se desfaria em horas. E aplica na hora, para
+    quem clicou ver o efeito sem esperar a próxima varredura.
+    """
+    db = get_service_db()
+    reg = db.table("licitacao_entrada").select("*").eq("id", entrada_id).execute().data
+    if not reg:
+        raise HTTPException(404, "solicitação não encontrada")
+
+    alvo = dict(item or {})
+    assinatura = assinatura_do_item(alvo)
+    if assinatura in ("D:", "S:||0.00"):
+        raise HTTPException(422, "esta linha não tem nada que a identifique — "
+                                 "sem isso a rejeição pegaria qualquer item.")
+    try:
+        db.table("licitacao_itens_rejeitados").insert({
+            "assinatura": assinatura,
+            "exemplo": alvo,
+            "entrada_id": entrada_id,
+            "chave_grupo": chave_do_grupo(reg[0]),
+            "motivo": (motivo or "").strip() or None,
+            "rejeitado_por": str(usuario.id) if usuario else None,
+        }).execute()
+    except Exception as exc:
+        # Já rejeitada antes (índice único) é sucesso, não erro: o efeito
+        # desejado já existe. Qualquer outra coisa sobe.
+        if "duplicate" not in str(exc).lower() and "23505" not in str(exc):
+            raise HTTPException(500, "não consegui gravar a rejeição: %s" % str(exc)[:120])
+
+    # Aplica AGORA em todos os e-mails do grupo: a linha ruim costuma vir do
+    # mesmo anexo, repetido em cada mensagem da conversa.
+    rejeitadas = _rejeicoes_ativas(db)
+    tocados = 0
+    for e in _emails_do_grupo(chave_do_grupo(reg[0]), "id, itens"):
+        novos = marcar_itens_rejeitados(e.get("itens") or [], rejeitadas)
+        if novos != (e.get("itens") or []):
+            db.table("licitacao_entrada").update(
+                {"itens": novos, "atualizado_em": _agora()}).eq("id", e["id"]).execute()
+            tocados += 1
+    return {"ok": True, "assinatura": assinatura, "registros_atualizados": tocados}
+
+
+def restaurar_item(assinatura: str, usuario: UsuarioOut) -> dict:
+    """Desfaz a rejeição: a linha volta a valer como item."""
+    db = get_service_db()
+    db.table("licitacao_itens_rejeitados").update({"ativo": False})\
+        .eq("assinatura", assinatura).execute()
+    regs = []
+    for off in range(0, 30000, 1000):
+        b = db.table("licitacao_entrada").select("id, itens").limit(1000).offset(off)\
+            .execute().data
+        regs += b
+        if len(b) < 1000:
+            break
+    rejeitadas = _rejeicoes_ativas(db)
+    tocados = 0
+    for e in regs:
+        itens = e.get("itens") or []
+        if not any(i.get("rejeitado") for i in itens):
+            continue
+        novos = marcar_itens_rejeitados(itens, rejeitadas)
+        if novos != itens:
+            db.table("licitacao_entrada").update(
+                {"itens": novos, "atualizado_em": _agora()}).eq("id", e["id"]).execute()
+            tocados += 1
+    return {"ok": True, "registros_atualizados": tocados}
+
+
+def listar_rejeicoes() -> list:
+    """O que o app aprendeu que não é item — para dar para revisar."""
+    db = get_service_db()
+    try:
+        return db.table("licitacao_itens_rejeitados")\
+            .select("*").eq("ativo", True).order("criado_em", desc=True)\
+            .limit(500).execute().data
+    except Exception:
+        return []
+
 
 def reconciliar_solicitacoes(usuario: Optional[UsuarioOut] = None,
                              aplicar: bool = True) -> dict:

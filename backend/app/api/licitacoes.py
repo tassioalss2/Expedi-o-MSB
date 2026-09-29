@@ -208,6 +208,43 @@ def liberar_estoque(demanda_id: UUID, payload: DemandaEstoqueLiberar, _: Usuario
     return licitacao_demanda_service.liberar_estoque(str(demanda_id), payload)
 
 
+class RejeitarItem(BaseModel):
+    """Esta linha do anexo nao e um item de pedido.
+
+    Vem a LINHA inteira, nao um indice: o card junta e deduplica os itens dos
+    varios e-mails da mesma NE, entao a posicao na tela nao e a posicao no
+    registro. A assinatura e calculada no servidor, onde a regra mora.
+    """
+    item: dict
+    motivo: Optional[str] = None
+
+
+@router.post("/entrada/{entrada_id}/itens/rejeitar")
+def rejeitar_item(entrada_id: UUID, payload: RejeitarItem,
+                  usuario: UsuarioOut = Depends(get_current_user)):
+    """Tira a linha do pedido E ensina o app a nao trazer de novo.
+
+    Nao basta apagar: `itens` e reescrito pelo motor a cada rodada, entao a
+    remocao se desfaria em horas. A rejeicao vive fora do registro e e
+    reaplicada em toda sincronizacao.
+    """
+    return licitacao_entrada_service.rejeitar_item(
+        str(entrada_id), payload.item, payload.motivo, usuario)
+
+
+@router.post("/entrada/itens/restaurar")
+def restaurar_item(assinatura: str = Query(...),
+                   usuario: UsuarioOut = Depends(get_current_user)):
+    """Desfaz: a linha volta a valer como item."""
+    return licitacao_entrada_service.restaurar_item(assinatura, usuario)
+
+
+@router.get("/entrada/itens/rejeitados")
+def listar_rejeicoes(_: UsuarioOut = Depends(get_current_user)):
+    """O que o app aprendeu que nao e item — para dar para revisar."""
+    return licitacao_entrada_service.listar_rejeicoes()
+
+
 @router.post("/entrada/reconciliar")
 def reconciliar_solicitacoes(aplicar: bool = Query(True),
                              usuario: UsuarioOut = Depends(get_current_user)):
