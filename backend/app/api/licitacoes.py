@@ -208,6 +208,20 @@ def liberar_estoque(demanda_id: UUID, payload: DemandaEstoqueLiberar, _: Usuario
     return licitacao_demanda_service.liberar_estoque(str(demanda_id), payload)
 
 
+@router.post("/entrada/reconciliar")
+def reconciliar_solicitacoes(aplicar: bool = Query(True),
+                             usuario: UsuarioOut = Depends(get_current_user)):
+    """Fecha as solicitacoes cuja OV ja foi faturada e que ficaram abertas.
+
+    O gatilho do faturamento so dispara no instante da nota. Quando o vinculo
+    com a demanda aparece depois — e aparece — ninguem reconfere. Esta varredura
+    cobre qualquer ordem dos eventos, e e idempotente.
+
+    `aplicar=false` devolve o que faria sem escrever.
+    """
+    return licitacao_entrada_service.reconciliar_solicitacoes(usuario, aplicar=aplicar)
+
+
 @router.delete("/demandas/{demanda_id}")
 def excluir_demanda(demanda_id: UUID,
                     motivo: str = Query("", description="Obrigatório quando já há NF"),

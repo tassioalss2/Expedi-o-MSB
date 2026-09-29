@@ -3005,6 +3005,113 @@ def detalhe(metrica: str, dias: Optional[int] = None) -> dict:
 
 # ── Fechamento automático pelo faturamento ───────────────────────────────────
 
+def reconciliar_solicitacoes(usuario: Optional[UsuarioOut] = None,
+                             aplicar: bool = True) -> dict:
+    """Varre as OVs de licitação já faturadas e fecha a solicitação que ficou aberta.
+
+    `resolver_por_faturamento` dispara no INSTANTE do faturamento, e isso deixa
+    um buraco que a medição mostrou: das 6 solicitações abertas com OV já
+    faturada, 5 TINHAM o vínculo com a demanda — ele só apareceu depois. A
+    OV016912 faturou em 25/09 e a solicitação seguia aberta em 29/09.
+
+    A ordem dos eventos varia e sempre vai variar: às vezes a demanda nasce
+    antes, às vezes o e-mail do órgão chega depois da entrega, às vezes alguém
+    liga as pontas na semana seguinte. Um gatilho de instante único não cobre
+    isso; uma varredura cobre.
+
+    Carrega tudo UMA vez e cruza em memória. A primeira versão chamava
+    `resolver_por_faturamento` por OV — 354 OVs relendo todas as demandas e
+    todas as entradas, milhares de idas ao banco, e passou de 10 minutos sem
+    terminar. O trabalho é o mesmo; o que mudou foi ler uma vez.
+
+    `aplicar=False` devolve o que faria sem escrever — é como se confere antes.
+    """
+    db = get_service_db()
+
+    def _tudo(tabela, colunas):
+        linhas = []
+        for off in range(0, 40000, 1000):
+            b = db.table(tabela).select(colunas).limit(1000).offset(off).execute().data
+            linhas += b
+            if len(b) < 1000:
+                break
+        return linhas
+
+    peds = _tudo("pedidos", "numero_pedido, numero_nf, status, forma_venda, canal")
+    faturadas = {}
+    for p in peds:
+        if not p.get("numero_nf") or p.get("status") == "CANCELADO":
+            continue
+        if not (p.get("forma_venda") == "LICITACAO"
+                or str(p.get("canal") or "").upper().startswith("LICITACAO")):
+            continue
+        faturadas[str(p["numero_pedido"]).upper()] = p
+
+    demandas = _tudo("licitacao_demandas", "id, numero, ovs, gerado_ref")
+    # Demanda → a OV faturada que a atende, se houver.
+    por_demanda, nes_faturadas = {}, {}
+    for d in demandas:
+        refs = [str(d.get("gerado_ref") or "").upper()]
+        refs += [str((o or {}).get("numero") or "").upper() for o in (d.get("ovs") or [])]
+        achou = next((faturadas[r] for r in refs if r in faturadas), None)
+        if not achou:
+            continue
+        por_demanda[d["id"]] = achou
+        for n in _nes_do_texto(d.get("numero")):
+            nes_faturadas[n] = achou
+
+    entradas = _tudo("licitacao_entrada",
+                     "id, chave, assunto, situacao, demanda_id, ativo, empenhos, "
+                     "cnpj_orgao, cliente_id, pregao, contrato, orgao_texto, corpo")
+
+    # Uma chave de grupo, uma decisão. `chave_do_grupo` é derivada — a coluna
+    # `chave` do banco não serve aqui, e passá-la daria "chave inválida".
+    fechar = {}
+    for e in entradas:
+        if not e.get("ativo") or e.get("situacao") in ("SIM", "PARCIAL"):
+            continue
+        ov = por_demanda.get(e.get("demanda_id"))
+        if not ov:
+            # Caminho B: a nota de empenho, que as duas pontas têm. Vale quando
+            # a demanda nasceu por fora do botão "Gerar demanda" e o vínculo por
+            # id nunca existiu — foi o caso da 2026NE004288.
+            nes = {str(x).upper().strip() for x in (e.get("empenhos") or [])}
+            nes |= _nes_do_texto(e.get("assunto"))
+            ov = next((nes_faturadas[n] for n in nes if n in nes_faturadas), None)
+        if ov:
+            fechar.setdefault(chave_do_grupo(e), ov)
+
+    fechados = [{"chave": c, "ov": p["numero_pedido"], "nf": p.get("numero_nf")}
+                for c, p in fechar.items()]
+    if not aplicar:
+        return {"conferidas": len(faturadas), "fechados": fechados, "erros": [],
+                "aplicado": False}
+
+    erros = []
+    for chave, p in fechar.items():
+        nota = ("Resolvido pelo app: a OV %s foi faturada%s."
+                % (p["numero_pedido"],
+                   " com a NF %s" % p["numero_nf"] if p.get("numero_nf") else ""))
+        try:
+            triar_grupo(chave, usuario, situacao="SIM",
+                        observacao=nota if usuario is not None else None)
+        except Exception as exc:  # noqa: BLE001
+            erros.append("%s: %s" % (chave, str(exc)[:110]))
+    return {"conferidas": len(faturadas), "fechados": fechados, "erros": erros,
+            "aplicado": True}
+
+
+def _nes_do_texto(texto) -> set:
+    """As notas de empenho citadas num texto, como tokens inteiros.
+
+    "EMPENHO 2026NE004288" e "2026NE004288" têm de casar — o prefixo é enfeite
+    do título da demanda. E casa só o token completo: procurar "NE001" dentro de
+    "NE0012" fecharia o caso errado, e fechar caso errado é pior do que deixar
+    aberto.
+    """
+    return set(re.findall(r"\b(20\d{2}NE\d{4,8})\b", str(texto or "").upper()))
+
+
 def resolver_por_faturamento(numero_pedido: str, numero_nf: str,
                              usuario: Optional[UsuarioOut] = None) -> dict:
     """Marca como resolvida a solicitação cuja OV acabou de ser faturada.
@@ -3040,12 +3147,24 @@ def resolver_por_faturamento(numero_pedido: str, numero_nf: str,
             demandas += bloco
             if len(bloco) < 1000:
                 break
-        alvo = [d["id"] for d in demandas
-                if str(d.get("gerado_ref") or "").upper() == ov
-                or any(str((o or {}).get("numero") or "").upper() == ov
-                       for o in (d.get("ovs") or []))]
+        casadas = [d for d in demandas
+                   if str(d.get("gerado_ref") or "").upper() == ov
+                   or any(str((o or {}).get("numero") or "").upper() == ov
+                          for o in (d.get("ovs") or []))]
+        alvo = [d["id"] for d in casadas]
         if not alvo:
             return resultado
+        # As notas de empenho dessas demandas. É o caminho B, e ele existe por
+        # um caso real: a 2026NE004288 foi entregue e faturada (OV016851, NF
+        # 20892), a demanda estava em NF_ENVIADA, e a solicitação continuou
+        # aberta na caixa de entrada — porque `demanda_id` nela era NULO.
+        #
+        # O vínculo por id só existe quando a demanda nasceu do botão "Gerar
+        # demanda" naquela solicitação. Demanda criada por fora fica sem ele, e
+        # aí o número do empenho é o que as duas pontas têm em comum.
+        nes_da_demanda = set()
+        for d in casadas:
+            nes_da_demanda |= _nes_do_texto(d.get("numero"))
 
         entradas = []
         for off in range(0, 20000, 1000):
@@ -3062,8 +3181,20 @@ def resolver_por_faturamento(numero_pedido: str, numero_nf: str,
         # (`NE:`, `DOC:`, `EM:`) e é ele que a tela e a triagem usam. Passar a
         # chave crua dava "chave de grupo inválida" — e, pior que o erro, seria
         # agir sobre um conjunto diferente do que a tela mostra.
+        def ligada(e) -> bool:
+            if e.get("demanda_id") in alvo:
+                return True                       # caminho A: o vínculo direto
+            if not nes_da_demanda:
+                return False
+            # Caminho B: a mesma nota de empenho nos dois lados. Casa por TOKEN
+            # inteiro ("2026NE004288"), nunca por pedaço — "NE001" dentro de
+            # "NE0012" fecharia o caso errado.
+            return bool(nes_da_demanda & (
+                {str(x).upper().strip() for x in (e.get("empenhos") or [])}
+                | _nes_do_texto(e.get("assunto"))))
+
         chaves = {chave_do_grupo(e) for e in entradas
-                  if e.get("demanda_id") in alvo and e.get("ativo")
+                  if ligada(e) and e.get("ativo")
                   and e.get("situacao") != "PARCIAL"}
         if not chaves:
             return resultado
