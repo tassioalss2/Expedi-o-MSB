@@ -46,6 +46,9 @@ const dataBR = (iso?: string | null) =>
 
 type FilaKey = 'COMPLETO' | 'PARCIAL' | 'NENHUM' | 'BLOQUEADA'
 
+/** Qual card do topo está filtrando a lista. `null` = todas. */
+type Recorte = null | 'liberar' | 'esperando' | 'parada'
+
 // As tres filas por estoque ("chegou tudo / parte / sem material") viraram uma
 // etiqueta no card: separavam o mesmo cliente em blocos diferentes, e a foto do
 // PCP nao decide onde a pendencia mora. `filaDe` ficou, porque os KPIs do topo
@@ -64,6 +67,7 @@ export default function Pendencias() {
   const [acompanhando, setAcompanhando] = useState<Pendencia | null>(null)
   const [cancelando, setCancelando] = useState<Pendencia | null>(null)
   const [verFila, setVerFila] = useState(false)
+  const [recorte, setRecorte] = useState<Recorte>(null)
 
   const { data, isLoading } = useQuery<PendenciasResp>({
     queryKey: ['crm-pendencias', verHistorico],
@@ -107,7 +111,7 @@ export default function Pendencias() {
   //
   // A chave é a OV. Sem OV (venda do CRM que ainda não desceu), cada pendência
   // é a sua própria venda e vira um grupo de um.
-  const grupos = useMemo(() => {
+  const todosGrupos = useMemo(() => {
     const m = new Map<string, Pendencia[]>()
     for (const p of abertas) {
       const k = p.ov_ref ? `ov:${p.ov_ref}` : `p:${p.fonte}-${p.id}`
@@ -135,6 +139,29 @@ export default function Pendencias() {
   const liberavelAgora = porFila.COMPLETO.concat(porFila.PARCIAL)
     .reduce((a, p) => a + (p.estoque_agora?.valor_disponivel || 0), 0)
 
+  // Os recortes dos cards do topo. Cada um decide por SALDO; o filtro depois
+  // aplica por VENDA.
+  const RECORTES: Record<Exclude<Recorte, null>, (p: Pendencia) => boolean> = {
+    liberar: p => !!p.pode_liberar
+      && (p.estoque_agora?.status === 'COMPLETO' || p.estoque_agora?.status === 'PARCIAL'),
+    parada: p => (p.dias_parada || 0) >= DIAS_CRITICO,
+    esperando: p => !!p.pode_liberar && p.estoque_agora?.status !== 'COMPLETO'
+      && p.estoque_agora?.status !== 'PARCIAL',
+  }
+
+  // O ponto do pedido dele: clicar em "dá para liberar agora" e ver a VENDA
+  // INTEIRA, não só o saldo que casa com o recorte. Uma OV com um saldo liberável
+  // e outro sem estoque aparece completa — senão a tela mostra metade de uma
+  // venda e a pessoa libera sem saber que o cliente espera mais coisa.
+  //
+  // Por isso o teste é `.some()` sobre os saldos do grupo, e o grupo entra
+  // inteiro. O que casou ganha destaque dentro do card.
+  const grupos = useMemo(() => {
+    if (!recorte) return todosGrupos
+    const casa = RECORTES[recorte]
+    return todosGrupos.filter(g => g.itens.some(casa))
+  }, [todosGrupos, recorte])
+
   return (
     <div className="space-y-4">
       <div>
@@ -161,19 +188,34 @@ export default function Pendencias() {
 
       {aba === 'produto' ? <PorProduto /> : <>
 
-      {/* Os três números que decidem o dia */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* Os números que decidem o dia — e, clicados, o filtro da lista.
+          O primeiro é o total e por isso limpa o filtro; os outros três são os
+          recortes de "o que dá para liberar", "o que só espera material" e "o
+          que já passou do prazo". */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi
           rotulo="Parado esperando material"
           valor={fmtBRL(abertas.reduce((a, p) => a + (p.valor || 0), 0))}
-          detalhe={`${abertas.length} pendência(s)`}
+          detalhe={`${abertas.length} pendência(s) · ${todosGrupos.length} venda(s)`}
           cor="text-red-700"
+          ativo={recorte === null} anel="ring-red-200 border-red-300"
+          onClick={() => setRecorte(null)}
         />
         <Kpi
           rotulo="Dá para liberar agora"
           valor={fmtBRL(liberavelAgora)}
           detalhe={`${porFila.COMPLETO.length} completa(s) · ${porFila.PARCIAL.length} parcial(is)`}
           cor="text-emerald-700"
+          ativo={recorte === 'liberar'} anel="ring-emerald-200 border-emerald-300"
+          onClick={() => setRecorte(r => r === 'liberar' ? null : 'liberar')}
+        />
+        <Kpi
+          rotulo="Só esperando material"
+          valor={fmtBRL(porFila.NENHUM.reduce((a, p) => a + (p.valor || 0), 0))}
+          detalhe={`${porFila.NENHUM.length} sem estoque na foto`}
+          cor="text-gray-700"
+          ativo={recorte === 'esperando'} anel="ring-gray-300 border-gray-300"
+          onClick={() => setRecorte(r => r === 'esperando' ? null : 'esperando')}
         />
         <Kpi
           rotulo="Espera mais longa"
@@ -181,7 +223,9 @@ export default function Pendencias() {
             ? `${Math.max(...abertas.map(p => p.dias_parada || 0))} dias`
             : '—'}
           detalhe={`${abertas.filter(p => (p.dias_parada || 0) >= DIAS_CRITICO).length} acima de ${DIAS_CRITICO} dias`}
-          cor="text-gray-800"
+          cor="text-amber-700"
+          ativo={recorte === 'parada'} anel="ring-amber-200 border-amber-300"
+          onClick={() => setRecorte(r => r === 'parada' ? null : 'parada')}
         />
       </div>
 
@@ -241,6 +285,18 @@ export default function Pendencias() {
             {busca || linha ? 'Nenhuma pendência com esse filtro.' : 'Tudo que foi vendido tem estoque.'}
           </p>
         </div>
+      ) : grupos.length === 0 ? (
+        /* Ha pendencias, mas nenhuma no recorte clicado. Dizer isso e oferecer a
+           saida, em vez do mesmo aviso verde de "nao ha nada", que seria mentira. */
+        <div className="bg-white border border-gray-200 rounded-xl px-4 py-8 text-center">
+          <p className="text-sm text-gray-600">
+            Nenhuma venda neste recorte — as outras {abertas.length} pendências continuam abertas.
+          </p>
+          <button onClick={() => setRecorte(null)}
+            className="mt-2 text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50">
+            Ver todas
+          </button>
+        </div>
       ) : (
         /* Uma lista só. Separar em "chegou tudo / chegou parte / sem material"
            quebrava o mesmo cliente em três blocos — a SEVEN MEDIC aparecia em
@@ -251,28 +307,48 @@ export default function Pendencias() {
         <section className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="flex items-baseline justify-between gap-2 mb-1">
             <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-              <PackageCheck size={16} /> Pendências abertas
+              <PackageCheck size={16} />
+              {recorte === 'liberar' ? 'Vendas com algo para liberar'
+                : recorte === 'esperando' ? 'Vendas só esperando material'
+                : recorte === 'parada' ? `Vendas paradas há mais de ${DIAS_CRITICO} dias`
+                : 'Pendências abertas'}
               <span className="text-xs font-normal text-gray-400">
                 {grupos.length} {grupos.length === 1 ? 'venda' : 'vendas'}
-                {grupos.length !== abertas.length && ` · ${abertas.length} saldos`}
+                {` · ${grupos.reduce((a, g) => a + g.itens.length, 0)} saldos`}
               </span>
+              {recorte && (
+                <button onClick={() => setRecorte(null)}
+                  className="text-[11px] font-normal px-1.5 py-0.5 rounded border border-gray-300
+                             text-gray-500 hover:bg-gray-50">
+                  <X size={10} className="inline -mt-0.5 mr-0.5" /> limpar filtro
+                </button>
+              )}
             </h2>
             <span className="text-sm font-semibold tabular-nums text-gray-700">
-              {fmtBRL(abertas.reduce((a, p) => a + (p.valor || 0), 0))}
+              {fmtBRL(grupos.reduce((a, g) => a + g.valor, 0))}
             </span>
           </div>
           <p className="text-xs text-gray-500 mb-3">
-            As mais paradas primeiro. A etiqueta de estoque em cada card é o que a última
-            foto do PCP diz — recomendação, não trava: dá para liberar mesmo assim.
+            {recorte ? (
+              <>A venda aparece <strong>inteira</strong>: se uma OV tem um saldo que casa com o
+              filtro e outro que não, os dois ficam à vista — liberar sem ver o resto do que o
+              cliente espera é como esta tela erra. O saldo que casou está marcado.</>
+            ) : (
+              <>As mais paradas primeiro. A etiqueta de estoque em cada card é o que a última
+              foto do PCP diz — recomendação, não trava: dá para liberar mesmo assim.
+              Clique nos números acima para filtrar.</>
+            )}
           </p>
           <div className="space-y-2">
             {grupos.map(g => g.itens.length === 1 ? (
               <Card key={g.k} p={g.itens[0]}
+                destacado={!!recorte && RECORTES[recorte](g.itens[0])}
                 onLiberar={() => setLiberando(g.itens[0])}
                 onAcompanhar={() => setAcompanhando(g.itens[0])}
                 onCancelar={() => setCancelando(g.itens[0])} />
             ) : (
               <GrupoDaVenda key={g.k} itens={g.itens} valor={g.valor}
+                destaca={recorte ? RECORTES[recorte] : undefined}
                 onLiberar={setLiberando} onAcompanhar={setAcompanhando}
                 onCancelar={setCancelando} />
             ))}
@@ -489,15 +565,35 @@ function PorProduto() {
   )
 }
 
-function Kpi({ rotulo, valor, detalhe, cor }: {
+function Kpi({ rotulo, valor, detalhe, cor, ativo, onClick, anel }: {
   rotulo: string; valor: string; detalhe: string; cor: string
+  /** Clicável, o número vira o filtro da lista abaixo: o card já resume um
+   *  recorte, e ter de reproduzi-lo à mão num campo de busca era trabalho que
+   *  o próprio card podia poupar. */
+  ativo?: boolean; onClick?: () => void; anel?: string
 }) {
+  const base = "rounded-xl border shadow-sm px-4 py-3 text-left w-full transition"
+  if (!onClick) {
+    return (
+      <div className={`${base} bg-white border-gray-100`}>
+        <p className="text-xs text-gray-400">{rotulo}</p>
+        <p className={`text-lg font-bold tabular-nums ${cor}`}>{valor}</p>
+        <p className="text-[11px] text-gray-400">{detalhe}</p>
+      </div>
+    )
+  }
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3">
-      <p className="text-xs text-gray-400">{rotulo}</p>
+    <button onClick={onClick}
+      title={ativo ? 'Clique para ver todas de novo' : 'Clique para filtrar a lista por este recorte'}
+      className={`${base} ${ativo
+        ? `bg-white ${anel} ring-2`
+        : 'bg-white border-gray-100 hover:border-gray-300 hover:shadow'}`}>
+      <p className={`text-xs ${ativo ? 'font-medium text-gray-600' : 'text-gray-400'}`}>
+        {rotulo}{ativo && ' · filtrando'}
+      </p>
       <p className={`text-lg font-bold tabular-nums ${cor}`}>{valor}</p>
       <p className="text-[11px] text-gray-400">{detalhe}</p>
-    </div>
+    </button>
   )
 }
 
@@ -652,8 +748,11 @@ function EtiquetaEstoque({ p }: { p: Pendencia }) {
  *  para fundir os saldos num só: cada um é uma linha de `pedidos` diferente, e
  *  liberar, cobrar e cancelar agem em cada um. Juntar só o cabeçalho resolve o
  *  que incomodava — ler três vezes o mesmo cliente e a mesma OV. */
-function GrupoDaVenda({ itens, valor, onLiberar, onAcompanhar, onCancelar }: {
+function GrupoDaVenda({ itens, valor, destaca, onLiberar, onAcompanhar, onCancelar }: {
   itens: Pendencia[]; valor: number
+  /** Com filtro ativo, marca quais saldos casaram. Os outros continuam à vista:
+   *  a venda aparece inteira de proposito. */
+  destaca?: (p: Pendencia) => boolean
   onLiberar: (p: Pendencia) => void
   onAcompanhar: (p: Pendencia) => void
   onCancelar: (p: Pendencia) => void
@@ -697,6 +796,7 @@ function GrupoDaVenda({ itens, valor, onLiberar, onAcompanhar, onCancelar }: {
       <div className="space-y-1.5 px-2 pb-2">
         {itens.map(p => (
           <Card key={`${p.fonte}-${p.id}`} p={p} dentroDeGrupo
+            destacado={destaca ? destaca(p) : undefined}
             onLiberar={() => onLiberar(p)}
             onAcompanhar={() => onAcompanhar(p)}
             onCancelar={() => onCancelar(p)} />
@@ -706,11 +806,14 @@ function GrupoDaVenda({ itens, valor, onLiberar, onAcompanhar, onCancelar }: {
   )
 }
 
-function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo }: {
+function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado }: {
   p: Pendencia; onLiberar: () => void; onAcompanhar: () => void; onCancelar: () => void
   /** Dentro de GrupoDaVenda: cliente, linha e OV já estão no cabeçalho do grupo
    *  e repeti-los em cada saldo era exatamente o ruído que o grupo desfaz. */
   dentroDeGrupo?: boolean
+  /** Filtro ativo: true = este saldo casou com o recorte, false = veio junto
+   *  porque e da mesma venda. undefined = sem filtro, ninguem se destaca. */
+  destacado?: boolean
 }) {
   const [aberto, setAberto] = useState(false)
   const [ajustando, setAjustando] = useState<{ codigo: string; descricao?: string | null } | null>(null)
@@ -750,7 +853,9 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo }: {
   const atrasada = !!p.previsao_pcp && String(p.previsao_pcp).slice(0, 10) < hojeLocal()
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200">
+    <div className={`rounded-lg border ${destacado === true
+      ? 'bg-white border-indigo-300 ring-1 ring-indigo-200'
+      : destacado === false ? 'bg-gray-50/60 border-gray-200' : 'bg-white border-gray-200'}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
         <button onClick={() => setAberto(a => !a)}
           className="text-gray-400 hover:text-gray-600 shrink-0" title="Ver os itens">
