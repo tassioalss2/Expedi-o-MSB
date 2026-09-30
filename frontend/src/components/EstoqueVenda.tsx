@@ -403,6 +403,14 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, c
   )
 }
 
+/** O frete que uma remessa de pendencia costuma ter.
+ *
+ *  Regra do Tassio, e os dados concordam: das 13 remessas complementares
+ *  nascidas de pendencia, 10 sao CIF sem valor. Faz sentido — o cliente ja
+ *  pagou a entrega uma vez, e o segundo frete e nosso porque a falta foi nossa.
+ *  E PADRAO, nao regra: os outros 23% existem. */
+const SUGERIDO_PENDENCIA = 'CIF_SEM_VALOR'
+
 export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLiberado }: {
   pendencia: Pendencia
   /** Situação de agora, quando quem abriu o modal já a tem em mão. Com ela o modal
@@ -693,7 +701,8 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                   <span>
                     <strong>Remessa nova</strong>
                     <span className="block text-[11px] text-gray-600">
-                      Nota fiscal própria e card separado no kanban.
+                      Nota fiscal própria e card separado no kanban. Nasce como
+                      <strong> CIF sem valor</strong>, que é o usual em saldo de pendência.
                     </span>
                   </span>
                 </label>
@@ -724,17 +733,24 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                         [daOv, 'deste saldo']].map(([t, de]) => (
                         <label key={t} className="mt-1 flex items-center gap-2 text-[11px] cursor-pointer">
                           <input type="radio" name="frete-consolidado"
-                            checked={freteEscolhido === t || (!freteEscolhido && t === r.tipo_frete)}
+                            checked={(freteEscolhido || SUGERIDO_PENDENCIA) === t}
                             onChange={() => setFreteEscolhido(t as string)} />
                           <span>
                             <strong>{TIPO_FRETE_LABEL[t as string] || t}</strong>
                             <span className="text-gray-500"> — o de {de}</span>
+                            {t === SUGERIDO_PENDENCIA && (
+                              <span className="ml-1 rounded bg-violet-200 px-1 text-[10px] text-violet-800">
+                                o usual em pendência
+                              </span>
+                            )}
                           </span>
                         </label>
                       ))}
                       <p className="mt-1 text-[11px] text-gray-500">
-                        Trocar o frete leva a OV para a etapa certa: CIF vai cotar, FOB
-                        espera a transportadora do cliente.
+                        Saldo de pendência costuma ser <strong>CIF sem valor</strong>: o cliente
+                        já pagou a entrega uma vez, e o segundo frete é nosso porque a falta
+                        foi nossa. Trocar o frete leva a OV para a etapa certa — CIF vai cotar,
+                        FOB espera a transportadora.
                       </p>
                     </div>
                   )

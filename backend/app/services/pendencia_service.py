@@ -35,7 +35,7 @@ from typing import Optional
 from fastapi import HTTPException
 
 from app.core.database import get_service_db
-from app.models.enums import StatusPedido
+from app.models.enums import StatusPedido, TipoFrete
 from app.models.schemas import UsuarioOut
 from app.services import disponibilidade_service
 
@@ -1763,6 +1763,19 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             # senão a 2ª remessa de uma licitação seria rotulada como direta.
             forma_venda=ov.get("forma_venda"),
             canal=ov.get("canal"),
+            # Remessa de pendencia nasce CIF SEM VALOR, e nao FOB (o padrao do
+            # PedidoCreate). Regra do Tassio, e os dados concordam: das 13
+            # remessas complementares nascidas de pendencia, 10 sao CIF sem
+            # valor. Faz sentido — o cliente ja pagou a entrega uma vez, e o
+            # segundo frete e nosso porque a falta foi nossa.
+            #
+            # `tipo_frete` explicito, e nao herdado da OV original: a OV podia
+            # ser FOB porque o cliente coletou a primeira remessa, e isso nao
+            # diz nada sobre quem paga a complementar.
+            #
+            # E padrao, nao regra: os outros 23%% existem, e quem libera troca
+            # no card se for o caso.
+            tipo_frete=TipoFrete.CIF_SEM_VALOR,
             itens=itens_ov,
             criar_derivada=True,
             observacoes=f"Remessa do saldo que estava pendente de estoque. {observacao or ''}".strip(),
