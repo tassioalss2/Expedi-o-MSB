@@ -937,6 +937,15 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
                 origem agora e a frase abaixo, que tem espaco para dizer a coisa
                 inteira. */}
             <SeloOrigem p={p} />
+            {/* Parada pelo cliente: sai do kanban, entao esta lista vira o unico
+                lugar onde a venda aparece. Sem o selo ela se confunde com quem
+                espera material — e aqui material costuma ter. */}
+            {(p as any).espera_tipo && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0"
+                title={`Fora do kanban — ${(p as any).espera_motivo || 'aguardando o cliente'}`}>
+                ⏸️ parado pelo cliente
+              </span>
+            )}
             <EtiquetaEstoque p={p} />
           </div>
           {/* A explicacao do saldo, visivel sem abrir o card. O rotulo sozinho

@@ -2750,6 +2750,125 @@ def trocar_numero_por_rejeicao(pedido_id: str, novo_numero: str, motivo: str,
     return obter_pedido(pedido_id)
 
 
+# ── Venda parada por decisão do cliente ────────────────────────────────────────
+#
+# Não é falta de material: é o cliente que adiou. A OV017010 tinha 105 un do
+# item disponíveis e mesmo assim o card dizia "Aguardando produção", com 220h
+# acima de um SLA de 2h — o app culpava a operação por uma espera que não era
+# dela.
+#
+# Parar é diferente de cancelar: a venda continua viva nas Pendências, com o
+# motivo à vista, e volta ao quadro quando o cliente resolver. Cancelar perderia
+# a venda; deixar no kanban enche o quadro de card que ninguém pode tocar.
+_ESPERA_TIPOS = {"CLIENTE": "parado pelo cliente"}
+
+
+def _sem_coluna_de_espera(exc) -> bool:
+    """A v53 ainda não rodou? O texto do PostgREST é o que sobra para saber."""
+    t = str(exc).lower()
+    return "espera_tipo" in t and ("column" in t or "schema cache" in t)
+
+
+def marcar_espera(pedido_id: str, tipo: str, motivo: str, usuario: UsuarioOut) -> dict:
+    """Tira a venda do quadro sem perdê-la, dizendo por quê."""
+    from app.services.inventario_service import _get_usuario_real
+
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+
+    tipo = (tipo or "CLIENTE").strip().upper()
+    if tipo not in _ESPERA_TIPOS:
+        raise HTTPException(status_code=422, detail="Tipo de espera desconhecido: %s" % tipo)
+
+    motivo = (motivo or "").strip()
+    if len(motivo) < 5:
+        raise HTTPException(
+            status_code=422,
+            detail="Diga por que a venda está parada (mín. 5 caracteres) — sem isso "
+                   "ela vira um card parado que ninguém sabe explicar.")
+
+    travados = (StatusPedido.FATURADO.value, StatusPedido.AGUARD_COLETA.value,
+                StatusPedido.COLETADO.value, StatusPedido.EXPEDIDO.value,
+                StatusPedido.CANCELADO.value)
+    if pedido["status"] in travados:
+        raise HTTPException(
+            status_code=422,
+            detail="Esta venda já foi faturada ou encerrada — não há o que parar. "
+                   "Se o cliente desistiu depois da nota, o caminho é devolução.")
+    if pedido.get("espera_tipo"):
+        raise HTTPException(status_code=409, detail="Esta venda já está parada.")
+
+    agora = _agora()
+    uid = _get_usuario_real(str(usuario.id))
+    try:
+        db.table("pedidos").update({
+            "espera_tipo": tipo,
+            "espera_motivo": motivo,
+            "espera_desde": agora,
+            "espera_por": uid,
+            "atualizado_em": agora,
+        }).eq("id", pedido_id).execute()
+    except Exception as exc:
+        if _sem_coluna_de_espera(exc):
+            raise HTTPException(
+                status_code=503,
+                detail="O banco ainda não tem os campos de espera — rode a migração "
+                       "v53 (backend/migracao_espera_v53.sql).")
+        raise
+
+    db.table("movimentacoes").insert({
+        "pedido_id": pedido_id,
+        "status_anterior": pedido["status"],
+        "status_novo": pedido["status"],
+        "usuario_id": uid,
+        "observacao": ("Venda parada (%s) — sai do kanban e fica nas Pendências. "
+                       "Motivo: %s" % (_ESPERA_TIPOS[tipo], motivo)),
+        "criado_em": agora,
+    }).execute()
+    return obter_pedido(pedido_id)
+
+
+def retomar_da_espera(pedido_id: str, usuario: UsuarioOut) -> dict:
+    """O cliente resolveu: a venda volta ao quadro de onde parou."""
+    from app.services.inventario_service import _get_usuario_real
+
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+    if not pedido.get("espera_tipo"):
+        raise HTTPException(status_code=409, detail="Esta venda não está parada.")
+
+    agora = _agora()
+    uid = _get_usuario_real(str(usuario.id))
+    desde = pedido.get("espera_desde")
+    motivo_antigo = pedido.get("espera_motivo") or ""
+    db.table("pedidos").update({
+        "espera_tipo": None,
+        "espera_motivo": None,
+        "espera_desde": None,
+        "espera_por": None,
+        "atualizado_em": agora,
+    }).eq("id", pedido_id).execute()
+
+    dias = ""
+    try:
+        d0 = datetime.fromisoformat(str(desde).replace("Z", "+00:00"))
+        dias = " (%d dia(s) parada)" % max(
+            (datetime.now(timezone.utc) - d0.astimezone(timezone.utc)).days, 0)
+    except Exception:
+        pass
+
+    db.table("movimentacoes").insert({
+        "pedido_id": pedido_id,
+        "status_anterior": pedido["status"],
+        "status_novo": pedido["status"],
+        "usuario_id": uid,
+        "observacao": ("Venda retomada%s — volta para o kanban. Estava parada por: %s"
+                       % (dias, motivo_antigo)),
+        "criado_em": agora,
+    }).execute()
+    return obter_pedido(pedido_id)
+
+
 def corrigir_numero_da_ov(pedido_id: str, novo_numero: str, motivo: str,
                           usuario: UsuarioOut) -> dict:
     """A remessa foi aberta na OV errada: aponta para a OV certa.

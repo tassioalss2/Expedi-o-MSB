@@ -28,7 +28,7 @@ from app.models.schemas import (
     PedidoCreate,
     PedidoOutboundCreate,
     ReclassificarCanalRequest,
-    RejeicaoSefazRequest, TrocarOVRequest,
+    RejeicaoSefazRequest, TrocarOVRequest, EsperaRequest,
     TratativaRequest,
     UsuarioOut,
     DevolverPendenciaRequest, DevolverReservaRequest,
@@ -519,6 +519,26 @@ def trocar_ov_por_rejeicao(
     """
     return pedido_service.trocar_numero_por_rejeicao(
         str(pedido_id), payload.novo_numero, payload.motivo, usuario)
+
+
+@router.post("/{pedido_id}/parar")
+def parar_venda(
+    pedido_id: UUID,
+    payload: EsperaRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    """O cliente adiou: a venda sai do kanban e fica nas Pendencias, com motivo.
+
+    Nao e cancelamento — a venda continua viva e volta pelo /retomar.
+    """
+    return pedido_service.marcar_espera(
+        str(pedido_id), payload.tipo, payload.motivo, usuario)
+
+
+@router.post("/{pedido_id}/retomar")
+def retomar_venda(pedido_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    """O cliente resolveu: a venda volta para o kanban de onde parou."""
+    return pedido_service.retomar_da_espera(str(pedido_id), usuario)
 
 
 @router.post("/{pedido_id}/trocar-ov")

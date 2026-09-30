@@ -134,6 +134,10 @@ export interface Pedido {
   transportadora_nome?: string
   pedido_pai_id?: string
   remessa_numero?: number
+  /** Venda parada por decisao externa (hoje so 'CLIENTE'). Sai do kanban. */
+  espera_tipo?: string | null
+  espera_motivo?: string | null
+  espera_desde?: string | null
 }
 
 export interface InventarioItem {

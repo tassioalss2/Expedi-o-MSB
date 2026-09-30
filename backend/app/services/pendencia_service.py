@@ -652,15 +652,31 @@ def ordem_automatica(usuario: UsuarioOut) -> dict:
 
 
 # ── Listagem ──────────────────────────────────────────────────────────────────
+_COLUNAS_OV = ("id, numero_pedido, status, remessa_numero, cliente_id, "
+               "atualizado_em, forma_venda, canal")
+# Campos da v53. Enquanto a migração não roda, o PostgREST devolve 400 e a tela
+# inteira de Pendências cairia por causa de um rótulo — então a primeira falha
+# derruba só os campos novos, e o resto segue igual.
+_COLUNAS_ESPERA = ", espera_tipo, espera_motivo, espera_desde"
+_TEM_ESPERA = [True]
+
+
 def _ov_por_ids(db, ids: list) -> dict:
     ids = [i for i in ids if i]
     if not ids:
         return {}
     out: dict = {}
     for i in range(0, len(ids), 40):
-        rows = db.table("pedidos").select("id, numero_pedido, status, remessa_numero, cliente_id, "
-                                   "atualizado_em, forma_venda, canal")\
-            .in_("id", ids[i:i + 40]).execute().data
+        lote = ids[i:i + 40]
+        cols = _COLUNAS_OV + (_COLUNAS_ESPERA if _TEM_ESPERA[0] else "")
+        try:
+            rows = db.table("pedidos").select(cols).in_("id", lote).execute().data
+        except Exception as exc:
+            if not _TEM_ESPERA[0] or "espera_tipo" not in str(exc):
+                raise
+            print("v53 ainda nao rodou: Pendencias seguem sem o motivo da parada")
+            _TEM_ESPERA[0] = False
+            rows = db.table("pedidos").select(_COLUNAS_OV).in_("id", lote).execute().data
         for r in rows:
             out[r["id"]] = r
     return out
@@ -1208,6 +1224,11 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         # OV016456, 32 un do 53053 ficaram na R4 e 28 un na R3, devolvidas pela
         # mesma pessoa no mesmo minuto. Sem isto as duas linhas ficam idênticas.
         "remessa_numero": (ov or {}).get("remessa_numero"),
+        # A venda esta parada por decisao do CLIENTE, nao por falta nossa.
+        # Ela sai do kanban, entao as Pendencias viram o unico lugar onde
+        # aparece — e sem dizer o porque, ficaria igual a quem espera material.
+        "espera_tipo": (ov or {}).get("espera_tipo"),
+        "espera_motivo": (ov or {}).get("espera_motivo"),
         "decisao": pend.get("decisao"),
         "origem": pend.get("origem"),
         # De onde a venda veio: licitação ou comercial. São dois mundos com

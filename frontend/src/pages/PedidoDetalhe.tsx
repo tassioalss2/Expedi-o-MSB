@@ -1926,6 +1926,63 @@ function AvisoDeAlteracao({ pedido }: { pedido: Pedido }) {
   )
 }
 
+function ModalPararVenda({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [motivo, setMotivo] = useState('')
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/parar`, { tipo: 'CLIENTE', motivo: motivo.trim() }),
+    onSuccess: () => {
+      toast.success('Venda parada — saiu do kanban e continua nas Pendências.')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Nao consegui parar a venda'),
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md">
+        <div className="p-5 border-b">
+          <h2 className="text-lg font-bold text-amber-700">Parar — aguardando o cliente</h2>
+          <p className="text-[13px] text-gray-500 mt-0.5">
+            Sai do kanban. Não é cancelamento.
+          </p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700">Por que está parada? *</label>
+            <input value={motivo} onChange={e => setMotivo(e.target.value)}
+              placeholder="Ex.: cliente devendo, só paga no mês que vem"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              Fica à vista no detalhe e nas Pendências — é o que responde "por que esta
+              venda não anda?" sem ter que caçar no histórico.
+            </p>
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+            <p className="font-medium mb-1">O que acontece:</p>
+            <p>
+              sai do quadro e para de contar SLA — a espera não é da operação. Itens,
+              frete e histórico ficam. Ela continua nas <strong>Pendências</strong> e
+              volta para o kanban num clique, de onde parou.
+            </p>
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-2">
+          <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Fechar</button>
+          <button onClick={() => mutation.mutate()}
+            disabled={motivo.trim().length < 5 || mutation.isPending}
+            className="flex-1 rounded-xl bg-amber-600 py-2.5 text-sm font-medium text-white hover:bg-amber-500 disabled:bg-gray-200 disabled:text-gray-400">
+            {mutation.isPending ? 'Parando…' : 'Parar a venda'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ModalTrocarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [novoNumero, setNovoNumero] = useState('')
@@ -3042,7 +3099,19 @@ export function PedidoDetalhe() {
   // O pedido de transportadora ao cliente FOB, antes do faturamento.
   const [avisoColeta, setAvisoColeta] = useState<any>(null)
   const [cotacaoCif, setCotacaoCif] = useState<any>(null)
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'rejeicao_sefaz' | 'trocar_ov' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'rejeicao_sefaz' | 'trocar_ov' | 'parar' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
+  // Retomar nao tem modal: e um clique no proprio aviso de que esta parada.
+  // Pedir confirmacao para VOLTAR ao normal seria atrito sem risco nenhum.
+  const retomar = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido?.id}/retomar`),
+    onSuccess: () => {
+      toast.success('Venda retomada — voltou para o kanban.')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido?.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Nao consegui retomar a venda'),
+  })
+
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -3375,8 +3444,30 @@ export function PedidoDetalhe() {
         </div>
       </div>
 
+      {/* Venda parada pelo cliente. Fica no lugar do relogio de propósito: o
+          relogio ali dizia "220h acima do SLA de 2h" numa espera que nao e da
+          operacao, e o motivo real morava escondido numa movimentacao. */}
+      {pedido.espera_tipo && (
+        <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-start gap-4">
+          <div className="text-3xl">⏸️</div>
+          <div className="flex-1">
+            <p className="text-sm font-bold text-amber-900">Venda parada — aguardando o cliente</p>
+            <p className="text-sm text-amber-800 mt-0.5">{pedido.espera_motivo}</p>
+            <p className="text-[11px] text-amber-700 mt-1">
+              Fora do kanban desde {pedido.espera_desde
+                ? format(parseISO(pedido.espera_desde), "dd/MM 'às' HH:mm", { locale: ptBR })
+                : '—'} · o relógio de SLA está parado · a venda continua nas Pendências
+            </p>
+          </div>
+          <button onClick={() => retomar.mutate()} disabled={retomar.isPending}
+            className="shrink-0 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-500 disabled:bg-gray-300">
+            {retomar.isPending ? 'Retomando…' : '▶ Retomar'}
+          </button>
+        </div>
+      )}
+
       {/* Card tempo de separação */}
-      {status !== 'CANCELADO' && inicioSep && (
+      {!pedido.espera_tipo && status !== 'CANCELADO' && inicioSep && (
         <div className={`rounded-xl p-4 border-2 flex items-center gap-4 ${
           chegouFaturamento ? (horasSep <= SLA_HORAS ? 'bg-green-50 border-green-300' : 'bg-orange-50 border-orange-300')
           : bgSLA(horasSep, SLA_HORAS)
@@ -3903,6 +3994,16 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
+              {/* O cliente adiou. Parar e diferente de cancelar: a venda some do
+                  quadro mas continua viva nas Pendencias, e volta num clique. */}
+              {!pedido.espera_tipo && !['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO'].includes(status) && (
+                <button onClick={() => setModal('parar')}
+                  title="O cliente adiou: tira do kanban sem cancelar a venda"
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-amber-300 text-amber-700 rounded-lg text-sm hover:bg-amber-50">
+                  ⏸️ Parar — aguardando cliente
+                </button>
+              )}
+
               {status === 'FATURADO' && (
                 <button onClick={() => setModal('pallet')}
                   className="w-full flex items-center gap-2 justify-center py-3 bg-teal-600 text-white rounded-lg font-medium hover:bg-teal-500">
@@ -4056,6 +4157,7 @@ export function PedidoDetalhe() {
       {modal === 'corrigir_dados' && <ModalCorrigirDados pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'rejeicao_sefaz' && <ModalRejeicaoSefaz pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'trocar_ov' && <ModalTrocarOV pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'parar' && <ModalPararVenda pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (

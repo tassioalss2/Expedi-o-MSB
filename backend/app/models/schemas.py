@@ -1369,6 +1369,12 @@ class FaturamentoRequest(BaseModel):
     codigo_rastreio: Optional[str] = None  # só Correios
 
 
+class EsperaRequest(BaseModel):
+    """A venda para por decisao externa (hoje so do cliente) e sai do kanban."""
+    tipo: str = "CLIENTE"
+    motivo: str
+
+
 class TrocarOVRequest(BaseModel):
     """A remessa foi aberta na OV errada e vai para a OV certa.
 

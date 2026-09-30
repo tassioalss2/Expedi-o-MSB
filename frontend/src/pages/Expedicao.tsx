@@ -493,8 +493,15 @@ function KanbanView({ pedidos, onClickPedido, onPedirTransportadora, onCotarFret
   })
 
   const hoje = hojeLocal()
+
+  // Venda parada por decisao do cliente nao entra no quadro. O kanban e a fila
+  // do que da para tocar HOJE; um card que ninguem pode mexer so ocupa espaco e
+  // ainda estraga o valor por etapa. Ela continua viva nas Pendencias, com o
+  // motivo a vista, e volta sozinha ao quadro quando for retomada.
+  const noQuadro = pedidos.filter((p) => !p.espera_tipo)
+
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
-    let lista = pedidos.filter((p) => p.status === status)
+    let lista = noQuadro.filter((p) => p.status === status)
     // AGUARDANDO PRODUCAO nao tem coluna, e sem isto a OV sumia: o kanban
     // buscava a linha do banco e a descartava por nao ter onde por. Quatro
     // ficaram invisiveis, uma desde 31/08 — a R3 da OV016456, com R$ 11.000 de
@@ -505,7 +512,7 @@ function KanbanView({ pedidos, onClickPedido, onPedirTransportadora, onCotarFret
     // lugar certo. O card se distingue pelo marcador, nao por uma coluna a mais
     // num quadro que ja esta cheio.
     if (status === 'AGUARD_DADOS_OV') {
-      lista = lista.concat(pedidos.filter((p) => p.status === 'AGUARD_PRODUCAO'))
+      lista = lista.concat(noQuadro.filter((p) => p.status === 'AGUARD_PRODUCAO'))
     }
     if (status === 'EXPEDIDO') {
       // `expedido_em` vem da movimentação para EXPEDIDO. Antes usava
