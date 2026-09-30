@@ -521,6 +521,16 @@ def trocar_ov_por_rejeicao(
         str(pedido_id), payload.novo_numero, payload.motivo, usuario)
 
 
+@router.post("/{pedido_id}/ciente-da-alteracao")
+def marcar_ciente(pedido_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    """A expedicao viu que o comercial mexeu na OV — some o selo do card.
+
+    Fica registrado QUEM viu e QUANDO: e o que resolve a discussao de "ninguem
+    me avisou".
+    """
+    return pedido_service.marcar_ciente(str(pedido_id), usuario)
+
+
 @router.get("/{pedido_id}/aviso-nf")
 def aviso_nf_emitida(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
     """O e-mail que avisa o cliente da NF, da transportadora e da previsão.

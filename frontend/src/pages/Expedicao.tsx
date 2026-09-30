@@ -158,6 +158,7 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
         <p className="text-xs text-gray-500 font-medium mb-1">🚚 {resolveNomeTransportadora(pedido.transportadora_nome, pedido.observacoes)}</p>
       )}
       {pedido.tipo_frete && <div className="mb-1.5"><FreteBadge tipo={pedido.tipo_frete} /></div>}
+      <SeloAlteracao pedido={pedido} />
       <div className="flex items-center justify-between">
         <span className={`text-xs ${atrasado ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
           {atrasado ? '⚠ ATRASADO' : `Entrega: ${new Date(pedido.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')}`}
@@ -166,6 +167,51 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
           {formatDistanceToNow(parseISO(pedido.atualizado_em), { locale: ptBR, addSuffix: true })}
         </span>
       </div>
+    </div>
+  )
+}
+
+/** "O comercial mexeu nesta OV e voce nao sabia."
+ *
+ *  O historico registra toda alteracao desde sempre — o que faltava era o
+ *  AVISO: alguem tinha de abrir a OV e ler para descobrir que ela mudou. Caso
+ *  real: a OV016984 teve os itens editados as 13:39 e quem separa nao ficou
+ *  sabendo.
+ *
+ *  Nao precisou de tabela nova: o proprio historico responde. O selo existe
+ *  enquanto houver alteracao mais nova que o ultimo "ciente" — e "ciente"
+ *  tambem e uma movimentacao, entao fica registrado quem viu e quando. */
+function SeloAlteracao({ pedido }: { pedido: Pedido }) {
+  const a = (pedido as any).alteracao
+  const qc = useQueryClient()
+  const ciente = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/ciente-da-alteracao`),
+    onSuccess: () => {
+      toast.success('Marcado como visto.')
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+    },
+    onError: () => toast.error('Nao consegui marcar como visto'),
+  })
+  if (!a) return null
+  return (
+    <div className="mb-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1">
+      <p className="text-[11px] font-semibold text-amber-900">
+        ⚠ O comercial alterou esta OV
+        {a.quantas > 1 ? ` (${a.quantas} alterações)` : ''}
+      </p>
+      <p className="text-[11px] leading-snug text-amber-800">{a.o_que}</p>
+      <p className="mt-0.5 flex items-center gap-2 text-[10px] text-amber-700">
+        <span>
+          {a.quem ? `${String(a.quem).split(' ')[0]} · ` : ''}
+          {a.quando ? formatDistanceToNow(parseISO(a.quando), { locale: ptBR, addSuffix: true }) : ''}
+        </span>
+        <span role="button" tabIndex={0}
+          onClick={e => { e.stopPropagation(); ciente.mutate() }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); ciente.mutate() } }}
+          className="ml-auto cursor-pointer rounded border border-amber-400 bg-white px-1.5 py-0.5 font-medium text-amber-800 hover:bg-amber-100">
+          já vi
+        </span>
+      </p>
     </div>
   )
 }

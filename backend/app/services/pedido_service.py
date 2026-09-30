@@ -1991,6 +1991,119 @@ def listar_familia(numero_pedido: str) -> list[dict]:
     return resultado.data
 
 
+# ── Alteração feita pelo comercial, ainda não vista pela expedição ───────────
+#
+# A vendedora mexe na OV (troca item, muda quantidade, corrige o frete, troca a
+# transportadora) e quem está separando não fica sabendo. O histórico da OV
+# registra tudo desde sempre — o que faltava era o AVISO: alguém precisa abrir a
+# OV e ler para descobrir que ela mudou.
+#
+# Sem tabela nova: o proprio historico responde. O aviso existe enquanto houver
+# alteracao mais NOVA que o ultimo "ciente" — e "ciente" tambem e uma
+# movimentacao. Duas ideias, zero migracao.
+_MARCA_CIENTE = "[ciente da alteração]"
+
+# O que conta como alteracao que a expedicao precisa saber. Mudanca de ETAPA nao
+# entra: ela ja e visivel no kanban, o card anda de coluna sozinho.
+_ALTERACOES = (
+    "itens da ov editados",
+    "itens adicionados à ov",
+    "itens adicionados a ov",
+    "dados da ov corrigidos",
+    "tipo de frete alterado",
+    "valor do frete corrigido",
+    "transportadora alterada",
+    "saldo que estava pendente somado",
+    "itens da ov",
+)
+
+
+def _e_alteracao(obs: str) -> bool:
+    t = " ".join(str(obs or "").lower().split())
+    return any(marca in t for marca in _ALTERACOES)
+
+
+def alteracoes_nao_vistas(db, pedido_ids: list) -> dict:
+    """Por OV: o que mudou depois do último "ciente", e quem mudou.
+
+    Devolve {} para quem não tem nada — o card só mostra o selo quando há.
+    """
+    ids = [str(i) for i in pedido_ids if i]
+    if not ids:
+        return {}
+    movs = []
+    for i in range(0, len(ids), 40):
+        try:
+            movs += db.table("movimentacoes")\
+                .select("pedido_id, observacao, criado_em, usuario_id")\
+                .in_("pedido_id", ids[i:i + 40]).execute().data
+        except Exception:
+            return {}
+
+    por_pedido: dict = {}
+    for m in movs:
+        por_pedido.setdefault(m.get("pedido_id"), []).append(m)
+
+    # Nome de quem alterou. Lido uma vez: sao poucas dezenas de pessoas.
+    nomes = {}
+    try:
+        for u in db.table("usuarios").select("id, nome").limit(1000).execute().data:
+            nomes[str(u["id"])] = (u.get("nome") or "").strip()
+    except Exception:
+        pass
+
+    saida = {}
+    for pid, lista in por_pedido.items():
+        lista.sort(key=lambda m: m.get("criado_em") or "")
+        visto_em = ""
+        for m in lista:
+            if _MARCA_CIENTE in str(m.get("observacao") or ""):
+                visto_em = m.get("criado_em") or visto_em
+        novas = [m for m in lista
+                 if _e_alteracao(m.get("observacao"))
+                 and (m.get("criado_em") or "") > visto_em]
+        if not novas:
+            continue
+        ultima = novas[-1]
+        saida[pid] = {
+            "quantas": len(novas),
+            "quando": ultima.get("criado_em"),
+            "quem": nomes.get(str(ultima.get("usuario_id"))) or None,
+            # O texto inteiro da ultima, porque e ele que diz O QUE mudou —
+            # "entraram na OV: 73363 2; 73348 4" e a informacao que a expedicao
+            # precisa, nao a palavra "alteracao".
+            "o_que": str(ultima.get("observacao") or "")[:240],
+            "todas": [str(m.get("observacao") or "")[:240] for m in novas[-5:]],
+        }
+    return saida
+
+
+def marcar_ciente(pedido_id: str, usuario) -> dict:
+    """A expedição viu a alteração. Some o selo do card.
+
+    Grava como movimentação e não como flag: assim fica registrado QUEM viu e
+    QUANDO, que é o que resolve a discussão de "ninguém me avisou".
+    """
+    db = get_service_db()
+    p = db.table("pedidos").select("id, status").eq("id", pedido_id).execute().data
+    if not p:
+        raise HTTPException(404, "OV não encontrada")
+    from app.services.inventario_service import _get_usuario_real
+    try:
+        uid = _get_usuario_real(str(usuario.id)) if usuario else None
+    except Exception:
+        uid = None
+    db.table("movimentacoes").insert({
+        "pedido_id": pedido_id,
+        "status_anterior": p[0]["status"],
+        "status_novo": p[0]["status"],
+        "usuario_id": uid,
+        "observacao": "%s %s" % (_MARCA_CIENTE, (usuario.nome if usuario else "")),
+        "criado_em": _agora(),
+    }).execute()
+    return {"ok": True}
+
+
 def listar_pedidos(
     status_filter: Optional[str] = None,
     cliente_id: Optional[str] = None,
@@ -2064,6 +2177,11 @@ def listar_pedidos(
         if not v and p.get("valor_nf"):
             v = float(p["valor_nf"])
         p["valor_ov"] = round(v, 2)
+
+    # O selo de "mudou e ninguem te avisou". Uma consulta para o kanban inteiro.
+    alteradas = alteracoes_nao_vistas(db, ids)
+    for p in pedidos:
+        p["alteracao"] = alteradas.get(p["id"])
 
     # Data de faturamento (movimentação -> FATURADO, BRT) por pedido.
     fat: dict[str, str] = {}
