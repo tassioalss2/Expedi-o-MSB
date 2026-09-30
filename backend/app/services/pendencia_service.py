@@ -1661,6 +1661,24 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
     if not itens_pend:
         raise HTTPException(status_code=422, detail="A pendência não tem itens para liberar.")
 
+    # ── O clique duplo ────────────────────────────────────────────────────────
+    # Aconteceu tres vezes so hoje, e cada uma custou horas de conserto:
+    #
+    #   OV016456  21/09 15:13:01 e 15:13:32  ->  R3 e R4 identicas, 200 un de
+    #             USDJ-6026 cada. Uma foi faturada; a outra virou fantasma.
+    #   OV016920  28/09 14:20:56 e 14:21:01  ->  itens em dobro na OV, e a
+    #             correcao virou pendencia falsa de R$ 11.460.
+    #
+    # A pendencia ja resolvida e a prova de que o primeiro clique funcionou: o
+    # segundo chega e encontra o trabalho feito. Antes ele seguia adiante e
+    # criava tudo de novo.
+    if pend.get("resolvido_em"):
+        quando = str(pend["resolvido_em"])[:19].replace("T", " às ")
+        raise HTTPException(status_code=409, detail=(
+            "Esta pendência já foi liberada em %s. Se precisar liberar mais alguma "
+            "coisa desta venda, recarregue a tela — o que sobrou aparece como saldo "
+            "novo." % quando))
+
     ov = None
     if fonte == "oportunidade":
         if reg.get("gerado_ov_id"):

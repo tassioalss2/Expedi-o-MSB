@@ -420,11 +420,21 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
 }) {
   const [observacao, setObservacao] = useState('')
   const [detalhes, setDetalhes] = useState(false)
-  const [somarEm, setSomarEm] = useState<string>('')
-  const [freteEscolhido, setFreteEscolhido] = useState<string>(SUGERIDO_PENDENCIA)
-  const [transportadora, setTransportadora] = useState<string>('')
-
   const abertas: any[] = (p as any).remessas_abertas || []
+
+  /** SOMAR e o padrao, e nao abrir remessa nova.
+   *
+   *  Toda liberacao abria uma remessa. A OV016456 chegou a CINCO remessas e
+   *  tres pendencias abertas, com o mesmo produto em duas — e nenhuma tela
+   *  salva isso, porque o problema nao e a tela, e a multiplicacao.
+   *
+   *  Somando quando ja existe remessa sem faturar: uma nota, uma coleta, um
+   *  card. Continua sendo escolha — "Remessa nova" esta ali do lado —, mas o
+   *  caminho comum deixou de ser o que empilha. */
+  const [somarEm, setSomarEm] = useState<string>(abertas[0]?.id || '')
+  const [freteEscolhido, setFreteEscolhido] = useState<string>(
+    abertas[0]?.tipo_frete || SUGERIDO_PENDENCIA)
+  const [transportadora, setTransportadora] = useState<string>('')
 
   const { data: transportadoras = [] } = useQuery<any[]>({
     queryKey: ['transportadoras'],
@@ -586,15 +596,6 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
           <p className="text-xs font-semibold text-gray-700">2. Onde entra</p>
           {abertas.length > 0 ? (
             <>
-              <label className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
-                <input type="radio" name="destino-saldo" checked={!somarEm}
-                  onChange={() => setSomarEm('')} className="mt-0.5" />
-                <span>Remessa nova
-                  <span className="block text-[11px] text-gray-500">
-                    mesmo número de OV, nota fiscal própria
-                  </span>
-                </span>
-              </label>
               {abertas.map(r => (
                 <label key={r.id} className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
                   <input type="radio" name="destino-saldo" checked={somarEm === r.id}
@@ -607,6 +608,15 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                   </span>
                 </label>
               ))}
+              <label className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
+                <input type="radio" name="destino-saldo" checked={!somarEm}
+                  onChange={() => setSomarEm('')} className="mt-0.5" />
+                <span>Remessa nova
+                  <span className="block text-[11px] text-gray-500">
+                    mais uma nota e mais um card — só quando precisar mesmo
+                  </span>
+                </span>
+              </label>
             </>
           ) : (
             <p className="mt-1 text-[11px] text-gray-500">

@@ -243,6 +243,15 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete }: {
         </span>
       )}
 
+      {/* Sem material ainda: esta na coluna de dados da OV mas nao anda dali ate
+          o estoque chegar. Sem o marcador, ela pareceria uma OV normal parada. */}
+      {pedido.status === 'AGUARD_PRODUCAO' && (
+        <span className="flex-shrink-0 rounded border border-orange-300 bg-orange-100 px-1 text-[10px] leading-4 text-orange-800"
+          title="Aguardando produção — entra no fluxo quando o material chegar">
+          🏭 s/ material
+        </span>
+      )}
+
       {/* O comercial mexeu nesta OV e a expedicao precisa saber. Marcador, e nao
           bloco: esta linha e densa de proposito e cabe um simbolo. O que mudou
           vai no title, e o aviso inteiro (com o "ja vi") mora no detalhe da OV,
@@ -450,6 +459,18 @@ function KanbanView({ pedidos, onClickPedido, onPedirTransportadora, onCotarFret
   const hoje = hojeLocal()
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
     let lista = pedidos.filter((p) => p.status === status)
+    // AGUARDANDO PRODUCAO nao tem coluna, e sem isto a OV sumia: o kanban
+    // buscava a linha do banco e a descartava por nao ter onde por. Quatro
+    // ficaram invisiveis, uma desde 31/08 — a R3 da OV016456, com R$ 11.000 de
+    // material, foi a que o Tassio nao achava.
+    //
+    // Entra na PRIMEIRA coluna, e nao numa nova: e para la que ela vai sozinha
+    // quando o material chega (AGUARD_PRODUCAO -> AGUARD_DADOS_OV), entao e o
+    // lugar certo. O card se distingue pelo marcador, nao por uma coluna a mais
+    // num quadro que ja esta cheio.
+    if (status === 'AGUARD_DADOS_OV') {
+      lista = lista.concat(pedidos.filter((p) => p.status === 'AGUARD_PRODUCAO'))
+    }
     if (status === 'EXPEDIDO') {
       // `expedido_em` vem da movimentação para EXPEDIDO. Antes usava
       // `atualizado_em`, que muda a cada toque na linha — uma correção de frete ou
