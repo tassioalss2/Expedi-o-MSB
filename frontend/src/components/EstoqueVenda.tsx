@@ -13,7 +13,7 @@ import {
   type Disponibilidade, type ItemDisponibilidade, type Pendencia,
 } from '../lib/crm'
 import { ModalBase, inputCls } from '../pages/crm/CrmShared'
-import { TIPO_FRETE_LABEL } from '../lib/statusConfig'
+import { TIPO_FRETE_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
 
 const n = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
 
@@ -755,89 +755,48 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                 </p>
               )}
             </div>
-            {/* A escolha que faltava. A OV ja saiu, entao a regra abriria uma
-                remessa nova — mas se existe outra da MESMA OV ainda sem nota,
-                somar nela da UMA nota, UMA coleta e UM card no kanban. */}
-            {abertas.length > 0 && (
+            {/* UM bloco, nao tres. Antes a tela dizia "CIF sem valor" em tres
+                lugares e o cartao azul afirmava "remessa nova" mesmo com a
+                pessoa tendo escolhido somar. Aqui: ONDE entra o saldo, e so
+                isso. O que vai acontecer e o frete vem depois, uma vez cada. */}
+            {abertas.length > 0 ? (
               <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
-                <p className="text-sm font-medium text-violet-900">
-                  Esta OV tem remessa aberta sem faturar. Onde entra este saldo?
-                </p>
+                <p className="text-sm font-medium text-violet-900">Onde entra este saldo?</p>
                 <label className="mt-2 flex items-start gap-2 text-sm cursor-pointer">
                   <input type="radio" name="destino-saldo" checked={!somarEm}
                     onChange={() => setSomarEm('')} className="mt-0.5" />
                   <span>
                     <strong>Remessa nova</strong>
                     <span className="block text-[11px] text-gray-600">
-                      Nota fiscal própria e card separado no kanban. Nasce como
-                      <strong> CIF sem valor</strong>, que é o usual em saldo de pendência.
+                      Mesmo número de OV, nota fiscal própria, card separado no kanban.
                     </span>
                   </span>
                 </label>
                 {abertas.map(r => (
                   <label key={r.id} className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
                     <input type="radio" name="destino-saldo" checked={somarEm === r.id}
-                      onChange={() => setSomarEm(r.id)} className="mt-0.5" />
+                      onChange={() => { setSomarEm(r.id); setFreteEscolhido(r.tipo_frete || SUGERIDO_PENDENCIA) }}
+                      className="mt-0.5" />
                     <span>
                       <strong>Somar na remessa R{r.remessa_numero}</strong>
                       <span className="block text-[11px] text-gray-600">
-                        está em {r.status?.replaceAll('_', ' ').toLowerCase()}
-                        {r.tipo_frete ? ` · frete ${TIPO_FRETE_LABEL[r.tipo_frete] || r.tipo_frete}` : ''}
-                        {' '}— sai tudo numa nota só.
+                        Sai tudo numa nota só. Ela está em{' '}
+                        {(STATUS_CONFIG as any)[r.status]?.label || r.status}
+                        {r.tipo_frete ? `, com frete ${TIPO_FRETE_LABEL[r.tipo_frete] || r.tipo_frete}` : ''}.
                       </span>
                     </span>
                   </label>
                 ))}
-                {somarEm && (() => {
-                  const r = abertas.find(x => x.id === somarEm)
-                  const daOv = (p as any).tipo_frete
-                  if (!r?.tipo_frete || !daOv || r.tipo_frete === daOv) return null
-                  return (
-                    <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5">
-                      <p className="text-[11px] font-medium text-amber-900">
-                        As duas têm frete diferente. Qual vale para a remessa consolidada?
-                      </p>
-                      {[[r.tipo_frete, `R${r.remessa_numero}`],
-                        [daOv, 'deste saldo']].map(([t, de]) => (
-                        <label key={t} className="mt-1 flex items-center gap-2 text-[11px] cursor-pointer">
-                          <input type="radio" name="frete-consolidado"
-                            checked={(freteEscolhido || SUGERIDO_PENDENCIA) === t}
-                            onChange={() => setFreteEscolhido(t as string)} />
-                          <span>
-                            <strong>{TIPO_FRETE_LABEL[t as string] || t}</strong>
-                            <span className="text-gray-500"> — o de {de}</span>
-                            {t === SUGERIDO_PENDENCIA && (
-                              <span className="ml-1 rounded bg-violet-200 px-1 text-[10px] text-violet-800">
-                                o usual em pendência
-                              </span>
-                            )}
-                          </span>
-                        </label>
-                      ))}
-                      <p className="mt-1 text-[11px] text-gray-500">
-                        Saldo de pendência costuma ser <strong>CIF sem valor</strong>: o cliente
-                        já pagou a entrega uma vez, e o segundo frete é nosso porque a falta
-                        foi nossa. Trocar o frete leva a OV para a etapa certa — CIF vai cotar,
-                        FOB espera a transportadora.
-                      </p>
-                    </div>
-                  )
-                })()}
               </div>
-            )}
-
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
-              <p className="text-sm text-blue-900">
-                <strong>{somarEm ? 'Somar na remessa aberta' : (ACAO_LIBERAR_LABEL[p.acao_liberar || ''] || '—')}</strong>
-              </p>
-              <p className="text-xs text-blue-700 mt-0.5">
+            ) : (
+              <p className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
                 {p.acao_liberar === 'REMESSA_2'
-                  ? `A OV ${p.ov_ref} já faturou, então o saldo entra como remessa nova — mesmo número de OV, nota fiscal própria.`
+                  ? `A OV ${p.ov_ref} já faturou, então o saldo sai como 2ª remessa — mesmo número de OV, nota fiscal própria.`
                   : p.acao_liberar === 'SOMAR_R1'
-                    ? 'A OV ainda não faturou, então o saldo é somado a ela e sai numa nota só.'
+                    ? `A OV ${p.ov_ref} ainda não faturou, então o saldo é somado a ela e sai numa nota só.`
                     : 'A venda estava aguardando produção e não tinha OV — ela é aberta agora.'}
               </p>
-            </div>
+            )}
             <ComoVaiSair frete={freteEscolhido} setFrete={setFreteEscolhido}
               transportadora={transportadora} setTransportadora={setTransportadora}
               transportadoras={transportadoras} />
