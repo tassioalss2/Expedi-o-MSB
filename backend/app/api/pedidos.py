@@ -28,7 +28,7 @@ from app.models.schemas import (
     PedidoCreate,
     PedidoOutboundCreate,
     ReclassificarCanalRequest,
-    RejeicaoSefazRequest,
+    RejeicaoSefazRequest, TrocarOVRequest,
     TratativaRequest,
     UsuarioOut,
     DevolverPendenciaRequest, DevolverReservaRequest,
@@ -518,6 +518,21 @@ def trocar_ov_por_rejeicao(
     pallet — refazer a expedição por um erro fiscal é trabalho jogado fora.
     """
     return pedido_service.trocar_numero_por_rejeicao(
+        str(pedido_id), payload.novo_numero, payload.motivo, usuario)
+
+
+@router.post("/{pedido_id}/trocar-ov")
+def trocar_ov(
+    pedido_id: UUID,
+    payload: TrocarOVRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    """A remessa nasceu na OV errada — aponta para a certa, sem refazer nada.
+
+    Antes disto a saida era cancelar e recriar, e ai itens, frete, separacao e
+    historico ficavam para tras.
+    """
+    return pedido_service.corrigir_numero_da_ov(
         str(pedido_id), payload.novo_numero, payload.motivo, usuario)
 
 

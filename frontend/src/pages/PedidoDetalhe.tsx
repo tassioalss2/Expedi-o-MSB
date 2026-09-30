@@ -1926,6 +1926,96 @@ function AvisoDeAlteracao({ pedido }: { pedido: Pedido }) {
   )
 }
 
+function ModalTrocarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [novoNumero, setNovoNumero] = useState('')
+  const [motivo, setMotivo] = useState('')
+
+  const mutation = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/trocar-ov`, {
+      novo_numero: novoNumero.trim().toUpperCase(),
+      motivo: motivo.trim(),
+    }),
+    onSuccess: (r: any) => {
+      const d = r?.data || {}
+      toast.success(`Remessa movida para ${d.numero_pedido || novoNumero.trim().toUpperCase()}`
+        + (d.remessa_numero ? ` R${d.remessa_numero}` : ''))
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['ocorrencias'] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Nao consegui trocar a OV'),
+  })
+
+  const pode = novoNumero.trim().length >= 3 && motivo.trim().length >= 5
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b">
+          <h2 className="text-lg font-bold text-violet-700">Trocar o número da OV</h2>
+          <p className="text-[13px] text-gray-500 mt-0.5">
+            A remessa foi aberta na OV errada e passa para a certa.
+          </p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="bg-gray-50 rounded-lg p-3 text-sm">
+            <p className="text-gray-500 text-xs mb-1">Esta remessa está em</p>
+            <p className="font-bold text-gray-800 text-base">
+              {pedido.numero_pedido}
+              {pedido.remessa_numero && pedido.remessa_numero > 1 && (
+                <span className="text-violet-600"> R{pedido.remessa_numero}</span>
+              )}
+            </p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Número da OV correta *</label>
+            <input value={novoNumero} onChange={e => setNovoNumero(e.target.value)}
+              placeholder="OV016952"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono uppercase" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              Pode ser uma OV que já existe: a remessa entra na numeração dela.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Por que estava errada? *</label>
+            <input value={motivo} onChange={e => setMotivo(e.target.value)}
+              placeholder="Ex.: a pendência não era desta OV"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <p className="text-[11px] text-gray-400 mt-1">
+              Vai para o histórico e abre uma ocorrência — é o que explica a troca depois.
+            </p>
+          </div>
+
+          {/* O medo aqui e perder a separacao. Dizer o que NAO acontece e o que
+              faz a pessoa clicar em vez de cancelar e refazer a OV. */}
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+            <p className="font-medium mb-1">Continua tudo como está:</p>
+            <p>
+              itens, frete, transportadora, inventário e histórico seguem com a remessa.
+              Só o número da OV muda, e ela vira a próxima remessa da OV de destino.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            Depois da nota emitida isto não vale mais — o número da OV está impresso nela.
+          </div>
+        </div>
+        <div className="p-5 border-t flex gap-2">
+          <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Fechar</button>
+          <button onClick={() => mutation.mutate()} disabled={!pode || mutation.isPending}
+            className="flex-1 rounded-xl bg-violet-600 py-2.5 text-sm font-medium text-white hover:bg-violet-500 disabled:bg-gray-200 disabled:text-gray-400">
+            {mutation.isPending ? 'Trocando…' : 'Trocar a OV'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ModalRejeicaoSefaz({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [novoNumero, setNovoNumero] = useState('')
@@ -2952,7 +3042,7 @@ export function PedidoDetalhe() {
   // O pedido de transportadora ao cliente FOB, antes do faturamento.
   const [avisoColeta, setAvisoColeta] = useState<any>(null)
   const [cotacaoCif, setCotacaoCif] = useState<any>(null)
-  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'rejeicao_sefaz' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
+  const [modal, setModal] = useState<'inventario' | 'verificacao' | 'cubagem' | 'cotacao_frete' | 'transportadora_cliente' | 'faturamento' | 'divergencia' | 'pallet' | 'transportadora' | 'tipo_frete' | 'cancelar' | 'reativar' | 'retornar' | 'confirmar_coleta' | 'editar_itens' | 'adicionar_itens' | 'corrigir_dados' | 'rejeicao_sefaz' | 'trocar_ov' | 'devolver-crm' | 'devolver-pendencia' | 'credito' | null>(null)
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -3800,6 +3890,19 @@ export function PedidoDetalhe() {
                 </button>
               )}
 
+              {/* A remessa nasceu na OV errada. Acontece com pendencia: o saldo
+                  era de outra venda e a remessa foi aberta na OV que estava na
+                  tela. Antes disto a saida era cancelar e refazer, perdendo
+                  itens, frete e historico. Some depois da nota, porque ai o
+                  numero ja esta impresso nela. */}
+              {!pedido.numero_nf && !['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO'].includes(status) && (
+                <button onClick={() => setModal('trocar_ov')}
+                  title="A remessa foi aberta na OV errada: aponta para a OV certa sem refazer nada"
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-violet-300 text-violet-700 rounded-lg text-sm hover:bg-violet-50">
+                  🔀 Trocar o número da OV
+                </button>
+              )}
+
               {status === 'FATURADO' && (
                 <button onClick={() => setModal('pallet')}
                   className="w-full flex items-center gap-2 justify-center py-3 bg-teal-600 text-white rounded-lg font-medium hover:bg-teal-500">
@@ -3952,6 +4055,7 @@ export function PedidoDetalhe() {
       {modal === 'adicionar_itens' && <ModalAdicionarItens pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'corrigir_dados' && <ModalCorrigirDados pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'rejeicao_sefaz' && <ModalRejeicaoSefaz pedido={pedido} onClose={() => setModal(null)} />}
+      {modal === 'trocar_ov' && <ModalTrocarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (

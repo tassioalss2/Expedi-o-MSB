@@ -1369,6 +1369,16 @@ class FaturamentoRequest(BaseModel):
     codigo_rastreio: Optional[str] = None  # só Correios
 
 
+class TrocarOVRequest(BaseModel):
+    """A remessa foi aberta na OV errada e vai para a OV certa.
+
+    Diferente da rejeicao da SEFAZ, o numero de destino pode ja existir: a
+    remessa entra na numeracao de la.
+    """
+    novo_numero: str
+    motivo: str
+
+
 class RejeicaoSefazRequest(BaseModel):
     """A nota foi rejeitada: o D365 abre uma OV nova e o app troca o número.
 

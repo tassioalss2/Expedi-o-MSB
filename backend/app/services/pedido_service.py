@@ -2750,6 +2750,146 @@ def trocar_numero_por_rejeicao(pedido_id: str, novo_numero: str, motivo: str,
     return obter_pedido(pedido_id)
 
 
+def corrigir_numero_da_ov(pedido_id: str, novo_numero: str, motivo: str,
+                          usuario: UsuarioOut) -> dict:
+    """A remessa foi aberta na OV errada: aponta para a OV certa.
+
+    Caso real: a pendência não era da OV016898, mas a remessa nasceu ali. Quem
+    percebeu foi a operação, depois de a remessa já estar em separação — e a
+    única saída era cancelar e refazer, perdendo itens, frete e histórico.
+
+    Diferente da troca por rejeição da SEFAZ, aqui o número de destino PODE já
+    existir: é justamente o ponto. A remessa muda de família, então entra na
+    numeração da OV de destino (vira a próxima remessa dela) e passa a apontar
+    para a original de lá. O número velho fica com um buraco na sequência, e
+    tudo bem: sequência com buraco é verdade, renumerar seria apagar o rastro.
+
+    Não vale depois da nota: o número da OV está impresso nela. A partir daí o
+    caminho é no D365, e não aqui.
+    """
+    from app.models.schemas import validar_numero_ov, _OPERACOES_SEM_NUMERO_OV
+    from app.services.inventario_service import _get_usuario_real
+
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+
+    travados = (StatusPedido.FATURADO.value, StatusPedido.AGUARD_COLETA.value,
+                StatusPedido.COLETADO.value, StatusPedido.EXPEDIDO.value,
+                StatusPedido.CANCELADO.value)
+    if pedido["status"] in travados or (pedido.get("numero_nf") or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Esta remessa já tem nota emitida — o número da OV está impresso nela. "
+                   "Para trocar agora, o caminho é cancelar a nota no D365 e relançar.")
+
+    motivo = (motivo or "").strip()
+    if len(motivo) < 5:
+        raise HTTPException(status_code=422,
+                            detail="Diga por que a remessa está na OV errada (mín. 5 "
+                                   "caracteres) — é o que explica a troca para quem ler depois.")
+
+    antigo = pedido.get("numero_pedido") or ""
+    op = pedido.get("tipo_operacao") or "VENDA_NORMAL"
+    alvo = str(novo_numero or "").strip().upper()
+    if op not in _OPERACOES_SEM_NUMERO_OV:
+        try:
+            alvo = validar_numero_ov(alvo)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    if not alvo:
+        raise HTTPException(status_code=422, detail="Informe o número da OV correta.")
+    if alvo == antigo:
+        raise HTTPException(status_code=422,
+                            detail="O número informado é o mesmo da OV atual.")
+
+    # Mover uma remessa que é MÃE de outras deixaria as filhas apontando para
+    # uma OV que mudou de número debaixo delas. Recusa em vez de quebrar o
+    # vínculo em silêncio.
+    filhas = db.table("pedidos").select("id, remessa_numero")\
+        .eq("pedido_pai_id", pedido_id)\
+        .neq("status", StatusPedido.CANCELADO.value).execute().data
+    if filhas:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta é a remessa original da %s e tem outra(s) remessa(s) presa(s) a "
+                   "ela (%s). Mova as remessas filhas primeiro, ou troque o número pela "
+                   "remessa que está errada." % (
+                       antigo, ", ".join("R%s" % (f.get("remessa_numero") or 1) for f in filhas)))
+
+    # A família de destino. Se não existe, a remessa passa a ser a original de lá.
+    destino = db.table("pedidos").select("id, status, remessa_numero")\
+        .eq("numero_pedido", alvo)\
+        .neq("status", StatusPedido.CANCELADO.value).execute().data
+    destino = [d for d in destino if d["id"] != pedido_id]
+    if destino:
+        original = sorted(destino, key=lambda d: d.get("remessa_numero") or 1)[0]
+        nova_remessa = max((d.get("remessa_numero") or 1) for d in destino) + 1
+        pai = original["id"]
+    else:
+        nova_remessa = 1
+        pai = None
+
+    agora = _agora()
+    uid = _get_usuario_real(str(usuario.id))
+    obs_nova = "[aberta antes como %s R%s]" % (antigo, pedido.get("remessa_numero") or 1)
+    observacoes = re.sub(r"\[aberta antes como[^\]]*\]", "",
+                         str(pedido.get("observacoes") or "")).strip()
+    db.table("pedidos").update({
+        "numero_pedido": alvo,
+        "remessa_numero": nova_remessa,
+        "pedido_pai_id": pai,
+        "observacoes": ("%s %s" % (observacoes, obs_nova)).strip(),
+        "atualizado_em": agora,
+    }).eq("id", pedido_id).execute()
+
+    # No painel de licitação, corrige SÓ a entrada desta remessa — casando por
+    # id, nunca por número. A troca por rejeição casa por número porque lá a OV
+    # inteira muda; aqui as outras remessas continuam com o número antigo, e
+    # reescrever por número levaria todas juntas.
+    try:
+        demandas = db.table("licitacao_demandas").select("id, ovs").limit(3000).execute().data
+        for d in demandas:
+            ovs = d.get("ovs") or []
+            if not any(isinstance(o, dict) and str(o.get("id")) == str(pedido_id) for o in ovs):
+                continue
+            db.table("licitacao_demandas").update({
+                "ovs": [{**o, "numero": alvo}
+                        if isinstance(o, dict) and str(o.get("id")) == str(pedido_id) else o
+                        for o in ovs],
+                "atualizado_em": agora,
+            }).eq("id", d["id"]).execute()
+    except Exception as exc:
+        print("numero da OV nao atualizado no painel de licitacao: %s" % exc)
+
+    db.table("movimentacoes").insert({
+        "pedido_id": pedido_id,
+        "status_anterior": pedido["status"],
+        "status_novo": pedido["status"],
+        "usuario_id": uid,
+        "observacao": ("Remessa movida de OV: %s R%s → %s R%s. Motivo: %s. "
+                       "Itens, frete, separação e histórico mantidos."
+                       % (antigo, pedido.get("remessa_numero") or 1, alvo, nova_remessa, motivo)),
+        "criado_em": agora,
+    }).execute()
+
+    try:
+        db.table("ocorrencias").insert({
+            "pedido_id": pedido_id,
+            "tipo": "Remessa aberta na OV errada",
+            "descricao": ("A remessa %s R%s foi aberta na OV errada e passou para %s R%s.\n"
+                          "• Motivo: %s\n"
+                          "• Nada foi refeito: itens, frete e separação seguiram com ela."
+                          % (antigo, pedido.get("remessa_numero") or 1, alvo, nova_remessa, motivo)),
+            "responsavel_id": uid,
+            "status": "ABERTA",
+            "criado_em": agora,
+        }).execute()
+    except Exception as exc:
+        print("ocorrencia de troca de OV nao registrada: %s" % exc)
+
+    return obter_pedido(pedido_id)
+
+
 def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: UsuarioOut) -> dict:
     db = get_service_db()
     pedido = obter_pedido(pedido_id)
