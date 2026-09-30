@@ -1879,6 +1879,53 @@ function ModalAlterarTipoFrete({ pedido, onClose }: { pedido: Pedido; onClose: (
  *  cubado e no pallet. Por isso aqui troca só o número: o registro é o mesmo,
  *  então nada precisa ser copiado nem refeito.
  */
+/** "O comercial mexeu nesta OV e voce nao sabia."
+ *
+ *  O historico ja registrava tudo; o que faltava era o AVISO — alguem tinha de
+ *  abrir a OV e LER para descobrir que ela mudou. No kanban isso e um marcador
+ *  "⚠ alterada"; aqui e o aviso inteiro, porque e nesta tela que a pessoa age.
+ *
+ *  Nao precisou de tabela: o selo existe enquanto houver alteracao mais nova
+ *  que o ultimo "ciente", e "ciente" tambem e uma movimentacao — entao fica
+ *  registrado QUEM viu e QUANDO, que e o que resolve o "ninguem me avisou". */
+function AvisoDeAlteracao({ pedido }: { pedido: Pedido }) {
+  const qc = useQueryClient()
+  const a = (pedido as any).alteracao
+  const ciente = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/ciente-da-alteracao`),
+    onSuccess: () => {
+      toast.success('Marcado como visto.')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+    },
+    onError: () => toast.error('Não consegui marcar como visto'),
+  })
+  if (!a) return null
+  return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+      <p className="text-sm font-semibold text-amber-900">
+        ⚠ O comercial alterou esta OV
+        {a.quantas > 1 ? ` — ${a.quantas} alterações` : ''}
+      </p>
+      <div className="mt-1 space-y-0.5">
+        {(a.todas || [a.o_que]).map((t: string, i: number) => (
+          <p key={i} className="text-xs leading-snug text-amber-900">{t}</p>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-[11px] text-amber-700">
+        <span>
+          {a.quem ? `${a.quem} · ` : ''}
+          {a.quando ? format(new Date(a.quando), "dd/MM 'às' HH:mm", { locale: ptBR }) : ''}
+        </span>
+        <button onClick={() => ciente.mutate()} disabled={ciente.isPending}
+          className="ml-auto rounded-lg border border-amber-400 bg-white px-2.5 py-1 font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50">
+          {ciente.isPending ? '…' : 'já vi'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function ModalRejeicaoSefaz({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [novoNumero, setNovoNumero] = useState('')
@@ -3572,6 +3619,7 @@ export function PedidoDetalhe() {
 
         {/* Ações */}
         <div className="space-y-4">
+          <AvisoDeAlteracao pedido={pedido} />
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <h2 className="font-semibold text-gray-800 mb-4">Próxima Ação</h2>
             <div className="space-y-2">
