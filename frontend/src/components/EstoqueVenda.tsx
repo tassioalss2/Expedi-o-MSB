@@ -4,7 +4,7 @@
 // da oportunidade, modal de ganho e venda outbound. Se cada tela montasse a sua,
 // elas divergiriam na primeira mudança de regra.
 import { useEffect, useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { AlertTriangle, Check, Clock, PackageCheck, PackageX } from 'lucide-react'
 import api from '../lib/api'
@@ -411,6 +411,60 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, c
  *  E PADRAO, nao regra: os outros 23% existem. */
 const SUGERIDO_PENDENCIA = 'CIF_SEM_VALOR'
 
+/** Como esta remessa vai sair: frete e transportadora.
+ *
+ *  Ate agora nenhum dos dois era perguntado na liberacao — a remessa nascia com
+ *  um frete que o app escolheu e sem transportadora nenhuma, e chegava na
+ *  expedicao faltando justamente os dois dados de que ela precisa. Quem libera
+ *  sabe os dois; o momento de dizer e este. */
+function ComoVaiSair({ frete, setFrete, transportadora, setTransportadora, transportadoras }: {
+  frete: string; setFrete: (v: string) => void
+  transportadora: string; setTransportadora: (v: string) => void
+  transportadoras: any[]
+}) {
+  return (
+    <div className="rounded-xl border border-gray-200 p-3">
+      <p className="text-xs font-medium text-gray-700">Como esta remessa vai sair</p>
+      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className="text-[11px] text-gray-500">Tipo de frete</label>
+          <select value={frete} onChange={e => setFrete(e.target.value)}
+            className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm">
+            {['CIF_SEM_VALOR', 'CIF_COM_VALOR', 'FOB'].map(t => (
+              <option key={t} value={t}>
+                {TIPO_FRETE_LABEL[t] || t}{t === SUGERIDO_PENDENCIA ? ' — o usual em pendência' : ''}
+              </option>
+            ))}
+          </select>
+          {frete === SUGERIDO_PENDENCIA && (
+            <p className="mt-1 text-[11px] text-gray-500">
+              O cliente já pagou a entrega uma vez; o segundo frete é nosso porque a
+              falta foi nossa.
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="text-[11px] text-gray-500">
+            Transportadora <span className="text-gray-400">— se já souber</span>
+          </label>
+          <select value={transportadora} onChange={e => setTransportadora(e.target.value)}
+            className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm">
+            <option value="">definir depois</option>
+            {(transportadoras || []).map((t: any) => (
+              <option key={t.id} value={t.id}>{t.nome}</option>
+            ))}
+          </select>
+          {frete === 'FOB' && !transportadora && (
+            <p className="mt-1 text-[11px] text-gray-500">
+              No FOB quem contrata é o cliente — dá para deixar em branco até ele informar.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLiberado }: {
   pendencia: Pendencia
   /** Situação de agora, quando quem abriu o modal já a tem em mão. Com ela o modal
@@ -456,13 +510,24 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
   // Fretes diferentes nas duas remessas: quem vende escolhe qual vale. O app
   // nao conhece o acordo com o cliente, entao adotar o da remessa de destino em
   // silencio seria escolher por quem sabe.
-  const [freteEscolhido, setFreteEscolhido] = useState<string>('')
+  const [freteEscolhido, setFreteEscolhido] = useState<string>(SUGERIDO_PENDENCIA)
+  const [transportadora, setTransportadora] = useState<string>('')
+
+  // A expedicao precisa dos dois para tocar a remessa, e ate agora nenhum era
+  // perguntado: ela nascia com um frete que o app escolheu e sem transportadora
+  // nenhuma. Quem libera sabe os dois — e o momento de dizer e este.
+  const { data: transportadoras = [] } = useQuery<any[]>({
+    queryKey: ['transportadoras'],
+    queryFn: () => api.get('/transportadoras').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
 
   const liberar = useMutation({
     mutationFn: ({ parcial, itens }: { parcial: boolean; itens?: { produto_id: string; qtd: number }[] }) =>
       api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`,
         { parcial, observacao, itens, somar_em: somarEm || null,
-          tipo_frete: freteEscolhido || null })
+          tipo_frete: freteEscolhido || null,
+          transportadora_id: transportadora || null })
         .then(r => r.data),
     onSuccess: (r: any) => {
       const acao = ACAO_LIBERAR_LABEL[r?.acao] || 'liberada'
@@ -583,6 +648,9 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
               </p>
             </div>
             <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} onQtd={setQtd} tetoNaDivida />
+            <ComoVaiSair frete={freteEscolhido} setFrete={setFreteEscolhido}
+              transportadora={transportadora} setTransportadora={setTransportadora}
+              transportadoras={transportadoras} />
             <div>
               <label className="text-sm text-gray-600">Observação (opcional)</label>
               <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />
@@ -770,6 +838,9 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                     : 'A venda estava aguardando produção e não tinha OV — ela é aberta agora.'}
               </p>
             </div>
+            <ComoVaiSair frete={freteEscolhido} setFrete={setFreteEscolhido}
+              transportadora={transportadora} setTransportadora={setTransportadora}
+              transportadoras={transportadoras} />
             <div>
               <label className="text-sm text-gray-600">Observação (opcional)</label>
               <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />

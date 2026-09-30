@@ -1031,6 +1031,9 @@ class LiberarPendenciaRequest(BaseModel):
     # vale — o app nao conhece o acordo com o cliente. Vazio mantem o da
     # remessa de destino.
     tipo_frete: Optional[str] = None
+    # Quem leva esta remessa. Sem isso ela chegava na expedicao sem os dois
+    # dados de que a expedicao precisa para tocar o pedido.
+    transportadora_id: Optional[UUID] = None
 
 
 # ── CRM · Empresas (prospecção e qualificação) ─────────────────────────────────

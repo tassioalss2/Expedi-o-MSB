@@ -184,7 +184,9 @@ def liberar_pendencia(fonte: str, registro_id: UUID,
         observacao=payload.observacao if payload else None,
         itens_escolhidos=payload.itens if payload else None,
         somar_em=str(payload.somar_em) if (payload and payload.somar_em) else None,
-        tipo_frete=payload.tipo_frete if payload else None)
+        tipo_frete=payload.tipo_frete if payload else None,
+        transportadora_id=(str(payload.transportadora_id)
+                           if (payload and payload.transportadora_id) else None))
 
 
 @router.post("/pendencias/{fonte}/{registro_id}/cancelar")

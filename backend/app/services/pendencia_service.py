@@ -407,6 +407,39 @@ def _morreu_com_a_ov(ov: Optional[dict], fonte: str) -> bool:
     return bool(ov) and fonte == "pedido" and ov.get("status") == "CANCELADO"
 
 
+def _definir_transportadora(db, destino: dict, transportadora_id, usuario) -> None:
+    """Quem leva esta remessa.
+
+    Recusa transportadora INATIVA: as 21 linhas duplicadas de 15/09/2026 viraram
+    inativas, e apontar uma remessa para uma delas recriaria a divisao que a
+    juncao desfez — o mesmo cuidado que `frete_service.definir_transportadora`
+    ja tem.
+    """
+    tid = str(transportadora_id or "").strip()
+    if not tid or tid == str(destino.get("transportadora_id") or ""):
+        return
+    t = db.table("transportadoras").select("id, nome, ativo").eq("id", tid).execute().data
+    if not t:
+        raise HTTPException(404, "Transportadora nao encontrada.")
+    if not t[0].get("ativo"):
+        raise HTTPException(409, "%s esta inativa — escolha a ativa com esse nome."
+                            % t[0].get("nome"))
+    db.table("pedidos").update({"transportadora_id": tid, "atualizado_em": _agora()})        .eq("id", destino["id"]).execute()
+    try:
+        from app.services.inventario_service import _get_usuario_real
+        db.table("movimentacoes").insert({
+            "pedido_id": destino["id"],
+            "status_anterior": destino.get("status"),
+            "status_novo": destino.get("status"),
+            "usuario_id": _get_usuario_real(str(usuario.id)) if usuario else None,
+            "observacao": "Transportadora definida na liberacao da pendencia: %s"
+                          % t[0].get("nome"),
+            "criado_em": _agora(),
+        }).execute()
+    except Exception as exc:
+        print("transportadora definida, movimentacao nao: %s" % exc)
+
+
 def _aplicar_frete_da_consolidacao(db, destino: dict, tipo_frete, usuario) -> None:
     """Troca o frete da remessa de destino, quando a vendedora escolheu outro.
 
@@ -1584,7 +1617,8 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             parcial: bool = False, observacao: Optional[str] = None,
             itens_escolhidos: Optional[list] = None,
             somar_em: Optional[str] = None,
-            tipo_frete: Optional[str] = None) -> dict:
+            tipo_frete: Optional[str] = None,
+            transportadora_id: Optional[str] = None) -> dict:
     """Manda o saldo para a expedição.
 
     Confere o estoque OUTRA VEZ antes de liberar — a pendência pode ter ficado
@@ -1744,11 +1778,6 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             observacao_estoque=("Saldo que estava pendente somado a esta remessa "
                                 "(ela ainda nao faturou, entao sai numa nota so). %s"
                                 % (observacao or "")).strip())
-        # As duas remessas podem ter fretes diferentes — a R2 da OV016753 era
-        # CIF sem valor e o saldo vinha de uma OV FOB. Adotar o da remessa de
-        # destino em silencio seria escolher por quem sabe: quem vende conhece o
-        # acordo com o cliente, o app nao. Entao ele so aplica o que foi dito.
-        _aplicar_frete_da_consolidacao(db, d, tipo_frete, usuario)
         acao = "SOMAR_REMESSA"
     elif acao == "REMESSA_2":
         resultado_ov = pedido_service.criar_pedido(PedidoCreate(
@@ -1797,6 +1826,24 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
                 str(usuario.id), "Material chegou — a venda entrou na expedição.")
     else:  # GERAR_OV
         resultado_ov = _gerar_ov_do_saldo(db, reg, a_liberar, usuario)
+
+    # ── Como esse material vai sair ───────────────────────────────────────────
+    # Frete e transportadora sao decisao de quem libera, e ate aqui o app
+    # escolhia sozinho: a remessa nascia com um frete e ninguem informava a
+    # transportadora, entao ela ia parar na expedicao sem os dois dados que a
+    # expedicao precisa. Aplica na OV que FICOU com o saldo — a nova, a
+    # consolidada ou a propria, conforme o caminho.
+    destino_id = None
+    if isinstance(resultado_ov, dict):
+        destino_id = resultado_ov.get("id")
+    if not destino_id and acao in ("SOMAR_R1",) and ov:
+        destino_id = ov.get("id")
+    if destino_id and (tipo_frete or transportadora_id):
+        atual = db.table("pedidos").select("id, status, tipo_frete, numero_pedido")            .eq("id", str(destino_id)).execute().data
+        if atual:
+            _aplicar_frete_da_consolidacao(db, atual[0], tipo_frete, usuario)
+            if transportadora_id:
+                _definir_transportadora(db, atual[0], transportadora_id, usuario)
 
     # ── Baixa (ou reduz) a pendência ──────────────────────────────────────────
     # O que fica pendente é o pedido MENOS o que acabou de sair — e não o que a
