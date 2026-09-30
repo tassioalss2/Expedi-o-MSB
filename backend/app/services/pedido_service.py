@@ -2127,6 +2127,26 @@ def marcar_ciente(pedido_id: str, usuario) -> dict:
     return {"ok": True}
 
 
+def _tudo_paginado(consulta_de, limite=60000) -> list:
+    """Lê a tabela inteira em páginas, em vez de em blocos de ids.
+
+    O kanban levava 25 SEGUNDOS e ficava em "Carregando...". O perfil mostrou o
+    motivo: três laços que buscavam por `in_(ids, 40)` — 47 consultas para 629
+    pedidos, 26 dos 28 segundos. Cada bloco custa uma ida à rede, e o PostgREST
+    obriga blocos pequenos porque a lista de ids vai na URL.
+
+    Trazer a tabela já filtrada por STATUS e cruzar em memória troca 16 idas por
+    duas: o filtro de id sai da URL e vira um `in` de dicionário, que é de graça.
+    """
+    linhas = []
+    for off in range(0, limite, 1000):
+        bloco = consulta_de().limit(1000).offset(off).execute().data
+        linhas += bloco
+        if len(bloco) < 1000:
+            break
+    return linhas
+
+
 def listar_pedidos(
     status_filter: Optional[str] = None,
     cliente_id: Optional[str] = None,
@@ -2169,16 +2189,14 @@ def listar_pedidos(
     # `atualizado_em` muda a cada toque na linha (correção de frete, troca de
     # transportadora, qualquer script de manutenção), e aí OVs expedidas meses
     # antes voltavam a aparecer como se fossem de hoje.
-    ids_exp = [p["id"] for p in pedidos if p.get("status") == StatusPedido.EXPEDIDO.value]
+    ids_exp = {p["id"] for p in pedidos if p.get("status") == StatusPedido.EXPEDIDO.value}
     expedido_em: dict[str, str] = {}
-    for i in range(0, len(ids_exp), 40):
-        movs = db.table("movimentacoes").select("pedido_id, criado_em")\
-            .eq("status_novo", StatusPedido.EXPEDIDO.value)\
-            .in_("pedido_id", ids_exp[i:i + 40]).execute().data
-        for m in movs:
-            pid, ts = m.get("pedido_id"), m.get("criado_em")
-            if pid and ts and ts > expedido_em.get(pid, ""):
-                expedido_em[pid] = ts
+    for m in _tudo_paginado(lambda: db.table("movimentacoes")
+                            .select("pedido_id, criado_em")
+                            .eq("status_novo", StatusPedido.EXPEDIDO.value)):
+        pid, ts = m.get("pedido_id"), m.get("criado_em")
+        if pid in ids_exp and ts and ts > expedido_em.get(pid, ""):
+            expedido_em[pid] = ts
     for p in pedidos:
         p["expedido_em"] = expedido_em.get(p["id"])
 
@@ -2186,15 +2204,16 @@ def listar_pedidos(
     # da NF quando os itens não têm preço). Alimenta o total por etapa no kanban.
     ids = [p["id"] for p in pedidos]
     valor_itens: dict[str, float] = {}
-    for i in range(0, len(ids), 40):
-        its = db.table("itens_pedido").select("pedido_id, qtd_solicitada, valor_unitario")\
-            .in_("pedido_id", ids[i:i + 40]).execute().data
-        for it in its:
-            pid = it.get("pedido_id")
-            if not pid:
-                continue
-            valor_itens[pid] = valor_itens.get(pid, 0.0) + \
-                (float(it.get("qtd_solicitada") or 0) * float(it.get("valor_unitario") or 0))
+    # Mesma troca dos outros dois: uma leitura paginada e o cruzamento em
+    # memoria, no lugar de 16 idas a rede filtrando por lista de ids.
+    dos_nossos = set(ids)
+    for it in _tudo_paginado(lambda: db.table("itens_pedido")
+                             .select("pedido_id, qtd_solicitada, valor_unitario")):
+        pid = it.get("pedido_id")
+        if pid not in dos_nossos:
+            continue
+        valor_itens[pid] = valor_itens.get(pid, 0.0) + (
+            float(it.get("qtd_solicitada") or 0) * float(it.get("valor_unitario") or 0))
     for p in pedidos:
         v = valor_itens.get(p["id"], 0.0)
         if not v and p.get("valor_nf"):
@@ -2213,20 +2232,20 @@ def listar_pedidos(
 
     # Data de faturamento (movimentação -> FATURADO, BRT) por pedido.
     fat: dict[str, str] = {}
-    for i in range(0, len(ids), 40):
-        movs = db.table("movimentacoes").select("pedido_id, criado_em")\
-            .eq("status_novo", "FATURADO").in_("pedido_id", ids[i:i + 40]).execute().data
-        for m in movs:
-            ts = m.get("criado_em")
-            pid = m.get("pedido_id")
-            if not ts or not pid:
-                continue
-            try:
-                d = (datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc) - timedelta(hours=3)).date().isoformat()
-            except Exception:
-                continue
-            if pid not in fat or d > fat[pid]:
-                fat[pid] = d
+    vistos = set(ids)
+    for m in _tudo_paginado(lambda: db.table("movimentacoes")
+                            .select("pedido_id, criado_em")
+                            .eq("status_novo", "FATURADO")):
+        ts, pid = m.get("criado_em"), m.get("pedido_id")
+        if not ts or pid not in vistos:
+            continue
+        try:
+            d = (datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                 .astimezone(timezone.utc) - timedelta(hours=3)).date().isoformat()
+        except Exception:
+            continue
+        if pid not in fat or d > fat[pid]:
+            fat[pid] = d
     for p in pedidos:
         p["data_faturamento"] = fat.get(p["id"])
 
