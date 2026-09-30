@@ -3,7 +3,7 @@
 // Mora num arquivo só porque a MESMA informação aparece em três telas — detalhe
 // da oportunidade, modal de ganho e venda outbound. Se cada tela montasse a sua,
 // elas divergiriam na primeira mudança de regra.
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { AlertTriangle, Check, Clock, PackageCheck, PackageX } from 'lucide-react'
@@ -411,436 +411,264 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, c
  *  E PADRAO, nao regra: os outros 23% existem. */
 const SUGERIDO_PENDENCIA = 'CIF_SEM_VALOR'
 
-/** Como esta remessa vai sair: frete e transportadora.
- *
- *  Ate agora nenhum dos dois era perguntado na liberacao — a remessa nascia com
- *  um frete que o app escolheu e sem transportadora nenhuma, e chegava na
- *  expedicao faltando justamente os dois dados de que ela precisa. Quem libera
- *  sabe os dois; o momento de dizer e este. */
-function ComoVaiSair({ frete, setFrete, transportadora, setTransportadora, transportadoras }: {
-  frete: string; setFrete: (v: string) => void
-  transportadora: string; setTransportadora: (v: string) => void
-  transportadoras: any[]
-}) {
-  return (
-    <div className="rounded-xl border border-gray-200 p-3">
-      <p className="text-xs font-medium text-gray-700">Como esta remessa vai sair</p>
-      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <label className="text-[11px] text-gray-500">Tipo de frete</label>
-          <select value={frete} onChange={e => setFrete(e.target.value)}
-            className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm">
-            {['CIF_SEM_VALOR', 'CIF_COM_VALOR', 'FOB'].map(t => (
-              <option key={t} value={t}>
-                {TIPO_FRETE_LABEL[t] || t}{t === SUGERIDO_PENDENCIA ? ' — o usual em pendência' : ''}
-              </option>
-            ))}
-          </select>
-          {frete === SUGERIDO_PENDENCIA && (
-            <p className="mt-1 text-[11px] text-gray-500">
-              O cliente já pagou a entrega uma vez; o segundo frete é nosso porque a
-              falta foi nossa.
-            </p>
-          )}
-        </div>
-        <div>
-          <label className="text-[11px] text-gray-500">
-            Transportadora <span className="text-gray-400">— se já souber</span>
-          </label>
-          <select value={transportadora} onChange={e => setTransportadora(e.target.value)}
-            className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm">
-            <option value="">definir depois</option>
-            {(transportadoras || []).map((t: any) => (
-              <option key={t.id} value={t.id}>{t.nome}</option>
-            ))}
-          </select>
-          {frete === 'FOB' && !transportadora && (
-            <p className="mt-1 text-[11px] text-gray-500">
-              No FOB quem contrata é o cliente — dá para deixar em branco até ele informar.
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLiberado }: {
   pendencia: Pendencia
-  /** Situação de agora, quando quem abriu o modal já a tem em mão. Com ela o modal
-   *  mostra o que vai sair e oferece a liberação parcial de UMA vez, em vez de
-   *  exigir uma tentativa recusada primeiro. */
+  /** Situação de agora, quando quem abriu o modal já a tem em mão. */
   analise?: Disponibilidade | null
   onClose: () => void
   onLiberado: () => void
 }) {
   const [observacao, setObservacao] = useState('')
-  const [faltaAinda, setFaltaAinda] = useState<Disponibilidade | null>(null)
-  // Quantidade escolhida por item. Começa com tudo o que há em estoque — o caso
-  // comum é liberar tudo, e quem quiser segurar algo baixa o número.
-  const [qtds, setQtds] = useState<Record<string, string>>({})
-  const setQtd = (pid: string, v: string) => setQtds(q => ({ ...q, [pid]: v }))
-  /** Quanto DESTE item da para liberar agora, depois da fila. Vem de
-   *  `estoque_agora`, que a pendencia ja carrega: o modal e aberto sem `analise`
-   *  a partir da tela de Pendencias, e sem esta leitura ele nao sabia o que
-   *  existe. Devolve null quando nao ha informacao — aí nao se afirma nada. */
-  const dispAgora = (codigo?: string | null): number | null => {
-    const linha = (p.estoque_agora?.itens || []).find(x => (x.codigo || '') === (codigo || ''))
-    return linha ? (Number(linha.qtd_atendida) || 0) : null
-  }
-
-  // Escolha quando o saldo inteiro esta em estoque ou quando a tela nao recebeu
-  // analise. Comeca com o que EXISTE, nunca com a divida: pre-preencher 30 de um
-  // item com zero em estoque convida a mandar material que nao esta la — e era
-  // exatamente o que esta tela estava fazendo.
-  const [qtdsSaldo, setQtdsSaldo] = useState<Record<string, string>>(
-    Object.fromEntries((p.itens || [])
-      .filter(i => i.produto_id)
-      .map(i => {
-        const devido = Number(i.qtd_pendente) || 0
-        const d = dispAgora(i.codigo)
-        return [i.produto_id as string, String(d === null ? devido : Math.min(devido, d))]
-      })))
-
-  // Somar numa remessa que ainda nao faturou, em vez de abrir outra. Sem isso a
-  // OV016753 virou duas MEDCER no kanban: a R1 estava expedida, entao a regra
-  // criou a R3 — com a R2 aberta ali do lado, sem nota.
-  const abertas: any[] = (p as any).remessas_abertas || []
+  const [detalhes, setDetalhes] = useState(false)
   const [somarEm, setSomarEm] = useState<string>('')
-  // Fretes diferentes nas duas remessas: quem vende escolhe qual vale. O app
-  // nao conhece o acordo com o cliente, entao adotar o da remessa de destino em
-  // silencio seria escolher por quem sabe.
   const [freteEscolhido, setFreteEscolhido] = useState<string>(SUGERIDO_PENDENCIA)
   const [transportadora, setTransportadora] = useState<string>('')
 
-  // A expedicao precisa dos dois para tocar a remessa, e ate agora nenhum era
-  // perguntado: ela nascia com um frete que o app escolheu e sem transportadora
-  // nenhuma. Quem libera sabe os dois — e o momento de dizer e este.
+  const abertas: any[] = (p as any).remessas_abertas || []
+
   const { data: transportadoras = [] } = useQuery<any[]>({
     queryKey: ['transportadoras'],
     queryFn: () => api.get('/transportadoras').then(r => r.data),
     staleTime: 5 * 60 * 1000,
   })
 
+  /** UMA lista de itens, e não três.
+   *
+   *  O modal tinha três caminhos — "voltou 409 do servidor", "a análise já veio
+   *  com falta" e "o saldo inteiro" — cada um com sua tabela, seu botão e seu
+   *  texto. Eles diferiam só em DE ONDE vinha a lista, e é por isso que a tela
+   *  foi ficando incoerente: uma correção entrava num caminho e não nos outros.
+   *
+   *  Agora a fonte é a análise quando existe e o saldo da pendência quando não,
+   *  e daí para baixo é tudo igual. */
+  type Linha = {
+    produto_id: string; codigo?: string | null; descricao?: string | null
+    devido: number; naFoto: number; valor: number; reservado: any[]
+  }
+  const linhas: Linha[] = useMemo(() => {
+    const daAnalise = analise?.itens || []
+    if (daAnalise.length) {
+      return daAnalise.filter(i => i.produto_id).map(i => ({
+        produto_id: i.produto_id as string,
+        codigo: i.codigo,
+        descricao: i.descricao,
+        devido: Number(i.qtd_pedida) || 0,
+        naFoto: Number(i.qtd_atendida) || 0,
+        valor: Number((i as any).valor_unitario) || 0,
+        reservado: (i as any).reservado_para || [],
+      }))
+    }
+    return (p.itens || []).filter(i => i.produto_id).map(i => {
+      const linha = (p.estoque_agora?.itens || [])
+        .find(x => (x.codigo || '') === (i.codigo || ''))
+      const devido = Number(i.qtd_pendente) || 0
+      return {
+        produto_id: i.produto_id as string,
+        codigo: i.codigo,
+        descricao: i.descricao,
+        devido,
+        // Sem leitura do PCP não se afirma nada: a sugestão vira a dívida.
+        naFoto: linha ? (Number(linha.qtd_atendida) || 0) : devido,
+        valor: Number(i.valor_unitario) || 0,
+        reservado: (linha as any)?.reservado_para || [],
+      }
+    })
+  }, [analise, p])
+
+  // Começa com o que a foto do PCP cobre — o caso comum é liberar isso. Nunca
+  // com a dívida: pré-preencher 30 de um item com zero em estoque convida a
+  // mandar material que não está lá.
+  const [qtds, setQtds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(linhas.map(l => [l.produto_id, String(Math.min(l.devido, l.naFoto))])))
+
+  const num = (v: any) => Number(String(v ?? '').replace(',', '.')) || 0
+  const escolha = linhas
+    .map(l => ({ produto_id: l.produto_id, qtd: num(qtds[l.produto_id]) }))
+    .filter(i => i.qtd > 0)
+  const total = escolha.reduce((a, i) => a + i.qtd, 0)
+  // Teto é a DÍVIDA: o estoque só recomenda, mas entregar mais do que foi
+  // vendido continua fora.
+  const excedeu = linhas.filter(l => num(qtds[l.produto_id]) > l.devido + 0.001)
+  const acimaDaFoto = linhas.filter(l => num(qtds[l.produto_id]) > l.naFoto + 0.001)
+
   const liberar = useMutation({
-    mutationFn: ({ parcial, itens }: { parcial: boolean; itens?: { produto_id: string; qtd: number }[] }) =>
-      api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`,
-        { parcial, observacao, itens, somar_em: somarEm || null,
-          tipo_frete: freteEscolhido || null,
-          transportadora_id: transportadora || null })
-        .then(r => r.data),
+    mutationFn: () => api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`, {
+      parcial: true, observacao, itens: escolha,
+      somar_em: somarEm || null,
+      tipo_frete: freteEscolhido || null,
+      transportadora_id: transportadora || null,
+    }).then(r => r.data),
     onSuccess: (r: any) => {
-      const acao = ACAO_LIBERAR_LABEL[r?.acao] || 'liberada'
-      toast.success(`Pendência liberada — ${acao.toLowerCase()}.`)
+      toast.success(`Pendência liberada — ${(ACAO_LIBERAR_LABEL[r?.acao] || 'liberada').toLowerCase()}.`)
       onLiberado()
       onClose()
     },
-    onError: (e: any) => {
-      const d = e?.response?.data?.detail
-      if (d?.tipo === 'ESTOQUE_INSUFICIENTE' && d.analise) {
-        setFaltaAinda(d.analise)
-        return
-      }
-      toast.error(msgErro(e, 'Não foi possível liberar a pendência.'))
-    },
+    onError: (e: any) => toast.error(msgErro(e, 'Não foi possível liberar a pendência.')),
   })
-
-  // Situação já conhecida: parte em estoque, parte faltando. Vai direto ao parcial.
-  const situacao = faltaAinda || analise || null
-  const parcialDireto = !faltaAinda && !!analise?.tem_falta
-    && analise.itens.some(i => (i.qtd_atendida || 0) > 0)
-  const prontos = (situacao?.itens || []).filter(i => (i.qtd_atendida || 0) > 0)
-
-  // Sempre que a situação muda (abriu, ou voltou um 409 com a análise nova),
-  // repõe as quantidades com o disponível daquele momento.
-  useEffect(() => {
-    if (!situacao?.itens) return
-    setQtds(Object.fromEntries(situacao.itens
-      .filter(i => (i.qtd_atendida || 0) > 0 && i.produto_id)
-      .map(i => [i.produto_id as string, String(i.qtd_atendida)])))
-  }, [situacao])
-
-  // O que vai ser enviado: todo item com quantidade digitada > 0. Antes o filtro
-  // exigia estoque na foto, então digitar num item zerado não surtia efeito — a
-  // liberação saía sem ele, calada.
-  const escolha = (situacao?.itens || [])
-    .filter(i => i.produto_id)
-    .map(i => ({ produto_id: i.produto_id as string, qtd: Number(qtds[i.produto_id as string] ?? 0) }))
-    .filter(i => i.qtd > 0)
-  // Teto é a dívida, não o estoque: o estoque só recomenda.
-  const excedeuAlgum = (situacao?.itens || []).some(i =>
-    i.produto_id && Number(qtds[i.produto_id] ?? 0) > (i.qtd_pedida || 0) + 0.001)
-  const acimaDaFoto = (situacao?.itens || []).filter(i =>
-    i.produto_id && Number(qtds[i.produto_id] ?? 0) > (i.qtd_atendida || 0) + 0.001)
-  const totalEscolhido = escolha.reduce((a, i) => a + i.qtd, 0)
-
-  // Saldo inteiro disponivel: mesma leitura, sobre p.itens.
-  const escolhaSaldo = (p.itens || [])
-    .filter(i => i.produto_id)
-    .map(i => ({ produto_id: i.produto_id as string,
-                 qtd: Number(String(qtdsSaldo[i.produto_id as string] ?? '').replace(',', '.')) || 0 }))
-    .filter(i => i.qtd > 0)
-  /** Teto de cada item: a DÍVIDA da venda. O estoque nao e teto — e sugestao.
-   *  O app conhece a ultima foto do PCP, nao a prateleira; quem abre o modal
-   *  esta com a peca na mao. Entregar mais do que foi vendido continua fora. */
-  const tetoDe = (i: { qtd_pendente?: number }) => Number(i.qtd_pendente) || 0
-  /** O que a foto do estoque cobre deste item — o numero recomendado. */
-  const sugeridoDe = (i: { codigo?: string | null; qtd_pendente?: number }) => {
-    const devido = Number(i.qtd_pendente) || 0
-    const d = dispAgora(i.codigo)
-    return d === null ? devido : Math.min(devido, d)
-  }
-  const excedeuSaldo = (p.itens || []).some(i => i.produto_id
-    && (Number(String(qtdsSaldo[i.produto_id] ?? '').replace(',', '.')) || 0) > tetoDe(i) + 0.001)
-  /** Passou da foto do estoque: avisa, nao impede. */
-  const acimaDoEstoque = (p.itens || []).filter(i => i.produto_id
-    && (Number(String(qtdsSaldo[i.produto_id] ?? '').replace(',', '.')) || 0) > sugeridoDe(i) + 0.001)
-  const totalSaldo = escolhaSaldo.reduce((a, i) => a + i.qtd, 0)
-  // Nada em estoque para nenhum item: nao ha liberacao possivel, e o botao tem de
-  // dizer isso em vez de tentar e voltar erro.
-  const nadaParaLiberar = escolhaSaldo.length === 0
-  // Sem `estoque_agora` nao ha base para afirmar o que existe: nesse caso o teto
-  // virou a divida e escolher seria adivinhar. Segue o caminho antigo, em que o
-  // servidor reconfere e oferece o parcial se faltar.
-  const semLeituraDeEstoque = !(p.estoque_agora?.itens || []).length
 
   return (
     <ModalBase titulo="Liberar pendência de estoque" onClose={onClose} max="max-w-2xl">
       <div className="p-5 space-y-4 overflow-y-auto flex-1">
         <div>
           <p className="text-sm font-semibold text-gray-800">{p.titulo}</p>
-          <p className="text-xs text-gray-500">{p.cliente || '—'}</p>
+          <p className="text-xs text-gray-500">
+            {p.cliente || '—'}
+            {p.nada_entregue
+              ? ' · nada foi entregue ainda'
+              : p.ov_ref ? ` · saldo da ${p.ov_ref}` : ''}
+          </p>
         </div>
 
-        {/* De onde vem a coluna "Pedido". Sem isto o operador não sabia se aquele
-            número era a venda toda ou só o que sobrou — e a diferença muda o que
-            ele está prestes a mandar para a expedição. */}
-        <div className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-gray-600">
-          {p.nada_entregue ? (
-            <>Nada foi entregue ainda: a venda inteira — <strong>{n(p.qtd_total)} un</strong> —
-              está esperando material. Não há OV aberta.</>
-          ) : (
-            <>A OV <strong>{p.ov_ref || '—'}</strong> já levou o que havia. O que aparece abaixo é
-              o <strong>saldo</strong> que ficou faltando: {n(p.qtd_total)} un.</>
+        {/* 1. QUANTO VAI SAIR AGORA */}
+        <div className="rounded-xl border border-gray-200">
+          <p className="border-b border-gray-100 px-3 py-2 text-xs font-semibold text-gray-700">
+            1. Quanto vai sair agora
+          </p>
+          <table className="w-full text-sm">
+            <tbody className="divide-y divide-gray-50">
+              {linhas.map(l => {
+                const q = num(qtds[l.produto_id])
+                return (
+                  <tr key={l.produto_id}>
+                    <td className="py-2 pl-3">
+                      <span className="font-medium text-gray-800">{l.codigo || '—'}</span>
+                      {l.descricao && (
+                        <span className="block truncate text-[11px] text-gray-400 max-w-[280px]">
+                          {l.descricao}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-right whitespace-nowrap">
+                      <input value={qtds[l.produto_id] ?? ''}
+                        onChange={e => setQtds(v => ({ ...v, [l.produto_id]: e.target.value }))}
+                        className={`w-20 rounded-lg border px-2 py-1 text-right tabular-nums
+                          ${q > l.devido + 0.001 ? 'border-red-300'
+                            : q > l.naFoto + 0.001 ? 'border-amber-300' : 'border-gray-200'}`} />
+                      <span className="ml-1 text-xs text-gray-400">de {n(l.devido)}</span>
+                    </td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-xs text-gray-500">
+                      {fmtBRL(l.valor * q)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {excedeu.length > 0 && (
+            <p className="px-3 pb-2 text-[11px] text-red-600">
+              {excedeu.map(l => l.codigo).join(', ')} acima do que esta venda deve.
+            </p>
+          )}
+          <button onClick={() => setDetalhes(d => !d)}
+            className="px-3 pb-2 text-[11px] text-blue-600 hover:underline">
+            {detalhes ? 'esconder detalhes' : 'ver detalhes do estoque'}
+          </button>
+          {detalhes && (
+            <div className="border-t border-gray-100 px-3 py-2 text-[11px] text-gray-500">
+              <p className="mb-1">
+                A foto do PCP é a última leitura, não a prateleira — ela recomenda, não trava.
+              </p>
+              {linhas.map(l => (
+                <p key={l.produto_id}>
+                  <span className="font-mono">{l.codigo}</span>: foto do PCP {n(l.naFoto)} un
+                  {(l.reservado || []).length > 0 && (
+                    <> · reservado para {(l.reservado as any[])
+                      .map(d => `${d.ov || d.cliente || 'outra venda'} (${n(d.qtd)})`).join(', ')}</>
+                  )}
+                </p>
+              ))}
+            </div>
           )}
         </div>
 
-        {faltaAinda ? (
-          <>
-            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3">
-              <AlertTriangle size={16} className="text-amber-600 mt-0.5 shrink-0" />
-              <p className="text-sm text-amber-900">
-                O material ainda não chegou por completo. Ainda faltam{' '}
-                <strong>{n(faltaAinda.qtd_pendente_total)} un</strong>.
-              </p>
-            </div>
-            <EscolhaDeLiberacao itens={faltaAinda.itens} qtds={qtds} onQtd={setQtd} tetoNaDivida />
-          </>
-        ) : parcialDireto && analise ? (
-          <>
-            <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-              <Check size={16} className="text-emerald-600 mt-0.5 shrink-0" />
-              <p className="text-sm text-emerald-900">
-                Tem estoque de <strong>
-                  {prontos.map(i => `${n(i.qtd_atendida)} un de ${i.codigo}`).join(', ')}
-                </strong>. Ajuste abaixo quanto de cada item vai agora — o que ficar
-                continua pendente e entra depois na mesma OV.
-              </p>
-            </div>
-            <EscolhaDeLiberacao itens={analise.itens} qtds={qtds} onQtd={setQtd} tetoNaDivida />
-            <ComoVaiSair frete={freteEscolhido} setFrete={setFreteEscolhido}
-              transportadora={transportadora} setTransportadora={setTransportadora}
-              transportadoras={transportadoras} />
-            <div>
-              <label className="text-sm text-gray-600">Observação (opcional)</label>
-              <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="rounded-xl border border-gray-200 p-3">
-              <p className="text-xs text-gray-400 mb-1.5">
-                Saldo a liberar — ajuste para menos se quiser entregar só uma parte
-              </p>
-              <table className="w-full text-sm">
-                <tbody className="divide-y divide-gray-100">
-                  {p.itens.map((i, idx) => {
-                    const pid = i.produto_id as string | undefined
-                    const devido = Number(i.qtd_pendente) || 0
-                    const teto = tetoDe(i)
-                    const sugerido = sugeridoDe(i)
-                    const escolhido = pid
-                      ? (Number(String(qtdsSaldo[pid] ?? '').replace(',', '.')) || 0)
-                      : sugerido
-                    const excede = escolhido > teto + 0.001
-                    const passouDaFoto = escolhido > sugerido + 0.001
-                    const naFila = (p.estoque_agora?.itens || [])
-                      .find(x => (x.codigo || '') === (i.codigo || ''))?.reservado_para || []
-                    return (
-                      <tr key={idx}>
-                        <td className="py-1.5">
-                          <span className="font-medium text-gray-800">{i.codigo || '—'}</span>
-                          {i.descricao && <span className="block text-[11px] text-gray-400">{i.descricao}</span>}
-                          {passouDaFoto ? (
-                            <span className="block text-[11px] text-amber-700">
-                              a foto do PCP mostra {n(sugerido)} un — liberando {n(escolhido)}.
-                              Vale o que você está vendo na prateleira.
-                              {naFila.length > 0 && (
-                                <> · o que a foto mostra está reservado para{' '}
-                                  {naFila.map(d => `${d.ov || d.cliente || 'outra venda'} (${n(d.qtd)})`).join(', ')}</>
-                              )}
-                            </span>
-                          ) : sugerido <= 0 && escolhido <= 0 ? (
-                            <span className="block text-[11px] text-gray-500">
-                              sem material na foto do PCP — digite a quantidade se houver na prateleira
-                              {naFila.length > 0 && (
-                                <> · o que existe está reservado para{' '}
-                                  {naFila.map(d => `${d.ov || d.cliente || 'outra venda'} (${n(d.qtd)})`).join(', ')}</>
-                              )}
-                            </span>
-                          ) : escolhido > 0 && escolhido < devido ? (
-                            <span className="block text-[11px] text-amber-700">
-                              ficam {n(devido - escolhido)} un pendentes nesta venda
-                            </span>
-                          ) : escolhido <= 0 ? (
-                            <span className="block text-[11px] text-gray-400">
-                              não entra nesta liberação — segue pendente
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="py-1.5 text-right whitespace-nowrap">
-                          {pid ? (
-                            <>
-                              {/* Sempre editavel: item zerado na foto pode estar na
-                                  prateleira, e campo travado nao deixava nem tentar. */}
-                              <input
-                                value={qtdsSaldo[pid] ?? ''}
-                                onChange={e => setQtdsSaldo(q => ({ ...q, [pid]: e.target.value }))}
-                                className={`w-20 px-2 py-1 border rounded-lg text-right tabular-nums
-                                  ${excede ? 'border-red-300 focus:ring-red-400'
-                                    : passouDaFoto ? 'border-amber-300 focus:ring-amber-400'
-                                    : 'border-gray-200 focus:ring-emerald-400'}
-                                  focus:ring-1`} />
-                              {/* "de X" e a DIVIDA: agora e ela o teto. O que a foto
-                                  cobre vai abaixo, quando os dois nao coincidem. */}
-                              <span className="text-gray-400 text-xs ml-1">de {n(devido)}</span>
-                              {sugerido < devido && (
-                                <span className="block text-[11px] text-gray-400">
-                                  foto do PCP: {n(sugerido)} un
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <span className="tabular-nums text-gray-700">{n(devido)} un</span>
-                          )}
-                        </td>
-                        <td className="py-1.5 text-right tabular-nums text-gray-500">
-                          {fmtBRL((Number(i.valor_unitario) || 0) * escolhido)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-              {excedeuSaldo ? (
-                <p className="text-[11px] text-red-600 mt-1">
-                  Há item acima do que esta venda deve. Não dá para entregar mais do que
-                  foi vendido — use <strong>corrigir</strong> no card se a venda mudou.
-                </p>
-              ) : acimaDoEstoque.length > 0 && (
-                <p className="text-[11px] text-amber-700 mt-1">
-                  Você está liberando mais do que a última foto do PCP mostra
-                  ({acimaDoEstoque.map(i => i.codigo).join(', ')}). Não é impedimento — o app
-                  conhece a foto, você conhece a prateleira. Fica registrado na liberação.
-                </p>
-              )}
-            </div>
-            {/* UM bloco, nao tres. Antes a tela dizia "CIF sem valor" em tres
-                lugares e o cartao azul afirmava "remessa nova" mesmo com a
-                pessoa tendo escolhido somar. Aqui: ONDE entra o saldo, e so
-                isso. O que vai acontecer e o frete vem depois, uma vez cada. */}
-            {abertas.length > 0 ? (
-              <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
-                <p className="text-sm font-medium text-violet-900">Onde entra este saldo?</p>
-                <label className="mt-2 flex items-start gap-2 text-sm cursor-pointer">
-                  <input type="radio" name="destino-saldo" checked={!somarEm}
-                    onChange={() => setSomarEm('')} className="mt-0.5" />
-                  <span>
-                    <strong>Remessa nova</strong>
-                    <span className="block text-[11px] text-gray-600">
-                      Mesmo número de OV, nota fiscal própria, card separado no kanban.
+        {/* 2. ONDE ENTRA */}
+        <div className="rounded-xl border border-gray-200 p-3">
+          <p className="text-xs font-semibold text-gray-700">2. Onde entra</p>
+          {abertas.length > 0 ? (
+            <>
+              <label className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
+                <input type="radio" name="destino-saldo" checked={!somarEm}
+                  onChange={() => setSomarEm('')} className="mt-0.5" />
+                <span>Remessa nova
+                  <span className="block text-[11px] text-gray-500">
+                    mesmo número de OV, nota fiscal própria
+                  </span>
+                </span>
+              </label>
+              {abertas.map(r => (
+                <label key={r.id} className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="destino-saldo" checked={somarEm === r.id}
+                    onChange={() => { setSomarEm(r.id); setFreteEscolhido(r.tipo_frete || SUGERIDO_PENDENCIA) }}
+                    className="mt-0.5" />
+                  <span>Somar na remessa R{r.remessa_numero}
+                    <span className="block text-[11px] text-gray-500">
+                      em {(STATUS_CONFIG as any)[r.status]?.label || r.status} — sai numa nota só
                     </span>
                   </span>
                 </label>
-                {abertas.map(r => (
-                  <label key={r.id} className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
-                    <input type="radio" name="destino-saldo" checked={somarEm === r.id}
-                      onChange={() => { setSomarEm(r.id); setFreteEscolhido(r.tipo_frete || SUGERIDO_PENDENCIA) }}
-                      className="mt-0.5" />
-                    <span>
-                      <strong>Somar na remessa R{r.remessa_numero}</strong>
-                      <span className="block text-[11px] text-gray-600">
-                        Sai tudo numa nota só. Ela está em{' '}
-                        {(STATUS_CONFIG as any)[r.status]?.label || r.status}
-                        {r.tipo_frete ? `, com frete ${TIPO_FRETE_LABEL[r.tipo_frete] || r.tipo_frete}` : ''}.
-                      </span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-                {p.acao_liberar === 'REMESSA_2'
-                  ? `A OV ${p.ov_ref} já faturou, então o saldo sai como 2ª remessa — mesmo número de OV, nota fiscal própria.`
-                  : p.acao_liberar === 'SOMAR_R1'
-                    ? `A OV ${p.ov_ref} ainda não faturou, então o saldo é somado a ela e sai numa nota só.`
-                    : 'A venda estava aguardando produção e não tinha OV — ela é aberta agora.'}
-              </p>
-            )}
-            <ComoVaiSair frete={freteEscolhido} setFrete={setFreteEscolhido}
-              transportadora={transportadora} setTransportadora={setTransportadora}
-              transportadoras={transportadoras} />
+              ))}
+            </>
+          ) : (
+            <p className="mt-1 text-[11px] text-gray-500">
+              {p.acao_liberar === 'REMESSA_2'
+                ? `A ${p.ov_ref} já faturou — sai como 2ª remessa, com nota própria.`
+                : p.acao_liberar === 'SOMAR_R1'
+                  ? `Somado na ${p.ov_ref}, que ainda não faturou — uma nota só.`
+                  : 'A venda não tinha OV — ela é aberta agora.'}
+            </p>
+          )}
+        </div>
+
+        {/* 3. COMO SAI */}
+        <div className="rounded-xl border border-gray-200 p-3">
+          <p className="text-xs font-semibold text-gray-700">3. Como sai</p>
+          <div className="mt-1.5 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label className="text-sm text-gray-600">Observação (opcional)</label>
-              <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />
+              <label className="text-[11px] text-gray-500">Frete</label>
+              <select value={freteEscolhido} onChange={e => setFreteEscolhido(e.target.value)}
+                className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm">
+                {['CIF_SEM_VALOR', 'CIF_COM_VALOR', 'FOB'].map(t => (
+                  <option key={t} value={t}>{TIPO_FRETE_LABEL[t] || t}</option>
+                ))}
+              </select>
             </div>
-          </>
-        )}
+            <div>
+              <label className="text-[11px] text-gray-500">Transportadora</label>
+              <select value={transportadora} onChange={e => setTransportadora(e.target.value)}
+                className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm">
+                <option value="">definir depois</option>
+                {(transportadoras || []).map((t: any) => (
+                  <option key={t.id} value={t.id}>{t.nome}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {freteEscolhido === SUGERIDO_PENDENCIA && (
+            <p className="mt-1 text-[11px] text-gray-400">
+              CIF sem valor é o usual em pendência: o frete desta remessa é nosso.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="text-xs text-gray-500">Observação (opcional)</label>
+          <input value={observacao} onChange={e => setObservacao(e.target.value)} className={inputCls} />
+        </div>
       </div>
 
       <div className="p-5 border-t flex gap-2 shrink-0">
         <button onClick={onClose} className="flex-1 border rounded-xl py-2.5 text-sm">Fechar</button>
-        {faltaAinda || parcialDireto ? (
-          <button
-            disabled={liberar.isPending || excedeuAlgum || escolha.length === 0}
-            onClick={() => liberar.mutate({ parcial: true, itens: escolha })}
-            title={excedeuAlgum ? 'Há item acima do que esta venda deve'
-              : acimaDaFoto.length ? 'Acima da foto do PCP — permitido, fica registrado' : undefined}
-            className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl py-2.5 text-sm font-medium">
-            {liberar.isPending ? 'Liberando…'
-              : excedeuAlgum ? 'Quantidade acima do que foi vendido'
-              : escolha.length === 0 ? 'Escolha o que liberar'
-              : `Liberar ${n(totalEscolhido)} un (${escolha.length} ${escolha.length === 1 ? 'item' : 'itens'})`}
-          </button>
-        ) : (
-          <button
-            disabled={liberar.isPending || excedeuSaldo
-              || (nadaParaLiberar && !semLeituraDeEstoque)}
-            onClick={() => liberar.mutate(semLeituraDeEstoque
-              ? { parcial: false }
-              : { parcial: true, itens: escolhaSaldo })}
-            title={acimaDoEstoque.length
-              ? 'Acima da foto do PCP — permitido, fica registrado' : undefined}
-            className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400 text-white rounded-xl py-2.5 text-sm font-medium">
-            {liberar.isPending ? 'Liberando…'
-              : excedeuSaldo ? 'Quantidade acima do que foi vendido'
-              : semLeituraDeEstoque ? 'Confirmar liberação'
-              /* Nao e mais "nada disponivel": o campo esta editavel e a foto do
-                 estoque so sugere. O que falta e alguem digitar a quantidade. */
-              : nadaParaLiberar ? 'Digite quanto vai agora'
-              : `Liberar ${n(totalSaldo)} un (${escolhaSaldo.length} ${escolhaSaldo.length === 1 ? 'item' : 'itens'})`}
-          </button>
-        )}
+        <button
+          disabled={liberar.isPending || excedeu.length > 0 || escolha.length === 0}
+          onClick={() => liberar.mutate()}
+          title={acimaDaFoto.length
+            ? 'Acima da foto do PCP — permitido, fica registrado' : undefined}
+          className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:bg-gray-200 disabled:text-gray-400">
+          {liberar.isPending ? 'Liberando…'
+            : excedeu.length > 0 ? 'Quantidade acima do que foi vendido'
+            : escolha.length === 0 ? 'Digite quanto vai agora'
+            : `Liberar ${n(total)} un`}
+        </button>
       </div>
     </ModalBase>
   )
