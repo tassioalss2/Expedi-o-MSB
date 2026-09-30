@@ -2028,17 +2028,40 @@ def alteracoes_nao_vistas(db, pedido_ids: list) -> dict:
 
     Devolve {} para quem não tem nada — o card só mostra o selo quando há.
     """
-    ids = [str(i) for i in pedido_ids if i]
+    ids = set(str(i) for i in pedido_ids if i)
     if not ids:
         return {}
+
+    # Por JANELA DE TEMPO, e não por pedido. A primeira versão lia as
+    # movimentações em blocos de 40 ids: com 629 pedidos no kanban foram 16
+    # consultas e 9,5 segundos, numa tela que já levava 25. O Tássio viu
+    # "Carregando..." e nenhum pedido.
+    #
+    # A janela é segura: para o aviso sumir, o "ciente" tem de ser MAIS NOVO que
+    # a alteração — se a alteração está na janela, o ciente dela também está.
+    # E alteração de dois meses atrás não é novidade para ninguém.
+    #
+    # SÓ A DATA, sem hora nem fuso: `isoformat()` devolve "...+00:00", e o "+"
+    # numa query string do PostgREST vira ESPAÇO — a consulta voltava 400 e o
+    # `except` abaixo devolvia {} sem dizer nada. O aviso simplesmente parou de
+    # existir, e só apareceu porque o número caiu de 2 para 0 na conferência.
+    # 15 dias, e nao 60: alteracao de agosto nao e NOTICIA em setembro. Com 60
+    # dias o aviso aparecia em 153 OVs, quase todas "transportadora alterada" em
+    # venda ja expedida — e aviso que aparece em tudo ninguem le.
+    limite = (datetime.now(timezone.utc) - timedelta(days=15)).date().isoformat()
     movs = []
-    for i in range(0, len(ids), 40):
-        try:
-            movs += db.table("movimentacoes")\
-                .select("pedido_id, observacao, criado_em, usuario_id")\
-                .in_("pedido_id", ids[i:i + 40]).execute().data
-        except Exception:
-            return {}
+    try:
+        for off in range(0, 60000, 1000):
+            bloco = db.table("movimentacoes")                .select("pedido_id, observacao, criado_em, usuario_id")                .gte("criado_em", limite).limit(1000).offset(off).execute().data
+            movs += bloco
+            if len(bloco) < 1000:
+                break
+    except Exception as exc:
+        # Nunca derruba o kanban por causa do aviso — mas também não falha em
+        # silêncio: sem esta linha o defeito acima teria passado batido.
+        print("aviso de alteracao nao carregou: %s" % str(exc)[:160])
+        return {}
+    movs = [m for m in movs if str(m.get("pedido_id")) in ids]
 
     por_pedido: dict = {}
     for m in movs:
@@ -2179,7 +2202,12 @@ def listar_pedidos(
         p["valor_ov"] = round(v, 2)
 
     # O selo de "mudou e ninguem te avisou". Uma consulta para o kanban inteiro.
-    alteradas = alteracoes_nao_vistas(db, ids)
+    # So o que ainda esta EM JOGO. Numa OV expedida ou cancelada a alteracao ja
+    # nao muda o que alguem vai fazer — e era dai que vinha quase todo o ruido.
+    em_jogo = [p["id"] for p in pedidos
+               if p.get("status") not in (StatusPedido.EXPEDIDO.value,
+                                          StatusPedido.CANCELADO.value)]
+    alteradas = alteracoes_nao_vistas(db, em_jogo)
     for p in pedidos:
         p["alteracao"] = alteradas.get(p["id"])
 
