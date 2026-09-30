@@ -1265,7 +1265,8 @@ def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
                     decisao: Optional[str] = None,
                     observacao_estoque: Optional[str] = None,
                     previsao_pcp: Optional[str] = None,
-                    escolha: Optional[dict] = None) -> dict:
+                    escolha: Optional[dict] = None,
+                    quantidade_ja_decidida: bool = False) -> dict:
     """Acrescenta itens a uma OV que já existe, conferindo o estoque.
 
     O processo que isto atende: a mesma OV acumula pedidos do cliente e vai sendo
@@ -1308,7 +1309,13 @@ def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     } for idx, it in enumerate(limpos)], sincronizar=True)
 
     dec = (decisao or "").strip().upper() or None
-    if analise.get("tem_falta") and dec not in ("PARCIAL", "AGUARDAR"):
+    # `quantidade_ja_decidida`: quem chamou JA perguntou e JA ouviu a resposta.
+    # E o caso da liberacao de pendencia — a pessoa viu a foto do PCP, viu o
+    # aviso de que estava acima dela e mandou liberar assim mesmo, porque esta
+    # com a peca na mao. Perguntar de novo aqui nao e cuidado: e a segunda
+    # pergunta dizendo que a primeira resposta nao valeu. Foi o que barrou o
+    # Tassio tentando liberar 19 un do 53030 com 24 na prateleira.
+    if analise.get("tem_falta") and not quantidade_ja_decidida             and dec not in ("PARCIAL", "AGUARDAR"):
         raise HTTPException(status_code=409, detail={
             "tipo": "ESTOQUE_INSUFICIENTE",
             "msg": "Não há material para tudo o que está sendo adicionado. Os itens podem "
@@ -1336,7 +1343,12 @@ def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
         info = por_ref.get(idx) or {}
         pid = str(it.produto_id)
         vendida = float(it.qtd_solicitada)
-        atendida = float(info.get("qtd_atendida", vendida) or 0)
+        # Com a quantidade ja decidida, entra o que foi PEDIDO e nao o que a
+        # foto cobre: `qtd_atendida` viria 0 num item com o comprometido acima
+        # do estoque, e o item seria pulado em silencio — a liberacao "daria
+        # certo" sem adicionar nada.
+        atendida = (vendida if quantidade_ja_decidida
+                    else float(info.get("qtd_atendida", vendida) or 0))
         vendidos.append({
             "produto_id": pid,
             "codigo": info.get("codigo"),

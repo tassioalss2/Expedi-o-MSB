@@ -1808,8 +1808,16 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
                                 % (d["numero_pedido"], d["numero_nf"]))
         if str(d.get("numero_pedido") or "").upper() != str(ov["numero_pedido"]).upper():
             raise HTTPException(422, "So da para somar numa remessa da MESMA OV.")
+        # `decisao="PARCIAL"` porque a decisao JA FOI TOMADA no modal de
+        # liberacao: a pessoa viu a foto do PCP, viu o aviso ambar de que estava
+        # acima dela, e mandou liberar assim mesmo. `adicionar_itens` tem a
+        # trava antiga de estoque e recusaria de novo — foi o que barrou o
+        # Tassio liberando 19 un do 53030 dizendo que tinha 24 na prateleira.
+        #
+        # Perguntar duas vezes a mesma coisa nao e cuidado: e a segunda pergunta
+        # dizendo que a primeira resposta nao valeu.
         resultado_ov = pedido_service.adicionar_itens(
-            d["id"], itens_ov, usuario,
+            d["id"], itens_ov, usuario, quantidade_ja_decidida=True,
             observacao_estoque=("Saldo que estava pendente somado a esta remessa "
                                 "(ela ainda nao faturou, entao sai numa nota so). %s"
                                 % (observacao or "")).strip())
