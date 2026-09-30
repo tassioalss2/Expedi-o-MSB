@@ -105,9 +105,24 @@ export function Indicadores() {
 
   const div = indicadores?.taxa_divergencia || 0
   const retr = indicadores?.taxa_retrabalho || 0
+  // Transfer price (Biomedical) e venda para dentro do grupo, nao mercado — e a
+  // meta nao o contempla. Entao TODO indicador comparado com meta usa o
+  // faturamento SEM transfer; o total com transfer fica ao lado, porque ele e
+  // que bate com o D365.
+  //
+  // O % Frete/Venda vinha dividindo pelo total COM transfer: o denominador
+  // inflava e o indicador saia melhor do que e.
+  const fatVendas = financeiro?.outras_vendas?.faturamento_sem_frete || 0
+  const fatTransfer = financeiro?.transfer_price?.faturamento_sem_frete || 0
   const fatSemFrete = financeiro?.faturamento_sem_frete || 0
+  const fatVendasLiq = financeiro?.outras_vendas_liquido?.faturamento_sem_frete || 0
+  const fatTransferLiq = financeiro?.transfer_price_liquido?.faturamento_sem_frete || 0
+  const fatTotalLiq = financeiro?.faturamento_liquido?.faturamento_sem_frete || 0
   const freteProprio = financeiro?.frete_proprio || 0
-  const fretePct = fatSemFrete > 0 ? (freteProprio / fatSemFrete) * 100 : 0
+  const freteVendas = financeiro?.outras_vendas?.frete_proprio || 0
+  const fretePct = fatVendas > 0 ? (freteVendas / fatVendas) * 100 : 0
+  const fretePctTotal = fatSemFrete > 0 ? (freteProprio / fatSemFrete) * 100 : 0
+  const pctTransfer = fatSemFrete > 0 ? (fatTransfer / fatSemFrete) * 100 : 0
   const brl = (v: number) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   return (
@@ -121,6 +136,66 @@ export function Indicadores() {
           <input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)}
             className="border rounded-lg px-3 py-2 text-sm" />
         </div>
+      </div>
+
+      {/* Faturamento com e sem transfer price.
+          A venda para a Biomedical e venda para dentro do grupo: entra na nota
+          fiscal e no numero do D365, mas nao e mercado e a meta nao a
+          contempla. Os dois numeros sao verdadeiros e respondem perguntas
+          diferentes — "quanto a empresa faturou" e "quanto a equipe vendeu".
+          Mostrar so um deles obriga a refazer a conta a mao toda vez. */}
+      <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="font-semibold text-gray-800">Faturamento — com e sem transfer price</h2>
+          <span className="text-xs text-gray-400">líquido de devoluções · sem frete</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+              Vendas — sem transfer
+            </p>
+            <p className="text-2xl font-bold text-emerald-700 mt-1 tabular-nums">R$ {brl(fatVendasLiq)}</p>
+            <p className="text-[11px] text-emerald-800/70 mt-1">
+              {financeiro?.outras_vendas?.qtd_nfs || 0} NF · é este que vai contra a meta
+            </p>
+          </div>
+          <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-purple-700">
+              Transfer price (Biomedical)
+            </p>
+            <p className="text-2xl font-bold text-purple-700 mt-1 tabular-nums">R$ {brl(fatTransferLiq)}</p>
+            <p className="text-[11px] text-purple-800/70 mt-1">
+              {financeiro?.transfer_price?.qtd_nfs || 0} NF · {pctTransfer.toFixed(1)}% do total · fora da meta
+            </p>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-600">
+              Total — com transfer
+            </p>
+            <p className="text-2xl font-bold text-gray-800 mt-1 tabular-nums">R$ {brl(fatTotalLiq)}</p>
+            <p className="text-[11px] text-gray-500 mt-1">
+              é este que bate com o D365
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-gray-100 pt-4">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs text-gray-500">% Frete / Venda — sem transfer</span>
+            <span className={`text-sm font-bold tabular-nums ${fretePct <= 1.6 ? 'text-green-600' : 'text-red-600'}`}>
+              {fretePct.toFixed(1)}%
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs text-gray-400">% Frete / Venda — com transfer</span>
+            <span className="text-sm font-medium text-gray-500 tabular-nums">{fretePctTotal.toFixed(1)}%</span>
+          </div>
+        </div>
+        {fatTransferLiq > 0 && (
+          <p className="mt-3 text-[11px] text-gray-400">
+            Sem separar os dois, o transfer price infla o denominador e o % Frete/Venda
+            aparece melhor do que é — a diferença aqui é de {(fretePct - fretePctTotal).toFixed(1)} ponto(s).
+          </p>
+        )}
       </div>
 
       {/* Metas vs Realizado */}
@@ -192,11 +267,19 @@ export function Indicadores() {
             } as Drill,
           },
           {
-            label: '% Frete / Venda', valor: `${fretePct.toFixed(1)}%`, sub: 'meta ≤ 1,6%', cor: fretePct <= 1.6 ? 'text-green-600' : 'text-red-600',
+            label: '% Frete / Venda', valor: `${fretePct.toFixed(1)}%`, sub: 'meta ≤ 1,6% · sem transfer', cor: fretePct <= 1.6 ? 'text-green-600' : 'text-red-600',
             drill: {
               titulo: '% Frete / Venda', valorTexto: `${fretePct.toFixed(1)}%`,
-              fonte: 'Frete próprio (CIF sem valor na NF — o frete que a empresa absorve, não ressarcido pelo cliente) das notas faturadas no período.',
-              formula: `% Frete/Venda = frete próprio ÷ faturamento (sem frete) × 100. No período: R$ ${brl(freteProprio)} ÷ R$ ${brl(fatSemFrete)}.`,
+              fonte: 'Frete próprio (CIF sem valor na NF — o frete que a empresa absorve, não ressarcido pelo cliente) das notas faturadas no período, SEM transfer price.',
+              formula: `% Frete/Venda = frete próprio ÷ faturamento (sem frete) × 100.
+
+`
+                + `Sem transfer price (é este o comparado com a meta): R$ ${brl(freteVendas)} ÷ R$ ${brl(fatVendas)} = ${fretePct.toFixed(1)}%.
+`
+                + `Com transfer price: R$ ${brl(freteProprio)} ÷ R$ ${brl(fatSemFrete)} = ${fretePctTotal.toFixed(1)}%.
+
+`
+                + `A venda para a Biomedical é transfer price — venda para dentro do grupo. A meta não a contempla, então ela fica fora do indicador e aparece só no total.`,
             } as Drill,
           },
         ].map((item) => (
