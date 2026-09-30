@@ -170,9 +170,17 @@ function CardPedido({ pedido, onClick }: { pedido: Pedido; onClick: () => void }
   )
 }
 
-function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete }: {
+/** O que uma OV promete alem do estoque. Vem de /estoque/sem-material. */
+type FaltaDeMaterial = {
+  faltam: number
+  itens: { codigo: string; descricao?: string; prometido: number; faltam: number }[]
+}
+
+function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta }: {
   pedido: Pedido
   onClick: () => void
+  /** So chega quando esta OV e a que passou do estoque no rateio por ordem de chegada. */
+  falta?: FaltaDeMaterial
   /** So chega preenchido na coluna "Aguardando transportadora". */
   onPedirTransportadora?: (p: Pedido) => void
   /** So chega preenchido na coluna "Cotacao de frete". */
@@ -249,6 +257,22 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete }: {
         <span className="flex-shrink-0 rounded border border-orange-300 bg-orange-100 px-1 text-[10px] leading-4 text-orange-800"
           title="Aguardando produção — entra no fluxo quando o material chegar">
           🏭 s/ material
+        </span>
+      )}
+
+      {/* Prometeu material que a foto do PCP nao cobre. Nasceu de duas liberacoes
+          feitas acima do estoque em 30/09: o numero ficava negativo na tela de
+          estoque e quem estava com a OV na mao, aqui, nao via nada.
+
+          So aparece na OV que passou do limite. O rateio e por ordem de chegada,
+          entao a OV antiga que o estoque ainda cobre NAO recebe o marcador —
+          alarme falso ensina a ignorar o alarme. */}
+      {falta && (
+        <span className="flex-shrink-0 rounded border border-red-300 bg-red-100 px-1 text-[10px] leading-4 text-red-800"
+          title={`Prometido alem do estoque — ${falta.itens
+            .map((i) => `${i.codigo}: ${i.prometido} un na OV, faltam ${i.faltam}`)
+            .join(' · ')}. A foto do PCP e da ultima leitura; se o material existe, ajuste o estoque.`}>
+          📉 faltam {falta.faltam}
         </span>
       )}
 
@@ -456,6 +480,18 @@ function KanbanView({ pedidos, onClickPedido, onPedirTransportadora, onCotarFret
   onCotarFrete: (p: Pedido) => void
 }) {
   const [infoAberta, setInfoAberta] = useState<string | null>(null)
+
+  // OVs que prometem mais do que a foto do PCP cobre. Consulta separada de
+  // proposito: dentro de /pedidos ela dobrava o tempo do kanban. Aqui o quadro
+  // desenha na hora e o marcador entra um instante depois. UMA observadora para
+  // o quadro inteiro — por isso mora aqui e nao dentro do card.
+  const { data: semMaterial = {} } = useQuery<Record<string, FaltaDeMaterial>>({
+    queryKey: ['estoque-sem-material'],
+    queryFn: () => api.get('/estoque/sem-material').then((r) => r.data),
+    staleTime: 2 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+  })
+
   const hoje = hojeLocal()
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
     let lista = pedidos.filter((p) => p.status === status)
@@ -523,6 +559,7 @@ function KanbanView({ pedidos, onClickPedido, onPedirTransportadora, onCotarFret
                       )}
                       {lista.map((p) => (
                         <EntradaOV key={p.id} pedido={p} onClick={() => onClickPedido(p)}
+                          falta={semMaterial[p.id]}
                           onPedirTransportadora={status === 'AGUARD_TRANSPORTADORA'
                             ? onPedirTransportadora : undefined}
                           onCotarFrete={status === 'EM_COTACAO_FRETE' ? onCotarFrete : undefined} />

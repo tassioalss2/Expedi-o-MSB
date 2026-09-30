@@ -203,6 +203,7 @@ def sincronizar(forcar: bool = False) -> dict:
     if chegadas:
         _registrar_chegadas(db, dia, chegadas)
         _CACHE_EXIBICAO["dados"] = None  # o estoque mudou: a próxima leitura recalcula
+        _CACHE_SEM_MATERIAL["dados"] = None  # o marcador do kanban vem daqui
 
     novos = _cadastrar_skus_novos(db, linhas)
 
@@ -419,6 +420,7 @@ def ajustar(codigo: str, estoque_pa: float, motivo: str, usuario_id: str) -> dic
     # A tela de estoque lê do cache de exibição; sem invalidar, o ajuste só
     # apareceria dois minutos depois — e quem ajustou acharia que não funcionou.
     _CACHE_EXIBICAO["dados"] = None
+    _CACHE_SEM_MATERIAL["dados"] = None  # o marcador do kanban vem daqui
     return novo
 
 
@@ -476,6 +478,25 @@ def _ovs_reservadas_na_foto(db, sincronizado_em: Optional[str]) -> set:
     return {pid for pid, quando in entrada.items() if quando and quando < sincronizado_em}
 
 
+def _todos_os_itens(db) -> list:
+    """A tabela `itens_pedido` inteira, em páginas.
+
+    Mesma troca que tirou o kanban de 28s para 5,7s: buscar por
+    `in_("pedido_id", lote_de_40)` custa uma ida à rede por lote, porque o
+    PostgREST põe a lista de ids na URL. São 826 linhas no total — trazer tudo
+    de uma vez e cruzar em memória custa 0,7s contra 4,2s em oito consultas.
+    """
+    linhas = []
+    for off in range(0, 60000, 1000):
+        bloco = db.table("itens_pedido")\
+            .select("pedido_id, produto_id, qtd_solicitada")\
+            .limit(1000).offset(off).execute().data
+        linhas += bloco
+        if len(bloco) < 1000:
+            break
+    return linhas
+
+
 def _comprometido_por_produto(db, sincronizado_em: str) -> dict:
     """produto_id -> qtd comprometida (ver regra no docstring do módulo)."""
     ids = set()
@@ -489,15 +510,13 @@ def _comprometido_por_produto(db, sincronizado_em: str) -> dict:
     if not ids:
         return {}
 
-    ids = list(ids)
     comprometido: dict = {}
-    for i in range(0, len(ids), 40):
-        itens = db.table("itens_pedido").select("produto_id, qtd_solicitada")\
-            .in_("pedido_id", ids[i:i + 40]).execute().data
-        for it in itens:
-            pid = it.get("produto_id")
-            if pid:
-                comprometido[pid] = comprometido.get(pid, 0.0) + float(it.get("qtd_solicitada") or 0)
+    for it in _todos_os_itens(db):
+        if it.get("pedido_id") not in ids:
+            continue
+        pid = it.get("produto_id")
+        if pid:
+            comprometido[pid] = comprometido.get(pid, 0.0) + float(it.get("qtd_solicitada") or 0)
     return comprometido
 
 
@@ -667,9 +686,9 @@ def _vendido_no_mes_por_codigo(db, mes_ref: str) -> dict:
         return {}
 
     pedido_ids = list(data_por_pedido.keys())
-    itens = []
-    for i in range(0, len(pedido_ids), 40):
-        itens += db.table("itens_pedido").select("pedido_id, produto_id, qtd_solicitada")            .in_("pedido_id", pedido_ids[i:i + 40]).execute().data
+    # Mesma troca do comprometido: uma leitura paginada no lugar de um lote
+    # de consultas por id. O cruzamento com `data_por_pedido` ja filtra.
+    itens = _todos_os_itens(db)
 
     cod_por_pid = _codigo_por_produto_id(db)
     out: dict = {}
@@ -918,3 +937,118 @@ def listar(sincronizar_se_preciso: bool = True) -> dict:
     _CACHE_EXIBICAO["dados"] = {**resultado, "sync": None}
     _CACHE_EXIBICAO["em"] = time.monotonic()
     return resultado
+
+
+# ── Quem prometeu o que não existe ──────────────────────────────────────────────
+#
+# `disponivel` negativo diz que um código foi prometido além da foto, mas fica só
+# na tela de estoque: quem está com a OV na mão, no kanban, não vê nada. Esta
+# função responde a pergunta do outro lado — não "quanto falta do item", e sim
+# "QUAL OV está prometendo o que não existe".
+#
+# O rateio é por ordem de chegada: a foto cobre primeiro quem se comprometeu
+# antes. Sem isso, uma OV antiga e já coberta apareceria marcada junto com a que
+# de fato passou do limite — alarme falso é pior que alarme nenhum, porque ensina
+# a ignorar o marcador.
+_CACHE_SEM_MATERIAL: dict = {"em": 0.0, "dados": None}
+
+
+def ovs_sem_material() -> dict:
+    """pedido_id -> o que aquela OV promete além do estoque.
+
+    Devolve apenas as OVs que ficaram DEPOIS do que a foto cobre, com quanto
+    falta de cada código. OV coberta pelo rateio não aparece.
+    """
+    cache = _CACHE_SEM_MATERIAL
+    if cache["dados"] is not None and (time.monotonic() - cache["em"]) < _CACHE_SEGUNDOS:
+        return cache["dados"]
+
+    dados = listar(sincronizar_se_preciso=False)
+    # Só os códigos no vermelho. Em dia normal são zero ou dois — é o que torna
+    # barato fazer isto dentro do kanban.
+    negativos = {(i.get("codigo") or "").strip().upper(): i
+                 for i in dados.get("itens", [])
+                 if (i.get("disponivel") or 0) < 0}
+    if not negativos:
+        cache["dados"], cache["em"] = {}, time.monotonic()
+        return {}
+
+    db = get_service_db()
+    sincronizado_em = dados.get("sincronizado_em")
+
+    # O MESMO conjunto de OVs que compõe o `comprometido`. Se eu montasse outro
+    # aqui, a soma dos marcadores não fecharia com o número da tela de estoque, e
+    # aí não dá para confiar em nenhum dos dois.
+    ids_relevantes = set()
+    for i in range(0, len(_STATUS_ABERTOS), 10):
+        for p in db.table("pedidos").select("id")\
+                .in_("status", _STATUS_ABERTOS[i:i + 10]).execute().data:
+            ids_relevantes.add(p["id"])
+    ids_relevantes.update(_ovs_faturadas_apos(db, sincronizado_em))
+    ids_relevantes -= _ovs_reservadas_na_foto(db, sincronizado_em)
+    if not ids_relevantes:
+        cache["dados"], cache["em"] = {}, time.monotonic()
+        return {}
+
+    codigos = list(negativos)
+    produtos = []
+    for i in range(0, len(codigos), 40):
+        produtos += db.table("produtos").select("id, codigo, descricao")\
+            .in_("codigo", codigos[i:i + 40]).execute().data
+    por_produto = {p["id"]: p for p in produtos}
+    if not por_produto:
+        cache["dados"], cache["em"] = {}, time.monotonic()
+        return {}
+
+    prod_ids = list(por_produto)
+    itens = []
+    for i in range(0, len(prod_ids), 40):
+        itens += db.table("itens_pedido").select("pedido_id, produto_id, qtd_solicitada")\
+            .in_("produto_id", prod_ids[i:i + 40]).execute().data
+    itens = [it for it in itens if it.get("pedido_id") in ids_relevantes]
+    if not itens:
+        cache["dados"], cache["em"] = {}, time.monotonic()
+        return {}
+
+    ped_ids = list({it["pedido_id"] for it in itens})
+    quando = {}
+    for i in range(0, len(ped_ids), 40):
+        for p in db.table("pedidos").select("id, criado_em")\
+                .in_("id", ped_ids[i:i + 40]).execute().data:
+            quando[p["id"]] = p.get("criado_em") or ""
+
+    # Soma por (código, OV): a mesma OV pode ter o item em duas linhas.
+    prometido: dict = {}
+    for it in itens:
+        prod = por_produto.get(it.get("produto_id"))
+        if not prod:
+            continue
+        cod = (prod.get("codigo") or "").strip().upper()
+        chave = (cod, it["pedido_id"])
+        prometido[chave] = prometido.get(chave, 0.0) + float(it.get("qtd_solicitada") or 0)
+
+    saida: dict = {}
+    for cod, info in negativos.items():
+        # A foto, e não o disponível: o disponível já está com tudo descontado.
+        sobra = float(info.get("estoque_pcp") or 0)
+        linhas = sorted([(pid, q) for (c, pid), q in prometido.items() if c == cod],
+                        key=lambda x: quando.get(x[0]) or "")
+        for pid, q in linhas:
+            coberto = min(q, max(sobra, 0.0))
+            sobra -= coberto
+            falta = q - coberto
+            if falta <= 0.001:
+                continue
+            saida.setdefault(pid, {"itens": [], "faltam": 0.0})
+            saida[pid]["itens"].append({
+                "codigo": cod,
+                "descricao": (info.get("descricao") or "")[:60],
+                "prometido": round(q),
+                "faltam": round(falta),
+            })
+            saida[pid]["faltam"] += falta
+
+    for v in saida.values():
+        v["faltam"] = round(v["faltam"])
+    cache["dados"], cache["em"] = saida, time.monotonic()
+    return saida

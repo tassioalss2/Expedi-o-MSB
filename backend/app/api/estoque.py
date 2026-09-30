@@ -36,6 +36,20 @@ def disponivel_por_codigo(_: UsuarioOut = Depends(get_current_user)):
     return estoque_service.disponivel_por_codigo()
 
 
+@router.get("/sem-material")
+def ovs_sem_material(_: UsuarioOut = Depends(get_current_user)):
+    """As OVs que prometem mais do que a foto do PCP cobre.
+
+    Rota propria, e nao um campo em /pedidos, por causa do custo: o calculo
+    precisa do comprometido inteiro e levava mais tempo que o kanban todo.
+    Dentro de listar_pedidos ele dobraria o tempo da tela. Aqui o kanban pede em
+    paralelo, desenha na hora e o marcador aparece um instante depois.
+
+    Fica ANTES de /{codigo}/... pelo mesmo motivo de /disponivel.
+    """
+    return estoque_service.ovs_sem_material()
+
+
 @router.post("/ajuste")
 def ajustar_estoque(payload: AjusteEstoqueRequest,
                     usuario: UsuarioOut = Depends(get_current_user)):
