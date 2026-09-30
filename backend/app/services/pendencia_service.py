@@ -407,6 +407,72 @@ def _morreu_com_a_ov(ov: Optional[dict], fonte: str) -> bool:
     return bool(ov) and fonte == "pedido" and ov.get("status") == "CANCELADO"
 
 
+def _aplicar_frete_da_consolidacao(db, destino: dict, tipo_frete, usuario) -> None:
+    """Troca o frete da remessa de destino, quando a vendedora escolheu outro.
+
+    Muda tambem a ETAPA, porque as duas nao andam separadas: CIF vai cotar, FOB
+    espera a transportadora do cliente. Deixar o frete novo com a etapa velha
+    poe a OV pedindo cotacao de um frete que o cliente paga — o mesmo estrago
+    que a correcao de frete ja conhecia.
+    """
+    novo = (tipo_frete or "").strip().upper()
+    if not novo or novo == (destino.get("tipo_frete") or ""):
+        return
+    from app.models.enums import StatusPedido, TipoFrete
+    validos = {TipoFrete.FOB.value, TipoFrete.CIF_COM_VALOR.value,
+               TipoFrete.CIF_SEM_VALOR.value}
+    if novo not in validos:
+        raise HTTPException(422, "Tipo de frete '%s' nao existe." % novo)
+
+    update = {"tipo_frete": novo, "atualizado_em": _agora()}
+    # Sai de CIF: o valor cotado para o frete antigo nao vale mais.
+    if novo == TipoFrete.FOB.value:
+        update["valor_frete"] = None
+    db.table("pedidos").update(update).eq("id", destino["id"]).execute()
+
+    destino_etapa = (StatusPedido.AGUARD_TRANSPORTADORA.value
+                     if novo == TipoFrete.FOB.value
+                     else StatusPedido.EM_COTACAO_FRETE.value)
+    if destino.get("status") in (StatusPedido.EM_COTACAO_FRETE.value,
+                                 StatusPedido.AGUARD_TRANSPORTADORA.value,
+                                 StatusPedido.AGUARD_FATURAMENTO.value)             and destino["status"] != destino_etapa:
+        try:
+            from app.services.inventario_service import alterar_status
+            alterar_status(destino["id"], destino_etapa, usuario,
+                           "Frete definido na consolidacao do saldo: %s" % novo)
+        except Exception as exc:
+            print("frete trocado, etapa nao: %s" % exc)
+
+
+def remessas_abertas(db, numero_pedido: Optional[str], excluir_id=None) -> list:
+    """As remessas da MESMA OV que ainda nao faturaram.
+
+    Existe por um caso real: a OV016753 tinha a R1 expedida com NF, e a
+    liberacao da pendencia dela criou a R3 — enquanto a R2 estava ali, aberta em
+    Cotacao de Frete, sem nota. Duas MEDCER no kanban, duas notas para o mesmo
+    cliente, duas coletas.
+
+    A regra antiga olhava so a OV da pendencia: expedida, entao remessa nova.
+    Certo em si, cego para o resto da familia.
+    """
+    alvo = str(numero_pedido or "").strip().upper()
+    if not alvo:
+        return []
+    try:
+        linhas = db.table("pedidos").select(
+            "id, numero_pedido, status, numero_nf, remessa_numero, tipo_frete"
+        ).eq("numero_pedido", alvo).execute().data
+    except Exception:
+        return []
+    return sorted(
+        [p for p in linhas
+         if not p.get("numero_nf")
+         and p.get("status") not in ("CANCELADO",)
+         and p.get("status") not in _JA_SAIU
+         and str(p.get("id")) != str(excluir_id or "")],
+        key=lambda p: p.get("remessa_numero") or 0)
+
+
 def _acao(ov: Optional[dict], fonte: str = "oportunidade") -> tuple:
     """(acao, motivo_bloqueio) para a pendência cuja OV é `ov` (None = sem OV)."""
     if not ov:
@@ -1140,6 +1206,13 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "resolucao": (pend.get("resolucao")
                       or ("OV_CANCELADA" if _morreu_com_a_ov(ov, fonte) else None)),
         "acao_liberar": acao,
+        # Remessas da mesma OV ainda sem nota. Quando existem e a acao seria
+        # "remessa nova", da para SOMAR numa delas e sair uma nota so — foi o
+        # que faltou na OV016753 e virou duas MEDCER no kanban.
+        "remessas_abertas": (remessas_abertas(get_service_db(),
+                                              (ov or {}).get("numero_pedido"),
+                                              excluir_id=(ov or {}).get("id"))
+                             if acao == "REMESSA_2" else []),
         "pode_liberar": bool(acao),
         "motivo_bloqueio": bloqueio,
         **(extra or {}),
@@ -1509,7 +1582,9 @@ def _ler(db, fonte: str, registro_id: str) -> tuple:
 
 def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             parcial: bool = False, observacao: Optional[str] = None,
-            itens_escolhidos: Optional[list] = None) -> dict:
+            itens_escolhidos: Optional[list] = None,
+            somar_em: Optional[str] = None,
+            tipo_frete: Optional[str] = None) -> dict:
     """Manda o saldo para a expedição.
 
     Confere o estoque OUTRA VEZ antes de liberar — a pendência pode ter ficado
@@ -1651,7 +1726,31 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             detail="Os itens da pendência não têm produto cadastrado — não dá para gerar a remessa.")
 
     resultado_ov = None
-    if acao == "REMESSA_2":
+    # A vendedora escolheu somar numa remessa que ainda nao faturou, em vez de
+    # abrir outra. Uma nota, uma coleta, um card no kanban.
+    if acao == "REMESSA_2" and somar_em:
+        destino = db.table("pedidos").select("id, numero_pedido, status, numero_nf")            .eq("id", str(somar_em)).execute().data
+        if not destino:
+            raise HTTPException(404, "A remessa escolhida nao existe mais.")
+        d = destino[0]
+        if d.get("numero_nf"):
+            raise HTTPException(409, "A remessa %s ja faturou (NF %s) — o saldo tem de "
+                                     "sair numa remessa nova."
+                                % (d["numero_pedido"], d["numero_nf"]))
+        if str(d.get("numero_pedido") or "").upper() != str(ov["numero_pedido"]).upper():
+            raise HTTPException(422, "So da para somar numa remessa da MESMA OV.")
+        resultado_ov = pedido_service.adicionar_itens(
+            d["id"], itens_ov, usuario,
+            observacao_estoque=("Saldo que estava pendente somado a esta remessa "
+                                "(ela ainda nao faturou, entao sai numa nota so). %s"
+                                % (observacao or "")).strip())
+        # As duas remessas podem ter fretes diferentes — a R2 da OV016753 era
+        # CIF sem valor e o saldo vinha de uma OV FOB. Adotar o da remessa de
+        # destino em silencio seria escolher por quem sabe: quem vende conhece o
+        # acordo com o cliente, o app nao. Entao ele so aplica o que foi dito.
+        _aplicar_frete_da_consolidacao(db, d, tipo_frete, usuario)
+        acao = "SOMAR_REMESSA"
+    elif acao == "REMESSA_2":
         resultado_ov = pedido_service.criar_pedido(PedidoCreate(
             numero_pedido=ov["numero_pedido"],
             cliente_id=reg.get("cliente_id") or ov.get("cliente_id"),

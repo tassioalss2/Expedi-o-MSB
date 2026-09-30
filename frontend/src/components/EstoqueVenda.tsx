@@ -13,6 +13,7 @@ import {
   type Disponibilidade, type ItemDisponibilidade, type Pendencia,
 } from '../lib/crm'
 import { ModalBase, inputCls } from '../pages/crm/CrmShared'
+import { TIPO_FRETE_LABEL } from '../lib/statusConfig'
 
 const n = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
 
@@ -439,9 +440,21 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
         return [i.produto_id as string, String(d === null ? devido : Math.min(devido, d))]
       })))
 
+  // Somar numa remessa que ainda nao faturou, em vez de abrir outra. Sem isso a
+  // OV016753 virou duas MEDCER no kanban: a R1 estava expedida, entao a regra
+  // criou a R3 — com a R2 aberta ali do lado, sem nota.
+  const abertas: any[] = (p as any).remessas_abertas || []
+  const [somarEm, setSomarEm] = useState<string>('')
+  // Fretes diferentes nas duas remessas: quem vende escolhe qual vale. O app
+  // nao conhece o acordo com o cliente, entao adotar o da remessa de destino em
+  // silencio seria escolher por quem sabe.
+  const [freteEscolhido, setFreteEscolhido] = useState<string>('')
+
   const liberar = useMutation({
     mutationFn: ({ parcial, itens }: { parcial: boolean; itens?: { produto_id: string; qtd: number }[] }) =>
-      api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`, { parcial, observacao, itens })
+      api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`,
+        { parcial, observacao, itens, somar_em: somarEm || null,
+          tipo_frete: freteEscolhido || null })
         .then(r => r.data),
     onSuccess: (r: any) => {
       const acao = ACAO_LIBERAR_LABEL[r?.acao] || 'liberada'
@@ -666,9 +679,72 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
                 </p>
               )}
             </div>
+            {/* A escolha que faltava. A OV ja saiu, entao a regra abriria uma
+                remessa nova — mas se existe outra da MESMA OV ainda sem nota,
+                somar nela da UMA nota, UMA coleta e UM card no kanban. */}
+            {abertas.length > 0 && (
+              <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
+                <p className="text-sm font-medium text-violet-900">
+                  Esta OV tem remessa aberta sem faturar. Onde entra este saldo?
+                </p>
+                <label className="mt-2 flex items-start gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="destino-saldo" checked={!somarEm}
+                    onChange={() => setSomarEm('')} className="mt-0.5" />
+                  <span>
+                    <strong>Remessa nova</strong>
+                    <span className="block text-[11px] text-gray-600">
+                      Nota fiscal própria e card separado no kanban.
+                    </span>
+                  </span>
+                </label>
+                {abertas.map(r => (
+                  <label key={r.id} className="mt-1.5 flex items-start gap-2 text-sm cursor-pointer">
+                    <input type="radio" name="destino-saldo" checked={somarEm === r.id}
+                      onChange={() => setSomarEm(r.id)} className="mt-0.5" />
+                    <span>
+                      <strong>Somar na remessa R{r.remessa_numero}</strong>
+                      <span className="block text-[11px] text-gray-600">
+                        está em {r.status?.replaceAll('_', ' ').toLowerCase()}
+                        {r.tipo_frete ? ` · frete ${TIPO_FRETE_LABEL[r.tipo_frete] || r.tipo_frete}` : ''}
+                        {' '}— sai tudo numa nota só.
+                      </span>
+                    </span>
+                  </label>
+                ))}
+                {somarEm && (() => {
+                  const r = abertas.find(x => x.id === somarEm)
+                  const daOv = (p as any).tipo_frete
+                  if (!r?.tipo_frete || !daOv || r.tipo_frete === daOv) return null
+                  return (
+                    <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2.5">
+                      <p className="text-[11px] font-medium text-amber-900">
+                        As duas têm frete diferente. Qual vale para a remessa consolidada?
+                      </p>
+                      {[[r.tipo_frete, `R${r.remessa_numero}`],
+                        [daOv, 'deste saldo']].map(([t, de]) => (
+                        <label key={t} className="mt-1 flex items-center gap-2 text-[11px] cursor-pointer">
+                          <input type="radio" name="frete-consolidado"
+                            checked={freteEscolhido === t || (!freteEscolhido && t === r.tipo_frete)}
+                            onChange={() => setFreteEscolhido(t as string)} />
+                          <span>
+                            <strong>{TIPO_FRETE_LABEL[t as string] || t}</strong>
+                            <span className="text-gray-500"> — o de {de}</span>
+                          </span>
+                        </label>
+                      ))}
+                      <p className="mt-1 text-[11px] text-gray-500">
+                        Trocar o frete leva a OV para a etapa certa: CIF vai cotar, FOB
+                        espera a transportadora do cliente.
+                      </p>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
               <p className="text-sm text-blue-900">
-                <strong>{ACAO_LIBERAR_LABEL[p.acao_liberar || ''] || '—'}</strong>
+                <strong>{somarEm ? 'Somar na remessa aberta' : (ACAO_LIBERAR_LABEL[p.acao_liberar || ''] || '—')}</strong>
               </p>
               <p className="text-xs text-blue-700 mt-0.5">
                 {p.acao_liberar === 'REMESSA_2'

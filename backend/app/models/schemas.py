@@ -1023,6 +1023,14 @@ class LiberarPendenciaRequest(BaseModel):
     # decide é o comercial: dá para segurar um item para mandar tudo junto, ou
     # soltar só o que o cliente precisa agora.
     itens: Optional[list[ItemLiberacao]] = None
+    # Somar o saldo numa remessa da MESMA OV que ainda nao faturou, em vez de
+    # abrir outra. Uma nota, uma coleta, um card no kanban — sem isso a
+    # OV016753 virou duas MEDCER na tela com a R2 aberta ali do lado.
+    somar_em: Optional[UUID] = None
+    # Quando as duas remessas tem fretes diferentes, quem vende escolhe qual
+    # vale — o app nao conhece o acordo com o cliente. Vazio mantem o da
+    # remessa de destino.
+    tipo_frete: Optional[str] = None
 
 
 # ── CRM · Empresas (prospecção e qualificação) ─────────────────────────────────
