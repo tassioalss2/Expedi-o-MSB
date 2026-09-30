@@ -282,8 +282,18 @@ def devolver_para_pendencia(pend: Optional[dict], devolvidos: list,
         if alvo is not None:
             # Já havia saldo deste item: o devolvido sai do atendido e entra no
             # pendente. qtd_pedida não muda — a venda é a mesma.
-            alvo["qtd_atendida"] = max(0.0, float(alvo.get("qtd_atendida") or 0) - qtd)
-            alvo["qtd_pendente"] = round(float(alvo.get("qtd_pendente") or 0) + qtd, 3)
+            #
+            # E o pendente NUNCA passa do pedido. Somar às cegas foi o que fez a
+            # OV017010 dever 60 un de uma venda de 30: a pendência de origem
+            # dizia 30 pendentes quando as 30 já estavam na OV, e a devolução
+            # somou por cima. A causa está consertada em `liberar`, mas o teto
+            # fica aqui também — é o invariante desta função, e ele tem que
+            # valer mesmo quando quem chama chega com número errado.
+            pedida = float(alvo.get("qtd_pedida") or 0)
+            somado = float(alvo.get("qtd_pendente") or 0) + qtd
+            alvo["qtd_pendente"] = round(min(somado, pedida) if pedida else somado, 3)
+            alvo["qtd_atendida"] = (round(pedida - alvo["qtd_pendente"], 3) if pedida
+                                    else max(0.0, float(alvo.get("qtd_atendida") or 0) - qtd))
             alvo["valor_pendente"] = round(float(alvo["qtd_pendente"]) * vu, 2)
             alvo["status"] = "FALTA"
             # Parte do saldo agora é material que EXISTE (foi devolvido de
@@ -1938,8 +1948,23 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
                 "valor": round(sum(float(i.get("valor_pendente") or 0) for i in restante), 2),
                 "liberado_parcial_em": agora}
     else:
+        # Saiu TUDO: os itens precisam dizer isso. Carimbar só `resolvido_em` e
+        # deixar `qtd_pendente` como estava foi o que quebrou a OV017010 — a
+        # pendência ficou "resolvida" ainda dizendo 30 un devendo, e quando as
+        # 30 voltaram para ela no mesmo dia a soma deu 60 para uma venda de 30.
+        #
+        # A pendência resolvida não é um registro morto: ela é a BASE de que a
+        # devolução parte. Se mentir sobre o que foi entregue, mente em dobro.
+        entregues = [{**i,
+                      "qtd_atendida": float(i.get("qtd_pedida") or 0),
+                      "qtd_pendente": 0.0,
+                      "valor_pendente": 0.0,
+                      "status": "OK"}
+                     for i in (analise.get("itens") or [])]
         nova = {**pend, "resolvido_em": agora, "resolucao": acao,
-                "resolvido_por": str(usuario.id)}
+                "resolvido_por": str(usuario.id),
+                "itens": entregues or (pend.get("itens") or []),
+                "valor": 0.0}
 
     tabela = "crm_oportunidades" if fonte == "oportunidade" else "pedidos"
     db.table(tabela).update({"pendencia": nova, "atualizado_em": agora}).eq("id", registro_id).execute()
