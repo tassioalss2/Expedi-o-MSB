@@ -477,6 +477,24 @@ def _aplicar_frete_da_consolidacao(db, destino: dict, tipo_frete, usuario) -> No
             print("frete trocado, etapa nao: %s" % exc)
 
 
+# As etapas em que uma remessa esta ANDANDO na expedicao. Somar saldo so faz
+# sentido nelas.
+#
+# Fora ficam, e cada uma por um motivo:
+#   AGUARD_PRODUCAO  nao esta no kanban — e venda esperando material, parada.
+#                    Foi o que confundiu a vendedora: a R3 da OV016456 aparecia
+#                    ao lado da R5, que estava liberada de verdade.
+#   BLOQUEADO        tem impedimento; jogar mais material nela agrava.
+#   DIVERGENCIA e AGUARD_TRATATIVA  estao em conferencia — o que ja esta la
+#                    ainda nao bateu, e somar mais atrapalha quem confere.
+#   as de _JA_SAIU   ja foram embora.
+_NO_KANBAN = {
+    "AGUARD_DADOS_OV", "AGUARD_CREDITO", "LIBERADO", "EM_INVENTARIO",
+    "AGUARD_VERIFICACAO", "EM_PROCESSO_SISTEMICO", "EM_COTACAO_FRETE",
+    "AGUARD_TRANSPORTADORA", "AGUARD_FATURAMENTO",
+}
+
+
 def remessas_abertas(db, numero_pedido: Optional[str], excluir_id=None) -> list:
     """As remessas da MESMA OV que ainda nao faturaram.
 
@@ -500,8 +518,7 @@ def remessas_abertas(db, numero_pedido: Optional[str], excluir_id=None) -> list:
     return sorted(
         [p for p in linhas
          if not p.get("numero_nf")
-         and p.get("status") not in ("CANCELADO",)
-         and p.get("status") not in _JA_SAIU
+         and p.get("status") in _NO_KANBAN
          and str(p.get("id")) != str(excluir_id or "")],
         key=lambda p: p.get("remessa_numero") or 0)
 
