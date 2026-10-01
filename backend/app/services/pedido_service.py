@@ -3251,12 +3251,46 @@ def obter_dashboard_operacional() -> dict:
 def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
     db = get_service_db()
 
-    # Busca OVs coletadas/expedidas no período pelo atualizado_em
-    expedidos = db.table("pedidos").select("*")\
-        .eq("status", StatusPedido.EXPEDIDO.value)\
-        .gte("atualizado_em", f"{data_inicio.isoformat()}T00:00:00")\
-        .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
-        .execute().data
+    # QUANDO a OV foi expedida vem da movimentação para EXPEDIDO — nunca de
+    # `atualizado_em`.
+    #
+    # `atualizado_em` muda a cada toque na linha: correção de frete, troca de
+    # transportadora, qualquer script de manutenção. Usá-lo aqui errava duas
+    # vezes na mesma conta — trazia para o mês OVs expedidas muito antes, e
+    # comparava a data prometida com a data da última edição, de modo que uma
+    # entrega no prazo mexida depois aparecia como atrasada.
+    #
+    # O efeito não era pequeno: em setembro/2026 o indicador dizia 21,0% de
+    # pontualidade; medido pela expedição real são 83,6%.
+    expedido_ts: dict = {}
+    for m in _tudo_paginado(lambda: db.table("movimentacoes")
+                            .select("pedido_id, criado_em")
+                            .eq("status_novo", StatusPedido.EXPEDIDO.value)):
+        pid, ts = m.get("pedido_id"), m.get("criado_em")
+        if not pid or not ts:
+            continue
+        # A ÚLTIMA ida para EXPEDIDO é a que vale: OV que voltou de etapa e foi
+        # expedida de novo saiu mesmo na segunda vez.
+        if ts > expedido_ts.get(pid, ""):
+            expedido_ts[pid] = ts
+
+    def _dia_brt(ts):
+        try:
+            return (datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    .astimezone(timezone.utc) - timedelta(hours=3)).date().isoformat()
+        except Exception:
+            return None
+
+    saida_em = {}
+    for pid, ts in expedido_ts.items():
+        dia = _dia_brt(ts)
+        if dia:
+            saida_em[pid] = dia
+
+    _ini, _fim = data_inicio.isoformat(), data_fim.isoformat()
+    expedidos = [p for p in _tudo_paginado(
+        lambda: db.table("pedidos").select("*").eq("status", StatusPedido.EXPEDIDO.value))
+        if _ini <= saida_em.get(p["id"], "") <= _fim]
 
     # OTIF = On Time In Full.
     #  - On Time: expedida até a data prevista de entrega.
@@ -3276,7 +3310,13 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
             separadas[it["pedido_id"]] = separadas.get(it["pedido_id"], 0.0) + float(it.get("qtd_venda") or 0)
 
     def _on_time(p):
-        return bool(p.get("atualizado_em") and p["atualizado_em"][:10] <= p["data_prevista_entrega"])
+        # Expedicao real contra data prometida. Sem uma das duas nao se
+        # afirma atraso — OV sem data prometida nao e penalizada.
+        saiu = saida_em.get(p["id"])
+        prometida = p.get("data_prevista_entrega")
+        if not saiu or not prometida:
+            return True
+        return saiu <= prometida
 
     def _in_full(p):
         ped = pedidas.get(p["id"])
@@ -3383,16 +3423,35 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
     ]
 
     if metrica == "otif_atrasados":
-        expedidos = db.table("pedidos").select(
-            "numero_pedido,data_prevista_entrega,atualizado_em,clientes(nome)"
-        ).eq("status", StatusPedido.EXPEDIDO.value)\
-         .gte("atualizado_em", f"{data_inicio.isoformat()}T00:00:00")\
-         .lte("atualizado_em", f"{data_fim.isoformat()}T23:59:59")\
-         .execute().data
+        # Mesma correção do indicador: a data de saída é a da movimentação para
+        # EXPEDIDO. Antes esta lista mostrava como atraso uma OV que só tinha
+        # sido editada depois de expedida.
+        exp_ts = {}
+        for m in _tudo_paginado(lambda: db.table("movimentacoes")
+                                .select("pedido_id, criado_em")
+                                .eq("status_novo", StatusPedido.EXPEDIDO.value)):
+            pid, ts = m.get("pedido_id"), m.get("criado_em")
+            if pid and ts and ts > exp_ts.get(pid, ""):
+                exp_ts[pid] = ts
+        saiu = {}
+        for pid, ts in exp_ts.items():
+            try:
+                saiu[pid] = (datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                             .astimezone(timezone.utc) - timedelta(hours=3)).date().isoformat()
+            except Exception:
+                pass
+        _i, _f = data_inicio.isoformat(), data_fim.isoformat()
+        expedidos = [p for p in _tudo_paginado(
+            lambda: db.table("pedidos").select(
+                "id,numero_pedido,data_prevista_entrega,clientes(nome)")
+            .eq("status", StatusPedido.EXPEDIDO.value))
+            if _i <= saiu.get(p["id"], "") <= _f]
         result = []
         for p in expedidos:
-            data_exp = p["atualizado_em"][:10]
+            data_exp = saiu.get(p["id"])
             data_prev = p["data_prevista_entrega"]
+            if not data_exp or not data_prev:
+                continue
             if data_exp > data_prev:
                 dias = (date_cls.fromisoformat(data_exp) - date_cls.fromisoformat(data_prev)).days
                 result.append({
