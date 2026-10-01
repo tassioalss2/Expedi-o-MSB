@@ -33,7 +33,11 @@ export function MarcaEnviado({ pedidoId, tipo, enviado, onMudou }: {
       onMudou(data?.avisos_enviados?.[tipo] ?? null)
       toast.success(enviado ? 'Desmarcado' : 'Marcado como enviado')
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail || 'Não consegui marcar')
+      // Nunca entrega objeto ao toast: ele vira filho de JSX e o React derruba
+      // a pagina inteira. O interceptor ja normaliza a lista do 422; isto aqui
+      // cobre o resto.
+      const d = e?.response?.data?.detail
+      toast.error(typeof d === 'string' && d ? d : 'Não consegui marcar')
     } finally {
       setSalvando(false)
     }

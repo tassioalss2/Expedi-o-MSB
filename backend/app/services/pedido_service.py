@@ -4268,6 +4268,10 @@ def aviso_coleta_fob(pedido_id: str) -> dict:
         "assunto": assunto,
         "texto": "\n".join(linhas),
         "ov": pedido.get("numero_pedido"),
+        # O id vai junto: a tela precisa dele para marcar o aviso como
+        # enviado, e sem ele a chamada ia para /pedidos/undefined/... e
+        # voltava 422 — que era o que pintava a Expedicao de branco.
+        "pedido_id": str(pedido.get("id") or pedido_id),
         "cliente": pedido.get("cliente_nome") or (pedido.get("cliente") or {}).get("nome"),
         "num_caixas": cub.get("num_caixas"),
         "peso_kg": cub.get("peso_kg"),
@@ -4358,6 +4362,10 @@ def aviso_cotacao_cif(pedido_id: str) -> dict:
         "tem": True,
         "texto": "\n".join(linhas),
         "ov": pedido.get("numero_pedido"),
+        # O id vai junto: a tela precisa dele para marcar o aviso como
+        # enviado, e sem ele a chamada ia para /pedidos/undefined/... e
+        # voltava 422 — que era o que pintava a Expedicao de branco.
+        "pedido_id": str(pedido.get("id") or pedido_id),
         "cliente": cliente,
         "tipo_frete": pedido.get("tipo_frete"),
         "endereco": endereco,

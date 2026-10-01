@@ -731,7 +731,10 @@ export function Expedicao() {
   async function pedirTransportadora(p: Pedido) {
     try {
       const { data } = await api.get(`/pedidos/${p.id}/aviso-coleta-fob`)
-      if (data?.tem) setAvisoColeta(data)
+      // O id vem do payload; o `|| p.id` e rede de seguranca para a janela em
+      // que o front ja subiu e o backend ainda nao. Sem id, "marcar como
+      // enviado" chamava /pedidos/undefined/... e derrubava a tela.
+      if (data?.tem) setAvisoColeta({ ...data, pedido_id: data.pedido_id || p.id })
       else toast(data?.motivo || 'Nao consegui montar o texto')
     } catch {
       toast.error('Nao consegui montar o texto')
