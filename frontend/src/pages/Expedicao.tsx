@@ -204,6 +204,15 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
   // quem vai abrir a OV sai da tela para procurar o codigo de um cliente que o
   // card ja identificou pelo nome.
   const clienteCodigo = (pedido as any).cliente_codigo || ''
+
+  // A OV chegou parcial: faltou material e o resto virou pendencia. Quem lanca
+  // no D365 precisa lancar a venda INTEIRA, entao tem de saber disso antes de
+  // abrir a OV — ate agora so dava para descobrir indo em Pendencias.
+  const pend = (pedido as any).pendencia
+  const temPendencia = !!(pend && !pend.resolvido_em && (pend.itens || []).length)
+  const faltamItens = temPendencia
+    ? (pend.itens || []).filter((i: any) => Number(i.qtd_pendente) > 0).length
+    : 0
   // O ✓ verde no lugar do icone: olhando a coluna da para ver o que ja saiu.
   const avisos = ((pedido as any).avisos_enviados || {}) as Record<string, any>
   const jaEnviouCotacao = avisos.cotacao_cif
@@ -268,6 +277,16 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
         <span className="flex-shrink-0 rounded border border-orange-300 bg-orange-100 px-1 text-[10px] leading-4 text-orange-800"
           title="Aguardando produção — entra no fluxo quando o material chegar">
           🏭 s/ material
+        </span>
+      )}
+
+      {/* Venda maior que a OV: o resto esta na pendencia. O D365 recebe o pedido
+          completo, entao este marcador e o aviso de "nao lance so o que esta
+          aqui". Abre o detalhe, onde a venda inteira aparece montada. */}
+      {temPendencia && (
+        <span className="flex-shrink-0 rounded border border-amber-400 bg-amber-50 px-1 text-[10px] leading-4 text-amber-800"
+          title={`Venda parcial — ${faltamItens} item(ns) em pendência. No D365 lance a venda completa; abra a OV para ver as linhas.`}>
+          ✂ parcial
         </span>
       )}
 

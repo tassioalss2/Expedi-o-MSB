@@ -1926,6 +1926,121 @@ function AvisoDeAlteracao({ pedido }: { pedido: Pedido }) {
   )
 }
 
+/** A venda INTEIRA, para ser lançada no D365.
+ *
+ *  Quando falta material, a OV que chega na expedição leva só o que havia. O
+ *  resto vira pendência e some da tela da OV — mas no D365 o pedido é lançado
+ *  COMPLETO, com as linhas que ainda não têm material. Quem lança via a OV
+ *  parcial na tela e não tinha como saber o que faltava sem abrir Pendências.
+ *
+ *  Aqui as duas partes voltam a ser uma coisa só: o que foi vendido, quanto
+ *  disso está nesta OV e quanto ficou devendo. */
+function VendaCompletaParaD365({ pedido }: { pedido: any }) {
+  const pend = pedido?.pendencia
+  const pendItens: any[] = (pend && !pend.resolvido_em && Array.isArray(pend.itens)) ? pend.itens : []
+  if (!pendItens.length) return null
+
+  const chave = (x: any) => String(x?.produto_id || x?.produtos?.id || x?.codigo || '')
+  const linhas: any[] = []
+
+  // 1. O que está NA OV. Se o item também aparece na pendência, a quantidade
+  //    original é a de lá — a OV guarda só a parte atendida.
+  for (const it of (pedido.itens || [])) {
+    const k = chave({ produto_id: it.produto_id, codigo: it.produtos?.codigo })
+    const p = pendItens.find(x => chave(x) === k)
+    const naOV = Number(it.qtd_solicitada) || 0
+    const original = p ? Math.max(Number(p.qtd_pedida) || 0, naOV) : naOV
+    linhas.push({
+      codigo: it.produtos?.codigo || p?.codigo || '—',
+      descricao: it.produtos?.descricao || p?.descricao || '',
+      original, naOV,
+      pendente: p ? Math.max(0, original - naOV) : 0,
+      valor: Number(it.valor_unitario) || Number(p?.valor_unitario) || 0,
+    })
+  }
+
+  // 2. O que ficou SÓ na pendência — item que não entrou de jeito nenhum na OV.
+  //    É o caso que mais some da tela, porque não há linha dele em lugar nenhum.
+  for (const p of pendItens) {
+    const k = chave(p)
+    if (linhas.some(l => chave({ produto_id: null, codigo: l.codigo }) === k || l.codigo === p.codigo)) continue
+    const original = Number(p.qtd_pedida) || 0
+    linhas.push({
+      codigo: p.codigo || '—',
+      descricao: p.descricao || '',
+      original, naOV: Math.max(0, original - (Number(p.qtd_pendente) || 0)),
+      pendente: Number(p.qtd_pendente) || 0,
+      valor: Number(p.valor_unitario) || 0,
+    })
+  }
+
+  const total = linhas.reduce((a, l) => a + l.original * l.valor, 0)
+  const totalPendente = linhas.reduce((a, l) => a + l.pendente * l.valor, 0)
+  const n = (v: number) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 })
+  const brl = (v: number) => `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  const paraCopiar = linhas.map(l => `${l.codigo}\t${n(l.original)}\t${String(l.valor).replace('.', ',')}`).join('\n')
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border-2 border-amber-300 overflow-hidden">
+      <div className="bg-amber-50 px-5 py-3 border-b border-amber-200 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-amber-900 text-sm">
+            Esta OV é parcial — lance a venda completa no D365
+          </h3>
+          <p className="text-[12px] text-amber-800 mt-0.5">
+            Faltou material, então a expedição recebeu só parte. O pedido no D365 vai
+            inteiro, com as linhas abaixo.
+          </p>
+        </div>
+        <button
+          onClick={() => { navigator.clipboard?.writeText(paraCopiar); toast.success('Linhas copiadas — código, quantidade e preço.') }}
+          className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100">
+          Copiar linhas
+        </button>
+      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
+            <th className="text-left font-medium px-5 py-2">Item</th>
+            <th className="text-right font-medium px-2 py-2">Vendido</th>
+            <th className="text-right font-medium px-2 py-2">Nesta OV</th>
+            <th className="text-right font-medium px-2 py-2">Pendente</th>
+            <th className="text-right font-medium px-5 py-2">Valor</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {linhas.map((l, i) => (
+            <tr key={i} className={l.pendente > 0 ? 'bg-amber-50/40' : ''}>
+              <td className="px-5 py-2">
+                <span className="font-mono font-medium text-gray-800">{l.codigo}</span>
+                {l.descricao && (
+                  <span className="block truncate text-[11px] text-gray-400 max-w-[320px]">{l.descricao}</span>
+                )}
+              </td>
+              <td className="px-2 py-2 text-right tabular-nums font-semibold text-gray-900">{n(l.original)}</td>
+              <td className="px-2 py-2 text-right tabular-nums text-gray-500">{n(l.naOV)}</td>
+              <td className={`px-2 py-2 text-right tabular-nums ${l.pendente > 0 ? 'font-semibold text-amber-700' : 'text-gray-300'}`}>
+                {l.pendente > 0 ? n(l.pendente) : '—'}
+              </td>
+              <td className="px-5 py-2 text-right tabular-nums text-gray-600">{brl(l.original * l.valor)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-gray-200 bg-gray-50">
+            <td className="px-5 py-2 text-xs font-semibold text-gray-700">Venda completa</td>
+            <td colSpan={3} className="px-2 py-2 text-right text-[11px] text-amber-700">
+              {totalPendente > 0 && `${brl(totalPendente)} ainda pendentes`}
+            </td>
+            <td className="px-5 py-2 text-right tabular-nums font-bold text-gray-900">{brl(total)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  )
+}
+
 function ModalPararVenda({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [motivo, setMotivo] = useState('')
@@ -3493,6 +3608,10 @@ export function PedidoDetalhe() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Info */}
         <div className="lg:col-span-2 space-y-5">
+          {/* Antes dos dados da OV de propósito: quem abre esta tela para lançar
+              no D365 precisa ver PRIMEIRO que a venda é maior do que a OV. */}
+          <VendaCompletaParaD365 pedido={pedido} />
+
           {/* Dados do pedido */}
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-3">
