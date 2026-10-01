@@ -3608,10 +3608,6 @@ export function PedidoDetalhe() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Info */}
         <div className="lg:col-span-2 space-y-5">
-          {/* Antes dos dados da OV de propósito: quem abre esta tela para lançar
-              no D365 precisa ver PRIMEIRO que a venda é maior do que a OV. */}
-          <VendaCompletaParaD365 pedido={pedido} />
-
           {/* Dados do pedido */}
           <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-3">
@@ -3831,6 +3827,12 @@ export function PedidoDetalhe() {
               )}
             </div>
           )}
+
+          {/* Depois da cubagem de proposito: quem lanca no D365 chega aqui ja com
+              a OV conferida, e e neste ponto que precisa da venda INTEIRA — com
+              as linhas que ficaram na pendencia e nao aparecem em lugar nenhum
+              da tela. No topo ele interrompia a leitura dos dados da OV. */}
+          <VendaCompletaParaD365 pedido={pedido} />
 
           {/* Inventário Contínuo (se existir) */}
           {inventario?.itens?.length > 0 && (
