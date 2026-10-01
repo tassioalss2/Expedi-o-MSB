@@ -2169,7 +2169,7 @@ def listar_pedidos(
 ) -> list[dict]:
     db = get_service_db()
     query = db.table("pedidos").select(
-        "*, clientes(id, nome), transportadoras(id, nome)"
+        "*, clientes(id, nome, codigo), transportadoras(id, nome)"
     )
     query = _so_logistica(query)
 
@@ -2194,6 +2194,10 @@ def listar_pedidos(
             and p["status"] not in (StatusPedido.EXPEDIDO.value, StatusPedido.CANCELADO.value)
         )
         p["cliente_nome"] = p.get("clientes", {}).get("nome", "") if p.get("clientes") else ""
+        # O codigo do cliente (C005669) e o que a pessoa digita no D365 para
+        # abrir a OV. Sem ele no card, ela sai da tela para procurar o codigo
+        # de um cliente que o card ja identificou pelo nome.
+        p["cliente_codigo"] = p.get("clientes", {}).get("codigo") if p.get("clientes") else None
         p["transportadora_nome"] = p.get("transportadoras", {}).get("nome") if p.get("transportadoras") else None
 
     # Quando a OV foi de fato expedida — o kanban mostra na coluna Expedido apenas
@@ -2301,6 +2305,7 @@ def obter_pedido(pedido_id: str) -> dict:
     } if emp else None
     p["itens"] = p.pop("itens_pedido", []) or []
     p["cliente_nome"] = p.get("cliente", {}).get("nome", "") if p.get("cliente") else ""
+    p["cliente_codigo"] = p.get("cliente", {}).get("codigo") if p.get("cliente") else None
     p["transportadora_nome"] = p.get("transportadora", {}).get("nome", "") if p.get("transportadora") else ""
     # Origem no CRM: é o que habilita "Voltar para o CRM" na tela da OV. Sem isto a
     # tela não tinha como saber se a OV nasceu de uma oportunidade.

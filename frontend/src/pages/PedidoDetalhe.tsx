@@ -3509,6 +3509,9 @@ export function PedidoDetalhe() {
               )}
             </div>
             <Linha label="Cliente" valor={pedido.cliente?.nome || pedido.cliente_nome} />
+            {/* O codigo do D365 vem logo abaixo do nome: e o que se digita la
+                para abrir a OV, e procura-lo fora do app custava uma ida e volta. */}
+            <Linha label="Código do Cliente" valor={(pedido as any).cliente_codigo || pedido.cliente?.codigo || null} />
             {pedido.cliente?.cnpj && <Linha label="CNPJ" valor={formatarCnpjExibicao(pedido.cliente.cnpj)} />}
             <Linha label="Tipo de Operação" valor={pedido.tipo_operacao ? (OPERACAO_LABEL[pedido.tipo_operacao] || pedido.tipo_operacao) : null} />
             <Linha label="Prioridade" valor={PRIORIDADE_LABEL[pedido.prioridade] || pedido.prioridade} />

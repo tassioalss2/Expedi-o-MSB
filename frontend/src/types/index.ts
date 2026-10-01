@@ -135,6 +135,8 @@ export interface Pedido {
   pedido_pai_id?: string
   remessa_numero?: number
   /** Venda parada por decisao externa (hoje so 'CLIENTE'). Sai do kanban. */
+  /** Codigo do cliente no D365 (C005669) — e com ele que a OV e aberta la. */
+  cliente_codigo?: string | null
   espera_tipo?: string | null
   espera_motivo?: string | null
   espera_desde?: string | null

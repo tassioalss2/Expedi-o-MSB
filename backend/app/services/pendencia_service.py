@@ -898,9 +898,12 @@ def _nomes_clientes(db, ids: list) -> dict:
         return {}
     out: dict = {}
     for i in range(0, len(ids), 40):
-        rows = db.table("clientes").select("id, nome").in_("id", ids[i:i + 40]).execute().data
+        rows = db.table("clientes").select("id, nome, codigo")            .in_("id", ids[i:i + 40]).execute().data
         for r in rows:
             out[r["id"]] = r.get("nome")
+            # O codigo vai numa chave paralela para nao mudar o que os chamadores
+            # ja esperam daqui (nome puro). E o codigo e o que se digita no D365.
+            out["cod:" + r["id"]] = r.get("codigo")
     return out
 
 
@@ -957,6 +960,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         saida.append(_serializar(
             fonte="oportunidade", registro_id=o["id"], titulo=o.get("titulo"),
             cliente=clientes.get(o.get("cliente_id")), cliente_id=o.get("cliente_id"),
+            cliente_codigo=clientes.get("cod:" + str(o.get("cliente_id"))),
             canal=o.get("canal"), ov=ov, pend=pend, acao=acao, bloqueio=bloqueio,
             extra={"estagio": o.get("estagio"), "oportunidade_id": o["id"]}))
 
@@ -970,6 +974,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
             titulo=titulo_da_pendencia((p.get("pendencia") or {}).get("origem"),
                                        p.get("numero_pedido")),
             cliente=clientes.get(p.get("cliente_id")), cliente_id=p.get("cliente_id"),
+            cliente_codigo=clientes.get("cod:" + str(p.get("cliente_id"))),
             canal=p.get("canal"), ov=p, pend=pend, acao=acao, bloqueio=bloqueio,
             extra={"oportunidade_id": None}))
 
@@ -1211,7 +1216,7 @@ def _estoque_agora(pendencias: list) -> dict:
 
 
 def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
-                ov, pend, acao, bloqueio, extra) -> dict:
+                ov, pend, acao, bloqueio, extra, cliente_codigo=None) -> dict:
     itens = pend.get("itens") or []
 
     # "aguardar produção" sem OV = NADA saiu. Nesse caso `qtd_atendida` do item é
@@ -1238,6 +1243,9 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "titulo": titulo,
         "cliente": cliente,
         "cliente_id": cliente_id,
+        # O codigo do D365 (C005669): e com ele que a OV e aberta la, entao
+        # ele anda junto do nome em toda tela de venda.
+        "cliente_codigo": cliente_codigo,
         "canal": canal,
         "ov_id": (ov or {}).get("id"),
         "ov_ref": (ov or {}).get("numero_pedido"),

@@ -200,6 +200,10 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
   const transpLabel = transp ? (transp.match(/\(([^)]+)\)/)?.[1] ?? transp) : ''
   const tempo = formatDistanceToNow(parseISO(pedido.atualizado_em), { locale: ptBR, addSuffix: false })
   const clienteAbrev = (pedido.cliente_nome || pedido.cliente?.nome || '').split(' ').slice(0, 2).join(' ')
+  // O codigo do D365 e a informacao com que a OV e aberta la. Sem ele no card,
+  // quem vai abrir a OV sai da tela para procurar o codigo de um cliente que o
+  // card ja identificou pelo nome.
+  const clienteCodigo = (pedido as any).cliente_codigo || ''
   // O ✓ verde no lugar do icone: olhando a coluna da para ver o que ja saiu.
   const avisos = ((pedido as any).avisos_enviados || {}) as Record<string, any>
   const jaEnviouCotacao = avisos.cotacao_cif
@@ -242,7 +246,14 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
       </span>
 
       {/* Cliente — ocupa o espaço restante */}
-      <span className="text-[10px] text-gray-500 truncate flex-1 min-w-0">{clienteAbrev}</span>
+      <span className="text-[10px] text-gray-500 truncate flex-1 min-w-0">
+        {clienteCodigo && (
+          <span className="font-mono text-gray-700 mr-1" title="Código do cliente no D365">
+            {clienteCodigo}
+          </span>
+        )}
+        {clienteAbrev}
+      </span>
 
       {/* NF */}
       {pedido.numero_nf && (

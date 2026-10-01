@@ -382,7 +382,14 @@ export default function Pendencias() {
                 <div key={`${p.fonte}-${p.id}`}
                   className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-sm py-1.5 border-b border-gray-50 last:border-0">
                   <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                  <span className="font-medium text-gray-700">{p.cliente || '—'}</span>
+                  <span className="font-medium text-gray-700 truncate">
+                    {(p as any).cliente_codigo && (
+                      <span className="font-mono text-gray-500 mr-1" title="Código do cliente no D365">
+                        {(p as any).cliente_codigo}
+                      </span>
+                    )}
+                    {p.cliente || '—'}
+                  </span>
                   {p.ov_ref && <span className="font-mono text-xs text-gray-500">{p.ov_ref}</span>}
                   <span className="text-xs text-gray-400">
                     resolvida em {dataBR(p.resolvido_em)}
@@ -899,7 +906,14 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
             {dentroDeGrupo ? (
               <span className="font-medium text-gray-700 truncate">{tituloDoSaldo(p)}</span>
             ) : (
-              <span className="font-medium text-gray-800 truncate">{p.cliente || '—'}</span>
+              <span className="font-medium text-gray-800 truncate">
+                {(p as any).cliente_codigo && (
+                  <span className="font-mono text-gray-500 mr-1" title="Código do cliente no D365">
+                    {(p as any).cliente_codigo}
+                  </span>
+                )}
+                {p.cliente || '—'}
+              </span>
             )}
             {!dentroDeGrupo && p.canal && (
               <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p.canal] || p.canal}</span>
