@@ -128,8 +128,14 @@ export function VendaOutbound() {
     && form.condicao_pagamento.trim()
     && form.tipo_operacao && itens.length > 0
 
-  const handleClienteChange = (id: string, nome: string) => {
-    setForm(f => ({ ...f, cliente_id: id, cliente_nome: nome }))
+  // O CNPJ vem do cadastro junto com o cliente: 98% deles tem. Digitar de novo
+  // o que o app ja sabe so cria chance de erro. Se o cadastro nao tiver, o
+  // campo segue em branco para a pessoa preencher — e dai o app aprende.
+  const handleClienteChange = (id: string, nome: string, cliente?: any) => {
+    setForm(f => ({
+      ...f, cliente_id: id, cliente_nome: nome,
+      ...(cliente?.cnpj ? { cliente_cnpj: formatarCnpj(String(cliente.cnpj)) } : {}),
+    }))
   }
 
   return (

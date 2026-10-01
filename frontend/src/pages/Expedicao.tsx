@@ -255,12 +255,12 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
       </span>
 
       {/* Cliente — ocupa o espaço restante */}
-      <span className="text-[10px] text-gray-500 truncate flex-1 min-w-0">
-        {clienteCodigo && (
-          <span className="font-mono text-gray-700 mr-1" title="Código do cliente no D365">
-            {clienteCodigo}
-          </span>
-        )}
+      {/* O codigo do cliente NAO entra aqui: a linha do card ja esta cheia e ele
+          roubava o espaco do nome, que e por onde a pessoa reconhece a venda.
+          Ele vive no detalhe da OV, que e onde se abre a OV no D365, e no
+          title abaixo para quem precisar de relance. */}
+      <span className="text-[10px] text-gray-500 truncate flex-1 min-w-0"
+        title={clienteCodigo ? `${clienteCodigo} — ${pedido.cliente_nome || pedido.cliente?.nome || ''}` : undefined}>
         {clienteAbrev}
       </span>
 

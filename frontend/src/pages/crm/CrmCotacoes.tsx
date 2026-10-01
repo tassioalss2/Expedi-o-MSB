@@ -240,7 +240,13 @@ function FormCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
           <div className="col-span-2">
             <Campo label="Cliente / Órgão (razão social)">
               <ClienteAutocomplete value={clienteId} initialNome={clienteNome}
-                onChange={(id, nome) => { setClienteId(id); setClienteNome(nome) }} />
+                onChange={(id, nome, cliente) => {
+                  setClienteId(id); setClienteNome(nome)
+                  // Mesmo principio das outras telas: o CNPJ ja esta no cadastro,
+                  // redigitar so cria chance de erro. So preenche se estiver vazio,
+                  // para nao atropelar um CNPJ que a pessoa ja tinha corrigido.
+                  if ((cliente as any)?.cnpj) setClienteCnpj((c: string) => c || String((cliente as any).cnpj))
+                }} />
               {clienteId && <p className="text-xs text-green-600 mt-1">✅ {clienteNome}</p>}
             </Campo>
           </div>

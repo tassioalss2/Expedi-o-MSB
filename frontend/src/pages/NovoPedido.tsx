@@ -11,8 +11,20 @@ import type { Disponibilidade } from '../lib/crm'
 import { erroNumeroOv, limpaNumeroOv } from '../lib/crm'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 
+/** 14 digitos -> 00.000.000/0000-00; CPF (11) -> 000.000.000-00. */
+function formatarCnpjExibicao(v: string) {
+  const d = String(v || '').replace(/\D/g, '')
+  if (d.length === 14) return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+  if (d.length === 11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4')
+  return v
+}
+
 export function ClienteAutocomplete({ value, onChange, initialNome, onCriarNovo }: {
-  value: string; onChange: (id: string, nome: string) => void; initialNome?: string
+  value: string
+  /** O 3o argumento e o cliente INTEIRO (cnpj, codigo...). Quem so precisa do
+   *  id e do nome ignora, entao nenhum chamador antigo quebra. */
+  onChange: (id: string, nome: string, cliente?: Cliente) => void
+  initialNome?: string
   onCriarNovo?: (nome: string) => Promise<{ id: string; nome: string } | null | undefined>
 }) {
   const [busca, setBusca] = useState('')
@@ -45,11 +57,11 @@ export function ClienteAutocomplete({ value, onChange, initialNome, onCriarNovo 
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const selecionar = (cliente: { id: string; nome: string }) => {
+  const selecionar = (cliente: { id: string; nome: string } | Cliente) => {
     setNomeSelecionado(cliente.nome)
     setBusca('')
     setAberto(false)
-    onChange(cliente.id, cliente.nome)
+    onChange(cliente.id, cliente.nome, cliente as Cliente)
   }
 
   const criarNovo = async () => {
@@ -279,7 +291,12 @@ export function NovoPedido() {
   const podeConfirmarRecriar =
     modalRecriar.motivo.trim().length >= 5 && modalRecriar.confirmado
 
-  const handleClienteChange = (id: string, nome: string) => {
+  // Esta tela nao guarda CNPJ (ele vive no cadastro do cliente), entao aqui o
+  // util e MOSTRAR: codigo para abrir a OV no D365 e CNPJ para conferir que e
+  // o cliente certo — dois homonimos no cadastro e coisa comum.
+  const [clienteEscolhido, setClienteEscolhido] = useState<any>(null)
+  const handleClienteChange = (id: string, nome: string, cliente?: any) => {
+    setClienteEscolhido(cliente || null)
     setForm(f => ({ ...f, cliente_id: id, cliente_nome: nome }))
   }
 
@@ -319,7 +336,17 @@ export function NovoPedido() {
             <label className="text-sm font-medium text-gray-700">Cliente *</label>
             <ClienteAutocomplete value={form.cliente_id} onChange={handleClienteChange} />
             {form.cliente_id && (
-              <p className="text-xs text-green-600 mt-1">✅ {form.cliente_nome}</p>
+              <p className="text-xs text-green-600 mt-1">
+                ✅ {form.cliente_nome}
+                {clienteEscolhido?.codigo && (
+                  <span className="ml-2 font-mono text-gray-500">{clienteEscolhido.codigo}</span>
+                )}
+                {clienteEscolhido?.cnpj && (
+                  <span className="ml-2 text-gray-500">
+                    CNPJ {formatarCnpjExibicao(String(clienteEscolhido.cnpj))}
+                  </span>
+                )}
+              </p>
             )}
           </div>
 
