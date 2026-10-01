@@ -920,13 +920,26 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         # Migration v29 pendente: sem a coluna não há pendência para listar, e
         # devolver vazio é melhor do que derrubar o painel inteiro com 400.
         opps = []
+    # A pendência de PEDIDO usa o próprio registro como OV, então os campos de
+    # espera têm de vir por aqui também — senão a venda parada sai do kanban e
+    # chega nas Pendências sem o selo que explica por quê, que é o único lugar
+    # onde ela ainda aparece.
+    _base_ped = ("id, numero_pedido, status, cliente_id, canal, pendencia, remessa_numero, "
+                 "criado_em, atualizado_em, forma_venda")
     try:
         peds = db.table("pedidos").select(
-            "id, numero_pedido, status, cliente_id, canal, pendencia, remessa_numero, criado_em, "
-            "atualizado_em, forma_venda"
+            _base_ped + (_COLUNAS_ESPERA if _TEM_ESPERA[0] else "")
         ).not_is("pendencia", "null").execute().data
-    except Exception:
-        peds = []
+    except Exception as exc:
+        if _TEM_ESPERA[0] and "espera_tipo" in str(exc):
+            _TEM_ESPERA[0] = False
+            try:
+                peds = db.table("pedidos").select(_base_ped)\
+                    .not_is("pendencia", "null").execute().data
+            except Exception:
+                peds = []
+        else:
+            peds = []
 
     ov_ids = [o.get("gerado_ov_id") for o in opps]
     ovs = _ov_por_ids(db, ov_ids)
