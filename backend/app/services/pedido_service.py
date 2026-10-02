@@ -3353,19 +3353,32 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
     otif_on_time = round(sum(1 for p in expedidos if _on_time(p)) / n_exp * 100, 2) if n_exp else None
     otif_in_full = round(sum(1 for p in expedidos if _in_full(p)) / n_exp * 100, 2) if n_exp else None
 
-    # Taxa de divergência: ocorrências de estoque / total expedido
-    ocorrencias_div = db.table("ocorrencias").select("id")\
-        .eq("tipo", "Divergência de Estoque")\
-        .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
-        .execute().data
-    taxa_div = round(len(ocorrencias_div) / max(len(expedidos), 1) * 100, 2) if expedidos else None
+    # Divergência e retrabalho: % das OVs EXPEDIDAS no período que tiveram ao
+    # menos uma ocorrência daquele tipo.
+    #
+    # As duas consultas tinham `gte(inicio)` e nenhum limite superior: somavam
+    # ocorrências até hoje e dividiam pelo mês consultado. Julho/2026 dava 119%
+    # de retrabalho — impossível, e ninguém estranhou porque o denominador
+    # errado do OTIF antigo inflava a base e disfarçava a conta.
+    #
+    # Agora as duas são contadas por PEDIDO e restritas ao conjunto expedido no
+    # período — é a fórmula que o glossário da tela sempre disse ter.
+    ids_exp = {p["id"] for p in expedidos}
+    _ini_ts = f"{data_inicio.isoformat()}T00:00:00"
+    _fim_ts = f"{data_fim.isoformat()}T23:59:59"
 
-    # Taxa de retrabalho — % de OVs expedidas que tiveram ao menos 1 ocorrência de retrabalho
+    ocorrencias_div = db.table("ocorrencias").select("pedido_id")\
+        .eq("tipo", "Divergência de Estoque")\
+        .gte("criado_em", _ini_ts).lte("criado_em", _fim_ts).execute().data
+    pedidos_div = len({o["pedido_id"] for o in ocorrencias_div
+                       if o.get("pedido_id") in ids_exp})
+    taxa_div = round(pedidos_div / len(expedidos) * 100, 2) if expedidos else None
+
     ocorrencias_ret = db.table("ocorrencias").select("pedido_id")\
         .eq("retrabalho", "true")\
-        .gte("criado_em", f"{data_inicio.isoformat()}T00:00:00")\
-        .execute().data
-    pedidos_retrabalho = len({o["pedido_id"] for o in ocorrencias_ret if o.get("pedido_id")})
+        .gte("criado_em", _ini_ts).lte("criado_em", _fim_ts).execute().data
+    pedidos_retrabalho = len({o["pedido_id"] for o in ocorrencias_ret
+                              if o.get("pedido_id") in ids_exp})
     taxa_retrab = round(pedidos_retrabalho / len(expedidos) * 100, 2) if expedidos else None
 
     # Backlog: OVs ativas em qualquer etapa do fluxo (exceto finalizadas)
