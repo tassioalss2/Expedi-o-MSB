@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
+import { PedidoDetalhe } from './PedidoDetalhe'
 
 const fmtBRL = (v: any) =>
   (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -637,6 +638,10 @@ function APagar({ onAbrirOv }: { onAbrirOv: (ovOuId: string) => void }) {
   // Clicar num numero nao abre outra tela: ele RECORTA a lista de baixo, que
   // e de onde aquele numero saiu. O caminho do total ate a nota fica visivel.
   const [foco, setFoco] = useState<{ transportadora: string; tipo?: string } | null>(null)
+  // A OV abre a tela DE VERDADE, num painel por cima: quem confere fatura
+  // precisa ver itens, cubagem e historico, nao um resumo — e perder o
+  // recorte do relatorio para voltar depois custa a conferencia inteira.
+  const [ovPainel, setOvPainel] = useState<string | null>(null)
 
   useEffect(() => { setFoco(null) }, [mes, quinzena, transp])
 
@@ -803,6 +808,25 @@ function APagar({ onAbrirOv }: { onAbrirOv: (ovOuId: string) => void }) {
         </table>
       </div>
 
+      {ovPainel && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40"
+          onClick={() => setOvPainel(null)}>
+          <div className="h-full w-full max-w-5xl overflow-y-auto bg-gray-50 shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-4 py-2">
+              <span className="text-sm font-semibold text-gray-700">OV aberta aqui</span>
+              <div className="flex items-center gap-3">
+                <a href={`/expedicao/${ovPainel}`} target="_blank" rel="noreferrer"
+                  className="text-xs text-blue-600 hover:underline">abrir em página inteira</a>
+                <button onClick={() => setOvPainel(null)}
+                  className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">Fechar</button>
+              </div>
+            </div>
+            <PedidoDetalhe pedidoId={ovPainel} onFechar={() => setOvPainel(null)} />
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="border-b border-gray-100 px-4 py-2.5">
           <span className="text-sm font-semibold text-gray-700">
@@ -844,9 +868,12 @@ function APagar({ onAbrirOv }: { onAbrirOv: (ovOuId: string) => void }) {
                     {l.data.slice(8, 10)}/{l.data.slice(5, 7)}
                   </td>
                   <td className="px-3 py-1.5 whitespace-nowrap">
-                    <button onClick={() => onAbrirOv(l.pedido_id || l.ov)}
+                    <button onClick={() => setOvPainel(l.pedido_id)}
                       className="font-medium text-blue-600 hover:underline"
-                      title="De onde veio este valor: cotação, transportadora e CT-e">{l.ov}</button>
+                      title="Abrir a OV sem sair do relatório">{l.ov}</button>
+                    <button onClick={() => onAbrirOv(l.pedido_id || l.ov)}
+                      className="ml-1.5 text-[11px] text-gray-400 hover:text-blue-600 hover:underline"
+                      title="Só a análise do frete: cotação, transportadora e CT-e">frete</button>
                     {l.nf && <span className="ml-1 text-xs text-blue-600">NF {l.nf}</span>}
                   </td>
                   <td className="px-3 py-1.5 max-w-[240px] truncate text-gray-600">

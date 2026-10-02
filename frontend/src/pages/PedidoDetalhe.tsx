@@ -3204,9 +3204,17 @@ function BotaoGerarOrcamento({ pedido }: { pedido: Pedido }) {
   )
 }
 
-export function PedidoDetalhe() {
-  const { id } = useParams<{ id: string }>()
+export function PedidoDetalhe({ pedidoId, onFechar }: {
+  /** Quando vem por prop, a tela e aberta DENTRO de outra pagina (o relatorio
+   *  de frete) em vez de pela rota. O id da URL continua valendo quando nao vem. */
+  pedidoId?: string
+  /** So existe no modo embutido: troca o "voltar" do historico por fechar. */
+  onFechar?: () => void
+} = {}) {
+  const { id: idUrl } = useParams<{ id: string }>()
+  const id = pedidoId || idUrl
   const navigate = useNavigate()
+  const voltar = onFechar || (() => navigate(-1))
   const qc = useQueryClient()
   // O aviso de saldo pendente para o cliente. Fica fora do `modal` porque ele
   // abre DEPOIS do faturamento, quando aquele ja fechou.
@@ -3457,7 +3465,7 @@ export function PedidoDetalhe() {
     <div className="p-6 max-w-4xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => navigate(-1)} className="p-2 hover:bg-gray-100 rounded-lg">
+        <button onClick={voltar} className="p-2 hover:bg-gray-100 rounded-lg">
           <ArrowLeft size={20} />
         </button>
         <div className="flex-1">
