@@ -1834,6 +1834,13 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   const [paciente, setPaciente] = useState(c.dados_comunicado?.nome_paciente || '')
   const [prontuario, setProntuario] = useState(c.dados_comunicado?.prontuario || '')
   const [dataProc, setDataProc] = useState(c.dados_comunicado?.data_procedimento || '')
+  // Gerar a OV aqui mesmo. Antes era: criar a demanda, sair da caixa de
+  // entrada, achar o card no painel de licitacao e concluir de novo — tres
+  // telas para um ato so, e o numero da OV ja esta na mao de quem tria.
+  const [gerarOv, setGerarOv] = useState(false)
+  const [ovNumero, setOvNumero] = useState('')
+  const [ovCondPag, setOvCondPag] = useState('')
+  const [ovFrete, setOvFrete] = useState('CIF_SEM_VALOR')
   const [itens, setItens] = useState<any[]>(() => (c.itens || []).map(i => ({
     produto_id: null, codigo: null, descricao: null,
     qtd: i.qtd || 0, valor: i.valor_unitario || 0,
@@ -1888,6 +1895,8 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   }
   if (eComunicado && !canal) falta.push('o canal')
   if (precisaItem && comProduto.length === 0) falta.push('escolher o produto de ao menos um item')
+  if (gerarOv && !ovNumero.trim()) falta.push('o número da OV')
+  if (gerarOv && !ovCondPag.trim()) falta.push('a condição de pagamento da OV')
   if (tipo === 'AMOSTRA' && !prazo) falta.push('o prazo de entrega/retirada')
 
   function gerar() {
@@ -1906,6 +1915,13 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
             qtd: Number(i.qtd) || 0, valor: Number(i.valor) || 0,
           }))
         : undefined,
+      // Nao vai para a demanda: e lido pela tela para concluir em seguida.
+      _ov: gerarOv ? {
+        numero_pedido: ovNumero.trim().toUpperCase(),
+        condicao_pagamento: ovCondPag.trim(),
+        tipo_frete: ovFrete,
+        data_prevista_entrega: prazo || undefined,
+      } : undefined,
     })
   }
 
@@ -2054,6 +2070,46 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
               ))}
             </div>
           </div>
+
+          {/* Gerar a OV aqui. Antes eram tres telas para um ato so: criar a
+              demanda, sair da caixa de entrada, achar o card no painel e
+              concluir. O numero da OV ja esta na mao de quem tria. */}
+          {tipo === 'VENDA_DIRETA' && (
+            <div className={`rounded-xl border p-3 ${gerarOv ? 'border-blue-300 bg-blue-50/50' : 'border-gray-200'}`}>
+              <label className="flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={gerarOv} className="mt-0.5"
+                  onChange={e => setGerarOv(e.target.checked)} />
+                <span>
+                  <span className="text-sm font-semibold text-gray-800">Gerar a OV agora</span>
+                  <span className="block text-xs text-gray-500">
+                    sem passar pelo painel de licitação — a demanda já nasce com a OV gerada
+                  </span>
+                </span>
+              </label>
+              {gerarOv && (
+                <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                  <Campo rotulo="Número da OV *">
+                    <input value={ovNumero} onChange={e => setOvNumero(e.target.value)}
+                      placeholder="OV017061"
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 font-mono text-sm uppercase" />
+                  </Campo>
+                  <Campo rotulo="Condição de pagamento *">
+                    <input value={ovCondPag} onChange={e => setOvCondPag(e.target.value)}
+                      placeholder="30 dias"
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm" />
+                  </Campo>
+                  <Campo rotulo="Tipo de frete">
+                    <select value={ovFrete} onChange={e => setOvFrete(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm">
+                      <option value="CIF_SEM_VALOR">CIF sem valor</option>
+                      <option value="CIF_COM_VALOR">CIF com valor</option>
+                      <option value="FOB">FOB</option>
+                    </select>
+                  </Campo>
+                </div>
+              )}
+            </div>
+          )}
 
           {falta.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
@@ -3370,13 +3426,29 @@ export function AbaCaixaEntrada() {
   const [promovendo, setPromovendo] = useState<Card | null>(null)
 
   const promover = useMutation({
-    mutationFn: ({ chave, extra }: { chave: string; extra: any }) =>
-      api.post(`/licitacoes/entrada/grupo/promover?chave=${encodeURIComponent(chave)}`, extra),
-    onSuccess: () => {
-      toast.success('Demanda criada — o card já está no painel')
+    mutationFn: async ({ chave, extra }: { chave: string; extra: any }) => {
+      // `_ov` nao e campo da demanda: e a instrucao de concluir em seguida.
+      const { _ov, ...payload } = extra || {}
+      const { data } = await api.post(
+        `/licitacoes/entrada/grupo/promover?chave=${encodeURIComponent(chave)}`, payload)
+      if (!_ov) return { data, ov: null }
+      // Em duas chamadas de proposito: a OV sai pelo MESMO caminho de sempre
+      // (concluir a demanda), entao contrato, precos e vinculos se comportam
+      // igual. Se a segunda falhar, a demanda ficou criada e aparece no painel
+      // para concluir la — nao se perde o trabalho da triagem.
+      const id = data?.demanda?.id
+      if (!id) throw new Error('A demanda foi criada, mas sem id para gerar a OV.')
+      const r = await api.post(`/licitacoes/demandas/${id}/concluir`, { ..._ov, gerar_ov: true })
+      return { data, ov: r.data }
+    },
+    onSuccess: (r: any) => {
+      toast.success(r?.ov
+        ? 'Demanda criada e OV gerada'
+        : 'Demanda criada — o card já está no painel')
       setPromovendo(null)
       qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
       qc.invalidateQueries({ queryKey: ['demandas'] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
     },
     onError: (e: any) => toast.error(msgErro(e, 'Não consegui gerar a demanda')),
   })
