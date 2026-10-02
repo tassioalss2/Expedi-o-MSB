@@ -1386,6 +1386,22 @@ export function AbaAcompanhamento() {
 
 // ── Caixa de entrada (a tela da operação) ────────────────────────────────────
 
+/** Numero como se digita aqui: "100,26" e "1.234,56" sao validos.
+ *
+ *  `Number("100,26")` e NaN, e o `|| 0` que havia no lugar transformava o
+ *  preco digitado em ZERO sem avisar — foi assim que a OV017061 nasceu sem
+ *  valor com o preco preenchido na tela. Devolve null quando nao da para ler,
+ *  para que a tela consiga BARRAR em vez de inventar zero. */
+function numeroBR(v: any): number | null {
+  if (v === null || v === undefined) return null
+  const txt = String(v).trim()
+  if (!txt) return null
+  // 1.234,56 -> 1234.56 · 100,26 -> 100.26 · 100.26 -> 100.26
+  const limpo = txt.includes(',') ? txt.replace(/\./g, '').replace(',', '.') : txt
+  const n = Number(limpo)
+  return Number.isFinite(n) ? n : null
+}
+
 function ItensDoPedido({ itens }: { itens: any[] }) {
   if (!itens.length) return null
   return (
@@ -1879,7 +1895,7 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
     }))
   }, [sugeridos])
 
-  const comProduto = itens.filter(i => i.produto_id && Number(i.qtd) > 0)
+  const comProduto = itens.filter(i => i.produto_id && (numeroBR(i.qtd) ?? 0) > 0)
   const precisaItem = tipo === 'VENDA_DIRETA' || tipo === 'AMOSTRA'
 
   const falta: string[] = []
@@ -1897,6 +1913,14 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   if (precisaItem && comProduto.length === 0) falta.push('escolher o produto de ao menos um item')
   if (gerarOv && !ovNumero.trim()) falta.push('o número da OV')
   if (gerarOv && !ovCondPag.trim()) falta.push('a condição de pagamento da OV')
+  // Numero ilegivel nunca vira zero calado: ou se conserta, ou nao passa.
+  const ilegivel = itens.filter(i =>
+    (String(i.qtd ?? '').trim() && numeroBR(i.qtd) === null) ||
+    (String(i.valor ?? '').trim() && numeroBR(i.valor) === null))
+  if (ilegivel.length) falta.push('corrigir quantidade ou preço que não dá para ler')
+  // Sem preco a OV nasce sem valor — e so se descobre no faturamento.
+  if (gerarOv && comProduto.some(i => (numeroBR(i.valor) ?? 0) <= 0))
+    falta.push('o preço unitário de todos os itens (a OV sairia sem valor)')
   if (tipo === 'AMOSTRA' && !prazo) falta.push('o prazo de entrega/retirada')
 
   function gerar() {
@@ -1912,7 +1936,7 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
       itens: comProduto.length
         ? comProduto.map(i => ({
             produto_id: i.produto_id, codigo: i.codigo, descricao: i.descricao,
-            qtd: Number(i.qtd) || 0, valor: Number(i.valor) || 0,
+            qtd: numeroBR(i.qtd) ?? 0, valor: numeroBR(i.valor) ?? 0,
           }))
         : undefined,
       // Nao vai para a demanda: e lido pela tela para concluir em seguida.
@@ -2044,7 +2068,10 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
                       R$
                       <input value={i.valor} onChange={e => setItens(itens.map((x, m) =>
                         m === n ? { ...x, valor: e.target.value } : x))}
-                        className="w-24 rounded border border-gray-200 px-1.5 py-1 text-right text-xs tabular-nums" />
+                        placeholder="100,26"
+                        className={`w-24 rounded border px-1.5 py-1 text-right text-xs tabular-nums ${
+                          String(i.valor ?? '').trim() && numeroBR(i.valor) === null
+                            ? 'border-red-400 bg-red-50' : 'border-gray-200'}`} />
                     </label>
                     <div className="min-w-[220px] flex-1">
                       <EscolheProduto produtos={produtos} escolhido={i}

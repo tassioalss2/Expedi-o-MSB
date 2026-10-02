@@ -513,58 +513,6 @@ def _garantir_contrato_vd(db, d: dict) -> str | None:
     return emp.get("id")
 
 
-def _preco_do_pregao(db, numero_pregao: Optional[str], cliente_id, itens: list) -> list:
-    """Completa o preço dos itens com o que o PREGÃO daquele cliente já registra.
-
-    O preço de licitação não é digitado na demanda: ele foi fixado quando o
-    pregão foi ganho. Mas o anexo da Nota de Empenho quase nunca traz valor, e
-    a triagem montava a demanda com `valor: 0` — que depois virava OV sem valor
-    e NF sem valor.
-
-    Aconteceu na OV017061 (EBSERH, pregão 90143/2024): o pregão tinha 51382 a
-    R$ 96,00 e 51203 a R$ 4xx, a demanda gravou zero nos dois, e a OV saiu sem
-    valor nenhum.
-
-    Só preenche o que está vazio — valor digitado pela pessoa manda, porque a
-    NE pode cobrir um preço renegociado. E só do pregão DAQUELE cliente: preço
-    é por cliente, puxar de outro seria inventar.
-    """
-    faltando = [i for i in itens if float(i.get("valor") or 0) <= 0 and i.get("produto_id")]
-    if not faltando or not (numero_pregao or "").strip():
-        return itens
-    try:
-        q = db.table("pregoes").select("itens, cliente_id")\
-            .eq("numero", numero_pregao.strip()).eq("ativo", True)
-        if cliente_id:
-            q = q.eq("cliente_id", str(cliente_id))
-        rows = q.execute().data
-    except Exception as exc:
-        print("preco do pregao nao consultado: %s" % str(exc)[:120])
-        return itens
-    if not rows:
-        return itens
-
-    preco = {}
-    for p in rows:
-        its = p.get("itens")
-        if isinstance(its, str):
-            try:
-                its = json.loads(its)
-            except Exception:
-                its = []
-        for i in (its or []):
-            pid, v = i.get("produto_id"), float(i.get("valor_unitario") or 0)
-            if pid and v > 0:
-                preco.setdefault(str(pid), v)
-
-    for i in faltando:
-        v = preco.get(str(i.get("produto_id")))
-        if v:
-            i["valor"] = v
-            i["valor_do_pregao"] = True
-    return itens
-
-
 def criar_demanda(payload: DemandaCreate) -> dict:
     if payload.tipo_operacao not in TIPOS:
         raise HTTPException(status_code=422, detail="Tipo de operação inválido")
@@ -695,9 +643,7 @@ def criar_demanda(payload: DemandaCreate) -> dict:
         "prazo": payload.prazo.isoformat() if payload.prazo else None,
         "prioridade": payload.prioridade or "NORMAL",
         "observacao": payload.observacao,
-        "itens": _preco_do_pregao(
-            db, payload.numero_pregao, payload.cliente_id,
-            _itens_das_notas(notas) if notas else _itens_json(payload.itens)),
+        "itens": _itens_das_notas(notas) if notas else _itens_json(payload.itens),
         "notas": notas,
         "nome_paciente": (payload.nome_paciente or "").strip() or None,
         "prontuario": (payload.prontuario or "").strip() or None,
