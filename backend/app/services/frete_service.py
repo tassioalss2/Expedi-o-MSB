@@ -652,7 +652,7 @@ def relatorio_a_pagar(de: str, ate: str, transportadora: Optional[str] = None) -
     pedidos = []
     for off in range(0, 40000, 1000):
         b = db.table("pedidos").select(
-            "numero_pedido, numero_nf, valor_frete, valor_nf, tipo_frete, status, "
+            "id, numero_pedido, numero_nf, valor_frete, valor_nf, tipo_frete, status, "
             "transportadora_id, cliente_id, local_entrega, data_faturamento, criado_em"
         ).limit(1000).offset(off).execute().data
         pedidos += b
@@ -726,6 +726,9 @@ def relatorio_a_pagar(de: str, ate: str, transportadora: Optional[str] = None) -
         cli = clientes.get(p.get("cliente_id")) or {}
 
         linhas.append({
+            # O id identifica a REMESSA; o numero da OV pode ter varias, e a
+            # analise precisa abrir a certa.
+            "pedido_id": p.get("id"),
             "data": dia,
             "transportadora": nome or "(sem transportadora)",
             "ov": p.get("numero_pedido"),
@@ -831,8 +834,27 @@ def analise_ov(numero: str) -> dict:
         pedidos += b
         if len(b) < 1000:
             break
-    p = next((x for x in pedidos
-              if str(x.get("numero_pedido") or "").strip().upper() == alvo), None)
+    # Por ID quando quem chamou tem o id em mao — é o caso do relatório a pagar,
+    # onde cada linha é uma REMESSA e não uma OV.
+    p = next((x for x in pedidos if str(x.get("id")) == alvo.lower()), None)
+
+    if p is None:
+        # Pelo número: uma OV pode ter várias remessas, e pegar a primeira que
+        # aparece dava a resposta errada. Na OV016753 a primeira era a R3,
+        # CANCELADA e FOB — a tela diria "frete zero" de uma remessa que custou
+        # R$ 333,05. Prefere o que não foi cancelado, depois o que tem frete
+        # nosso, depois a remessa mais recente.
+        candidatos = [x for x in pedidos
+                      if str(x.get("numero_pedido") or "").strip().upper() == alvo]
+        if candidatos:
+            def _peso(x):
+                return (
+                    x.get("status") == "CANCELADO",
+                    (x.get("tipo_frete") or "") not in ("CIF_SEM_VALOR", "CIF_COM_VALOR"),
+                    -float(x.get("valor_frete") or 0),
+                    -(x.get("remessa_numero") or 1),
+                )
+            p = sorted(candidatos, key=_peso)[0]
     if not p:
         raise HTTPException(404, "OV %s não existe no app" % alvo)
 
@@ -921,7 +943,32 @@ def analise_ov(numero: str) -> dict:
                                "transportadora — se não foi, é o que se contesta.",
                 })
     tudo_certo = all(pt["ok"] is not False for pt in pontos)
+
+    # ── De onde o número veio ─────────────────────────────────────────────────
+    # A tela mostra "R$ 411,10" e a pergunta seguinte é sempre a mesma: quem
+    # disse isso, e quando. O valor do frete não nasce com a OV — alguém cota,
+    # alguém corrige, às vezes duas vezes no mesmo dia. Sem este rastro, a
+    # conferência contra a fatura vira discussão de memória.
+    historico = []
+    try:
+        movs = db.table("movimentacoes").select("criado_em, observacao, usuario_id")            .eq("pedido_id", p["id"]).order("criado_em").execute().data
+        nomes = {u["id"]: u.get("nome") for u in
+                 db.table("usuarios").select("id, nome").execute().data}
+        CHAVES = ("frete", "transportadora", "cubagem", "coleta")
+        for m in movs:
+            txt = (m.get("observacao") or "")
+            if not any(k in txt.lower() for k in CHAVES):
+                continue
+            historico.append({
+                "em": str(m.get("criado_em") or "")[:19],
+                "quem": nomes.get(m.get("usuario_id")),
+                "o_que": txt[:220],
+            })
+    except Exception as exc:
+        print("historico de frete da OV nao carregado: %s" % str(exc)[:120])
+
     return {
+        "historico": historico,
         "ov": p.get("numero_pedido"), "nf": p.get("numero_nf"),
         "valor_nf": p.get("valor_nf"), "previsto": previsto,
         "tipo_frete": p.get("tipo_frete"), "transportadora": transp,

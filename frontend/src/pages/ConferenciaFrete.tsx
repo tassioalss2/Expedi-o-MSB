@@ -176,7 +176,7 @@ export default function ConferenciaFrete() {
 
       {aba === 'gastos' && <Gastos dados={gastos} onDefinir={definirTransp} />}
 
-      {aba === 'pagar' && <APagar />}
+      {aba === 'pagar' && <APagar onAbrirOv={setOvAberta} />}
 
       {aba === 'conferir' && <>
       {/* A conversa entra ANTES do pacote: e escolhida uma vez e vale para a
@@ -527,6 +527,30 @@ export default function ConferenciaFrete() {
                     </div>
                   ))}
                 </div>
+
+                {/* De onde o numero veio. A tela mostra "R$ 411,10" e a pergunta
+                    seguinte e sempre quem disse isso e quando — o valor do frete
+                    nao nasce com a OV, alguem cota e as vezes corrige. */}
+                {analise.historico?.length > 0 && (
+                  <div className="mt-4 rounded-lg border border-gray-200">
+                    <p className="border-b border-gray-100 px-3 py-2 text-xs font-semibold text-gray-700">
+                      De onde veio este valor
+                    </p>
+                    <ol className="divide-y divide-gray-50">
+                      {analise.historico.map((h: any, n: number) => (
+                        <li key={n} className="flex gap-3 px-3 py-2">
+                          <span className="w-24 shrink-0 text-xs tabular-nums text-gray-400">
+                            {h.em.slice(8, 10)}/{h.em.slice(5, 7)} {h.em.slice(11, 16)}
+                          </span>
+                          <span className="flex-1 text-xs text-gray-700">{h.o_que}</span>
+                          <span className="w-28 shrink-0 truncate text-right text-xs text-gray-400">
+                            {h.quem || '—'}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -586,7 +610,7 @@ export default function ConferenciaFrete() {
  *
  *  O CSV existe porque a conferência real acontece no Excel, ao lado da
  *  planilha que a transportadora manda. */
-function APagar() {
+function APagar({ onAbrirOv }: { onAbrirOv: (ovOuId: string) => void }) {
   // 30 dias, e nao "do dia 1o ate hoje": no dia 2 do mes aquele recorte mostrava
   // dois dias e dava a impressao de que uma transportadora inteira tinha sumido.
   const hoje = new Date()
@@ -595,6 +619,9 @@ function APagar() {
   const [de, setDe] = useState(iso(trintaDias))
   const [ate, setAte] = useState(iso(hoje))
   const [transp, setTransp] = useState('')
+  // Clicar num numero nao abre outra tela: ele RECORTA a lista de baixo, que
+  // e de onde aquele numero saiu. O caminho do total ate a nota fica visivel.
+  const [foco, setFoco] = useState<{ transportadora: string; tipo?: string } | null>(null)
 
   const { data, isFetching } = useQuery<any>({
     queryKey: ['frete-a-pagar', de, ate, transp],
@@ -609,7 +636,7 @@ function APagar() {
   function baixarCsv() {
     const cab = ['Data', 'Transportadora', 'OV', 'NF', 'Codigo cliente', 'Cliente',
       'Entrega', 'Tipo de frete', 'Valor da NF', 'Frete nosso', 'CT-e', 'Cobrado', 'Diferenca']
-    const linhas = (data?.linhas || []).map((l: any) => [
+    const linhas = visiveis.map((l: any) => [
       l.data, l.transportadora, l.ov, l.nf || '', l.cliente_codigo || '', l.cliente || '',
       l.local_entrega || '', l.tipo_frete, l.valor_nf, l.nosso, l.cte || '',
       l.cobrado ?? '', l.diferenca ?? '',
@@ -629,6 +656,11 @@ function APagar() {
     URL.revokeObjectURL(url)
   }
 
+  const todas: any[] = data?.linhas || []
+  const visiveis = foco
+    ? todas.filter(l => l.transportadora === foco.transportadora
+        && (!foco.tipo || l.tipo_frete === foco.tipo))
+    : todas
   const nomes: string[] = (data?.transportadoras || []).map((t: any) => t.transportadora)
 
   return (
@@ -680,12 +712,28 @@ function APagar() {
           </thead>
           <tbody className="divide-y divide-gray-50">
             {(data?.transportadoras || []).map((t: any) => (
-              <tr key={t.transportadora}>
+              <tr key={t.transportadora}
+                className={foco?.transportadora === t.transportadora ? 'bg-blue-50/60' : ''}>
                 <td className="px-3 py-2 font-medium text-gray-800">{t.transportadora}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-gray-500">{t.notas}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-gray-600">{brl(t.cif_sem_valor)}</td>
-                <td className="px-3 py-2 text-right tabular-nums text-gray-600">{brl(t.cif_com_valor)}</td>
-                <td className="px-3 py-2 text-right tabular-nums font-bold text-gray-900">{brl(t.a_pagar)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <button onClick={() => setFoco({ transportadora: t.transportadora })}
+                    className="text-blue-600 hover:underline" title="Ver estas notas">{t.notas}</button>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <button onClick={() => setFoco({ transportadora: t.transportadora, tipo: 'CIF_SEM_VALOR' })}
+                    className="text-gray-600 hover:text-blue-600 hover:underline" title="Ver as notas CIF sem valor">
+                    {brl(t.cif_sem_valor)}</button>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <button onClick={() => setFoco({ transportadora: t.transportadora, tipo: 'CIF_COM_VALOR' })}
+                    className="text-gray-600 hover:text-blue-600 hover:underline" title="Ver as notas CIF com valor">
+                    {brl(t.cif_com_valor)}</button>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <button onClick={() => setFoco({ transportadora: t.transportadora })}
+                    className="font-bold text-gray-900 hover:text-blue-600 hover:underline" title="Ver todas as notas">
+                    {brl(t.a_pagar)}</button>
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums">
                   {t.sem_valor
                     ? <span className="font-semibold text-amber-700" title="Frete CIF sem preço cotado — R$ 0,00 ou R$ 1,00 no cadastro">
@@ -730,11 +778,22 @@ function APagar() {
       <div className="rounded-xl border border-gray-200 bg-white">
         <div className="border-b border-gray-100 px-4 py-2.5">
           <span className="text-sm font-semibold text-gray-700">
-            Nota a nota {data?.linhas?.length ? `(${data.linhas.length})` : ''}
+            Nota a nota {visiveis.length ? `(${visiveis.length}${foco ? ` de ${todas.length}` : ''})` : ''}
           </span>
-          <span className="ml-2 text-xs text-gray-500">
-            é esta lista que se confere contra o relatório da transportadora
-          </span>
+          {foco ? (
+            <>
+              <span className="ml-2 rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                {foco.transportadora}
+                {foco.tipo && ` · ${foco.tipo === 'CIF_SEM_VALOR' ? 'CIF sem valor' : 'CIF com valor'}`}
+              </span>
+              <button onClick={() => setFoco(null)}
+                className="ml-2 text-xs text-blue-600 hover:underline">ver todas</button>
+            </>
+          ) : (
+            <span className="ml-2 text-xs text-gray-500">
+              é esta lista que se confere contra o relatório da transportadora — clique na OV para ver de onde veio o valor
+            </span>
+          )}
         </div>
         <div className="max-h-[32rem] overflow-y-auto">
           <table className="w-full text-sm">
@@ -751,13 +810,15 @@ function APagar() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {(data?.linhas || []).map((l: any, i: number) => (
+              {visiveis.map((l: any, i: number) => (
                 <tr key={i} className={l.diferenca && Math.abs(l.diferenca) >= 0.01 ? 'bg-red-50/40' : ''}>
                   <td className="px-3 py-1.5 whitespace-nowrap text-gray-500">
                     {l.data.slice(8, 10)}/{l.data.slice(5, 7)}
                   </td>
                   <td className="px-3 py-1.5 whitespace-nowrap">
-                    <span className="font-medium text-gray-800">{l.ov}</span>
+                    <button onClick={() => onAbrirOv(l.pedido_id || l.ov)}
+                      className="font-medium text-blue-600 hover:underline"
+                      title="De onde veio este valor: cotação, transportadora e CT-e">{l.ov}</button>
                     {l.nf && <span className="ml-1 text-xs text-blue-600">NF {l.nf}</span>}
                   </td>
                   <td className="px-3 py-1.5 max-w-[240px] truncate text-gray-600">
