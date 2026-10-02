@@ -587,10 +587,12 @@ export default function ConferenciaFrete() {
  *  O CSV existe porque a conferência real acontece no Excel, ao lado da
  *  planilha que a transportadora manda. */
 function APagar() {
+  // 30 dias, e nao "do dia 1o ate hoje": no dia 2 do mes aquele recorte mostrava
+  // dois dias e dava a impressao de que uma transportadora inteira tinha sumido.
   const hoje = new Date()
-  const primeiro = new Date(hoje.getFullYear(), hoje.getMonth(), 1)
+  const trintaDias = new Date(hoje.getTime() - 30 * 864e5)
   const iso = (d: Date) => d.toISOString().slice(0, 10)
-  const [de, setDe] = useState(iso(primeiro))
+  const [de, setDe] = useState(iso(trintaDias))
   const [ate, setAte] = useState(iso(hoje))
   const [transp, setTransp] = useState('')
 
@@ -660,7 +662,7 @@ function APagar() {
         <div className="border-b border-gray-100 px-4 py-2.5">
           <span className="text-sm font-semibold text-gray-700">A pagar no período</span>
           <span className="ml-2 text-xs text-gray-500">
-            CIF sem valor + CIF com valor — a transportadora fatura os dois. FOB é do cliente e não entra.
+            CIF sem valor + CIF com valor — a transportadora fatura os dois. FOB é do cliente e não entra.{' '}Frete sem preço cotado (R$ 0,00 ou R$ 1,00) sai do total e aparece na coluna "sem valor".
           </span>
         </div>
         <table className="w-full text-sm">
@@ -671,6 +673,7 @@ function APagar() {
               <th className="px-3 py-2 text-right">CIF sem valor</th>
               <th className="px-3 py-2 text-right">CIF com valor</th>
               <th className="px-3 py-2 text-right">A pagar</th>
+              <th className="px-3 py-2 text-right">Sem valor</th>
               <th className="px-3 py-2 text-right">Já faturado (CT-e)</th>
               <th className="px-3 py-2 text-right">Diferença no conferido</th>
             </tr>
@@ -683,6 +686,13 @@ function APagar() {
                 <td className="px-3 py-2 text-right tabular-nums text-gray-600">{brl(t.cif_sem_valor)}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-gray-600">{brl(t.cif_com_valor)}</td>
                 <td className="px-3 py-2 text-right tabular-nums font-bold text-gray-900">{brl(t.a_pagar)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {t.sem_valor
+                    ? <span className="font-semibold text-amber-700" title="Frete CIF sem preço cotado — R$ 0,00 ou R$ 1,00 no cadastro">
+                        {t.sem_valor} NF
+                      </span>
+                    : <span className="text-gray-300">—</span>}
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums text-gray-600">
                   {t.com_cte ? brl(t.cobrado) : <span className="text-gray-300">sem fatura</span>}
                 </td>
@@ -694,7 +704,7 @@ function APagar() {
               </tr>
             ))}
             {!data?.transportadoras?.length && !isFetching && (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-gray-400">
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-400">
                 Nenhum frete CIF no período.
               </td></tr>
             )}
@@ -706,6 +716,9 @@ function APagar() {
                 <td className="px-3 py-2 text-right tabular-nums">{data.notas}</td>
                 <td colSpan={2}></td>
                 <td className="px-3 py-2 text-right tabular-nums">{brl(data.total_a_pagar)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-amber-700">
+                  {data.sem_valor ? `${data.sem_valor} NF` : ''}
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums">{brl(data.total_cobrado)}</td>
                 <td></td>
               </tr>
@@ -755,7 +768,11 @@ function APagar() {
                   <td className="px-3 py-1.5 whitespace-nowrap text-xs text-gray-500">
                     {l.tipo_frete === 'CIF_SEM_VALOR' ? 'sem valor' : 'com valor'}
                   </td>
-                  <td className="px-3 py-1.5 text-right tabular-nums text-gray-800">{brl(l.nosso)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-gray-800">
+                    {l.nosso === null
+                      ? <span className="text-amber-700" title="Frete CIF sem preço cotado">a informar</span>
+                      : brl(l.nosso)}
+                  </td>
                   <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">
                     {l.cobrado === null ? <span className="text-gray-300">—</span> : brl(l.cobrado)}
                   </td>

@@ -717,7 +717,12 @@ def relatorio_a_pagar(de: str, ate: str, transportadora: Optional[str] = None) -
                 if c not in achados:
                     achados.append(c)
         cobrado = round(sum(float(c.get("valor") or 0) for c in achados), 2) if achados else None
-        nosso = round(float(p.get("valor_frete") or 0), 2)
+        # R$ 0,00 e R$ 1,00 nao sao preco: sao o que alguem digita para passar
+        # da tela quando o frete ainda nao foi cotado. Somar isso mente duas
+        # vezes — finge que o valor e conhecido e subestima a fatura. A nota
+        # continua na lista, com "a informar" no lugar do numero.
+        bruto = round(float(p.get("valor_frete") or 0), 2)
+        nosso = None if bruto <= 1.0 else bruto
         cli = clientes.get(p.get("cliente_id")) or {}
 
         linhas.append({
@@ -733,21 +738,25 @@ def relatorio_a_pagar(de: str, ate: str, transportadora: Optional[str] = None) -
             "nosso": nosso,
             "cte": ", ".join(str(c.get("numero")) for c in achados) or None,
             "cobrado": cobrado,
-            "diferenca": None if cobrado is None else round(cobrado - nosso, 2),
+            "diferenca": (None if cobrado is None or nosso is None
+                          else round(cobrado - nosso, 2)),
         })
 
         k = nome or "(sem transportadora)"
         t = por_transp.setdefault(k, {
             "transportadora": k, "notas": 0,
             "cif_sem_valor": 0.0, "cif_com_valor": 0.0, "a_pagar": 0.0,
-            "cobrado": 0.0, "com_cte": 0, "sem_cte": 0,
+            "cobrado": 0.0, "com_cte": 0, "sem_cte": 0, "sem_valor": 0,
         })
         t["notas"] += 1
-        t["a_pagar"] += nosso
-        if p["tipo_frete"] == "CIF_SEM_VALOR":
-            t["cif_sem_valor"] += nosso
+        if nosso is None:
+            t["sem_valor"] += 1
         else:
-            t["cif_com_valor"] += nosso
+            t["a_pagar"] += nosso
+            if p["tipo_frete"] == "CIF_SEM_VALOR":
+                t["cif_sem_valor"] += nosso
+            else:
+                t["cif_com_valor"] += nosso
         if cobrado is None:
             t["sem_cte"] += 1
         else:
@@ -761,7 +770,7 @@ def relatorio_a_pagar(de: str, ate: str, transportadora: Optional[str] = None) -
         # faturado com o total previsto do mês inteiro mistura o que ainda nem
         # foi cobrado, e foi assim que a RR pareceu R$ 6 mil mais cara.
         t["diferenca_no_conferido"] = round(
-            t["cobrado"] - sum(l["nosso"] for l in linhas
+            t["cobrado"] - sum(l["nosso"] or 0 for l in linhas
                                if l["transportadora"] == t["transportadora"]
                                and l["cobrado"] is not None), 2)
 
@@ -774,6 +783,7 @@ def relatorio_a_pagar(de: str, ate: str, transportadora: Optional[str] = None) -
         "total_a_pagar": round(sum(t["a_pagar"] for t in ordem), 2),
         "total_cobrado": round(sum(t["cobrado"] for t in ordem), 2),
         "notas": len(linhas),
+        "sem_valor": sum(t["sem_valor"] for t in ordem),
     }
 
 def definir_transportadora(numero_pedido: str, transportadora_id: str,
