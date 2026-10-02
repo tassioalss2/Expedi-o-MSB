@@ -208,6 +208,12 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
   // A OV chegou parcial: faltou material e o resto virou pendencia. Quem lanca
   // no D365 precisa lancar a venda INTEIRA, entao tem de saber disso antes de
   // abrir a OV — ate agora so dava para descobrir indo em Pendencias.
+  // OV faturada que ninguem encerrou. Quando o status E atualizado, faturar ->
+  // expedir leva 1 dia (mediana). O que passa disso quase sempre e registro
+  // esquecido, nao carga parada — e cada um desses some do OTIF, que so conta
+  // quem chegou a EXPEDIDO.
+  const semEncerrar = Number((pedido as any).dias_sem_encerrar) || 0
+
   const pend = (pedido as any).pendencia
   const temPendencia = !!(pend && !pend.resolvido_em && (pend.itens || []).length)
   const faltamItens = temPendencia
@@ -277,6 +283,13 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
         <span className="flex-shrink-0 rounded border border-orange-300 bg-orange-100 px-1 text-[10px] leading-4 text-orange-800"
           title="Aguardando produção — entra no fluxo quando o material chegar">
           🏭 s/ material
+        </span>
+      )}
+
+      {semEncerrar >= 3 && (
+        <span className="flex-shrink-0 rounded border border-orange-300 bg-orange-50 px-1 text-[10px] leading-4 text-orange-800"
+          title={`Faturada há ${semEncerrar} dias e ainda não marcada como expedida. Se já saiu, encerre — enquanto não encerra, ela não entra no OTIF.`}>
+          ⏳ {semEncerrar}d
         </span>
       )}
 

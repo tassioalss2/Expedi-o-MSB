@@ -2265,6 +2265,29 @@ def listar_pedidos(
     for p in pedidos:
         p["data_faturamento"] = fat.get(p["id"])
 
+    # ── OV faturada que ninguém encerrou ──────────────────────────────────────
+    # Quando o status É atualizado, faturar -> expedir leva 1 dia (mediana). Mas
+    # em setembro/2026, 146 das 277 OVs faturadas nunca foram marcadas como
+    # expedidas: o material saiu e o registro ficou aberto.
+    #
+    # Isso não é só sujeira de cadastro — é o que faz o OTIF medir 43% do mês, e
+    # medir justamente a metade que alguém se deu ao trabalho de fechar. Enquanto
+    # o encerramento depender de memória, o indicador continua escolhido.
+    _POS_NF = (StatusPedido.FATURADO.value, StatusPedido.AGUARD_COLETA.value,
+               StatusPedido.COLETADO.value)
+    hoje_brt = _hoje_brt()
+    for p in pedidos:
+        p["dias_sem_encerrar"] = None
+        if p.get("status") not in _POS_NF:
+            continue
+        d = p.get("data_faturamento")
+        if not d:
+            continue
+        try:
+            p["dias_sem_encerrar"] = (hoje_brt - date.fromisoformat(d)).days
+        except Exception:
+            pass
+
     if atrasados is not None:
         pedidos = [p for p in pedidos if p["atrasado"] == atrasados]
 
