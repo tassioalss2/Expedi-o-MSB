@@ -64,6 +64,18 @@ def definir_transportadora(numero: str, payload: DefinirTransportadora,
         numero, str(payload.transportadora_id), usuario)
 
 
+@router.get("/frete/a-pagar")
+def a_pagar(de: str, ate: str, transportadora: str = "",
+            _: UsuarioOut = Depends(get_current_user)):
+    """Quanto a MSB deve a cada transportadora no periodo, OV por OV.
+
+    Diferente de /frete/gastos, que mede CUSTO (so CIF sem valor): a fatura da
+    transportadora cobra os dois CIF. Sem o com-valor, os CORREIOS apareciam
+    zerados e a BRIX com um terco do que deve.
+    """
+    return frete_service.relatorio_a_pagar(de, ate, transportadora or None)
+
+
 @router.get("/frete/ov/{numero}")
 def analise_ov(numero: str, _: UsuarioOut = Depends(get_current_user)):
     """O que a conferência sabe de uma OV, com o veredito escrito."""

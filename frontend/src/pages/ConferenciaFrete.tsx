@@ -74,7 +74,7 @@ export default function ConferenciaFrete() {
   // ("o que ta de errado com essa OV nos fretes?"): a resposta era "nada, ela
   // foi pela BRIX", e ele teve de perguntar para saber.
   const [ovAberta, setOvAberta] = useState<string | null>(null)
-  const [aba, setAba] = useState<'conferir' | 'gastos'>('conferir')
+  const [aba, setAba] = useState<'conferir' | 'gastos' | 'pagar'>('conferir')
 
   const { data: historico = [] } = useQuery<any[]>({
     queryKey: ['frete-conferencias'],
@@ -164,7 +164,7 @@ export default function ConferenciaFrete() {
       </div>
 
       <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
-        {([['conferir', 'Conferir a fatura'], ['gastos', 'Gasto por transportadora']] as const)
+        {([['conferir', 'Conferir a fatura'], ['pagar', 'A pagar por transportadora'], ['gastos', 'Gasto por transportadora']] as const)
           .map(([v, label]) => (
             <button key={v} onClick={() => setAba(v)}
               className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
@@ -175,6 +175,8 @@ export default function ConferenciaFrete() {
       </div>
 
       {aba === 'gastos' && <Gastos dados={gastos} onDefinir={definirTransp} />}
+
+      {aba === 'pagar' && <APagar />}
 
       {aba === 'conferir' && <>
       {/* A conversa entra ANTES do pacote: e escolhida uma vez e vale para a
@@ -576,6 +578,202 @@ export default function ConferenciaFrete() {
  *  Os pedidos SEM transportadora aparecem em destaque e podem ser preenchidos
  *  aqui: sao 78 e R$ 17.896,13 hoje, quase um terco do gasto. Sem isso o
  *  relatorio mostraria menos do que a empresa gasta e ninguem saberia por que. */
+/** Quanto a MSB deve a cada transportadora — para bater com a fatura deles.
+ *
+ *  A aba "Gastos" responde outra pergunta: quanto o frete CUSTA (só CIF sem
+ *  valor). A fatura da transportadora cobra os dois CIF, e por isso os
+ *  CORREIOS apareciam zerados ali: todo o volume deles é CIF com valor.
+ *
+ *  O CSV existe porque a conferência real acontece no Excel, ao lado da
+ *  planilha que a transportadora manda. */
+function APagar() {
+  const hoje = new Date()
+  const primeiro = new Date(hoje.getFullYear(), hoje.getMonth(), 1)
+  const iso = (d: Date) => d.toISOString().slice(0, 10)
+  const [de, setDe] = useState(iso(primeiro))
+  const [ate, setAte] = useState(iso(hoje))
+  const [transp, setTransp] = useState('')
+
+  const { data, isFetching } = useQuery<any>({
+    queryKey: ['frete-a-pagar', de, ate, transp],
+    queryFn: () => api.get('/frete/a-pagar', { params: { de, ate, transportadora: transp } })
+      .then(r => r.data),
+  })
+
+  const brl = (v: any) => v === null || v === undefined
+    ? '—'
+    : `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  function baixarCsv() {
+    const cab = ['Data', 'Transportadora', 'OV', 'NF', 'Codigo cliente', 'Cliente',
+      'Entrega', 'Tipo de frete', 'Valor da NF', 'Frete nosso', 'CT-e', 'Cobrado', 'Diferenca']
+    const linhas = (data?.linhas || []).map((l: any) => [
+      l.data, l.transportadora, l.ov, l.nf || '', l.cliente_codigo || '', l.cliente || '',
+      l.local_entrega || '', l.tipo_frete, l.valor_nf, l.nosso, l.cte || '',
+      l.cobrado ?? '', l.diferenca ?? '',
+    ])
+    // ; e vírgula decimal: é o que o Excel em pt-BR abre sem pedir nada.
+    const txt = [cab, ...linhas]
+      .map(r => r.map((c: any) => {
+        const s = typeof c === 'number' ? String(c).replace('.', ',') : String(c ?? '')
+        return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+      }).join(';'))
+      .join('\r\n')
+    const url = URL.createObjectURL(new Blob(['﻿' + txt], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `frete-a-pagar_${de}_a_${ate}${transp ? '_' + transp : ''}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const nomes: string[] = (data?.transportadoras || []).map((t: any) => t.transportadora)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-4">
+        <div>
+          <label className="block text-xs text-gray-500">De</label>
+          <input type="date" value={de} onChange={e => setDe(e.target.value)}
+            className="mt-0.5 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500">Até</label>
+          <input type="date" value={ate} onChange={e => setAte(e.target.value)}
+            className="mt-0.5 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500">Transportadora</label>
+          <select value={transp} onChange={e => setTransp(e.target.value)}
+            className="mt-0.5 rounded-lg border border-gray-200 px-3 py-2 text-sm">
+            <option value="">Todas</option>
+            {nomes.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <button onClick={baixarCsv} disabled={!data?.linhas?.length}
+          className="ml-auto rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:bg-gray-200 disabled:text-gray-400">
+          Baixar CSV
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white">
+        <div className="border-b border-gray-100 px-4 py-2.5">
+          <span className="text-sm font-semibold text-gray-700">A pagar no período</span>
+          <span className="ml-2 text-xs text-gray-500">
+            CIF sem valor + CIF com valor — a transportadora fatura os dois. FOB é do cliente e não entra.
+          </span>
+        </div>
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+            <tr>
+              <th className="px-3 py-2 text-left">Transportadora</th>
+              <th className="px-3 py-2 text-right">NFs</th>
+              <th className="px-3 py-2 text-right">CIF sem valor</th>
+              <th className="px-3 py-2 text-right">CIF com valor</th>
+              <th className="px-3 py-2 text-right">A pagar</th>
+              <th className="px-3 py-2 text-right">Já faturado (CT-e)</th>
+              <th className="px-3 py-2 text-right">Diferença no conferido</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {(data?.transportadoras || []).map((t: any) => (
+              <tr key={t.transportadora}>
+                <td className="px-3 py-2 font-medium text-gray-800">{t.transportadora}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-gray-500">{t.notas}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-gray-600">{brl(t.cif_sem_valor)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-gray-600">{brl(t.cif_com_valor)}</td>
+                <td className="px-3 py-2 text-right tabular-nums font-bold text-gray-900">{brl(t.a_pagar)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-gray-600">
+                  {t.com_cte ? brl(t.cobrado) : <span className="text-gray-300">sem fatura</span>}
+                </td>
+                <td className={`px-3 py-2 text-right tabular-nums font-semibold ${
+                  !t.com_cte ? 'text-gray-300'
+                    : Math.abs(t.diferenca_no_conferido) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
+                  {t.com_cte ? brl(t.diferenca_no_conferido) : '—'}
+                </td>
+              </tr>
+            ))}
+            {!data?.transportadoras?.length && !isFetching && (
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-gray-400">
+                Nenhum frete CIF no período.
+              </td></tr>
+            )}
+          </tbody>
+          {!!data?.transportadoras?.length && (
+            <tfoot>
+              <tr className="border-t border-gray-200 bg-gray-50 font-bold text-gray-900">
+                <td className="px-3 py-2">Total</td>
+                <td className="px-3 py-2 text-right tabular-nums">{data.notas}</td>
+                <td colSpan={2}></td>
+                <td className="px-3 py-2 text-right tabular-nums">{brl(data.total_a_pagar)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{brl(data.total_cobrado)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white">
+        <div className="border-b border-gray-100 px-4 py-2.5">
+          <span className="text-sm font-semibold text-gray-700">
+            Nota a nota {data?.linhas?.length ? `(${data.linhas.length})` : ''}
+          </span>
+          <span className="ml-2 text-xs text-gray-500">
+            é esta lista que se confere contra o relatório da transportadora
+          </span>
+        </div>
+        <div className="max-h-[32rem] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Data</th>
+                <th className="px-3 py-2 text-left">OV / NF</th>
+                <th className="px-3 py-2 text-left">Cliente</th>
+                <th className="px-3 py-2 text-left">Entrega</th>
+                <th className="px-3 py-2 text-left">Frete</th>
+                <th className="px-3 py-2 text-right">Nosso</th>
+                <th className="px-3 py-2 text-right">CT-e</th>
+                <th className="px-3 py-2 text-right">Diferença</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {(data?.linhas || []).map((l: any, i: number) => (
+                <tr key={i} className={l.diferenca && Math.abs(l.diferenca) >= 0.01 ? 'bg-red-50/40' : ''}>
+                  <td className="px-3 py-1.5 whitespace-nowrap text-gray-500">
+                    {l.data.slice(8, 10)}/{l.data.slice(5, 7)}
+                  </td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">
+                    <span className="font-medium text-gray-800">{l.ov}</span>
+                    {l.nf && <span className="ml-1 text-xs text-blue-600">NF {l.nf}</span>}
+                  </td>
+                  <td className="px-3 py-1.5 max-w-[240px] truncate text-gray-600">
+                    {l.cliente_codigo && <span className="mr-1 font-mono text-xs text-gray-400">{l.cliente_codigo}</span>}
+                    {l.cliente}
+                  </td>
+                  <td className="px-3 py-1.5 whitespace-nowrap text-xs text-gray-500">{l.local_entrega || '—'}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap text-xs text-gray-500">
+                    {l.tipo_frete === 'CIF_SEM_VALOR' ? 'sem valor' : 'com valor'}
+                  </td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-gray-800">{brl(l.nosso)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums text-gray-600">
+                    {l.cobrado === null ? <span className="text-gray-300">—</span> : brl(l.cobrado)}
+                  </td>
+                  <td className={`px-3 py-1.5 text-right tabular-nums font-medium ${
+                    l.diferenca === null ? 'text-gray-300'
+                      : Math.abs(l.diferenca) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
+                    {l.diferenca === null ? '—' : brl(l.diferenca)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Gastos({ dados, onDefinir }: { dados: any; onDefinir: any }) {
   if (!dados) {
     return (

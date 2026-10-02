@@ -628,6 +628,154 @@ def gastos(meses: int = 6) -> dict:
     }
 
 
+def relatorio_a_pagar(de: str, ate: str, transportadora: Optional[str] = None) -> dict:
+    """O que a MSB DEVE a cada transportadora no período, OV por OV.
+
+    Diferente de `gastos`, que mede CUSTO e por isso só soma CIF sem valor.
+    Conta a pagar é outra pergunta: a transportadora fatura os dois CIF.
+
+      CIF sem valor  — a MSB paga e absorve; vira custo.
+      CIF com valor  — a MSB paga e cobra do cliente na nota; não é custo,
+                       mas é a mesma fatura chegando no fim do mês.
+      FOB            — o cliente contrata e paga direto. Não entra.
+
+    A diferença não é acadêmica: em setembro/2026 a BRIX aparecia com
+    R$ 2.011,53 no relatório de custo e deve R$ 7.409,39; os CORREIOS apareciam
+    com zero e devem R$ 337,17, porque todo o volume deles é CIF com valor.
+
+    Quando a fatura da transportadora já foi conferida, cada linha traz também
+    o CT-e e a diferença — é o que permite bater o relatório deles com o nosso
+    sem conferir nota a nota na mão.
+    """
+    db = get_service_db()
+
+    pedidos = []
+    for off in range(0, 40000, 1000):
+        b = db.table("pedidos").select(
+            "numero_pedido, numero_nf, valor_frete, valor_nf, tipo_frete, status, "
+            "transportadora_id, cliente_id, local_entrega, data_faturamento, criado_em"
+        ).limit(1000).offset(off).execute().data
+        pedidos += b
+        if len(b) < 1000:
+            break
+    transp = {t["id"]: t.get("nome") for t in
+              db.table("transportadoras").select("id, nome").limit(500).execute().data}
+    clientes = {}
+    for off in range(0, 40000, 1000):
+        b = db.table("clientes").select("id, codigo, nome").limit(1000).offset(off).execute().data
+        clientes.update({c["id"]: c for c in b})
+        if len(b) < 1000:
+            break
+
+    def _quando(p) -> str:
+        for k in ("data_faturamento", "criado_em"):
+            v = str(p.get(k) or "")[:10]
+            if v:
+                return v
+        return ""
+
+    # ── O que a transportadora já faturou, quando a conferência foi feita ──────
+    # Deduplicado pela chave do CT-e: o mesmo pacote foi carregado três vezes em
+    # agosto, e somar os três triplicava a fatura.
+    ctes_por_ov, ctes_por_nf = {}, {}
+    try:
+        vistos = set()
+        for c in db.table("frete_conferencia_ctes").select(
+                "numero, chave, valor, emissao, ov, notas").limit(5000).execute().data:
+            chave = c.get("chave") or c.get("numero")
+            if not chave or chave in vistos:
+                continue
+            vistos.add(chave)
+            if c.get("ov"):
+                ctes_por_ov.setdefault(str(c["ov"]).strip().upper(), []).append(c)
+            for nf in _numeros_de_nf(c.get("notas")):
+                ctes_por_nf.setdefault(nf, []).append(c)
+    except Exception as exc:
+        print("CT-es nao carregados no relatorio a pagar: %s" % str(exc)[:120])
+
+    A_PAGAR = ("CIF_SEM_VALOR", "CIF_COM_VALOR")
+    alvo = (transportadora or "").strip().upper()
+    linhas, por_transp = [], {}
+
+    for p in pedidos:
+        if p.get("status") == "CANCELADO":
+            continue
+        if (p.get("tipo_frete") or "") not in A_PAGAR:
+            continue
+        dia = _quando(p)
+        if not dia or dia < de or dia > ate:
+            continue
+        nome = transp.get(p.get("transportadora_id")) or ""
+        if alvo and alvo not in nome.upper():
+            continue
+
+        ov = str(p.get("numero_pedido") or "").strip().upper()
+        nfs = _numeros_de_nf(p.get("numero_nf"))
+        achados = list(ctes_por_ov.get(ov, []))
+        for nf in nfs:
+            for c in ctes_por_nf.get(nf, []):
+                if c not in achados:
+                    achados.append(c)
+        cobrado = round(sum(float(c.get("valor") or 0) for c in achados), 2) if achados else None
+        nosso = round(float(p.get("valor_frete") or 0), 2)
+        cli = clientes.get(p.get("cliente_id")) or {}
+
+        linhas.append({
+            "data": dia,
+            "transportadora": nome or "(sem transportadora)",
+            "ov": p.get("numero_pedido"),
+            "nf": p.get("numero_nf"),
+            "cliente": cli.get("nome"),
+            "cliente_codigo": cli.get("codigo"),
+            "local_entrega": p.get("local_entrega"),
+            "tipo_frete": p.get("tipo_frete"),
+            "valor_nf": round(float(p.get("valor_nf") or 0), 2),
+            "nosso": nosso,
+            "cte": ", ".join(str(c.get("numero")) for c in achados) or None,
+            "cobrado": cobrado,
+            "diferenca": None if cobrado is None else round(cobrado - nosso, 2),
+        })
+
+        k = nome or "(sem transportadora)"
+        t = por_transp.setdefault(k, {
+            "transportadora": k, "notas": 0,
+            "cif_sem_valor": 0.0, "cif_com_valor": 0.0, "a_pagar": 0.0,
+            "cobrado": 0.0, "com_cte": 0, "sem_cte": 0,
+        })
+        t["notas"] += 1
+        t["a_pagar"] += nosso
+        if p["tipo_frete"] == "CIF_SEM_VALOR":
+            t["cif_sem_valor"] += nosso
+        else:
+            t["cif_com_valor"] += nosso
+        if cobrado is None:
+            t["sem_cte"] += 1
+        else:
+            t["com_cte"] += 1
+            t["cobrado"] += cobrado
+
+    for t in por_transp.values():
+        for c in ("cif_sem_valor", "cif_com_valor", "a_pagar", "cobrado"):
+            t[c] = round(t[c], 2)
+        # A diferença só vale sobre as notas que TÊM CT-e: comparar o total
+        # faturado com o total previsto do mês inteiro mistura o que ainda nem
+        # foi cobrado, e foi assim que a RR pareceu R$ 6 mil mais cara.
+        t["diferenca_no_conferido"] = round(
+            t["cobrado"] - sum(l["nosso"] for l in linhas
+                               if l["transportadora"] == t["transportadora"]
+                               and l["cobrado"] is not None), 2)
+
+    linhas.sort(key=lambda l: (l["transportadora"], l["data"], str(l["ov"])))
+    ordem = sorted(por_transp.values(), key=lambda t: -t["a_pagar"])
+    return {
+        "de": de, "ate": ate,
+        "transportadoras": ordem,
+        "linhas": linhas,
+        "total_a_pagar": round(sum(t["a_pagar"] for t in ordem), 2),
+        "total_cobrado": round(sum(t["cobrado"] for t in ordem), 2),
+        "notas": len(linhas),
+    }
+
 def definir_transportadora(numero_pedido: str, transportadora_id: str,
                            usuario: Optional[UsuarioOut] = None) -> dict:
     """Diz qual transportadora levou um pedido que estava sem.
