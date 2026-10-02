@@ -20,7 +20,7 @@
  * deles de R$ 8.304,20). A soma fechar não quer dizer que está certo, e é por
  * isso que a tela mostra os cinco e não só o total.
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle, Check, FileText, Loader2, MessageSquare, Truck, Upload, X,
@@ -611,17 +611,34 @@ export default function ConferenciaFrete() {
  *  O CSV existe porque a conferência real acontece no Excel, ao lado da
  *  planilha que a transportadora manda. */
 function APagar({ onAbrirOv }: { onAbrirOv: (ovOuId: string) => void }) {
-  // 30 dias, e nao "do dia 1o ate hoje": no dia 2 do mes aquele recorte mostrava
-  // dois dias e dava a impressao de que uma transportadora inteira tinha sumido.
+  // Mes e quinzena, nao duas datas soltas: a fatura da transportadora fecha por
+  // quinzena e e assim que ela e paga. Datas livres obrigavam a operadora a
+  // lembrar o dia de corte toda vez — e no dia 2 do mes o padrao antigo
+  // mostrava dois dias, fazendo uma transportadora inteira parecer sumida.
   const hoje = new Date()
-  const trintaDias = new Date(hoje.getTime() - 30 * 864e5)
-  const iso = (d: Date) => d.toISOString().slice(0, 10)
-  const [de, setDe] = useState(iso(trintaDias))
-  const [ate, setAte] = useState(iso(hoje))
+  const mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`
+  const [mes, setMes] = useState(mesAtual)
+  const [quinzena, setQuinzena] = useState<'mes' | '1' | '2'>('mes')
+
+  const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+  // 18 meses para tras: cobre a conferencia atrasada sem virar uma lista enorme.
+  const opcoesMes = Array.from({ length: 18 }, (_, i) => {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1)
+    const v = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    return { valor: v, label: `${MESES[d.getMonth()]}/${d.getFullYear()}` }
+  })
+
+  const [ano, mm] = mes.split('-').map(Number)
+  const ultimoDia = new Date(ano, mm, 0).getDate()
+  const de = quinzena === '2' ? `${mes}-16` : `${mes}-01`
+  const ate = quinzena === '1' ? `${mes}-15` : `${mes}-${String(ultimoDia).padStart(2, '0')}`
   const [transp, setTransp] = useState('')
   // Clicar num numero nao abre outra tela: ele RECORTA a lista de baixo, que
   // e de onde aquele numero saiu. O caminho do total ate a nota fica visivel.
   const [foco, setFoco] = useState<{ transportadora: string; tipo?: string } | null>(null)
+
+  useEffect(() => { setFoco(null) }, [mes, quinzena, transp])
 
   const { data, isFetching } = useQuery<any>({
     queryKey: ['frete-a-pagar', de, ate, transp],
@@ -651,7 +668,8 @@ function APagar({ onAbrirOv }: { onAbrirOv: (ovOuId: string) => void }) {
     const url = URL.createObjectURL(new Blob(['﻿' + txt], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url
-    a.download = `frete-a-pagar_${de}_a_${ate}${transp ? '_' + transp : ''}.csv`
+    const sufixo = quinzena === 'mes' ? 'mes' : `${quinzena}a-quinzena`
+    a.download = `frete-a-pagar_${mes}_${sufixo}${transp ? '_' + transp : ''}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -667,14 +685,24 @@ function APagar({ onAbrirOv }: { onAbrirOv: (ovOuId: string) => void }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-4">
         <div>
-          <label className="block text-xs text-gray-500">De</label>
-          <input type="date" value={de} onChange={e => setDe(e.target.value)}
-            className="mt-0.5 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+          <label className="block text-xs text-gray-500">Mês</label>
+          <select value={mes} onChange={e => setMes(e.target.value)}
+            className="mt-0.5 rounded-lg border border-gray-200 px-3 py-2 text-sm capitalize">
+            {opcoesMes.map(o => <option key={o.valor} value={o.valor}>{o.label}</option>)}
+          </select>
         </div>
         <div>
-          <label className="block text-xs text-gray-500">Até</label>
-          <input type="date" value={ate} onChange={e => setAte(e.target.value)}
-            className="mt-0.5 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+          <label className="block text-xs text-gray-500">Quinzena</label>
+          <div className="mt-0.5 flex rounded-lg border border-gray-200 p-0.5">
+            {([['mes', 'Mês inteiro'], ['1', '1ª (1–15)'], ['2', `2ª (16–${ultimoDia})`]] as const)
+              .map(([v, label]) => (
+                <button key={v} onClick={() => setQuinzena(v)}
+                  className={`rounded-md px-2.5 py-1.5 text-sm font-medium transition ${
+                    quinzena === v ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                  {label}
+                </button>
+              ))}
+          </div>
         </div>
         <div>
           <label className="block text-xs text-gray-500">Transportadora</label>
