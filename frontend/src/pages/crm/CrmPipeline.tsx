@@ -1013,7 +1013,19 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
           {/* Coluna esquerda: itens + atividades */}
           <div className="p-5 space-y-4">
             <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5"><Package size={15} /> Itens</h3>
+              {/* O botão fica no título da seção, e não só no "Editar" lá em cima:
+                  quem olha a lista e vê quantidade errada procura o ajuste AQUI.
+                  Com o item na tela e nenhum botão ao lado, a leitura é que itens
+                  lançados não se mexem mais. */}
+              <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
+                <Package size={15} /> Itens
+                {(o.itens || []).length > 0 && (
+                  <button onClick={() => setEditar(true)}
+                    className="ml-auto flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline">
+                    <Pencil size={12} /> Alterar itens e quantidades
+                  </button>
+                )}
+              </h3>
               {(o.itens || []).length === 0 ? (
                 <div className="text-xs text-gray-400 bg-gray-50 rounded-lg p-2.5">
                   Nenhum item ainda. A proposta é gerada a partir deles — clique em{' '}
@@ -1029,6 +1041,16 @@ function ModalDetalheOportunidade({ id, onClose, onChanged }: { id: string; onCl
                     </div>
                   ))}
                 </div>
+              )}
+              {/* A proposta é uma FOTO dos itens no momento em que foi gerada —
+                  mudar aqui depois não a reescreve. Dizer isso evita o pior
+                  caminho: corrigir o item, mandar a proposta velha e descobrir
+                  na NF. */}
+              {(o.itens || []).length > 0 && (
+                <p className="mt-1.5 text-[11px] text-gray-400">
+                  Alterar aqui não muda uma proposta já gerada — para isso use
+                  <strong> Editar</strong> (ou <strong>Revisar</strong>, se já enviada) no bloco Propostas.
+                </p>
               )}
             </div>
             <div>
