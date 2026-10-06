@@ -364,14 +364,22 @@ export function NovoPedido() {
             <label className="text-sm font-medium text-gray-700">Tipo de Operação *</label>
             <select value={form.tipo_operacao} onChange={e => setForm({...form, tipo_operacao: e.target.value})}
               className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.tipo_operacao ? '' : 'border-amber-400 text-gray-400'}`}>
-              {/* Só as duas naturezas que operações de vendas lança por aqui.
-                  Comunicado de uso é lançado no módulo de Licitações, e
-                  bonificação/amostra/consignado saíram de uso — os registros
-                  antigos continuam válidos, só não se cria mais por aqui. */}
+              {/* Comunicado de uso é lançado no módulo de Licitações; amostra e
+                  consignado seguem fora daqui. Doação voltou a pedido do Tassio:
+                  ela sai com nota e passa pela expedição como qualquer OV, só
+                  não é faturamento — não entra na meta nem em "Vendas". */}
               <option value="" disabled>Selecione o tipo de operação…</option>
               <option value="VENDA_NORMAL">Venda normal</option>
               <option value="EXPORTACAO">Exportação</option>
+              <option value="BONIFICACAO_DOACAO">Bonificação / Doação</option>
             </select>
+            {form.tipo_operacao === 'BONIFICACAO_DOACAO' && (
+              <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900">
+                <b>Doação não é faturamento</b> — fica fora da meta e do relatório de Vendas.
+                Mas a nota sai <b>com valor</b>: preencha o preço unitário dos itens como numa venda.
+                A última doação registrada saiu com R$ 0,00 no app e R$ 1.189,68 na NF do D365.
+              </div>
+            )}
           </div>
 
 
