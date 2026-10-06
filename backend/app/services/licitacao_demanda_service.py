@@ -621,6 +621,13 @@ def criar_demanda(payload: DemandaCreate) -> dict:
             # onde ela está para a pessoa ir resolver em vez de recriar.
             dup = [d for d in candidatas
                    if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) not in ETAPAS_FINAIS]
+            if dup and getattr(payload, "permitir_duplicada", False):
+                # A pessoa marcou na tela que já viu a demanda existente e quer
+                # outra assim mesmo. Quem está na frente do pedido sabe coisas
+                # que o banco não sabe — que a anterior nasceu com o item errado,
+                # que a NE veio em duas partes. Barrar aqui só empurra o trabalho
+                # para fora do app.
+                dup = []
             if dup:
                 cli = (dup[0].get("clientes") or {}).get("nome") or "cliente não informado"
                 etapa = _ETAPA_LEGADA.get(dup[0].get("etapa"), dup[0].get("etapa")) or "?"

@@ -2260,6 +2260,8 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
         numero_nf=extra.get("numero_nf"),
         data_procedimento=extra.get("data_procedimento"),
         notas=extra.get("notas") or [],
+        # Veio marcado na tela: ela viu a demanda que já existe e quer outra.
+        permitir_duplicada=bool(extra.get("permitir_segunda")),
     )
     demanda = licitacao_demanda_service.criar_demanda(payload)
 

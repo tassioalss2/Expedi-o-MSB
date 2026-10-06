@@ -681,6 +681,12 @@ class DemandaCreate(BaseModel):
     # As notas da AF. `numero_nf` acima continua aceito (uma nota só) para não
     # quebrar quem já chama a API assim; o serviço converte para uma nota.
     notas: list[NotaComunicado] = []
+    # Segunda demanda do MESMO número, de propósito. O padrão continua barrando:
+    # isto só vem true quando a pessoa marcou na tela que sabe que já existe uma
+    # em andamento e quer outra mesmo assim (NE entregue em partes, demanda
+    # anterior lançada errada). A trava da NF não é afetada — nota fiscal
+    # continua não saindo duas vezes.
+    permitir_duplicada: bool = False
 
 
 class DemandaUpdate(BaseModel):

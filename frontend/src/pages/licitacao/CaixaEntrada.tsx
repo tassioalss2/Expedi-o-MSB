@@ -1964,6 +1964,11 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   // Gerar a OV aqui mesmo. Antes era: criar a demanda, sair da caixa de
   // entrada, achar o card no painel de licitacao e concluir de novo — tres
   // telas para um ato so, e o numero da OV ja esta na mao de quem tria.
+  // Esta carta já virou demanda uma vez. Não é motivo para impedir — NE entregue
+  // em partes é rotina, e demanda lançada com item errado se resolve lançando a
+  // certa — mas é motivo para a pessoa confirmar que viu.
+  const jaTemDemanda = !!c.demanda_id
+  const [confirmaSegunda, setConfirmaSegunda] = useState(false)
   const [gerarOv, setGerarOv] = useState(false)
   const [ovNumero, setOvNumero] = useState('')
   const [ovCondPag, setOvCondPag] = useState('')
@@ -2033,10 +2038,13 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   if (gerarOv && comProduto.some(i => (numeroBR(i.valor) ?? 0) <= 0))
     falta.push('o preço unitário de todos os itens (a OV sairia sem valor)')
   if (tipo === 'AMOSTRA' && !prazo) falta.push('o prazo de entrega/retirada')
+  if (jaTemDemanda && !confirmaSegunda) falta.push('confirmar que já existe uma demanda deste caso')
 
   function gerar() {
     onGerar({
       tipo_operacao: tipo,
+      // Sem isto o servidor recusa a segunda — e com razão, no caso normal.
+      permitir_segunda: jaTemDemanda || undefined,
       numero: numero.trim() || undefined,
       numero_pregao: pregao.trim() || undefined,
       prazo: prazo || undefined,
@@ -2078,6 +2086,26 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
         </div>
 
         <div className="space-y-4 px-5 py-4">
+          {jaTemDemanda && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
+              <p className="text-xs font-semibold text-amber-900">
+                Este caso já gerou uma demanda
+                {c.demanda ? ` — está em ${(ETAPA_CURTA[c.demanda.etapa] || c.demanda.etapa).toLowerCase()}` : ''}.
+              </p>
+              <p className="mt-1 text-[11px] text-amber-900">
+                Se o que falta é <strong>corrigir</strong> aquela demanda (item, quantidade ou cliente
+                errados), prefira abrir e corrigir: <a href={`/licitacoes?demanda=${c.demanda_id}`}
+                  className="underline">abrir a demanda existente</a>. Gerar outra cria um segundo
+                card do mesmo empenho, e alguém vai ter que cancelar um dos dois.
+              </p>
+              <label className="mt-2 flex items-start gap-2 text-[11px] font-medium text-amber-900">
+                <input type="checkbox" checked={confirmaSegunda} className="mt-0.5"
+                  onChange={e => setConfirmaSegunda(e.target.checked)} />
+                Vi a demanda que já existe e quero gerar outra mesmo assim
+                (segunda parte da NE, ou a anterior nasceu errada).
+              </label>
+            </div>
+          )}
           {!c.cliente_id && (
             <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
               <div className="text-xs font-medium text-amber-900">
@@ -3154,6 +3182,13 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onConfirmarEn
             })()}
           </div>
         </div>
+        {/* O botão fica SEMPRE, mesmo com demanda gerada. Antes ele sumia e
+            virava só o chip, e a leitura de quem estava na tela era "o botão
+            sumiu" — não "já existe". Quando a demanda anterior nasceu errada
+            (item trocado, cliente trocado), tirar o botão tirava justamente de
+            quem está na frente do pedido a chance de resolver. O modal avisa
+            que já existe e cobra uma confirmação antes de criar a segunda. */}
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
         {c.demanda_id ? (
           /* Ja virou trabalho: o card mostra ONDE esta, e nao so que existe.
              E esta informacao — "isto ja e a OV016058, NF enviada" — que faz
@@ -3178,12 +3213,15 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onConfirmarEn
               <span className="mt-0.5 block text-[11px]">NF {c.demanda.numero_nf}</span>
             )}
           </a>
-        ) : (
-          <button onClick={onPromover} disabled={salvando}
-            className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50">
-            Gerar demanda
-          </button>
-        )}
+        ) : null}
+        <button onClick={onPromover} disabled={salvando}
+          className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${
+            c.demanda_id
+              ? 'border border-gray-300 text-gray-600 hover:bg-gray-50'
+              : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+          {c.demanda_id ? 'Gerar outra demanda' : 'Gerar demanda'}
+        </button>
+        </div>
       </div>
 
       {/* Nota citada no e-mail que EXISTE no nosso sistema. É indício de que o
