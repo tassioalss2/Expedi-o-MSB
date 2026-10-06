@@ -608,13 +608,28 @@ def criar_demanda(payload: DemandaCreate) -> dict:
                            f"Se este é outro paciente, confira o nome e o prontuário.",
                 )
         else:
-            dup = candidatas
+            # Só o que está EM ANDAMENTO barra — como no comunicado de uso.
+            #
+            # Antes barrava qualquer demanda ativa com o mesmo número, inclusive
+            # já concluída, e isso tornava impossível a segunda parte de uma NE
+            # parcial: entregue a primeira, a mesma NE nunca mais podia ser
+            # trabalhada. Aconteceu com a 2026NE002971, que foi entregue em duas
+            # etapas (73341 em agosto, 73343 em outubro).
+            #
+            # O que protege contra processar duas vezes continua de pé: uma
+            # demanda ainda aberta com o mesmo número bloqueia, e a mensagem diz
+            # onde ela está para a pessoa ir resolver em vez de recriar.
+            dup = [d for d in candidatas
+                   if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) not in ETAPAS_FINAIS]
             if dup:
                 cli = (dup[0].get("clientes") or {}).get("nome") or "cliente não informado"
+                etapa = _ETAPA_LEGADA.get(dup[0].get("etapa"), dup[0].get("etapa")) or "?"
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Já existe uma demanda em andamento com o número '{num}' ({cli}). "
-                           f"Confira no painel/histórico antes de criar — risco de processar duas vezes.",
+                    detail=f"A demanda '{num}' ({cli}) já existe e está em "
+                           f"'{etapa.replace('_', ' ').lower()}'. Conclua aquela em vez de criar "
+                           f"outra — se esta é a segunda parte da mesma NE, ela só pode ser "
+                           f"lançada depois que a primeira for concluída.",
                 )
 
     # A NF é a trava de verdade: a mesma nota não sai duas vezes. Barrar aqui, e
