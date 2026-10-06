@@ -9,6 +9,7 @@ import {
 import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { ClienteAutocomplete } from '../NovoPedido'
+import { ModalCotacao } from './CrmCotacoes'
 import { ItensPedido, type ItemLinha } from '../../components/ItensPedido'
 import { LocalEntregaInput } from '../../components/LocalEntregaInput'
 import { LINHA_DO_CANAL } from '../../lib/statusConfig'
@@ -749,6 +750,9 @@ function PainelPropostas({ oportunidadeId, onChanged }: { oportunidadeId: string
     onError: (e: any) => toast.error(msgErro(e, 'Erro ao mudar status'), { duration: 5000 }),
   })
 
+  // A proposta em edicao. Fica aqui e nao no pai: so esta lista a abre.
+  const [editando, setEditando] = useState<string | null>(null)
+
   if (propostas.length === 0) return null
 
   const alguremEnviada = propostas.some(p => p.enviada_em || ['ENVIADA', 'ACEITA'].includes(p.status))
@@ -767,6 +771,17 @@ function PainelPropostas({ oportunidadeId, onChanged }: { oportunidadeId: string
           <strong>Marcar enviada</strong> abaixo para o histórico ficar correto.
         </p>
       )}
+      {editando && (
+        <ModalCotacao cotacao={{ id: editando }}
+          onClose={() => setEditando(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ['crm-cotacoes-opp', oportunidadeId] })
+            qc.invalidateQueries({ queryKey: ['crm-cotacoes'] })
+            onChanged()
+          }}
+          onRevisada={(novaId: string) => { setEditando(novaId) }} />
+      )}
+
       <div className="space-y-1.5">
         {propostas.map(p => {
           const enviada = p.enviada_em || ['ENVIADA', 'ACEITA'].includes(p.status)
@@ -776,8 +791,16 @@ function PainelPropostas({ oportunidadeId, onChanged }: { oportunidadeId: string
               <span className="text-gray-600 tabular-nums">{fmtBRL(p.valor_total)}</span>
               {p.validade && <span className={`text-[11px] ${prazoCor(p.validade)}`}>val. {fmtData(p.validade)}</span>}
               <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 ml-auto">{p.status}</span>
-              <button onClick={() => window.open(`/crm/cotacao/${p.id}/imprimir`, '_blank')}
+              {/* Editar aqui, e nao so dentro de "Abrir": a proposta nasce desta
+                  tela e e aqui que se descobre que o item esta errado. Ir ate a
+                  impressao para achar o botao e um caminho que ninguem adivinha.
+                  Proposta ja enviada abre como REVISAO — o editor cuida disso. */}
+              <button onClick={() => setEditando(p.id)}
                 className="flex items-center gap-1 text-xs text-blue-600 hover:underline whitespace-nowrap">
+                <Pencil size={12} /> {enviada ? 'Revisar' : 'Editar'}
+              </button>
+              <button onClick={() => window.open(`/crm/cotacao/${p.id}/imprimir`, '_blank')}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600 hover:underline whitespace-nowrap">
                 <Printer size={12} /> Abrir
               </button>
               {!enviada && (
