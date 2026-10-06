@@ -3161,9 +3161,13 @@ function CardEntrada({ c, onTriar, onNota, onTratativa, onEstoque, onConfirmarEn
              todo este processo. */
           <a href={`/licitacoes?demanda=${c.demanda_id}`}
             className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-right text-xs text-emerald-800 hover:bg-emerald-100">
+            {/* "demanda" escrito por extenso: só a etapa ("recebida") lia-se como
+                selo de status do e-mail, e quem procurava o botão Gerar demanda
+                concluía que ele tinha sumido. Ele some porque JÁ FOI gerada —
+                este chip é o caminho até ela. */}
             <span className="flex items-center gap-1 font-medium">
               <Link2 className="h-3.5 w-3.5" />
-              {c.demanda ? ETAPA_CURTA[c.demanda.etapa] || c.demanda.etapa.toLowerCase() : 'ver demanda'}
+              demanda{c.demanda ? ` · ${ETAPA_CURTA[c.demanda.etapa] || c.demanda.etapa.toLowerCase()}` : ''}
             </span>
             {c.demanda?.ovs?.length ? (
               <span className="mt-0.5 block font-mono text-[11px]">
