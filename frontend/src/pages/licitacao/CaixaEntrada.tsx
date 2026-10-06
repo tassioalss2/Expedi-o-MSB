@@ -23,6 +23,7 @@ import toast from 'react-hot-toast'
 import api from '../../lib/api'
 import { msgErro } from '../../lib/crm'
 import { ClienteAutocomplete } from '../NovoPedido'
+import { ModalConcluir } from '../Licitacoes'
 
 const fmtBRL = (v: number) => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 /** Dia e mês. Aceita tanto instante ("...T14:05:00-03:00") quanto data pura.
@@ -807,12 +808,114 @@ function Tile({ titulo, valor, sub, alerta }: {
   )
 }
 
+/** As demandas de uma etapa, para resolver sem sair de Solicitações.
+ *
+ *  O acompanhamento mostrava as etapas como barras: dava para ver que havia 3
+ *  demandas em "recebido" e não dava para abrir nenhuma. Quem precisava gerar a
+ *  OV ia para o painel de Licitações procurar o card — outra tela, outra busca,
+ *  e é a mesma pessoa que acabou de ver o número aqui.
+ *
+ *  Reaproveita o MESMO modal de conclusão do painel: a OV sai pelo caminho de
+ *  sempre, com as mesmas travas. Nada aqui é uma segunda implementação. */
+function DemandasDaEtapa({ etapa, onFechar }: { etapa: string; onFechar: () => void }) {
+  const qc = useQueryClient()
+  const [concluindo, setConcluindo] = useState<any>(null)
+
+  const { data = [], isLoading } = useQuery<any[]>({
+    queryKey: ['demandas'],
+    queryFn: () => api.get('/licitacoes/demandas').then(r => r.data),
+  })
+
+  const daEtapa = (data || []).filter((d: any) => (d.etapa || 'RECEBIDO') === etapa)
+  const rotulo = etapa.replace(/_/g, ' ').toLowerCase()
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8"
+      onClick={onFechar}>
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b px-5 py-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">
+              Demandas em <span className="capitalize">{rotulo}</span>
+            </h2>
+            <p className="text-xs text-gray-500">
+              {daEtapa.length} demanda(s) — dá para concluir aqui mesmo
+            </p>
+          </div>
+          <button onClick={onFechar} className="rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50">
+            Fechar
+          </button>
+        </div>
+
+        <div className="max-h-[70vh] overflow-y-auto p-4">
+          {isLoading && <p className="py-8 text-center text-sm text-gray-400">Carregando…</p>}
+          {!isLoading && daEtapa.length === 0 && (
+            <p className="py-8 text-center text-sm text-gray-400">Nenhuma demanda nesta etapa.</p>
+          )}
+          <div className="space-y-2">
+            {daEtapa.map((d: any) => {
+              const total = (d.itens || []).reduce(
+                (s: number, i: any) => s + (Number(i.qtd) || 0) * (Number(i.valor) || 0), 0)
+              return (
+                <div key={d.id} className="rounded-xl border border-gray-200 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-sm font-medium text-gray-800">
+                      {d.numero || 'sem número'}
+                    </span>
+                    <span className="text-xs text-gray-500">{d.tipo_operacao}</span>
+                    {d.cliente_nome && (
+                      <span className="truncate text-xs text-gray-500">· {d.cliente_nome}</span>
+                    )}
+                    <span className="ml-auto text-sm font-semibold tabular-nums text-gray-800">
+                      {total > 0
+                        ? `R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                        : <span className="text-amber-700">sem valor</span>}
+                    </span>
+                    <button onClick={() => setConcluindo(d)}
+                      className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500">
+                      Concluir
+                    </button>
+                  </div>
+                  {(d.itens || []).length > 0 && (
+                    <div className="mt-2 space-y-0.5">
+                      {(d.itens || []).map((i: any, n: number) => (
+                        <p key={n} className="text-xs text-gray-500">
+                          <span className="font-mono text-gray-700">{i.codigo}</span>
+                          {' · '}{Number(i.qtd) || 0} un
+                          {Number(i.valor) > 0
+                            ? ` × R$ ${Number(i.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                            : ' · sem preço'}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+
+      {concluindo && (
+        <ModalConcluir demanda={concluindo} onClose={() => setConcluindo(null)}
+          onSaved={() => {
+            setConcluindo(null)
+            qc.invalidateQueries({ queryKey: ['demandas'] })
+            qc.invalidateQueries({ queryKey: ['licitacao-painel'] })
+          }} />
+      )}
+    </div>
+  )
+}
+
 export function AbaAcompanhamento() {
   // Qual número o usuário abriu. null = nenhum.
   const [aberto, setAberto] = useState<string | null>(null)
   const [diaAberto, setDiaAberto] = useState<{ dia: string; tipo: string | null } | null>(null)
   // `undefined` = fechado; `null` = todos os tipos; string = um tipo.
   const [faturado, setFaturado] = useState<string | null | undefined>(undefined)
+  // Qual etapa a pessoa abriu para resolver sem sair daqui.
+  const [etapaAberta, setEtapaAberta] = useState<string | null>(null)
   const [params, setParams] = useSearchParams()
 
   /** Vai para a caixa de entrada já filtrada por tipo. As duas coisas viajam
@@ -1136,15 +1239,19 @@ export function AbaAcompanhamento() {
           <div className="mt-3 space-y-1.5">
             {etapas.length === 0 && <p className="text-sm text-gray-500">Nenhuma demanda ativa.</p>}
             {etapas.map(([etapa, n]) => (
-              <div key={etapa} className="flex items-center gap-2">
-                <span className="w-40 shrink-0 truncate text-xs text-gray-600">
+              <button key={etapa} onClick={() => n > 0 && setEtapaAberta(etapa)}
+                disabled={n === 0}
+                title={n > 0 ? 'Ver e concluir as demandas desta etapa' : undefined}
+                className={`flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left transition ${
+                  n > 0 ? 'hover:bg-gray-50' : 'cursor-default'}`}>
+                <span className={`w-40 shrink-0 truncate text-xs ${n > 0 ? 'text-blue-700' : 'text-gray-600'}`}>
                   {etapa.replace(/_/g, ' ').toLowerCase()}
                 </span>
                 <div className="h-4 flex-1 rounded-sm bg-gray-100">
                   <div className="h-4 rounded-sm bg-blue-500" style={{ width: `${(n / maxEtapa) * 100}%` }} />
                 </div>
                 <span className="w-8 text-right text-xs font-semibold tabular-nums text-gray-900">{n}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -1372,6 +1479,10 @@ export function AbaAcompanhamento() {
         <DetalheNumero metrica={aberto} onFechar={() => setAberto(null)}
           onAbrirCaso={irParaCaso} />
       )}
+      {etapaAberta && (
+        <DemandasDaEtapa etapa={etapaAberta} onFechar={() => setEtapaAberta(null)} />
+      )}
+
       {faturado !== undefined && (
         <DetalheFaturado tipo={faturado} onFechar={() => setFaturado(undefined)} />
       )}

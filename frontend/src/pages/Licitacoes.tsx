@@ -1512,7 +1512,7 @@ function ModalConcluirManual({ demanda, onClose, onSaved }: { demanda: any; onCl
 }
 
 // ── Modal: Processar (gera contrato ou comunicado) ───────────────────────────────
-function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
+export function ModalConcluir({ demanda, onClose, onSaved }: { demanda: any; onClose: () => void; onSaved: () => void }) {
   const cfg = TIPO_MAP[demanda.tipo_operacao] || TIPOS[0]
   const hoje = hojeLocal()
   const tipo: TipoKey = demanda.tipo_operacao
