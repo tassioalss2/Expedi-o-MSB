@@ -301,6 +301,19 @@ class EntradaTriar(BaseModel):
     estoque_itens: Optional[list] = None
 
 
+class OvNaPromocao(BaseModel):
+    """A OV do D365 informada já na triagem.
+
+    Só o que a conclusão precisa para gerar a entrega: o resto (itens, preços,
+    cliente) sai da própria demanda que acaba de nascer.
+    """
+    numero_pedido: str
+    condicao_pagamento: str
+    tipo_frete: Optional[str] = "CIF_SEM_VALOR"
+    local_entrega: Optional[str] = None
+    data_prevista_entrega: Optional[date] = None
+
+
 class ItemPromovido(DemandaItem):
     """O item com o produto escolhido na tela E o texto que o originou.
 
@@ -340,6 +353,10 @@ class EntradaPromover(BaseModel):
     # Segunda demanda para a mesma NE só quando alguém pede de propósito: duas
     # demandas para o mesmo empenho é o pedido duplicado que o processo evita.
     permitir_segunda: bool = False
+    # Com o número da OV já na mão, a demanda nasce e se conclui na mesma
+    # chamada: o caso vai direto para o kanban da expedição, sem parar no painel
+    # de licitação esperando alguém concluir.
+    ov: Optional[OvNaPromocao] = None
 
 
 class OrgaoMapear(BaseModel):

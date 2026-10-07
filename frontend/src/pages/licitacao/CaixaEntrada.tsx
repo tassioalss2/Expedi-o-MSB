@@ -3646,19 +3646,15 @@ export function AbaCaixaEntrada() {
 
   const promover = useMutation({
     mutationFn: async ({ chave, extra }: { chave: string; extra: any }) => {
-      // `_ov` nao e campo da demanda: e a instrucao de concluir em seguida.
-      const { _ov, ...payload } = extra || {}
+      // Uma chamada só. O servidor cria a demanda e já a conclui, então o caso
+      // nunca para no kanban da licitação: vai direto para a expedição. Antes
+      // eram duas chamadas daqui, e se a segunda falhasse o caso ficava parado
+      // lá esperando alguém concluir.
+      const { _ov, ...resto } = extra || {}
+      const payload = _ov ? { ...resto, ov: _ov } : resto
       const { data } = await api.post(
         `/licitacoes/entrada/grupo/promover?chave=${encodeURIComponent(chave)}`, payload)
-      if (!_ov) return { data, ov: null }
-      // Em duas chamadas de proposito: a OV sai pelo MESMO caminho de sempre
-      // (concluir a demanda), entao contrato, precos e vinculos se comportam
-      // igual. Se a segunda falhar, a demanda ficou criada e aparece no painel
-      // para concluir la — nao se perde o trabalho da triagem.
-      const id = data?.demanda?.id
-      if (!id) throw new Error('A demanda foi criada, mas sem id para gerar a OV.')
-      const r = await api.post(`/licitacoes/demandas/${id}/concluir`, { ..._ov, gerar_ov: true })
-      return { data, ov: r.data }
+      return { data, ov: data?.ov ? { numero_pedido: data.ov } : null }
     },
     onSuccess: (r: any) => {
       // Dizer o que NAO aconteceu, e nao so o que aconteceu: "demanda criada"

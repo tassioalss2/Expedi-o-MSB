@@ -2291,6 +2291,38 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
     if escolhidos:
         _aprende_produto(escolhidos, base.get("contrato"), cliente_id, usuario)
 
+    # ── Atalho: a OV sai agora, na MESMA chamada ──────────────────────────────
+    # Quem tria com o número da OV na mão não deve passar pelo painel de
+    # licitação: o trabalho é da expedição a partir daqui. Antes isto eram duas
+    # chamadas da tela (promover e depois concluir), e entre as duas existia um
+    # instante — e, se a segunda falhasse, um estado permanente — em que o caso
+    # ficava parado no kanban da licitação esperando alguém concluir.
+    #
+    # Aqui a conclusão acontece pelo MESMO caminho de sempre
+    # (concluir_demanda), então contrato, preços e vínculos se comportam igual.
+    # Se ela falhar, a demanda criada continua existindo e a mensagem diz o que
+    # faltou — o trabalho da triagem não se perde.
+    ov = extra.get("ov") or {}
+    if ov and tipo in ("VENDA_DIRETA", "CONSIGNACAO"):
+        from app.models.schemas import DemandaConcluir
+        concluir = DemandaConcluir(
+            numero_pedido=(ov.get("numero_pedido") or "").strip().upper() or None,
+            condicao_pagamento=ov.get("condicao_pagamento"),
+            tipo_frete=ov.get("tipo_frete") or "CIF_SEM_VALOR",
+            local_entrega=ov.get("local_entrega"),
+            data_prevista_entrega=ov.get("data_prevista_entrega") or payload.prazo,
+            numero=payload.numero,
+            numero_pregao=payload.numero_pregao,
+            gerar_ov=True,
+        )
+        gerada = licitacao_demanda_service.concluir_demanda(
+            demanda["id"], concluir, usuario)
+        # `gerado_ref` da demanda é o CONTRATO, não a OV — quem conclui uma venda
+        # direta cria os dois. Para a tela o que importa é o número da OV, que é
+        # o que a expedição vê no kanban.
+        return {"demanda": gerada, "emails_ligados": len(regs),
+                "ov": concluir.numero_pedido, "foi_direto_para_expedicao": True}
+
     return {"demanda": demanda, "emails_ligados": len(regs)}
 
 
