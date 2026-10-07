@@ -1950,7 +1950,12 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   onGerar: (extra: any) => void
   salvando: boolean
 }) {
-  const tipo = c.tipo || 'OUTRO'
+  // Escolhido aqui quando o motor nao classificou. Antes era const, e o aviso
+  // mandava "corrija no detalhe do caso": a janela cobrava uma informacao que
+  // ela mesma nao aceitava, e a pessoa tinha que fechar, achar o caso, abrir o
+  // detalhe, reclassificar com justificativa e voltar. O servidor sempre aceitou
+  // o tipo vindo da tela (extra.tipo_operacao) — faltava a tela perguntar.
+  const [tipo, setTipo] = useState(c.tipo || 'OUTRO')
   const doExig = (k: string) => c.exigencias_nf?.find(e => e.chave === k)?.valor || ''
   const eComunicado = tipo === 'COMUNICADO_USO'
 
@@ -2018,7 +2023,7 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   // A mensagem mandava "resolva o CNPJ na aba Órgãos" e parava aí. Agora o
   // campo está logo abaixo, nesta mesma janela — o aviso só diz que falta.
   if (!c.cliente_id) falta.push('o cliente')
-  if (tipo === 'OUTRO') falta.push('o tipo da operação — corrija no detalhe do caso')
+  if (tipo === 'OUTRO') falta.push('escolher o tipo da operação, logo acima')
   if (!numero.trim()) falta.push(eComunicado ? 'o número da AF' : 'a nota de empenho')
   if (eComunicado) {
     if (!paciente.trim()) falta.push('o nome do paciente')
@@ -2104,6 +2109,38 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
                 Vi a demanda que já existe e quero gerar outra mesmo assim
                 (segunda parte da NE, ou a anterior nasceu errada).
               </label>
+            </div>
+          )}
+          {/* O motor nao classificou este caso. Perguntar aqui, com o documento
+              aberto na tela, e onde a pessoa tem a informacao na mao. A troca
+              feita aqui NAO entra no placar do classificador — para isso, e para
+              deixar registrado o porque, existe o "corrigir o tipo" no detalhe
+              do caso, que pede justificativa. */}
+          {tipo === 'OUTRO' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+              <div className="text-xs font-medium text-amber-900">
+                Tipo da operação — o documento não deixou claro
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {['VENDA_DIRETA', 'CONSIGNACAO', 'COMUNICADO_USO', 'AMOSTRA'].map(t => (
+                  <button key={t} type="button" onClick={() => setTipo(t)}
+                    className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 hover:border-gray-400">
+                    {TIPO_LABEL[t]}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[11px] text-amber-900">
+                Nota de empenho é <strong>venda direta</strong>. Autorização de fornecimento de
+                material já consignado é <strong>comunicado de uso</strong>.
+              </p>
+            </div>
+          )}
+          {tipo !== 'OUTRO' && (c.tipo || 'OUTRO') === 'OUTRO' && (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+              <Check className="h-3.5 w-3.5 shrink-0" />
+              <span>Vai ser lançada como <strong>{TIPO_LABEL[tipo]}</strong>.</span>
+              <button type="button" onClick={() => setTipo('OUTRO')}
+                className="ml-auto font-medium underline">trocar</button>
             </div>
           )}
           {!c.cliente_id && (
