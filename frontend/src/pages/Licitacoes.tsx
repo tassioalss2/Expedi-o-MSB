@@ -149,8 +149,22 @@ function acaoDaEtapa(d: any): { kind: string; to?: string; label: string } | nul
     }
     return { kind: 'faturar', label: 'Concluir e faturar' }
   }
-  if (e === 'OV_GERADA') return { kind: 'frete', label: 'Cotar frete' }
-  if (e === 'COTACAO_FRETE') return { kind: 'enviarNf', label: 'Enviar NF' }
+  // Depois que a OV existe, o trabalho é da EXPEDIÇÃO — cotar frete e enviar NF
+  // acontecem no kanban dela, com o card da OV. Este painel tinha os mesmos dois
+  // botões, e isso criava dois lugares para a mesma etapa: dava para marcar
+  // "frete cotado" aqui sem que a logística soubesse, e vice-versa. Aqui o card
+  // passa a mostrar o status da OV e o caminho até ela.
+  //
+  // Vale só para quem gera OV. O comunicado de uso não passa por estas etapas:
+  // o material saiu meses antes, e a ação dele ("Concluir e faturar") está em
+  // PROCESSANDO, acima.
+  if (e === 'OV_GERADA') return null
+  // "Enviar NF" FICA. Não é logística: é mandar a nota ao órgão, ato da
+  // licitação, e é o que fecha o card. A coluna até aqui anda sozinha —
+  // etapaColuna espelha o status real da OV —, mas o fechamento ninguém mais
+  // dá: se este botão saísse, o card ficaria preso em "cotação de frete"
+  // depois de faturado, e o painel passaria a mentir o status.
+  if (e === 'COTACAO_FRETE') return { kind: 'enviarNf', label: 'Enviar NF ao órgão' }
   return null
 }
 // Card sem estoque? (na coluna de espera do PCP)
@@ -566,9 +580,13 @@ function CardDemanda({ d, tipo, onClick, onAcao, onGerarOv, onSemEstoque, duplic
         )}
         {d.ov_status && (
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            <span className="inline-flex items-center gap-1 text-[11px] bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5">
+            {/* Clicável: com as ações de frete/NF fora daqui, este é o caminho
+                até onde a etapa realmente anda. Abre a OV no kanban. */}
+            <a href={(d.ovs || []).length ? `/expedicao/${d.ovs[0].id}` : '/expedicao'}
+              onClick={e => e.stopPropagation()}
+              className="inline-flex items-center gap-1 text-[11px] bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5 hover:bg-indigo-100">
               🔗 {d.gerado_ref} · {ovStatusLabel(d.ov_status)}
-            </span>
+            </a>
             {temSaldoFollowup && (
               <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 rounded-full px-2 py-0.5">⚠️ saldo a faturar</span>
             )}
@@ -1290,10 +1308,18 @@ function ModalDetalheDemanda({ id, onClose, onChanged, onAcao, onGerarOv, onCota
           <div className="border border-gray-100 rounded-lg p-3 text-sm">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-gray-500 flex items-center gap-1"><Truck size={13} /> Frete cotado (CIF sem valor)</p>
-              {!concluida && (
+              {/* Com a OV criada, quem cota é a expedição, na tela da OV: dois
+                  lugares para a mesma cotação davam dois valores diferentes
+                  para o mesmo embarque. Sem OV ainda, cota aqui. */}
+              {!concluida && !(d.ovs || []).length && (
                 <button onClick={() => onCotarFrete(d)} className="text-xs text-blue-600 hover:underline">
                   {d.frete && (d.frete.transportadora_nome || d.frete.valor) ? 'Editar' : 'Cotar frete'}
                 </button>
+              )}
+              {!!(d.ovs || []).length && (
+                <a href={`/expedicao/${d.ovs[0].id}`} className="text-xs text-blue-600 hover:underline">
+                  cotar na {d.ovs[0].numero || 'OV'}
+                </a>
               )}
             </div>
             {d.frete && (d.frete.transportadora_nome || d.frete.valor)
