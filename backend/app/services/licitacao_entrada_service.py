@@ -2097,6 +2097,37 @@ def informar_produto(chave: str, descricao: str, produto_id: str,
     return {"produto": prod[0], "descricao": descricao}
 
 
+def ov_sugerida(chave: str) -> dict:
+    """Condição de pagamento, frete e local da ÚLTIMA OV deste cliente.
+
+    Para a janela de gerar demanda abrir com os campos da OV já preenchidos.
+    Não é palpite: é o que este mesmo órgão recebeu da última vez, e num
+    contrato público essas três coisas quase nunca mudam entre um empenho e o
+    seguinte. A pessoa confirma ou corrige — o que não dá é obrigar a redigitar
+    a cada empenho, porque é isso que faz o caminho até a expedição ser longo.
+    """
+    regs = _emails_do_grupo(chave, "cliente_id")
+    cliente_id = next((r.get("cliente_id") for r in regs if r.get("cliente_id")), None)
+    if not cliente_id:
+        return {}
+    db = get_service_db()
+    ult = db.table("pedidos").select(
+        "numero_pedido, condicao_pagamento, tipo_frete, local_entrega, criado_em"
+    ).eq("cliente_id", str(cliente_id)).neq("status", "CANCELADO")\
+        .order("criado_em", desc=True).limit(20).execute().data
+    for p in ult:
+        if (p.get("condicao_pagamento") or "").strip():
+            return {
+                "de_onde": p.get("numero_pedido"),
+                "condicao_pagamento": p.get("condicao_pagamento"),
+                "tipo_frete": p.get("tipo_frete"),
+                "local_entrega": p.get("local_entrega"),
+            }
+    return {"tipo_frete": (ult[0].get("tipo_frete") if ult else None),
+            "local_entrega": (ult[0].get("local_entrega") if ult else None),
+            "de_onde": (ult[0].get("numero_pedido") if ult else None)}
+
+
 def sugestoes_de_produto(chave: str) -> dict:
     """O de-para deste caso: descrição do órgão → produto já escolhido antes.
 

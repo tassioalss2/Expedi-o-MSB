@@ -527,6 +527,12 @@ def produto_sugerido(chave: str, _: UsuarioOut = Depends(get_current_user)):
     return licitacao_entrada_service.sugestoes_de_produto(chave)
 
 
+@router.get("/entrada/grupo/ov-sugerida")
+def ov_sugerida(chave: str, _: UsuarioOut = Depends(get_current_user)):
+    """Condição de pagamento, frete e local da última OV deste cliente."""
+    return licitacao_entrada_service.ov_sugerida(chave)
+
+
 @router.post("/entrada/grupo/promover")
 def promover_grupo(chave: str, payload: EntradaPromover,
                    usuario: UsuarioOut = Depends(get_current_user)):

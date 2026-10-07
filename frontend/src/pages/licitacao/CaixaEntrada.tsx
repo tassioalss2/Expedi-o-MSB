@@ -1974,10 +1974,32 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
   // certa — mas é motivo para a pessoa confirmar que viu.
   const jaTemDemanda = !!c.demanda_id
   const [confirmaSegunda, setConfirmaSegunda] = useState(false)
-  const [gerarOv, setGerarOv] = useState(false)
+  // Ligado por padrao na venda direta. O destino normal de uma NE e a expedicao,
+  // nao a fila da licitacao: deixar desmarcado fazia o caminho ser triar, sair,
+  // achar o card no painel e concluir — quatro telas para um ato so. Quem ainda
+  // nao tem o numero da OV desmarca.
+  const [gerarOv, setGerarOv] = useState((c.tipo || '') === 'VENDA_DIRETA')
   const [ovNumero, setOvNumero] = useState('')
   const [ovCondPag, setOvCondPag] = useState('')
   const [ovFrete, setOvFrete] = useState('CIF_SEM_VALOR')
+  const [ovLocal, setOvLocal] = useState('')
+
+  // Condição de pagamento, frete e local vêm da última OV deste órgão. Num
+  // contrato público essas três mudam muito pouco de um empenho para o
+  // seguinte, e redigitá-las a cada caso era metade do tempo da janela.
+  // Só preenche o que ainda está vazio: o que a pessoa já digitou manda.
+  const { data: sug } = useQuery<any>({
+    queryKey: ['ov-sugerida', c.chave],
+    queryFn: () => api.get('/licitacoes/entrada/grupo/ov-sugerida',
+      { params: { chave: c.chave } }).then(r => r.data),
+    enabled: !!c.cliente_id,
+  })
+  useEffect(() => {
+    if (!sug) return
+    if (sug.condicao_pagamento) setOvCondPag(v => v || sug.condicao_pagamento)
+    if (sug.tipo_frete) setOvFrete(v => (v === 'CIF_SEM_VALOR' ? sug.tipo_frete : v))
+    if (sug.local_entrega) setOvLocal(v => v || sug.local_entrega)
+  }, [sug])
   const [itens, setItens] = useState<any[]>(() => (c.itens || []).map(i => ({
     produto_id: null, codigo: null, descricao: null,
     qtd: i.qtd || 0, valor: i.valor_unitario || 0,
@@ -2068,6 +2090,7 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
         numero_pedido: ovNumero.trim().toUpperCase(),
         condicao_pagamento: ovCondPag.trim(),
         tipo_frete: ovFrete,
+        local_entrega: ovLocal.trim() || undefined,
         data_prevista_entrega: prazo || undefined,
       } : undefined,
     })
@@ -2283,11 +2306,13 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
                 <input type="checkbox" checked={gerarOv} className="mt-0.5"
                   onChange={e => setGerarOv(e.target.checked)} />
                 <span>
-                  <span className="text-sm font-semibold text-gray-800">Gerar a OV agora</span>
+                  <span className="text-sm font-semibold text-gray-800">
+                    Gerar a OV e mandar para a expedição
+                  </span>
                   <span className="block text-xs text-gray-500">
-                    Sem marcar, a demanda fica só no painel de licitação e a <strong>expedição não
-                    a enxerga</strong> — ela entra no kanban quando alguém concluir com o número
-                    da OV do D365. Marque se o número já estiver na sua mão.
+                    O caso vai direto para o kanban da expedição, sem parar na fila da licitação.
+                    Desmarque só se ainda não tiver o número da OV do D365 — aí ele fica no painel
+                    de licitação esperando alguém concluir.
                   </span>
                 </span>
               </label>
@@ -2311,6 +2336,19 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
                       <option value="FOB">FOB</option>
                     </select>
                   </Campo>
+                  <div className="sm:col-span-3">
+                    <Campo rotulo="Local de entrega">
+                      <input value={ovLocal} onChange={e => setOvLocal(e.target.value)}
+                        placeholder="cidade/UF ou o endereço que o órgão exige"
+                        className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm" />
+                    </Campo>
+                  </div>
+                  {sug?.de_onde && (
+                    <p className="text-[11px] text-gray-500 sm:col-span-3">
+                      Pagamento, frete e local vieram da {sug.de_onde}, a última OV deste órgão —
+                      confira e corrija se mudou.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -2336,7 +2374,7 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
           <button onClick={gerar} disabled={falta.length > 0 || salvando}
             className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-40">
             {salvando && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-            Gerar demanda
+            {gerarOv ? 'Gerar OV e mandar para a expedição' : 'Gerar demanda'}
           </button>
         </div>
       </div>
