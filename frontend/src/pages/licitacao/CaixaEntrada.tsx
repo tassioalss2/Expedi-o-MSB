@@ -2285,7 +2285,9 @@ function ModalGerarDemanda({ c, onFechar, onGerar, salvando }: {
                 <span>
                   <span className="text-sm font-semibold text-gray-800">Gerar a OV agora</span>
                   <span className="block text-xs text-gray-500">
-                    sem passar pelo painel de licitação — a demanda já nasce com a OV gerada
+                    Sem marcar, a demanda fica só no painel de licitação e a <strong>expedição não
+                    a enxerga</strong> — ela entra no kanban quando alguém concluir com o número
+                    da OV do D365. Marque se o número já estiver na sua mão.
                   </span>
                 </span>
               </label>
@@ -3659,9 +3661,14 @@ export function AbaCaixaEntrada() {
       return { data, ov: r.data }
     },
     onSuccess: (r: any) => {
+      // Dizer o que NAO aconteceu, e nao so o que aconteceu: "demanda criada"
+      // foi lido como "pronto, a logistica ja ve", e a OV ficou sem sair. Ela
+      // so entra no kanban da expedicao com o numero da OV do D365, que e
+      // justamente o que a demanda ainda nao tem.
       toast.success(r?.ov
-        ? 'Demanda criada e OV gerada'
-        : 'Demanda criada — o card já está no painel')
+        ? `Demanda criada e ${r.ov?.numero_pedido || 'OV'} gerada — já está no kanban da expedição`
+        : 'Demanda criada. A expedição ainda NÃO a vê: conclua com o número da OV do D365 para ela entrar no kanban.',
+        { duration: r?.ov ? 4000 : 8000 })
       setPromovendo(null)
       qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
       qc.invalidateQueries({ queryKey: ['demandas'] })
