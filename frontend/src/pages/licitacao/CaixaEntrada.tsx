@@ -3699,16 +3699,30 @@ export function AbaCaixaEntrada() {
       // foi lido como "pronto, a logistica ja ve", e a OV ficou sem sair. Ela
       // so entra no kanban da expedicao com o numero da OV do D365, que e
       // justamente o que a demanda ainda nao tem.
-      toast.success(r?.ov
-        ? `Demanda criada e ${r.ov?.numero_pedido || 'OV'} gerada — já está no kanban da expedição`
-        : 'Demanda criada. A expedição ainda NÃO a vê: conclua com o número da OV do D365 para ela entrar no kanban.',
-        { duration: r?.ov ? 4000 : 8000 })
+      toast.success(
+        r?.data?.retomou_demanda_existente
+          // Caso de retentativa: a demanda já existia de uma tentativa que
+          // parou antes da OV. Dizer isso evita a dúvida "criou outra?".
+          ? `${r.ov?.numero_pedido || 'OV'} gerada na demanda que já existia — nada foi duplicado, e já está no kanban da expedição`
+          : r?.ov
+            ? `Demanda criada e ${r.ov?.numero_pedido || 'OV'} gerada — já está no kanban da expedição`
+            : 'Demanda criada. A expedição ainda NÃO a vê: conclua com o número da OV do D365 para ela entrar no kanban.',
+        { duration: r?.ov ? 6000 : 8000 })
       setPromovendo(null)
       qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
       qc.invalidateQueries({ queryKey: ['demandas'] })
       qc.invalidateQueries({ queryKey: ['pedidos'] })
     },
-    onError: (e: any) => toast.error(msgErro(e, 'Não consegui gerar a demanda')),
+    onError: (e: any) => {
+      toast.error(msgErro(e, 'Não consegui gerar a demanda'), { duration: 8000 })
+      // Recarrega a lista: num 409 de "já existe demanda", o card na tela é
+      // antigo e ainda não sabe disso — sem isto a pessoa continua vendo
+      // "Gerar demanda" e sem a confirmação que destravaria o lançamento.
+      if (e.response?.status === 409) {
+        qc.invalidateQueries({ queryKey: ['licitacao-entrada'] })
+        qc.invalidateQueries({ queryKey: ['demandas'] })
+      }
+    },
   })
 
   const filtrados = useMemo(() => {

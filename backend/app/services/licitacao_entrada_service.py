@@ -2189,6 +2189,31 @@ def _aprende_produto(itens: list, contrato: Optional[str],
         print("nao consegui gravar o de-para de produto: %s" % e)
 
 
+def _concluir_com_ov(demanda: dict, ov: dict, usuario: UsuarioOut) -> dict:
+    """Conclui a demanda gerando a OV, pelo caminho normal de conclusão.
+
+    Usada por dois chamadores: a triagem que acabou de criar a demanda e a
+    retentativa de um caso cuja demanda já existia e parou antes da OV. Os dois
+    precisam se comportar igual — contrato, preços e vínculos saem do mesmo
+    lugar —, e duas implementações divergiriam no primeiro ajuste.
+    """
+    from app.models.schemas import DemandaConcluir
+    from app.services import licitacao_demanda_service
+
+    prazo = demanda.get("prazo")
+    concluir = DemandaConcluir(
+        numero_pedido=(ov.get("numero_pedido") or "").strip().upper() or None,
+        condicao_pagamento=ov.get("condicao_pagamento"),
+        tipo_frete=ov.get("tipo_frete") or "CIF_SEM_VALOR",
+        local_entrega=ov.get("local_entrega"),
+        data_prevista_entrega=ov.get("data_prevista_entrega") or prazo,
+        numero=demanda.get("numero"),
+        numero_pregao=demanda.get("numero_pregao"),
+        gerar_ov=True,
+    )
+    return licitacao_demanda_service.concluir_demanda(demanda["id"], concluir, usuario)
+
+
 def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> dict:
     """Cria a demanda a partir do que já está na caixa de entrada.
 
@@ -2210,12 +2235,41 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
     if not regs:
         raise HTTPException(404, "nenhum e-mail para a chave %s" % chave)
 
+    from app.services import licitacao_demanda_service
+
     ja = next((r["demanda_id"] for r in regs if r.get("demanda_id")), None)
     if ja and not extra.get("permitir_segunda"):
         # Duas demandas para a mesma nota de empenho é o pedido duplicado que
-        # este processo existe para evitar. Quem precisa de uma segunda remessa
-        # pede explicitamente.
-        raise HTTPException(409, "esta nota de empenho já gerou a demanda %s" % ja)
+        # este processo existe para evitar.
+        #
+        # Mas RECUSAR nem sempre é a resposta certa. O caso comum aqui não é
+        # alguém pedindo duas vezes: é uma tentativa que parou no meio. A
+        # demanda nasce, a geração da OV falha (preço faltando, número repetido)
+        # e a pessoa tenta de novo — e recebia "já gerou a demanda
+        # 5b80d44c-04ee-…", um UUID que não diz nada e não oferece saída. Ela
+        # ficava com o trabalho pela metade e sem caminho.
+        #
+        # Se a demanda que existe ainda não virou nada e agora veio o número da
+        # OV, a retentativa CONCLUI aquela — que é o que a pessoa está pedindo.
+        # Nenhuma demanda nova, nenhum duplicado.
+        d = (db.table("licitacao_demandas").select("*").eq("id", ja).execute().data or [None])[0]
+        ov_pedida = extra.get("ov") or {}
+        if d and ov_pedida and not (d.get("ovs") or []) and not d.get("gerado_id"):
+            gerada = _concluir_com_ov(d, ov_pedida, usuario)
+            return {"demanda": gerada, "emails_ligados": len(regs),
+                    "ov": (ov_pedida.get("numero_pedido") or "").strip().upper(),
+                    "retomou_demanda_existente": True,
+                    "foi_direto_para_expedicao": True}
+
+        numero = (d or {}).get("numero") or "sem número"
+        etapa = ((d or {}).get("etapa") or "?").replace("_", " ").lower()
+        ovs = ", ".join(str(o.get("numero")) for o in ((d or {}).get("ovs") or []) if o.get("numero"))
+        raise HTTPException(
+            409,
+            "Esta nota de empenho já virou a demanda '%s', que está em '%s'%s. "
+            "Para lançar outra assim mesmo (segunda parte da NE, ou a anterior nasceu errada), "
+            "marque a confirmação na janela." % (
+                numero, etapa, " e já gerou %s" % ovs if ovs else ""))
 
     regs.sort(key=lambda x: x.get("recebido_em") or "")
     base = regs[0]
@@ -2335,24 +2389,13 @@ def promover(chave: str, usuario: UsuarioOut, extra: Optional[dict] = None) -> d
     # faltou — o trabalho da triagem não se perde.
     ov = extra.get("ov") or {}
     if ov and tipo in ("VENDA_DIRETA", "CONSIGNACAO"):
-        from app.models.schemas import DemandaConcluir
-        concluir = DemandaConcluir(
-            numero_pedido=(ov.get("numero_pedido") or "").strip().upper() or None,
-            condicao_pagamento=ov.get("condicao_pagamento"),
-            tipo_frete=ov.get("tipo_frete") or "CIF_SEM_VALOR",
-            local_entrega=ov.get("local_entrega"),
-            data_prevista_entrega=ov.get("data_prevista_entrega") or payload.prazo,
-            numero=payload.numero,
-            numero_pregao=payload.numero_pregao,
-            gerar_ov=True,
-        )
-        gerada = licitacao_demanda_service.concluir_demanda(
-            demanda["id"], concluir, usuario)
+        gerada = _concluir_com_ov(demanda, ov, usuario)
         # `gerado_ref` da demanda é o CONTRATO, não a OV — quem conclui uma venda
         # direta cria os dois. Para a tela o que importa é o número da OV, que é
         # o que a expedição vê no kanban.
         return {"demanda": gerada, "emails_ligados": len(regs),
-                "ov": concluir.numero_pedido, "foi_direto_para_expedicao": True}
+                "ov": (ov.get("numero_pedido") or "").strip().upper(),
+                "foi_direto_para_expedicao": True}
 
     return {"demanda": demanda, "emails_ligados": len(regs)}
 
