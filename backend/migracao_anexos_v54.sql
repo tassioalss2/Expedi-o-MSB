@@ -14,19 +14,25 @@
 -- ON DELETE CASCADE: OV cancelada e removida leva os anexos junto; deixar
 -- registro órfão apontando para arquivo que ninguém mais acha não ajuda nada.
 
-CREATE TABLE IF NOT EXISTS pedido_anexos (
+-- `public.` escrito nas duas referências de propósito: sem o schema, o editor
+-- de SQL resolveu `pedidos` para OUTRA tabela com o mesmo nome e `id` inteiro,
+-- e a chave estrangeira falhou com "incompatible types: uuid and integer". A
+-- tabela que o app usa é a do schema public, onde o id é uuid.
+
+CREATE TABLE IF NOT EXISTS public.pedido_anexos (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    pedido_id   UUID NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+    pedido_id   UUID NOT NULL REFERENCES public.pedidos(id) ON DELETE CASCADE,
     nome        TEXT NOT NULL,           -- como o arquivo se chamava na máquina de quem subiu
     caminho     TEXT NOT NULL,           -- caminho dentro do bucket anexos-ov
     tipo        TEXT,                    -- content-type declarado no upload
     tamanho     BIGINT,                  -- bytes
     descricao   TEXT,                    -- o que é este documento, escrito por quem anexou
-    criado_por  UUID REFERENCES usuarios(id),
+    criado_por  UUID REFERENCES public.usuarios(id),
     criado_em   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_pedido_anexos_pedido ON pedido_anexos (pedido_id, criado_em DESC);
+CREATE INDEX IF NOT EXISTS idx_pedido_anexos_pedido
+    ON public.pedido_anexos (pedido_id, criado_em DESC);
 
 -- O bucket `anexos-ov` já foi criado (privado, teto de 20 MB por arquivo). O
 -- acesso é sempre pelo backend com a service key, que devolve uma URL assinada
