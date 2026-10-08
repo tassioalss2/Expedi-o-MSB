@@ -1977,6 +1977,7 @@ function VendaCompletaParaD365({ pedido }: { pedido: any }) {
 
   const total = linhas.reduce((a, l) => a + l.original * l.valor, 0)
   const totalPendente = linhas.reduce((a, l) => a + l.pendente * l.valor, 0)
+  const semPreco = linhas.filter(l => !(l.valor > 0)).length
   const n = (v: number) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 3 })
   const brl = (v: number) => `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -2000,14 +2001,19 @@ function VendaCompletaParaD365({ pedido }: { pedido: any }) {
           Copiar linhas
         </button>
       </div>
-      <table className="w-full text-sm">
+      {/* Rola na horizontal em vez de cortar: a coluna de valor era a ultima e
+          sumia na borda do painel, que e justamente o numero que a pessoa
+          precisa digitar no D365. */}
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[600px] text-sm">
         <thead>
           <tr className="text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
             <th className="text-left font-medium px-5 py-2">Item</th>
             <th className="text-right font-medium px-2 py-2">Vendido</th>
             <th className="text-right font-medium px-2 py-2">Nesta OV</th>
             <th className="text-right font-medium px-2 py-2">Pendente</th>
-            <th className="text-right font-medium px-5 py-2">Valor</th>
+            <th className="text-right font-medium px-2 py-2">Valor unit.</th>
+            <th className="text-right font-medium px-5 py-2">Total</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
@@ -2024,6 +2030,15 @@ function VendaCompletaParaD365({ pedido }: { pedido: any }) {
               <td className={`px-2 py-2 text-right tabular-nums ${l.pendente > 0 ? 'font-semibold text-amber-700' : 'text-gray-300'}`}>
                 {l.pendente > 0 ? n(l.pendente) : '—'}
               </td>
+              {/* O preco unitario e o que se digita no D365. Zero nao fica
+                  disfarcado de "R$ 0,00": a OV017061 saiu sem valor nenhum por
+                  isso, e o aviso aqui e a ultima chance de pegar antes do
+                  lancamento. */}
+              <td className="px-2 py-2 text-right tabular-nums">
+                {l.valor > 0
+                  ? <span className="font-medium text-gray-800">{brl(l.valor)}</span>
+                  : <span className="text-xs font-semibold text-red-600">sem preço</span>}
+              </td>
               <td className="px-5 py-2 text-right tabular-nums text-gray-600">{brl(l.original * l.valor)}</td>
             </tr>
           ))}
@@ -2031,13 +2046,21 @@ function VendaCompletaParaD365({ pedido }: { pedido: any }) {
         <tfoot>
           <tr className="border-t border-gray-200 bg-gray-50">
             <td className="px-5 py-2 text-xs font-semibold text-gray-700">Venda completa</td>
-            <td colSpan={3} className="px-2 py-2 text-right text-[11px] text-amber-700">
+            <td colSpan={4} className="px-2 py-2 text-right text-[11px] text-amber-700">
               {totalPendente > 0 && `${brl(totalPendente)} ainda pendentes`}
             </td>
             <td className="px-5 py-2 text-right tabular-nums font-bold text-gray-900">{brl(total)}</td>
           </tr>
         </tfoot>
       </table>
+      </div>
+      {semPreco > 0 && (
+        <div className="border-t border-red-200 bg-red-50 px-5 py-2.5 text-xs text-red-800">
+          <strong>{semPreco === 1 ? '1 item está sem preço' : `${semPreco} itens estão sem preço`}</strong> —
+          lançar assim faz a OV e a NF saírem com valor zero nessas linhas. Corrija o preço antes
+          (nos itens da OV, ou na demanda que a originou).
+        </div>
+      )}
     </div>
   )
 }
