@@ -10,6 +10,7 @@ import { BlocoDisponibilidade, ModalDecisaoEstoque, type DecisaoEstoque } from '
 import type { Disponibilidade } from '../lib/crm'
 import { erroNumeroOv, limpaNumeroOv } from '../lib/crm'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
+import { EscolherAnexos, enviarAnexos } from '../components/AnexosOV'
 
 /** 14 digitos -> 00.000.000/0000-00; CPF (11) -> 000.000.000-00. */
 function formatarCnpjExibicao(v: string) {
@@ -193,13 +194,23 @@ export function NovoPedido() {
     ...extra,
   })
 
+  // Documentos escolhidos antes de a OV existir. Sobem assim que ela nasce —
+  // ver onSuccess abaixo.
+  const [anexos, setAnexos] = useState<File[]>([])
+
   /** Criação normal */
   const mutation = useMutation({
     mutationFn: () => api.post('/pedidos', buildBody()),
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       toast.success(decisao
         ? 'OV cadastrada só com o material disponível — o saldo ficou como pendência.'
         : 'OV cadastrada!', { duration: decisao ? 7000 : 4000 })
+      // Os documentos sobem DEPOIS da OV, porque só agora existe id para
+      // onde mandá-los. Se um falhar, a OV continua criada e o aviso diz qual.
+      if (anexos.length) {
+        const n = await enviarAnexos(res.data.id, anexos)
+        if (n) toast.success(n === 1 ? 'Documento anexado' : `${n} documentos anexados`)
+      }
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       navigate(`/expedicao/${res.data.id}`)
     },
@@ -251,8 +262,9 @@ export function NovoPedido() {
   /** Remessa derivada — disparada após confirmação no modal */
   const mutationDerivar = useMutation({
     mutationFn: () => api.post('/pedidos', buildBody({ criar_derivada: true })),
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       toast.success(`✅ Remessa R${modalDerivar.remessaNumero} criada para OV ${form.numero_pedido}!`)
+      if (anexos.length) await enviarAnexos(res.data.id, anexos)
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       setModalDerivar({ visivel: false, remessaNumero: 2, confirmado: false })
       navigate(`/expedicao/${res.data.id}`)
@@ -272,8 +284,9 @@ export function NovoPedido() {
       forcar_duplicata: true,
       motivo_duplicata: modalRecriar.motivo.trim(),
     })),
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       toast.success(`✅ OV ${form.numero_pedido} recriada com sucesso!`)
+      if (anexos.length) await enviarAnexos(res.data.id, anexos)
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       setModalRecriar({ visivel: false, motivo: '', confirmado: false })
       navigate(`/expedicao/${res.data.id}`)
@@ -444,6 +457,13 @@ export function NovoPedido() {
                 </button>
               </p>
             )}
+          </div>
+
+          {/* O papel que originou a OV fica com ela. Antes ficava no e-mail de
+              quem abriu, e a expedição e o faturamento não tinham como ver o
+              que o cliente pediu sem perguntar. */}
+          <div className="col-span-2">
+            <EscolherAnexos arquivos={anexos} onChange={setAnexos} />
           </div>
 
           <div className="col-span-2">

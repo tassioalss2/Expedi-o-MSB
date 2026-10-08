@@ -10,6 +10,7 @@ import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { ClienteAutocomplete } from './NovoPedido'
 import { BlocoDisponibilidade, ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
 import type { Disponibilidade } from '../lib/crm'
+import { EscolherAnexos, enviarAnexos } from '../components/AnexosOV'
 
 function formatarCnpj(v: string) {
   const d = v.replace(/\D/g, '').slice(0, 14)
@@ -39,6 +40,8 @@ export function VendaOutbound() {
   })
 
   const [itens, setItens] = useState<ItemLinha[]>([])
+  // Documentos escolhidos antes de a venda existir; sobem quando ela nasce.
+  const [anexos, setAnexos] = useState<File[]>([])
 
   const { data: transportadoras = [] } = useQuery<Transportadora[]>({
     queryKey: ['transportadoras'],
@@ -95,7 +98,7 @@ export function VendaOutbound() {
       observacao_estoque: decisao?.observacao || null,
       previsao_pcp: decisao?.previsao_pcp || null,
     }),
-    onSuccess: (res, decisao) => {
+    onSuccess: async (res, decisao) => {
       // O servidor decide: sem material nenhum, "seguir com o disponível" vira
       // aguardar do mesmo jeito — então o aviso segue o status que voltou.
       const aguardando = res.data?.status === 'AGUARD_PRODUCAO'
@@ -105,6 +108,10 @@ export function VendaOutbound() {
         ? 'Venda lançada só com o material disponível — o saldo ficou como pendência.'
         : 'Venda outbound lançada! Aguardando operações completar o número da OV.',
         { duration: 7000 })
+      if (anexos.length) {
+        const n = await enviarAnexos(res.data.id, anexos)
+        if (n) toast.success(n === 1 ? 'Documento anexado' : `${n} documentos anexados`)
+      }
       qc.invalidateQueries({ queryKey: ['pedidos'] })
       qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
       navigate(`/expedicao/${res.data.id}`)
@@ -266,6 +273,9 @@ export function VendaOutbound() {
             {itens.length === 0 && (
               <p className="text-xs text-amber-600 mt-1">Adicione pelo menos um item para lançar a venda.</p>
             )}
+            <div className="mt-4">
+              <EscolherAnexos arquivos={anexos} onChange={setAnexos} />
+            </div>
             {itensValidos.length > 0 && (
               <div className="mt-2">
                 <BlocoDisponibilidade analise={analise} carregando={analisando} />

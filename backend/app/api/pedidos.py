@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from pydantic import BaseModel
 
 from app.core.deps import get_current_user, lider_ou_superior
@@ -36,7 +36,7 @@ from app.models.schemas import (
     DadosOVUpdate,
     AdicionarItensRequest,
 )
-from app.services import importacao_service, pedido_service
+from app.services import anexo_service, importacao_service, pedido_service
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
@@ -662,6 +662,38 @@ def fechar_ocorrencia(
     usuario: UsuarioOut = Depends(lider_ou_superior),
 ):
     return pedido_service.fechar_ocorrencia(str(ocorrencia_id), payload.resolucao, usuario)
+
+
+# ── Anexos da OV ───────────────────────────────────────────────────────────────
+
+@router.get("/{pedido_id}/anexos")
+def listar_anexos(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """Os documentos desta OV — empenho, ordem de compra, comprovante."""
+    return anexo_service.listar(str(pedido_id))
+
+
+@router.post("/{pedido_id}/anexos")
+async def anexar_documento(
+    pedido_id: UUID,
+    arquivo: UploadFile = File(...),
+    descricao: Optional[str] = Form(None),
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    conteudo = await arquivo.read()
+    return anexo_service.anexar(
+        str(pedido_id), conteudo, arquivo.filename or "documento",
+        usuario, descricao=descricao, tipo=arquivo.content_type)
+
+
+@router.get("/anexos/{anexo_id}/link")
+def link_do_anexo(anexo_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """URL assinada de 5 minutos — o bucket é privado."""
+    return anexo_service.link(str(anexo_id))
+
+
+@router.delete("/anexos/{anexo_id}")
+def remover_anexo(anexo_id: UUID, usuario: UsuarioOut = Depends(get_current_user)):
+    return anexo_service.remover(str(anexo_id), usuario)
 
 
 # ── Importação ─────────────────────────────────────────────────────────────────

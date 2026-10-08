@@ -19,6 +19,7 @@ import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
+import { AnexosDaOV } from '../components/AnexosOV'
 import { CampoEnderecoEntrega } from '../components/CampoEnderecoEntrega'
 import { MarcaEnviado } from '../components/MarcaEnviado'
 import { TIPO_FRETE_LABEL, OPERACAO_LABEL, OPERACOES_EDITAVEIS, CANAL_LABEL, LINHA_DO_CANAL, FORMA_VENDA_LABEL, STATUS_CONFIG } from '../lib/statusConfig'
@@ -3925,6 +3926,11 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
               as linhas que ficaram na pendencia e nao aparecem em lugar nenhum
               da tela. No topo ele interrompia a leitura dos dados da OV. */}
           <VendaCompletaParaD365 pedido={pedido} />
+
+          {/* O papel que originou a OV. Quem pega o caso depois — expedição,
+              faturamento, quem entrou no lugar de quem saiu — vê o que o
+              cliente pediu sem ter que achar o e-mail de outra pessoa. */}
+          <AnexosDaOV pedidoId={pedido.id} />
 
           {/* Inventário Contínuo (se existir) */}
           {inventario?.itens?.length > 0 && (
