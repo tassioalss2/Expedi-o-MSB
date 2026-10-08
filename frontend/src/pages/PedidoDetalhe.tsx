@@ -2041,6 +2041,83 @@ function VendaCompletaParaD365({ pedido }: { pedido: any }) {
   )
 }
 
+/** Corrige em que dia a nota desta OV foi emitida.
+ *
+ *  A competência do faturamento é um fato da NOTA. Quem fatura no fim do dia e
+ *  registra no app na manhã seguinte via o valor cair no dia errado — e, na
+ *  virada do mês, no MÊS errado, onde ele some do fechamento e reaparece como
+ *  divergência na conciliação com o D365. Não havia como corrigir. */
+function ModalDataFaturamento({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
+  const qc = useQueryClient()
+  const atual = String((pedido as any).data_faturamento || '').slice(0, 10)
+  const [data, setData] = useState(atual || hojeLocal())
+  const [motivo, setMotivo] = useState('')
+
+  const mutation = useMutation({
+    mutationFn: () => api.patch(`/pedidos/${pedido.id}/data-faturamento`,
+      { data_faturamento: data, motivo: motivo.trim() || null }),
+    onSuccess: () => {
+      toast.success('Data de faturamento corrigida')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['faturamento'] })
+      onClose()
+    },
+    onError: (e: any) => toast.error(
+      e.response?.data?.detail || 'Não consegui corrigir a data', { duration: 5000 }),
+  })
+
+  const fmt = (d: string) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—'
+  const mudou = data && data.slice(0, 10) !== atual
+  const mesDiferente = mudou && atual && data.slice(0, 7) !== atual.slice(0, 7)
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b">
+          <h2 className="text-lg font-bold text-amber-800">🗓️ Corrigir data de faturamento</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {pedido.numero_pedido}{pedido.numero_nf ? ` · NF ${pedido.numero_nf}` : ''} ·
+            hoje consta <strong>{fmt(atual)}</strong>
+          </p>
+        </div>
+        <div className="p-5 space-y-3">
+          <div>
+            <label className="text-sm font-medium text-gray-700">Data em que a NF foi emitida *</label>
+            <input type="date" value={data} max={hojeLocal()}
+              onChange={e => setData(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">Motivo</label>
+            <input type="text" value={motivo} onChange={e => setMotivo(e.target.value)}
+              placeholder="Ex: faturei ontem no D365 e registrei hoje"
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            <p className="text-xs text-gray-400 mt-1">
+              Fica no histórico da OV, com seu nome — mexer em competência move faturamento de mês.
+            </p>
+          </div>
+          {mesDiferente && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+              Atenção: isto tira <strong>{pedido.numero_pedido}</strong> do faturamento de{' '}
+              <strong>{fmt(atual).slice(3)}</strong> e passa para{' '}
+              <strong>{fmt(data).slice(3)}</strong>. Os dois meses mudam de total.
+            </div>
+          )}
+        </div>
+        <div className="p-5 border-t flex gap-2 justify-end">
+          <button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancelar</button>
+          <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !mudou}
+            title={mudou ? undefined : 'Escolha uma data diferente da atual'}
+            className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+            {mutation.isPending ? 'Salvando...' : 'Corrigir'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ModalPararVenda({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [motivo, setMotivo] = useState('')
@@ -3240,6 +3317,9 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
   const [valorProdutos, setValorProdutos] = useState('')
   const [valorFrete, setValorFrete] = useState('')
   const [novaDataEntrega, setNovaDataEntrega] = useState('')
+  // Competência da nota. Nasce hoje e a pessoa troca quando a NF é de outro dia.
+  const [dataFaturamento, setDataFaturamento] = useState(hojeLocal())
+  const [corrigirFat, setCorrigirFat] = useState(false)
   const [codigoRastreio, setCodigoRastreio] = useState('')
   const [reimprimindoEspelho, setReimprimindoEspelho] = useState(false)
 
@@ -3357,6 +3437,10 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
       valor_produtos: isCIF && valorProdutos ? Number(valorProdutos) : null,
       valor_frete: isCIF && valorFrete ? Number(valorFrete) : null,
       data_prevista_entrega: novaDataEntrega || null,
+      // Vazio = hoje, no servidor. Mandar a data só quando ela não é hoje
+      // mantém o comportamento antigo intacto para quem fatura no mesmo dia.
+      data_faturamento: dataFaturamento && dataFaturamento !== hojeLocal()
+        ? dataFaturamento : undefined,
       codigo_rastreio: isCorreios && codigoRastreio.trim() ? codigoRastreio.trim() : undefined,
     }),
     onSuccess: async () => {
@@ -4101,6 +4185,19 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
                 </button>
               )}
 
+              {/* A nota já saiu, mas em outro dia. A competência é um fato da
+                  NOTA, não do momento em que alguém registrou: faturar no fim do
+                  dia e lançar na manhã seguinte jogava o valor para o dia — e na
+                  virada do mês, para o mês — errado, e só aparecia na
+                  conciliação com o D365. */}
+              {pedido.numero_nf && ['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CONCLUIDO'].includes(status) && (
+                <button onClick={() => setCorrigirFat(true)}
+                  title="A nota foi emitida em outro dia: corrige a competência do faturamento"
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-amber-300 text-amber-800 rounded-lg text-sm hover:bg-amber-50">
+                  🗓️ Corrigir data de faturamento
+                </button>
+              )}
+
               {/* A nota voltou rejeitada da SEFAZ. O D365 abre uma OV nova, mas
                   o material já está separado, cubado e no pallet — refazer a
                   expedição por um erro fiscal é trabalho jogado fora. Aqui só o
@@ -4290,6 +4387,7 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
       {modal === 'rejeicao_sefaz' && <ModalRejeicaoSefaz pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'trocar_ov' && <ModalTrocarOV pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'parar' && <ModalPararVenda pedido={pedido} onClose={() => setModal(null)} />}
+      {corrigirFat && <ModalDataFaturamento pedido={pedido} onClose={() => setCorrigirFat(false)} />}
       {modal === 'cotacao_frete' && <ModalCotacaoFrete pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'transportadora_cliente' && <ModalTransportadoraCliente pedido={pedido} onClose={() => setModal(null)} />}
       {modal === 'faturamento' && (
@@ -4439,6 +4537,24 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
                     ⚠ Cubagem não registrada — será impressa 1 etiqueta. Registre a cubagem para imprimir o número correto.
                   </p>
                 )}
+              </div>
+              {/* Em que dia a NOTA saiu. Vem com hoje, porque é o caso comum,
+                  mas fatura-se no fim do dia e registra-se na manhã seguinte —
+                  e aí a competência ia para o dia (ou o mês) errado sem que
+                  ninguém pudesse corrigir. */}
+              <div className="border-t pt-4">
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                  🗓️ Data de faturamento da NF
+                </label>
+                <input type="date" value={dataFaturamento} max={hojeLocal()}
+                  onChange={e => setDataFaturamento(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+                <p className="text-xs text-gray-500 mt-1">
+                  {dataFaturamento && dataFaturamento !== hojeLocal()
+                    ? <>É esta data que define a <strong>competência</strong> — o faturamento entra
+                       no dia e no mês dela, não no de hoje.</>
+                    : 'Se a nota foi emitida ontem ou em outro dia, troque aqui — é esta data que define a competência.'}
+                </p>
               </div>
               {/* Corrigir data de entrega */}
               <div className="border-t pt-4">

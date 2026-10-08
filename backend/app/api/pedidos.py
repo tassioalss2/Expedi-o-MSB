@@ -16,6 +16,7 @@ from app.models.schemas import (
     DevolucaoCreate,
     DevolverAoCrmRequest,
     EditarItensRequest,
+    DataFaturamentoRequest,
     FaturamentoRequest,
     MetaFaturamentoRequest,
     TransportadoraClienteRequest,
@@ -504,6 +505,16 @@ def registrar_faturamento(
     usuario: UsuarioOut = Depends(get_current_user),
 ):
     return pedido_service.registrar_faturamento(str(pedido_id), payload, usuario)
+
+
+@router.patch("/{pedido_id}/data-faturamento")
+def corrigir_data_faturamento(
+    pedido_id: UUID,
+    payload: DataFaturamentoRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    """Corrige a competência de uma OV já faturada (nota emitida em outro dia)."""
+    return pedido_service.corrigir_data_faturamento(str(pedido_id), payload, usuario)
 
 
 @router.post("/{pedido_id}/rejeicao-sefaz")

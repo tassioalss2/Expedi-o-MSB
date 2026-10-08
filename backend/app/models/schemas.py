@@ -1373,6 +1373,16 @@ class FaturamentoRequest(BaseModel):
     chave_nfe: Optional[str] = None
     data_prevista_entrega: Optional[date] = None  # permite corrigir a data ao registrar NF
     codigo_rastreio: Optional[str] = None  # só Correios
+    # A data em que a NOTA foi emitida, que nem sempre é hoje: fatura-se no fim
+    # do dia e registra-se no app na manhã seguinte, e aí a competência cai no
+    # mês/dia errado. Vazio = hoje, como era.
+    data_faturamento: Optional[date] = None
+
+
+class DataFaturamentoRequest(BaseModel):
+    """Correção da competência de uma OV já faturada."""
+    data_faturamento: date
+    motivo: Optional[str] = None
 
 
 class EsperaRequest(BaseModel):

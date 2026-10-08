@@ -3037,6 +3037,66 @@ def corrigir_numero_da_ov(pedido_id: str, novo_numero: str, motivo: str,
     return obter_pedido(pedido_id)
 
 
+def corrigir_data_faturamento(pedido_id: str, payload, usuario: UsuarioOut) -> dict:
+    """Troca a competência de uma OV já faturada.
+
+    Faturar no fim do dia e registrar no app na manhã seguinte joga a nota para
+    o dia — e, na virada do mês, para o mês — errado. A competência é um fato da
+    NOTA, não do momento em que alguém digitou, e até agora não havia como
+    corrigir: o número ia para o fechamento errado e só aparecia na conciliação
+    com o D365.
+
+    Fica registrado em movimentação porque mexer em competência move faturamento
+    de mês: quem conferir o fechamento precisa achar quem trocou, quando e por quê.
+    """
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+    if pedido.get("status") not in (StatusPedido.FATURADO.value, "AGUARD_COLETA", "EXPEDIDO",
+                                    StatusPedido.CONCLUIDO.value):
+        raise HTTPException(
+            status_code=422,
+            detail="Esta OV ainda não foi faturada — não há competência para corrigir.")
+
+    nova = payload.data_faturamento
+    hoje = _hoje_brt()
+    if nova > hoje:
+        raise HTTPException(status_code=422, detail="A data de faturamento não pode ser no futuro.")
+    # Um ano para trás é folga de sobra para o atraso real (horas, no máximo
+    # alguns dias) e barra o engano de digitar o ano errado, que levaria a nota
+    # para um exercício fechado.
+    if (hoje - nova).days > 365:
+        raise HTTPException(
+            status_code=422,
+            detail="Data muito antiga (%s). Confira o ano." % nova.strftime("%d/%m/%Y"))
+
+    antes = str(pedido.get("data_faturamento") or "")[:10]
+    ts = f"{nova.isoformat()}T12:00:00+00:00"
+    db.table("pedidos").update({
+        "data_faturamento": ts, "atualizado_em": _agora(),
+    }).eq("id", pedido_id).execute()
+
+    def _br(d):
+        return "%s/%s/%s" % (d[8:10], d[5:7], d[0:4]) if len(d) >= 10 else (d or "não informada")
+
+    try:
+        # Sem troca de status: a OV continua onde está. O registro existe pelo
+        # histórico, que é onde se descobre quem moveu faturamento de mês.
+        db.table("movimentacoes").insert({
+            "pedido_id": pedido_id,
+            "status_anterior": pedido.get("status"),
+            "status_novo": pedido.get("status"),
+            "usuario_id": _autor(str(usuario.id)),
+            "observacao": "Data de faturamento corrigida de %s para %s%s" % (
+                _br(antes), nova.strftime("%d/%m/%Y"),
+                " — %s" % payload.motivo.strip() if getattr(payload, "motivo", None) else ""),
+            "criado_em": _agora(),
+        }).execute()
+    except Exception as exc:
+        print("movimentacao da troca de competencia nao registrada: %s" % str(exc)[:120])
+
+    return obter_pedido(pedido_id)
+
+
 def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: UsuarioOut) -> dict:
     db = get_service_db()
     pedido = obter_pedido(pedido_id)
@@ -3076,14 +3136,21 @@ def registrar_faturamento(pedido_id: str, payload: FaturamentoRequest, usuario: 
             detail=f"Para faturar a OV, informe: {', '.join(faltando)}.",
         )
 
-    agora_fat = _agora()
+    # Meio-dia UTC = 09h BRT: garante que a data BRT da competência seja a
+    # escolhida, e não o dia anterior/seguinte por causa do fuso.
+    #
+    # `atualizado_em` continua sendo AGORA, e isso não é detalhe: se os dois
+    # andassem juntos, registrar hoje uma nota de ontem faria a OV parecer sem
+    # movimento desde ontem — e é por esse campo que o kanban conta dias parados.
+    agora_fat = (f"{payload.data_faturamento.isoformat()}T12:00:00+00:00"
+                 if getattr(payload, "data_faturamento", None) else _agora())
     update_data: dict = {
         "numero_nf": payload.numero_nf,
         "valor_nf": payload.valor_nf,
         "valor_produtos": payload.valor_produtos,
         "valor_frete": payload.valor_frete,
         "chave_nfe": payload.chave_nfe,
-        "atualizado_em": agora_fat,
+        "atualizado_em": _agora(),
     }
     if payload.data_prevista_entrega:
         update_data["data_prevista_entrega"] = payload.data_prevista_entrega.isoformat()
