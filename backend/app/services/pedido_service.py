@@ -964,10 +964,17 @@ def completar_dados_ov(pedido_id: str, numero_pedido: str, data_prevista_entrega
     #
     # Recriar OV (criar_pedido) e reativar já ignoram canceladas; este era o
     # único caminho que não ignorava.
-    dup = db.table("pedidos").select("id, status").eq("numero_pedido", numero)\
-        .neq("status", StatusPedido.CANCELADO.value).neq("id", pedido_id).execute().data
-    if dup:
-        raise HTTPException(status_code=409, detail=f"Já existe uma OV ativa com o número '{numero}'.")
+    #
+    # Número INALTERADO não é duplicidade. A remessa do saldo usa o número da OV
+    # original de propósito — é a mesma venda, outra entrega —, então a R1
+    # aparecia aqui como "OV ativa com esse número" e barrava a R2 de seguir
+    # para a separação. A trava existe contra número REPETIDO em outra venda;
+    # confirmar o número que a própria OV já tem não repete nada.
+    if numero != (ped.get("numero_pedido") or "").strip().upper():
+        dup = db.table("pedidos").select("id, status").eq("numero_pedido", numero)\
+            .neq("status", StatusPedido.CANCELADO.value).neq("id", pedido_id).execute().data
+        if dup:
+            raise HTTPException(status_code=409, detail=f"Já existe uma OV ativa com o número '{numero}'.")
 
     agora = _agora()
     update = {
