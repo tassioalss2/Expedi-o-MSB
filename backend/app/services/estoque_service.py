@@ -457,10 +457,20 @@ def _ovs_reservadas_na_foto(db, sincronizado_em: Optional[str]) -> set:
     if not sincronizado_em:
         return set()
 
+    # Inclui as já FATURADAS/expedidas, e isso é uma correção. A reserva no D365
+    # acontece quando a OV entra em etapa pós-liberação — se isso foi ANTES da
+    # foto, o material já saiu dela, e continua fora depois que a OV fatura.
+    #
+    # Olhando só o status atual, a OV que faturou DEPOIS da foto caía desta lista
+    # e entrava em `_ovs_faturadas_apos`, somando a mesma baixa duas vezes. Foi o
+    # que fez o UAMB-14120 aparecer com 15 comprometidos (5 da OV017107, já
+    # descontados na foto das 16:48, mais 10 da OV017110) e a OV da LIFE dizer
+    # "faltam 10" com dez unidades inteiras na prateleira.
     atuais = []
-    for i in range(0, len(_STATUS_POS_LIBERACAO), 10):
-        lote = _STATUS_POS_LIBERACAO[i:i + 10]
-        atuais += db.table("pedidos").select("id").in_("status", lote).execute().data
+    for lista in (_STATUS_POS_LIBERACAO, _STATUS_FATURADOS):
+        for i in range(0, len(lista), 10):
+            lote = lista[i:i + 10]
+            atuais += db.table("pedidos").select("id").in_("status", lote).execute().data
     ids = [p["id"] for p in atuais]
     if not ids:
         return set()
