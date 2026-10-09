@@ -121,10 +121,13 @@ export default function Placar() {
   const dia = barra?.dia
   const corRitmo = RITMO_COR[ritmo?.status] || '#94a3b8'
 
-  // O que está no quadro com OV aberta — o pipeline real, não a projeção.
-  const emProcesso = previsao?.mes?.em_processo != null ? Number(previsao.mes.em_processo) : null
-  const pctComProcesso = valorMeta && emProcesso != null
-    ? ((realizado + emProcesso) / valorMeta) * 100 : 0
+  // Previsão do DIA = o que já faturou hoje + o que está no quadro para sair.
+  // `ovs_kanban` é o valor das OVs abertas; o faturado do dia vem da barra de
+  // meta, a mesma fonte do cartão "Hoje", para os dois baterem na tela.
+  const faturadoHoje = Number(dia?.realizado || 0)
+  const noQuadroHoje = previsao?.dia?.ovs_kanban != null ? Number(previsao.dia.ovs_kanban) : null
+  const pctPrevisaoDia = dia?.alvo > 0 && noQuadroHoje != null
+    ? ((faturadoHoje + noQuadroHoje) / Number(dia.alvo)) * 100 : 0
 
   // Realizado por canal: a linha do produto manda, não o canal digitado — é a
   // mesma regra do Painel Comercial, e a licitação vem separada de lá.
@@ -217,37 +220,40 @@ export default function Placar() {
           )}
         </div>
 
-        {/* Faturado + em processamento.
-            NÃO é a projeção estatística da tela de Previsão (que hoje daria
-            R$ 1,6 mi, montada sobre média histórica e saldo de contratos). Aqui
-            só entra o que existe: o que já faturou e o que está no quadro com
-            OV aberta. É um número que dá para apontar e ir conferir.
-            O faturado vem da MESMA fonte do número grande lá em cima — dois
-            "faturado" diferentes na mesma parede destruiriam a confiança nos
-            dois. */}
+        {/* Previsão DO DIA: o que já faturou hoje mais o que está no quadro
+            para sair. Mês não entra aqui — a pergunta é "quanto este dia ainda
+            pode entregar", e o número do mês está no topo da tela.
+
+            Não é a projeção estatística da tela de Previsão (média histórica +
+            saldo de contratos): só o que existe, OV por OV, e dá para conferir.
+            O faturado do dia vem da MESMA fonte do cartão "Hoje" ao lado —
+            dois "faturado hoje" diferentes na mesma parede acabariam com a
+            confiança nos dois. */}
         <div className="rounded-3xl bg-white/5 border border-white/10 p-6 flex flex-col">
-          <p className="text-white/50 text-lg">Faturado + em processamento</p>
-          {emProcesso != null ? (
+          <p className="text-white/50 text-lg">Previsão do dia</p>
+          {noQuadroHoje != null ? (
             <>
-              <p className="text-6xl font-black leading-none mt-1">{milhar(realizado + emProcesso)}</p>
-              {valorMeta && (
+              <p className="text-6xl font-black leading-none mt-1">
+                {milhar(faturadoHoje + noQuadroHoje)}
+              </p>
+              {dia?.alvo > 0 && (
                 <p className="text-xl font-bold mt-1"
-                  style={{ color: pctComProcesso >= 100 ? '#34d399' : pctComProcesso >= 70 ? '#fbbf24' : '#f87171' }}>
-                  {pctComProcesso.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}% da meta
+                  style={{ color: pctPrevisaoDia >= 100 ? '#34d399' : pctPrevisaoDia >= 70 ? '#fbbf24' : '#f87171' }}>
+                  {pctPrevisaoDia.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}% do alvo do dia
                 </p>
               )}
               <div className="mt-4 space-y-1.5 text-base">
                 <p className="flex justify-between text-white/60">
-                  <span>faturado</span>
-                  <strong className="text-white/85 tabular-nums">{milhar(realizado)}</strong>
+                  <span>já faturado hoje</span>
+                  <strong className="text-white/85 tabular-nums">{milhar(faturadoHoje)}</strong>
                 </p>
                 <p className="flex justify-between text-white/60">
                   <span>no quadro (OVs abertas)</span>
-                  <strong className="text-white/85 tabular-nums">{milhar(emProcesso)}</strong>
+                  <strong className="text-white/85 tabular-nums">{milhar(noQuadroHoje)}</strong>
                 </p>
               </div>
               <p className="text-sm text-white/35 mt-3">
-                o que já saiu mais o que está em processamento agora
+                o máximo que este dia entrega se tudo o que está no quadro faturar hoje
               </p>
             </>
           ) : (
