@@ -3078,8 +3078,15 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
     return (Number(agora?.qtd) || 0) < (Number(a.qtd) || 0)
   })
 
+  // Linha zerada SAI da OV — e nao vai como "quantidade 0". O servidor recusa
+  // zero ("Quantidade deve ser maior que zero"), entao zerar um item, que e o
+  // gesto natural de "nao mando mais este", batia num erro de validacao em vez
+  // de tirar o item. Tirar da lista e exatamente o que o proprio modal ja
+  // pergunta logo abaixo ("esta saindo material da OV: para onde ele vai?").
+  const paraEnviar = itens.filter(i => (Number(i.qtd) || 0) > 0)
+
   const corpo = (d?: DecisaoEstoque | null) => ({
-    itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor || null })),
+    itens: paraEnviar.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor || null })),
     decisao_estoque: d?.decisao || null,
     observacao_estoque: d?.observacao || null,
     previsao_pcp: d?.previsao_pcp || null,
@@ -3098,7 +3105,17 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
   }
 
   const mutation = useMutation({
-    mutationFn: () => api.patch(`/pedidos/${pedido.id}/itens`, corpo()),
+    mutationFn: () => {
+      // Zerar TUDO nao e edicao, e desmontar a OV — e para isso existe tela
+      // propria, que pergunta o destino do material inteiro. Avisar aqui evita
+      // o 422 generico do servidor ("a OV precisa ter ao menos um item").
+      if (!paraEnviar.length) {
+        return Promise.reject({ response: { data: { detail:
+          'Para tirar TODOS os itens, use "Voltar para a pendência do comercial" — ' +
+          'uma OV não pode ficar sem item.' } } })
+      }
+      return api.patch(`/pedidos/${pedido.id}/itens`, corpo())
+    },
     onSuccess: () => aoSalvar(false),
     onError: (e: any) => {
       const detail = e?.response?.data?.detail
