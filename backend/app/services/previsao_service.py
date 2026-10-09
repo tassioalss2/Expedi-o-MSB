@@ -37,6 +37,12 @@ _OPERACOES_FATURAMENTO = OPERACOES_FATURAMENTO
 
 # Pipeline: OVs ativas que ainda vão faturar (não inclui finalizadas/canceladas).
 _STATUS_PIPELINE = [
+    # "Dados da OV" entra, e isso é uma correção. A venda já existe, o material
+    # já está reservado e ela está no quadro da expedição — o que falta é
+    # Operações de Vendas informar o número do D365. Ficando de fora, o
+    # pipeline mentia para baixo: nenhuma venda vinda do CRM, nenhuma outbound
+    # e nenhuma remessa de saldo contava enquanto esperava esse número.
+    StatusPedido.AGUARD_DADOS_OV.value,
     StatusPedido.AGUARD_CREDITO.value,
     StatusPedido.LIBERADO.value,
     StatusPedido.EM_INVENTARIO.value,
