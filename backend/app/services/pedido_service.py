@@ -1306,7 +1306,10 @@ def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     from app.services import disponibilidade_service, pendencia_service
 
     db = get_service_db()
-    ped = db.table("pedidos").select("id, status, numero_pedido, pendencia")\
+    # `forma_venda` e `canal` entram no select porque a sincronizacao da linha,
+    # no fim desta funcao, precisa deles: a linha sai dos itens, mas direta x
+    # licitacao sai daqui.
+    ped = db.table("pedidos").select("id, status, numero_pedido, pendencia, forma_venda, canal")\
         .eq("id", pedido_id).single().execute().data
     if not ped:
         raise HTTPException(status_code=404, detail="OV não encontrada")
@@ -1419,6 +1422,16 @@ def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
     if observacao_estoque:
         obs += f" Obs.: {observacao_estoque}"
     _registrar_movimentacao(pedido_id, ped["status"], ped["status"], str(usuario.id), obs)
+
+    # A linha sai dos ITENS, e aqui os itens acabaram de mudar. Faltava este
+    # passo: criar OV e editar itens já sincronizavam, adicionar não — então a
+    # OV que nasce sem item (vinda do CRM) e recebe os produtos depois ficava
+    # para sempre com "Linha (meta): —". E linha vazia não é cosmético: a venda
+    # cai em "Sem linha" no faturamento por canal e não conta na meta de
+    # ninguém.
+    _sincronizar_linha(
+        db, pedido_id,
+        ped.get("forma_venda") or _forma_venda_de(_Legado(ped.get("canal"))))
 
     return obter_pedido(pedido_id)
 
