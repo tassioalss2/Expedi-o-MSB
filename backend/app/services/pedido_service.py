@@ -301,7 +301,13 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
                 "tipo_operacao":         payload.tipo_operacao.value if payload.tipo_operacao else "VENDA_NORMAL",
                 "canal":                 payload.canal.value if payload.canal else None,
                 "local_entrega":         payload.local_entrega,
-                "status":                StatusPedido.LIBERADO.value,
+                # Nasce em "Dados da OV", e nao em "Liberado". A remessa do saldo
+                # e uma SAIDA NOVA: o D365 nao sabe dela ate alguem liberar a
+                # entrega la. Indo direto para Liberado, o quadro dizia ao
+                # estoque que podia separar material que o sistema fiscal ainda
+                # nao tinha autorizado — e quem libera no D365 nao tinha onde ver
+                # que havia uma remessa esperando por isso.
+                "status":                StatusPedido.AGUARD_DADOS_OV.value,
                 "prioridade":            payload.prioridade.value,
                 "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
                 "data_prevista_coleta":  payload.data_prevista_coleta.isoformat() if payload.data_prevista_coleta else None,
@@ -338,8 +344,10 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
             if itens:
                 db.table("itens_pedido").insert(itens).execute()
             _sincronizar_linha(db, pedido["id"], _forma_venda_de(payload))
-            _registrar_movimentacao(pedido["id"], None, StatusPedido.LIBERADO.value, uid,
-                                    f"Remessa R{nova_remessa} criada a partir da OV original {payload.numero_pedido}")
+            _registrar_movimentacao(
+                pedido["id"], None, StatusPedido.AGUARD_DADOS_OV.value, uid,
+                f"Remessa R{nova_remessa} criada a partir da OV original "
+                f"{payload.numero_pedido} — falta liberar a entrega no D365")
             return pedido
 
         # forcar_duplicata=True: só permite recriar OVs CANCELADAS

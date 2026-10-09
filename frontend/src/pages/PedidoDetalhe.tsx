@@ -3233,7 +3233,12 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
   // local preenchidos — só falta o número real da OV. Vinda do CRM não tem
   // nada disso ainda. Pré-carrega o que já existe em vez de pedir de novo.
   const ehOutbound = pedido.numero_pedido?.startsWith('OUT-')
-  const [numero, setNumero] = useState('')
+  // Remessa do saldo de uma pendência: o número JÁ existe (é o da OV original,
+  // R2, R3…). Aqui não falta número — falta alguém liberar a entrega no D365.
+  // Pedir de novo o número que está impresso no topo da tela faria a pessoa
+  // procurar um dado que ela já tem, ou pior, inventar um novo.
+  const ehRemessa = (pedido as any).remessa_numero > 1
+  const [numero, setNumero] = useState(ehRemessa ? (pedido.numero_pedido || '') : '')
   const [data, setData] = useState(pedido.data_prevista_entrega || '')
   const [tipoFrete, setTipoFrete] = useState<'FOB' | 'CIF_COM_VALOR' | 'CIF_SEM_VALOR'>(
     (pedido.tipo_frete as any) || 'FOB'
@@ -3264,18 +3269,32 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
   return (
     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5 mb-5">
       <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
-        🆕 {ehOutbound ? 'Venda outbound lançada pelo comercial — complete a OV' : 'Venda ganha no CRM — complete a OV'}
+        {ehRemessa
+          ? `📦 Remessa R${(pedido as any).remessa_numero} do saldo — libere a entrega no D365`
+          : ehOutbound ? '🆕 Venda outbound lançada pelo comercial — complete a OV'
+          : '🆕 Venda ganha no CRM — complete a OV'}
       </p>
       <p className="text-xs text-blue-700 mt-0.5">
-        {ehOutbound
+        {ehRemessa
+          ? 'O material do saldo foi liberado e esta remessa já tem número — é a mesma OV, nova entrega. Falta liberar essa entrega no D365; confirme aqui depois disso e ela entra no fluxo normal da Expedição.'
+          : ehOutbound
           ? 'Cliente, frete, data e local já vieram preenchidos pelo comercial (confira e ajuste se precisar). Só falta emitir a OV no D365 e informar o número real para liberar esta venda no fluxo normal da Expedição.'
           : 'Cliente e valor já vieram do CRM. Emita a OV no D365 e informe o número real e a data de entrega para liberar esta venda no fluxo normal da Expedição.'}
       </p>
       <div className="grid grid-cols-2 gap-3 mt-3">
         <div>
-          <label className="text-sm font-medium text-gray-700">Número da OV (D365) *</label>
-          <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())} autoFocus
-            className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono" placeholder="Ex: OV015500" />
+          <label className="text-sm font-medium text-gray-700">
+            Número da OV (D365) {ehRemessa ? '' : '*'}
+          </label>
+          <input value={numero} onChange={e => setNumero(e.target.value.toUpperCase())}
+            autoFocus={!ehRemessa} readOnly={ehRemessa}
+            className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 font-mono ${
+              ehRemessa ? 'bg-gray-50 text-gray-600' : ''}`} placeholder="Ex: OV015500" />
+          {ehRemessa && (
+            <p className="text-[11px] text-gray-500 mt-1">
+              É a mesma OV da remessa original — o número não muda.
+            </p>
+          )}
         </div>
         <div>
           <label className="text-sm font-medium text-gray-700">Data prevista de entrega *</label>
@@ -3304,7 +3323,8 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
       </div>
       <button onClick={() => mutation.mutate()} disabled={!valido || mutation.isPending}
         className="mt-3 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg">
-        {mutation.isPending ? 'Liberando…' : 'Liberar OV'}
+        {mutation.isPending ? 'Liberando…'
+          : ehRemessa ? 'Já liberei no D365 — mandar para a separação' : 'Liberar OV'}
       </button>
     </div>
   )
