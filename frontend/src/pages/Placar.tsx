@@ -121,6 +121,11 @@ export default function Placar() {
   const dia = barra?.dia
   const corRitmo = RITMO_COR[ritmo?.status] || '#94a3b8'
 
+  // O que está no quadro com OV aberta — o pipeline real, não a projeção.
+  const emProcesso = previsao?.mes?.em_processo != null ? Number(previsao.mes.em_processo) : null
+  const pctComProcesso = valorMeta && emProcesso != null
+    ? ((realizado + emProcesso) / valorMeta) * 100 : 0
+
   // Realizado por canal: a linha do produto manda, não o canal digitado — é a
   // mesma regra do Painel Comercial, e a licitação vem separada de lá.
   const porCanal: Record<string, number> = {}
@@ -212,30 +217,41 @@ export default function Placar() {
           )}
         </div>
 
-        {/* Previsão do mês */}
+        {/* Faturado + em processamento.
+            NÃO é a projeção estatística da tela de Previsão (que hoje daria
+            R$ 1,6 mi, montada sobre média histórica e saldo de contratos). Aqui
+            só entra o que existe: o que já faturou e o que está no quadro com
+            OV aberta. É um número que dá para apontar e ir conferir.
+            O faturado vem da MESMA fonte do número grande lá em cima — dois
+            "faturado" diferentes na mesma parede destruiriam a confiança nos
+            dois. */}
         <div className="rounded-3xl bg-white/5 border border-white/10 p-6 flex flex-col">
-          <p className="text-white/50 text-lg">Previsão do mês</p>
-          {previsao?.mes?.previsao != null ? (
+          <p className="text-white/50 text-lg">Faturado + em processamento</p>
+          {emProcesso != null ? (
             <>
-              <p className="text-6xl font-black leading-none mt-1">{milhar(previsao.mes.previsao)}</p>
-              {previsao.mes.atingimento_previsto_pct != null && (
+              <p className="text-6xl font-black leading-none mt-1">{milhar(realizado + emProcesso)}</p>
+              {valorMeta && (
                 <p className="text-xl font-bold mt-1"
-                  style={{ color: previsao.mes.atingimento_previsto_pct >= 100 ? '#34d399'
-                    : previsao.mes.atingimento_previsto_pct >= 90 ? '#fbbf24' : '#f87171' }}>
-                  {previsao.mes.atingimento_previsto_pct.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}% da meta
+                  style={{ color: pctComProcesso >= 100 ? '#34d399' : pctComProcesso >= 70 ? '#fbbf24' : '#f87171' }}>
+                  {pctComProcesso.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}% da meta
                 </p>
               )}
-              {/* Garantido = o que já faturou + o que está no kanban. É o piso:
-                  o resto da previsão depende de negócio que ainda pode não sair. */}
-              {previsao.mes.garantido != null && (
-                <p className="text-white/50 text-base mt-3">
-                  garantido <strong className="text-white/80">{milhar(previsao.mes.garantido)}</strong>
-                  <span className="block text-sm text-white/35 mt-0.5">faturado + o que está no quadro</span>
+              <div className="mt-4 space-y-1.5 text-base">
+                <p className="flex justify-between text-white/60">
+                  <span>faturado</span>
+                  <strong className="text-white/85 tabular-nums">{milhar(realizado)}</strong>
                 </p>
-              )}
+                <p className="flex justify-between text-white/60">
+                  <span>no quadro (OVs abertas)</span>
+                  <strong className="text-white/85 tabular-nums">{milhar(emProcesso)}</strong>
+                </p>
+              </div>
+              <p className="text-sm text-white/35 mt-3">
+                o que já saiu mais o que está em processamento agora
+              </p>
             </>
           ) : (
-            <p className="text-white/30 text-lg mt-2">sem dados de previsão</p>
+            <p className="text-white/30 text-lg mt-2">sem dados</p>
           )}
         </div>
 
