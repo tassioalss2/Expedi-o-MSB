@@ -3607,8 +3607,23 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
   const emSeparacao = STATUSES_SEPARACAO.includes(status)
   const chegouFaturamento = !STATUSES_SEPARACAO.includes(status) && status !== 'CANCELADO'
 
-  // Calcula tempo de separação
-  const inicioSep = pedido.criado_em ? new Date(pedido.criado_em) : null
+  // Separação começa quando a OV é LIBERADA, não quando o registro nasce.
+  //
+  // A remessa do saldo nasce em "Dados da OV" e fica lá esperando Operações de
+  // Vendas liberar a entrega no D365 — espera que não é da separação e que o
+  // estoque sequer pode começar. Contando de `criado_em`, a R2 da OV017097
+  // aparecia com 2h30 "acima do SLA" sem ninguém ter tocado nela.
+  //
+  // Vale para todas: OV que nasceu liberada tem a movimentação no mesmo
+  // instante, então nada muda no histórico; sem movimentação (base antiga),
+  // cai no `criado_em` de antes.
+  const liberadaEm = (movimentacoes || [])
+    .filter(m => m.status_novo === 'LIBERADO')
+    .map(m => m.criado_em)
+    .sort()[0]
+  const esperandoD365 = status === 'AGUARD_DADOS_OV' || status === 'AGUARD_PRODUCAO'
+  const inicioSep = liberadaEm ? new Date(liberadaEm)
+    : (!esperandoD365 && pedido.criado_em ? new Date(pedido.criado_em) : null)
   const fimSep = chegouFaturamento && pedido.atualizado_em ? new Date(pedido.atualizado_em) : new Date()
   const horasSep = inicioSep ? calcHorasComerciais(inicioSep, fimSep) : 0
 
@@ -3782,6 +3797,22 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
             className="shrink-0 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-500 disabled:bg-gray-300">
             {retomar.isPending ? 'Retomando…' : '▶ Retomar'}
           </button>
+        </div>
+      )}
+
+      {/* O relógio ainda não começou: a OV espera a liberação no D365, e essa
+          espera não é da separação. Dizer isso é melhor que esconder o card —
+          quem procura o tempo precisa saber por que ele não está correndo. */}
+      {!pedido.espera_tipo && esperandoD365 && !inicioSep && (
+        <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 flex items-center gap-4">
+          <div className="text-3xl">⏸️</div>
+          <div>
+            <p className="text-sm font-bold text-blue-900">O relógio da separação ainda não começou</p>
+            <p className="text-sm text-blue-800 mt-0.5">
+              Ele passa a contar quando a OV for liberada para a separação. O tempo esperando a
+              liberação no D365 não entra no SLA.
+            </p>
+          </div>
         </div>
       )}
 

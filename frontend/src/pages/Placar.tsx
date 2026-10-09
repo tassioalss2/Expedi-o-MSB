@@ -93,6 +93,14 @@ export default function Placar() {
   // O quadro da logistica: quantas OVs em cada etapa, e quantas sairam hoje.
   // Mesma fonte do Painel Operacional — o placar nao recontata nada por conta
   // propria.
+  // Previsão de faturamento: para onde o mês vai se nada mudar. Sem ela o
+  // placar só diz onde estamos; com ela diz se o jeito que estamos andando
+  // chega lá — que é a pergunta que o comercial faz olhando a parede.
+  const { data: previsao } = useQuery<any>({
+    queryKey: ['placar-previsao'],
+    queryFn: () => api.get('/previsao/resumo').then(r => r.data),
+    refetchInterval: REFRESCO * 5,
+  })
   const { data: operacional } = useQuery<any>({
     queryKey: ['placar-operacional'],
     queryFn: () => api.get('/pedidos/dashboard/operacional').then(r => r.data),
@@ -182,7 +190,7 @@ export default function Placar() {
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0">
         {/* Hoje */}
         <div className="rounded-3xl bg-white/5 border border-white/10 p-6 flex flex-col">
           <p className="text-white/50 text-lg">Hoje</p>
@@ -204,8 +212,35 @@ export default function Placar() {
           )}
         </div>
 
+        {/* Previsão do mês */}
+        <div className="rounded-3xl bg-white/5 border border-white/10 p-6 flex flex-col">
+          <p className="text-white/50 text-lg">Previsão do mês</p>
+          {previsao?.mes?.previsao != null ? (
+            <>
+              <p className="text-6xl font-black leading-none mt-1">{milhar(previsao.mes.previsao)}</p>
+              {previsao.mes.atingimento_previsto_pct != null && (
+                <p className="text-xl font-bold mt-1"
+                  style={{ color: previsao.mes.atingimento_previsto_pct >= 100 ? '#34d399'
+                    : previsao.mes.atingimento_previsto_pct >= 90 ? '#fbbf24' : '#f87171' }}>
+                  {previsao.mes.atingimento_previsto_pct.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}% da meta
+                </p>
+              )}
+              {/* Garantido = o que já faturou + o que está no kanban. É o piso:
+                  o resto da previsão depende de negócio que ainda pode não sair. */}
+              {previsao.mes.garantido != null && (
+                <p className="text-white/50 text-base mt-3">
+                  garantido <strong className="text-white/80">{milhar(previsao.mes.garantido)}</strong>
+                  <span className="block text-sm text-white/35 mt-0.5">faturado + o que está no quadro</span>
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-white/30 text-lg mt-2">sem dados de previsão</p>
+          )}
+        </div>
+
         {/* Por linha */}
-        <div className="rounded-3xl bg-white/5 border border-white/10 p-6 col-span-2">
+        <div className="rounded-3xl bg-white/5 border border-white/10 p-6">
           <p className="text-white/50 text-lg mb-3">Por linha</p>
           <div className="space-y-3.5">
             {CANAIS.map(c => {
