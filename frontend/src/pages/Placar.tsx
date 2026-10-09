@@ -25,11 +25,15 @@ import { ORDEM_KANBAN, STATUS_CONFIG } from '../lib/statusConfig'
 
 const REFRESCO = 60_000
 
+// São TRÊS linhas. Licitação não é linha, é forma de venda: o item vendido por
+// licitação pertence a uma das três, e o faturamento dele já está rateado nelas.
+// Mostrá-la como quarta barra somava o mesmo dinheiro duas vezes na parede —
+// e, pior, fazia parecer que havia faturamento fora das linhas. O recorte de
+// licitação vira uma nota de rodapé do bloco.
 const CANAIS = [
   { key: 'URO', label: 'Uro', cor: '#38bdf8' },
   { key: 'VASCULAR', label: 'Vascular', cor: '#a78bfa' },
   { key: 'REALCLOSURE', label: 'Realclosure', cor: '#fbbf24' },
-  { key: 'LICITACAO', label: 'Licitação', cor: '#34d399' },
 ]
 
 const RITMO_COR: Record<string, string> = {
@@ -133,7 +137,8 @@ export default function Placar() {
   // mesma regra do Painel Comercial, e a licitação vem separada de lá.
   const porCanal: Record<string, number> = {}
   for (const c of (canais?.canais || [])) porCanal[c.canal] = Number(c.valor || 0)
-  porCanal['LICITACAO'] = Number(canais?.licitacao?.valor || 0)
+  // Recorte, não linha: quanto do total acima veio por licitação.
+  const licitacao = canais?.licitacao || null
 
   const topClientes = (clientes?.clientes || clientes || []).slice?.(0, 6) || []
 
@@ -292,6 +297,14 @@ export default function Placar() {
               )
             })}
           </div>
+          {/* Recorte, e dito como recorte: o valor JÁ está nas barras acima. */}
+          {licitacao?.valor > 0 && (
+            <p className="mt-4 border-t border-white/10 pt-3 text-sm text-white/40">
+              Deste total, <strong className="text-white/70">{milhar(licitacao.valor)}</strong> em{' '}
+              {licitacao.qtd} nota(s) vieram por <strong className="text-white/70">licitação</strong> —
+              já contadas nas linhas acima, porque o item vendido por licitação pertence a uma delas.
+            </p>
+          )}
         </div>
       </div>
 
