@@ -1883,6 +1883,10 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             # OV original — não faz sentido perguntar de novo. As OVs antigas não
             # têm o campo, daí o fallback.
             condicao_pagamento=(ov.get("condicao_pagamento") or "—").strip() or "—",
+            # Mesmo motivo da condicao de pagamento: o material vai para o mesmo
+            # lugar da primeira remessa. Sem isto a remessa nascia sem local e a
+            # tela pedia de novo um endereco que ja estava na OV.
+            local_entrega=ov.get("local_entrega"),
             # A remessa é a mesma venda: herda direta/licitação da OV original,
             # senão a 2ª remessa de uma licitação seria rotulada como direta.
             forma_venda=ov.get("forma_venda"),

@@ -301,6 +301,12 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
                 "tipo_operacao":         payload.tipo_operacao.value if payload.tipo_operacao else "VENDA_NORMAL",
                 "canal":                 payload.canal.value if payload.canal else None,
                 "local_entrega":         payload.local_entrega,
+                # Faltava aqui, e por isso a remessa do saldo nascia SEM condicao
+                # de pagamento: o chamador mandava o campo (copiado da OV
+                # original) e este dicionario o descartava em silencio. A tela
+                # entao pedia de novo uma condicao que ja estava negociada na
+                # primeira remessa.
+                "condicao_pagamento":    payload.condicao_pagamento,
                 # Nasce em "Dados da OV", e nao em "Liberado". A remessa do saldo
                 # e uma SAIDA NOVA: o D365 nao sabe dela ate alguem liberar a
                 # entrega la. Indo direto para Liberado, o quadro dizia ao
