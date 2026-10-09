@@ -3270,13 +3270,13 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5 mb-5">
       <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
         {ehRemessa
-          ? `📦 Remessa R${(pedido as any).remessa_numero} do saldo — libere a entrega no D365`
+          ? `📦 Remessa R${(pedido as any).remessa_numero} do saldo — Operações de Vendas libera no D365`
           : ehOutbound ? '🆕 Venda outbound lançada pelo comercial — complete a OV'
           : '🆕 Venda ganha no CRM — complete a OV'}
       </p>
       <p className="text-xs text-blue-700 mt-0.5">
         {ehRemessa
-          ? 'O material do saldo foi liberado e esta remessa já tem número — é a mesma OV, nova entrega. Falta liberar essa entrega no D365; confirme aqui depois disso e ela entra no fluxo normal da Expedição.'
+          ? 'O comercial liberou o material do saldo — isso já foi feito. Falta o outro ato, que é de Operações de Vendas: liberar esta entrega no D365. A remessa já tem número (é a mesma OV). Depois de liberar lá, confirme aqui e ela entra no fluxo normal da Expedição; até então o estoque não separa.'
           : ehOutbound
           ? 'Cliente, frete, data e local já vieram preenchidos pelo comercial (confira e ajuste se precisar). Só falta emitir a OV no D365 e informar o número real para liberar esta venda no fluxo normal da Expedição.'
           : 'Cliente e valor já vieram do CRM. Emita a OV no D365 e informe o número real e a data de entrega para liberar esta venda no fluxo normal da Expedição.'}

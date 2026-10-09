@@ -293,6 +293,18 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
         </span>
       )}
 
+      {/* Remessa do saldo esperando a liberacao da entrega no D365. Quem libera
+          la e OPERACOES DE VENDAS — a vendedora liberou o material, que e outro
+          ato. O marcador existe para a tarefa ter dono visivel no quadro: sem
+          ele, a remessa so dizia "Dados da OV" e cada um achava que era do
+          outro. */}
+      {(pedido.remessa_numero ?? 1) > 1 && pedido.status === 'AGUARD_DADOS_OV' && (
+        <span className="flex-shrink-0 rounded border border-blue-300 bg-blue-50 px-1 text-[10px] leading-4 text-blue-800"
+          title="Operações de Vendas precisa liberar a entrega desta remessa no D365. Até lá o estoque não separa.">
+          🔓 D365 · Op. Vendas
+        </span>
+      )}
+
       {/* Venda maior que a OV: o resto esta na pendencia. O D365 recebe o pedido
           completo, entao este marcador e o aviso de "nao lance so o que esta
           aqui". Abre o detalhe, onde a venda inteira aparece montada. */}
