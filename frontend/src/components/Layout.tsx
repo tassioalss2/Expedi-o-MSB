@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2,
+  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2, Monitor,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -20,6 +20,8 @@ type NavItem = {
   subs?: Array<{ hash: string; label: string }>
   /** Chave do contador vermelho, quando o item tem um. */
   badge?: 'expedicao' | 'ocorrencias' | 'pendencias'
+  /** Abre fora do app (o placar vai para uma TV, numa aba só dele). */
+  novaAba?: boolean
 }
 
 const navOperacoes: NavItem[] = [
@@ -43,6 +45,9 @@ const navComercial: NavItem[] = [
       { hash: '#produtos', label: 'Vendas por Produto' },
     ],
   },
+  // Abre em aba nova: o lugar dele e uma TV no corredor, e quem clica aqui
+  // normalmente quer deixar rodando sem perder a tela em que estava.
+  { to: '/placar', label: 'Placar de parede', icone: Monitor, novaAba: true },
   { to: '/pendencias', label: 'Pendências de OV', icone: PackageX, badge: 'pendencias' },
   { to: '/devolucoes', label: 'Devoluções', icone: Undo2 },
   { to: '/frete',      label: 'Conferência de Frete', icone: Truck },
@@ -151,6 +156,18 @@ export function Layout() {
   const Item = ({ item }: { item: NavItem }) => {
     const Icone = item.icone
     const qtd = item.badge ? badges[item.badge] : 0
+    // Abre numa aba propria e nao marca "ativo": o placar vive numa TV, e quem
+    // clica aqui nao esta saindo da tela em que estava.
+    if (item.novaAba) {
+      return (
+        <a href={item.to} target="_blank" rel="noopener noreferrer" onClick={fecharSidebar}
+          style={{ color: C.label, fontWeight: 500 }}
+          className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm transition-colors hover:bg-[#1f2937]">
+          <Icone size={18} style={{ color: C.icone }} className="shrink-0" />
+          <span className="flex-1 truncate">{item.label}</span>
+        </a>
+      )
+    }
     return (
       <div>
         <NavLink

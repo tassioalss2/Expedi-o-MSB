@@ -32,6 +32,7 @@ import { Inteligencia } from './pages/Inteligencia'
 import { CotacaoImprimir } from './pages/crm/CotacaoImprimir'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAuthStore } from './store/authStore'
+import Placar from './pages/Placar'
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 10_000 } },
@@ -61,6 +62,9 @@ export default function App() {
           <Route path="/relatorio/coleta" element={<RelatorioColeta />} />
           <Route path="/relatorio/coletas-realizadas" element={<RelatorioColetasRealizadas />} />
           <Route path="/crm/cotacao/:id/imprimir" element={<PrivateRoute><CotacaoImprimir /></PrivateRoute>} />
+          {/* Placar de parede — fora do Layout: numa TV não há sidebar nem
+              ninguém para navegar. */}
+          <Route path="/placar" element={<PrivateRoute><Placar /></PrivateRoute>} />
 
           {/* App principal — com sidebar */}
           <Route
