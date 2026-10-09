@@ -1573,9 +1573,24 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
   const semValor = pedido.tipo_frete === 'CIF_SEM_VALOR'
   const valorOk = Number(valorFrete) > 0
 
+  // QUEM vai fazer o frete era pedido só no texto livre da observação
+  // ("Transportadora cotada, prazo, etc."), e quem estava cotando esquecia.
+  // Sem ela a conta não fecha: o relatório do que se deve soma por
+  // transportadora, e em setembro havia 21 notas com R$ 7.727,79 de frete CIF
+  // sem transportadora nenhuma — dinheiro que não dá para conferir contra a
+  // fatura de ninguém. O backend já aceitava o campo; a tela é que não pedia.
+  const [transportadoraId, setTransportadoraId] = useState(
+    (pedido as any).transportadora_id || '')
+  const { data: transportadoras = [] } = useQuery<any[]>({
+    queryKey: ['transportadoras'],
+    queryFn: () => api.get('/transportadoras').then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
+
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/cotacao-frete`, {
       valor_frete: valorOk ? Number(valorFrete) : null,
+      transportadora_id: transportadoraId || null,
       observacao: obs.trim() || null,
       data_prevista_entrega: dataEntrega || null,
     }),
@@ -1611,6 +1626,21 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
             <p className="text-[11px] text-gray-400 mt-1">Confirme a data real de entrega com base no prazo do frete cotado.</p>
           </div>
           <div>
+            <label className="text-sm font-medium text-gray-700">Transportadora *</label>
+            <select value={transportadoraId} onChange={e => setTransportadoraId(e.target.value)}
+              className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${
+                transportadoraId ? '' : 'border-amber-400 text-gray-400'}`}>
+              <option value="">Quem vai levar?</option>
+              {transportadoras.map((t: any) => (
+                <option key={t.id} value={t.id}>{t.nome}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-gray-400 mt-1">
+              É por ela que se confere a fatura do frete no fim do mês — sem isso o valor
+              cotado não bate com ninguém.
+            </p>
+          </div>
+          <div>
             <label className="text-sm font-medium text-gray-700">Valor cotado do frete (R$)</label>
             <input type="number" step="0.01" min="0" value={valorFrete}
               onChange={e => setValorFrete(e.target.value)}
@@ -1624,11 +1654,18 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
           <div>
             <label className="text-sm font-medium text-gray-700">Observação (opcional)</label>
             <input value={obs} onChange={e => setObs(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="Transportadora cotada, prazo, etc." />
+              className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="Prazo, condição combinada, nº da cotação…" />
           </div>
+          {(!dataEntrega || !transportadoraId) && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Falta informar: <strong>{[!transportadoraId && 'a transportadora',
+                !dataEntrega && 'a data prevista de entrega'].filter(Boolean).join(' e ')}</strong>
+            </p>
+          )}
           <div className="flex gap-2 pt-1">
             <button onClick={onClose} className="flex-1 py-2.5 border rounded-lg text-sm text-gray-600">Cancelar</button>
-            <button onClick={() => mutation.mutate()} disabled={mutation.isPending || !dataEntrega}
+            <button onClick={() => mutation.mutate()}
+              disabled={mutation.isPending || !dataEntrega || !transportadoraId}
               className="flex-1 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-500 disabled:opacity-50">
               {mutation.isPending ? 'Salvando…' : 'Liberar para faturamento'}
             </button>
