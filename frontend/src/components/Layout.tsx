@@ -279,7 +279,7 @@ export function Layout() {
               nova para não derrubar a tela em que a pessoa estava. */}
           <div style={{ marginTop: 12 }}>
             <Item item={{ to: '/', label: 'Início', icone: Home }} />
-            <Item item={{ to: '/placar', label: 'Placar de parede do comercial',
+            <Item item={{ to: '/placar', label: 'Placar Comercial',
                           icone: Monitor, novaAba: true }} />
           </div>
 
