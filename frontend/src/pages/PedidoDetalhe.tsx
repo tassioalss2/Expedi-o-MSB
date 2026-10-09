@@ -4169,6 +4169,31 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
             <h2 className="font-semibold text-gray-800 mb-4">Próxima Ação</h2>
             <div className="space-y-2">
 
+              {/* Venda outbound sem material: ela espera em "Aguardando
+                  produção" e normalmente sai de lá sozinha, quando alguém
+                  libera a pendência de estoque. Mas quando a pendência foi
+                  cancelada e os itens entraram na OV por outro caminho
+                  ("Adicionar itens"), não sobrava NENHUM botão — a venda
+                  ficava presa com o material já lançado nela. Foi o caso da
+                  OUT-1F5DA59D. */}
+              {status === 'AGUARD_PRODUCAO' && (((pedido as any).itens || []).length > 0) && (
+                <button
+                  onClick={() => {
+                    if (confirm('Mandar esta venda para a expedição? Ela vai para "Dados da OV", '
+                      + 'onde Operações de Vendas informa o número real do D365. '
+                      + 'Faça isto só se o material existe.')) {
+                      alterarStatusMutation.mutate({
+                        novo_status: 'AGUARD_DADOS_OV',
+                        observacao: 'Material disponível — venda liberada para a expedição.',
+                      })
+                    }
+                  }}
+                  disabled={alterarStatusMutation.isPending}
+                  className="w-full flex items-center gap-2 justify-center py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 disabled:opacity-50">
+                  ✅ Material chegou — mandar para a expedição
+                </button>
+              )}
+
               {/* Retornar etapa */}
               {!['LIBERADO','EXPEDIDO','CANCELADO'].includes(status) && (
                 <button onClick={() => setModal('retornar')}
