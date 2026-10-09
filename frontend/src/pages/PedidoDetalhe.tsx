@@ -3228,7 +3228,9 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
  *  número real do D365 e a data prevista — quem tem essa informação é a
  *  operadora, não o comercial. Fica sempre visível porque é a primeira coisa
  *  que precisa acontecer nesta OV, não algo atrás de um clique a mais. */
-function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onCompletado: () => void }) {
+function FormCompletarDadosOV({ pedido, onCompletado, onTrocarNumero }: {
+  pedido: Pedido; onCompletado: () => void; onTrocarNumero?: () => void
+}) {
   // Venda outbound (lançada direto pelo comercial) já vem com frete, data e
   // local preenchidos — só falta o número real da OV. Vinda do CRM não tem
   // nada disso ainda. Pré-carrega o que já existe em vez de pedir de novo.
@@ -3292,7 +3294,17 @@ function FormCompletarDadosOV({ pedido, onCompletado }: { pedido: Pedido; onComp
               ehRemessa ? 'bg-gray-50 text-gray-600' : ''}`} placeholder="Ex: OV015500" />
           {ehRemessa && (
             <p className="text-[11px] text-gray-500 mt-1">
-              É a mesma OV da remessa original — o número não muda.
+              É a mesma OV da remessa original.{' '}
+              {/* Nem sempre dá para usar a mesma OV: se a original já faturou no
+                  D365, o saldo não entra mais nela e o jeito é abrir OV nova lá.
+                  A troca tem tela própria (pede o motivo e remonta a família das
+                  remessas), e o caminho fica aqui porque é aqui que a pessoa
+                  descobre que precisa dele. */}
+              {onTrocarNumero && (
+                <button type="button" onClick={onTrocarNumero} className="text-blue-600 underline">
+                  Abri outra OV no D365 para esta remessa
+                </button>
+              )}
             </p>
           )}
         </div>
@@ -3655,7 +3667,9 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
           data — sem isso a OV não avança nenhuma etapa. Fica sempre visível, não
           atrás de um clique, porque é o primeiro coisa que precisa acontecer. */}
       {status === 'AGUARD_DADOS_OV' && (
-        <FormCompletarDadosOV pedido={pedido} onCompletado={() => qc.invalidateQueries({ queryKey: ['pedido', id] })} />
+        <FormCompletarDadosOV pedido={pedido}
+          onCompletado={() => qc.invalidateQueries({ queryKey: ['pedido', id] })}
+          onTrocarNumero={() => setModal('trocar_ov')} />
       )}
 
       {/* Família de remessas */}
