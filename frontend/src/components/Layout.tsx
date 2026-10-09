@@ -45,9 +45,6 @@ const navComercial: NavItem[] = [
       { hash: '#produtos', label: 'Vendas por Produto' },
     ],
   },
-  // Abre em aba nova: o lugar dele e uma TV no corredor, e quem clica aqui
-  // normalmente quer deixar rodando sem perder a tela em que estava.
-  { to: '/placar', label: 'Placar de parede', icone: Monitor, novaAba: true },
   { to: '/pendencias', label: 'Pendências de OV', icone: PackageX, badge: 'pendencias' },
   { to: '/devolucoes', label: 'Devoluções', icone: Undo2 },
   { to: '/frete',      label: 'Conferência de Frete', icone: Truck },
@@ -276,9 +273,14 @@ export function Layout() {
         </div>
 
         <nav className="flex-1 px-3 pb-3 overflow-y-auto">
-          {/* Início: isolado no topo, sem label de grupo. */}
+          {/* Início: isolado no topo, sem label de grupo. O placar vive aqui,
+              e não em Comercial: ele é a tela da parede, que qualquer área
+              liga — e quem liga não entra pelo menu do comercial. Abre em aba
+              nova para não derrubar a tela em que a pessoa estava. */}
           <div style={{ marginTop: 12 }}>
             <Item item={{ to: '/', label: 'Início', icone: Home }} />
+            <Item item={{ to: '/placar', label: 'Placar de parede do comercial',
+                          icone: Monitor, novaAba: true }} />
           </div>
 
           {soAcompanha ? (

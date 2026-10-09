@@ -21,6 +21,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../lib/api'
+import { ORDEM_KANBAN, STATUS_CONFIG } from '../lib/statusConfig'
 
 const REFRESCO = 60_000
 
@@ -87,6 +88,14 @@ export default function Placar() {
     queryFn: () => api.get('/pedidos/dashboard/vendas-por-canal', {
       params: { data_inicio: iso(ini), data_fim: iso(hoje) },
     }).then(r => r.data),
+    refetchInterval: REFRESCO,
+  })
+  // O quadro da logistica: quantas OVs em cada etapa, e quantas sairam hoje.
+  // Mesma fonte do Painel Operacional — o placar nao recontata nada por conta
+  // propria.
+  const { data: operacional } = useQuery<any>({
+    queryKey: ['placar-operacional'],
+    queryFn: () => api.get('/pedidos/dashboard/operacional').then(r => r.data),
     refetchInterval: REFRESCO,
   })
   const { data: clientes } = useQuery<any>({
@@ -228,6 +237,49 @@ export default function Placar() {
           </div>
         </div>
       </div>
+
+      {/* A logística, em uma faixa. O comercial é o assunto do placar, mas quem
+          passa no corredor também precisa ver onde o pedido está parado — e a
+          etapa com fila é a conversa que o quadro provoca. */}
+      {operacional && (
+        <div className="rounded-3xl bg-white/5 border border-white/10 px-6 py-4">
+          <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2 mb-3">
+            <p className="text-white/50 text-lg">No quadro da logística</p>
+            <p className="text-3xl font-black tabular-nums">
+              {operacional.total_pedidos} <span className="text-lg font-medium text-white/50">OVs em andamento</span>
+            </p>
+            <p className="text-3xl font-black tabular-nums text-emerald-400">
+              {operacional.expedidos_hoje} <span className="text-lg font-medium text-white/50">expedidas hoje</span>
+            </p>
+            {operacional.atrasados > 0 && (
+              <p className="text-3xl font-black tabular-nums text-red-400">
+                {operacional.atrasados} <span className="text-lg font-medium text-white/50">atrasadas</span>
+              </p>
+            )}
+          </div>
+          {/* Etapa por etapa, na ordem do kanban. Etapa vazia fica visível e
+              apagada: o buraco na fila é informação — some a etapa, some a
+              noção de por onde o pedido passa. */}
+          <div className="grid grid-cols-6 lg:grid-cols-11 gap-2">
+            {ORDEM_KANBAN.filter(st => st !== 'EXPEDIDO').map(st => {
+              const linha = (operacional.por_status || []).find((x: any) => x.status === st)
+              const qtd = linha?.quantidade || 0
+              const atraso = linha?.atrasados || 0
+              const cfg: any = (STATUS_CONFIG as any)[st] || {}
+              return (
+                <div key={st} className={`rounded-xl px-2 py-2 text-center ${qtd ? 'bg-white/10' : 'bg-white/[0.03]'}`}
+                  title={cfg.descricao}>
+                  <p className={`text-3xl font-black leading-none tabular-nums ${qtd ? '' : 'text-white/20'}`}>{qtd}</p>
+                  <p className={`text-[11px] leading-tight mt-1 ${qtd ? 'text-white/60' : 'text-white/20'}`}>{cfg.label || st}</p>
+                  {atraso > 0 && (
+                    <p className="text-[11px] font-bold text-red-400 mt-0.5">{atraso} atrasada(s)</p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Quem está comprando */}
       {topClientes.length > 0 && (
