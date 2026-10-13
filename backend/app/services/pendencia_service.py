@@ -968,6 +968,16 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         pend = p.get("pendencia") or {}
         if not incluir_resolvidas and pend.get("resolvido_em"):
             continue
+        # OV CANCELADA não deve material a ninguém. A pendência fica gravada na
+        # remessa, e cancelar a remessa não apaga esse bloco — então a dívida
+        # continuava na lista do comercial, em nome de uma venda que não existe
+        # mais. No fechamento de setembro eram R$ 13.910,00 assim: a R3 da
+        # OV016456 e a OV016609, ambas canceladas.
+        #
+        # Se a venda continua de pé em outra OV, é lá que a pendência tem de
+        # estar — e está, porque quem cancela e refaz cria o registro novo.
+        if p.get("status") == StatusPedido.CANCELADO.value:
+            continue
         acao, bloqueio = _acao(p, "pedido")
         saida.append(_serializar(
             fonte="pedido", registro_id=p["id"],
