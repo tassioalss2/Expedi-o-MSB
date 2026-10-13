@@ -129,7 +129,12 @@ export default function Pendencias() {
         // O grupo se ordena pela espera mais longa que tem dentro: é ela que
         // vira reclamação de cliente.
         dias: Math.max(...itens.map(p => p.dias_parada || 0)),
-        valor: itens.reduce((a, p) => a + (p.valor || 0), 0),
+        // Transfer price (Biomedical) nao entra em valor nenhum da tela: e
+        // repasse dentro do grupo, nao dinheiro de venda parado. O material
+        // devido continua aparecendo — em unidades, item a item.
+        valor: itens.reduce((a, p) => a + (p.transfer_price ? 0 : (p.valor || 0)), 0),
+        transfer: itens.every(p => !!p.transfer_price),
+        valorTransfer: itens.reduce((a, p) => a + (p.transfer_price ? (p.valor || 0) : 0), 0),
       }))
       .sort((a, b) => b.dias - a.dias)
   }, [abertas])
@@ -142,7 +147,24 @@ export default function Pendencias() {
   }, [abertas])
 
   const liberavelAgora = porFila.COMPLETO.concat(porFila.PARCIAL)
-    .reduce((a, p) => a + (p.estoque_agora?.valor_disponivel || 0), 0)
+    .reduce((a, p) => a + (p.transfer_price ? 0 : (p.estoque_agora?.valor_disponivel || 0)), 0)
+
+  // O que devemos a Biomedical: fica a vista, por item, mas fora das somas.
+  const transferAberto = abertas.filter(p => !!p.transfer_price)
+  const transferItens = (() => {
+    const m = new Map<string, { codigo: string; descricao?: string | null; qtd: number }>()
+    for (const p of transferAberto) {
+      for (const i of (p.itens || [])) {
+        const q = Number((p.nada_entregue ? i.qtd_pedida : i.qtd_pendente) || 0)
+        const cod = (i.codigo || '').trim().toUpperCase()
+        if (!cod || q <= 0) continue
+        const r = m.get(cod) || { codigo: cod, descricao: i.descricao, qtd: 0 }
+        r.qtd += q
+        m.set(cod, r)
+      }
+    }
+    return [...m.values()].sort((a, b) => b.qtd - a.qtd)
+  })()
 
   // Os recortes dos cards do topo. Cada um decide por SALDO; o filtro depois
   // aplica por VENDA.
@@ -200,8 +222,8 @@ export default function Pendencias() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi
           rotulo="Parado esperando material"
-          valor={fmtBRL(abertas.reduce((a, p) => a + (p.valor || 0), 0))}
-          detalhe={`${abertas.length} pendência(s) · ${todosGrupos.length} venda(s)`}
+          valor={fmtBRL(abertas.reduce((a, p) => a + (p.transfer_price ? 0 : (p.valor || 0)), 0))}
+          detalhe={`${abertas.filter(p => !p.transfer_price).length} pendência(s) · ${todosGrupos.filter(g => !g.transfer).length} venda(s)`}
           cor="text-red-700"
           ativo={recorte === null} anel="ring-red-200 border-red-300"
           onClick={() => setRecorte(null)}
@@ -216,7 +238,7 @@ export default function Pendencias() {
         />
         <Kpi
           rotulo="Só esperando material"
-          valor={fmtBRL(porFila.NENHUM.reduce((a, p) => a + (p.valor || 0), 0))}
+          valor={fmtBRL(porFila.NENHUM.reduce((a, p) => a + (p.transfer_price ? 0 : (p.valor || 0)), 0))}
           detalhe={`${porFila.NENHUM.length} sem estoque na foto`}
           cor="text-gray-700"
           ativo={recorte === 'esperando'} anel="ring-gray-300 border-gray-300"
@@ -233,6 +255,28 @@ export default function Pendencias() {
           onClick={() => setRecorte(r => r === 'parada' ? null : 'parada')}
         />
       </div>
+
+      {/* Transfer price nao e dinheiro de venda parado — mas o material e
+          devido do mesmo jeito, e quem opera precisa saber o que e quanto.
+          Por isso fica aqui, inteiro, e fora de todas as somas acima. */}
+      {transferAberto.length > 0 && (
+        <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
+          <p className="font-semibold text-slate-800">
+            Fora da conta: {transferAberto.length} saldo(s) de transfer price (Biomedical)
+          </p>
+          <p className="mt-0.5">
+            Devemos o material, mas o valor nao e receita da MSB — por isso nao soma nos numeros
+            acima. {n(transferItens.reduce((a, i) => a + i.qtd, 0))} un no total:
+          </p>
+          <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+            {transferItens.map(i => (
+              <span key={i.codigo} title={i.descricao || ''}>
+                <span className="font-mono font-medium">{i.codigo}</span> {n(i.qtd)} un
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
 
       {data?.estoque_desatualizado && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -360,6 +404,7 @@ export default function Pendencias() {
                 onCancelar={() => setCancelando(g.itens[0])} />
             ) : (
               <GrupoDaVenda key={g.k} itens={g.itens} valor={g.valor}
+                transfer={g.transfer} valorTransfer={g.valorTransfer}
                 destaca={recorte ? RECORTES[recorte] : undefined}
                 onLiberar={setLiberando} onAcompanhar={setAcompanhando}
                 onCancelar={setCancelando} />
@@ -438,6 +483,9 @@ interface OvDoProduto {
 interface ProdutoPendente {
   codigo: string; descricao: string | null
   qtd_pendente: number; valor_pendente: number
+  /** Transfer price: entra na quantidade (a producao entrega igual), nunca no
+   *  valor — repasse dentro do grupo nao e receita. */
+  qtd_transfer?: number; valor_transfer?: number
   qtd_coberta_agora: number; qtd_a_produzir: number
   disponivel: number | null; estoque_sa: number | null; cobre_com_sa: boolean
   dias_maior_espera: number; previsao_pcp: string | null
@@ -528,6 +576,12 @@ function PorProduto() {
                       </td>
                       <td className="py-2 px-2 text-right tabular-nums font-semibold text-gray-800">
                         {fmtBRL(pr.valor_pendente)}
+                        {!!pr.qtd_transfer && (
+                          <span className="block text-[10px] font-normal text-slate-400"
+                            title="Transfer price (Biomedical): o material entra na coluna Falta, o valor nao soma aqui">
+                            + {n(pr.qtd_transfer)} un transfer
+                          </span>
+                        )}
                       </td>
                       <td className="py-2 px-2 text-center text-[11px] text-gray-600">
                         {pr.qtd_ovs} OV{pr.qtd_ovs > 1 ? 's' : ''}
@@ -787,8 +841,11 @@ function EtiquetaEstoque({ p }: { p: Pendencia }) {
  *  para fundir os saldos num só: cada um é uma linha de `pedidos` diferente, e
  *  liberar, cobrar e cancelar agem em cada um. Juntar só o cabeçalho resolve o
  *  que incomodava — ler três vezes o mesmo cliente e a mesma OV. */
-function GrupoDaVenda({ itens, valor, destaca, onLiberar, onAcompanhar, onCancelar }: {
+function GrupoDaVenda({ itens, valor, transfer, valorTransfer, destaca,
+                       onLiberar, onAcompanhar, onCancelar }: {
   itens: Pendencia[]; valor: number
+  /** Venda de transfer price: o valor fica a vista, mas em cinza e fora das somas. */
+  transfer?: boolean; valorTransfer?: number
   /** Com filtro ativo, marca quais saldos casaram. Os outros continuam à vista:
    *  a venda aparece inteira de proposito. */
   destaca?: (p: Pendencia) => boolean
@@ -826,8 +883,15 @@ function GrupoDaVenda({ itens, valor, destaca, onLiberar, onAcompanhar, onCancel
           title="Espera mais longa desta venda">
           <Clock size={12} className="inline mr-1 -mt-0.5" />{dias}d
         </div>
-        <div className="text-sm font-semibold text-red-700 tabular-nums w-28 text-right">
-          {fmtBRL(valor)}
+        <div className={`text-sm font-semibold tabular-nums w-28 text-right ${
+          transfer ? 'text-slate-400' : 'text-red-700'}`}
+          title={transfer
+            ? 'Transfer price (Biomedical): devemos o material, mas o valor nao soma na pendencia'
+            : undefined}>
+          {fmtBRL(transfer ? (valorTransfer || 0) : valor)}
+          {transfer && (
+            <span className="block text-[10px] font-normal leading-tight">fora da conta</span>
+          )}
         </div>
         {/* Espaço dos botões, que aqui vivem em cada saldo. */}
         <div className="w-[236px] shrink-0" />
@@ -1005,8 +1069,15 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
           <Clock size={12} className="inline mr-1 -mt-0.5" />{dias}d
         </div>
 
-        <div className="text-sm font-semibold text-red-700 tabular-nums w-28 text-right">
+        <div className={`text-sm font-semibold tabular-nums w-28 text-right ${
+          p.transfer_price ? 'text-slate-400' : 'text-red-700'}`}
+          title={p.transfer_price
+            ? 'Transfer price (Biomedical): devemos o material, mas o valor nao soma na pendencia'
+            : undefined}>
           {fmtBRL(p.valor)}
+          {p.transfer_price && (
+            <span className="block text-[10px] font-normal leading-tight">fora da conta</span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">

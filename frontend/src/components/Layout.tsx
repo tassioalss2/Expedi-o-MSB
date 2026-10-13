@@ -145,7 +145,10 @@ export function Layout() {
   const badges: Record<string, number> = {
     expedicao: (ovsPendentes as any[]).length,
     ocorrencias: (ocorrenciasAbertas as any[]).length,
-    pendencias: (pendencias as any)?.quantidade || 0,
+    // Conta tambem o transfer price: o valor dele fica fora das somas, mas o
+    // material e devido e alguem tem de olhar.
+    pendencias: ((pendencias as any)?.quantidade || 0)
+      + ((pendencias as any)?.quantidade_transfer || 0),
   }
 
   /** Um item de menu. Estilo inline nos tokens da spec — o Tailwind não tem

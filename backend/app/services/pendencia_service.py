@@ -826,6 +826,7 @@ def _solicitacoes_sem_ov(db, clientes: dict) -> list:
             "titulo": "Solicitação de licitação — ainda sem OV",
             "cliente": clientes.get(base.get("cliente_id")),
             "cliente_id": base.get("cliente_id"),
+            "transfer_price": "BIOMEDICAL" in (clientes.get(base.get("cliente_id")) or "").upper(),
             "canal": None,
             "origem_venda": "LICITACAO",
             "ov_id": None,
@@ -1003,10 +1004,20 @@ def listar(incluir_resolvidas: bool = False) -> dict:
     ordem = {"COMPLETO": 0, "PARCIAL": 1, "NENHUM": 2}
     saida.sort(key=lambda x: (ordem.get((x.get("estoque_agora") or {}).get("status"), 3),
                               -(x.get("valor") or 0)))
+    # Transfer price (Biomedical) é repasse dentro do grupo: a MSB deve o
+    # material, e isso precisa aparecer — o que e quanto —, mas não é dinheiro
+    # parado de venda. Somado ao total, inflava a dívida do comercial com algo
+    # que não vira receita. Fica marcado e contado à parte.
+    vendas = [x for x in saida if not x.get("transfer_price")]
+    transfer = [x for x in saida if x.get("transfer_price")]
     return {
         "pendencias": saida,
-        "total": round(sum(x.get("valor") or 0 for x in saida), 2),
-        "quantidade": len(saida),
+        "total": round(sum(x.get("valor") or 0 for x in vendas), 2),
+        "quantidade": len(vendas),
+        # O que devemos à Biomedical, fora da conta de cima.
+        "total_transfer": round(sum(x.get("valor") or 0 for x in transfer), 2),
+        "quantidade_transfer": len(transfer),
+        "qtd_itens_transfer": round(sum(x.get("qtd_total") or 0 for x in transfer), 3),
         "aguardando": sum(1 for x in saida if x.get("decisao") == "AGUARDAR"),
         "parciais": sum(1 for x in saida if x.get("decisao") == "PARCIAL"),
         # Para o cabeçalho da coluna: quantas dá para resolver agora e quanto isso
@@ -1016,7 +1027,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
         "com_estoque_parcial": sum(1 for x in saida
                                    if (x.get("estoque_agora") or {}).get("status") == "PARCIAL"),
         "valor_liberavel": round(sum((x.get("estoque_agora") or {}).get("valor_disponivel") or 0
-                                     for x in saida), 2),
+                                     for x in vendas), 2),
         "estoque_desatualizado": estoque.get("desatualizado", False),
         "estoque_data_ref": estoque.get("data_ref"),
         # Quantas foram posicionadas à mão: com zero, a fila é 100% automática.
@@ -1099,6 +1110,11 @@ def por_produto(incluir_resolvidas: bool = False) -> dict:
                 "produto_id": i.get("produto_id"),
                 "qtd_pendente": 0.0,
                 "valor_pendente": 0.0,
+                # Transfer price (Biomedical) entra na QUANTIDADE — a produção
+                # tem de entregar esse material do mesmo jeito — mas não no
+                # valor, que é repasse dentro do grupo e não receita.
+                "qtd_transfer": 0.0,
+                "valor_transfer": 0.0,
                 "qtd_coberta_agora": 0.0,
                 "disponivel": i.get("disponivel"),
                 "estoque_sa": i.get("estoque_sa"),
@@ -1108,7 +1124,11 @@ def por_produto(incluir_resolvidas: bool = False) -> dict:
                 "ovs": [],
             })
             reg["qtd_pendente"] += qtd
-            reg["valor_pendente"] += qtd * vu
+            if p.get("transfer_price"):
+                reg["qtd_transfer"] += qtd
+                reg["valor_transfer"] += qtd * vu
+            else:
+                reg["valor_pendente"] += qtd * vu
             reg["qtd_coberta_agora"] += coberto.get((p["id"], cod), 0.0)
             reg["dias_maior_espera"] = max(reg["dias_maior_espera"], int(p.get("dias_parada") or 0))
             # A previsão mais próxima entre as OVs que esperam este item: se
@@ -1125,6 +1145,7 @@ def por_produto(incluir_resolvidas: bool = False) -> dict:
                 "canal": p.get("canal"),
                 "qtd": qtd,
                 "valor": round(qtd * vu, 2),
+                "transfer_price": bool(p.get("transfer_price")),
                 "coberta_agora": coberto.get((p["id"], cod), 0.0),
                 "dias_parada": p.get("dias_parada") or 0,
                 "posicao_fila": p.get("posicao_fila"),
@@ -1135,6 +1156,8 @@ def por_produto(incluir_resolvidas: bool = False) -> dict:
     for reg in produtos.values():
         reg["qtd_pendente"] = round(reg["qtd_pendente"], 3)
         reg["valor_pendente"] = round(reg["valor_pendente"], 2)
+        reg["qtd_transfer"] = round(reg["qtd_transfer"], 3)
+        reg["valor_transfer"] = round(reg["valor_transfer"], 2)
         reg["qtd_coberta_agora"] = round(reg["qtd_coberta_agora"], 3)
         # O que a produção precisa entregar de fato: o que falta menos o que já
         # existe e está reservado para a fila deste item.
@@ -1150,10 +1173,12 @@ def por_produto(incluir_resolvidas: bool = False) -> dict:
     return {
         "produtos": saida,
         "total_valor": round(sum(r["valor_pendente"] for r in saida), 2),
+        # O que devemos à Biomedical, por fora: material a entregar, não receita.
+        "total_valor_transfer": round(sum(r["valor_transfer"] for r in saida), 2),
         "total_itens": len(saida),
         "valor_coberto_agora": round(
             sum(sum(o["coberta_agora"] * (o["valor"] / o["qtd"] if o["qtd"] else 0)
-                    for o in r["ovs"]) for r in saida), 2),
+                    for o in r["ovs"] if not o.get("transfer_price")) for r in saida), 2),
         "estoque_desatualizado": base.get("estoque_desatualizado"),
         "estoque_data_ref": base.get("estoque_data_ref"),
     }
@@ -1288,6 +1313,11 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         "titulo": titulo,
         "cliente": cliente,
         "cliente_id": cliente_id,
+        # Venda para a Biomedical é transfer price: repasse dentro do grupo, não
+        # receita. A dívida de material existe e tem de aparecer; o valor dela
+        # não entra na soma da pendência do comercial. Mesma regra do resto do
+        # app (`_eh_biomedical` em api/pedidos.py): casa por nome do cliente.
+        "transfer_price": "BIOMEDICAL" in (cliente or "").upper(),
         # O codigo do D365 (C005669): e com ele que a OV e aberta la, entao
         # ele anda junto do nome em toda tela de venda.
         "cliente_codigo": cliente_codigo,

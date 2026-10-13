@@ -145,6 +145,9 @@ export interface Pendencia {
   /** Quanto do que falta JÁ existe em estoque hoje — calculado no servidor, com
    *  rateio entre as pendências (a mesma unidade não é prometida duas vezes). */
   estoque_agora?: EstoqueAgora | null
+  /** Venda para a Biomedical: repasse dentro do grupo, não receita da MSB.
+   *  O material devido aparece igual; o valor fica fora da soma da pendência. */
+  transfer_price?: boolean
 }
 
 export interface AcompanhamentoPendencia {
@@ -186,6 +189,11 @@ export interface PendenciasResp {
   com_estoque: number
   com_estoque_parcial: number
   valor_liberavel: number
+  /** Transfer price (Biomedical), contado à parte: devemos o material, mas o
+   *  valor não é dinheiro de venda parado. */
+  total_transfer?: number
+  quantidade_transfer?: number
+  qtd_itens_transfer?: number
   estoque_desatualizado: boolean
   estoque_data_ref: string | null
   /** Quantas pendências foram posicionadas à mão. Zero = fila 100% automática. */

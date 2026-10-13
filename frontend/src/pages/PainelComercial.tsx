@@ -1077,6 +1077,14 @@ function SecaoPendencias() {
         Venda fechada esperando material · {data?.quantidade} pendência(s)
         {maisParada > 0 && ` · a mais antiga há ${maisParada} dia(s)`}
       </p>
+      {/* Transfer price e material devido, nao dinheiro de venda parado: fica
+          dito aqui para ninguem achar que sumiu da conta por engano. */}
+      {!!data?.quantidade_transfer && (
+        <p className="text-xs text-gray-400 mt-0.5">
+          + {data.quantidade_transfer} de transfer price (Biomedical), fora da conta —
+          material devido, nao receita.
+        </p>
+      )}
 
       {liberaveis > 0 ? (
         <p className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-800">
