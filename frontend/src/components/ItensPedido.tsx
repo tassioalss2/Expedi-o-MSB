@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { ehTransferPrice } from '../lib/meta'
 import { useQuery } from '@tanstack/react-query'
-import { Search, Plus, Trash2, Package } from 'lucide-react'
+import { Search, Plus, Trash2, Package, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
 import type { Produto } from '../types'
@@ -12,6 +13,17 @@ export type ItemLinha = {
   /** Linha comercial do SKU — é ela que decide para qual meta esta venda vai. */
   linha?: string | null
 }
+
+/** O que o cliente já espera de um código, e em quais pendências. */
+type PendenciaItemCliente = {
+  codigo: string; descricao?: string | null; qtd_pendente: number
+  pendencias: {
+    fonte: string; id: string; titulo?: string | null
+    ov_ref?: string | null; ov_id?: string | null; remessa_numero?: number | null
+    qtd_pendente: number; dias_parada?: number | null
+  }[]
+}
+type PendenciaCliente = { cliente_id: string; itens: PendenciaItemCliente[] }
 
 /** Cores por linha, para o operador distinguir de relance numa OV misturada. */
 const COR_LINHA: Record<string, string> = {
@@ -94,11 +106,14 @@ function SeloEstoque({ e, pedido }: { e: EstoqueItem | null; pedido?: number }) 
   )
 }
 
-export function ItensPedido({ value, onChange, comValor = false, clienteNome }: {
+export function ItensPedido({ value, onChange, comValor = false, clienteNome, clienteId }: {
   value: ItemLinha[]; onChange: (itens: ItemLinha[]) => void; comValor?: boolean
   /** Nome do cliente. Serve para o rodapé não prometer meta numa venda de
    *  transfer price (Biomedical), que não conta para meta nenhuma. */
   clienteNome?: string | null
+  /** Id do cliente. Com ele a tela sabe o que este cliente JÁ espera e avisa
+   *  quando o item que está entrando na OV é o mesmo da pendência. */
+  clienteId?: string | null
 }) {
   const [busca, setBusca] = useState('')
   const [aberto, setAberto] = useState(false)
@@ -125,6 +140,27 @@ export function ItensPedido({ value, onChange, comValor = false, clienteNome }: 
   const estoqueSelecionado = selecionado
     ? livreParaLinha(estoque, selecionado.codigo, value)
     : null
+
+  // O que este cliente já espera. A operadora liberou uma pendência pondo o item
+  // direto na OV, sem passar pela tela de Pendências: o material saiu, mas o
+  // saldo antigo continuou aberto — segurando fila e mentindo no fechamento.
+  // Daqui em diante o app pergunta antes.
+  const { data: pendCliente } = useQuery<PendenciaCliente>({
+    queryKey: ['pendencias-do-cliente', clienteId],
+    queryFn: () => api.get(`/crm/pendencias/do-cliente/${clienteId}`).then(r => r.data),
+    enabled: !!clienteId,
+    staleTime: 60_000,
+  })
+  const pendPorCodigo: Record<string, PendenciaItemCliente> = {}
+  for (const p of pendCliente?.itens || []) {
+    pendPorCodigo[(p.codigo || '').trim().toUpperCase()] = p
+  }
+  // O selecionado entra junto: melhor avisar antes do Add do que depois.
+  const codigosNaTela = Array.from(new Set(
+    [...value.map(i => i.codigo), selecionado?.codigo]
+      .filter(Boolean).map(c => (c as string).trim().toUpperCase())))
+  const avisosPendencia = codigosNaTela
+    .map(c => pendPorCodigo[c]).filter(Boolean) as PendenciaItemCliente[]
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -251,6 +287,34 @@ export function ItensPedido({ value, onChange, comValor = false, clienteNome }: 
               {estoque.desatualizado && ' ⚠'}
             </span>
           )}
+        </div>
+      )}
+
+      {/* Este cliente já espera este item. Não dá para o app decidir sozinho —
+          pode ser uma venda nova de verdade — então ele pergunta e aponta o
+          caminho certo, que é liberar pela tela de Pendências. */}
+      {avisosPendencia.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 space-y-1.5">
+          <p className="flex items-start gap-1.5 font-semibold">
+            <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+            Este cliente já espera {avisosPendencia.length === 1 ? 'este item' : 'estes itens'} na pendência.
+            Esta quantidade é para puxar de lá?
+          </p>
+          {avisosPendencia.map(a => (
+            <p key={a.codigo} className="pl-5">
+              <span className="font-mono font-medium">{a.codigo}</span>: devemos{' '}
+              <strong>{a.qtd_pendente}</strong> un —{' '}
+              {a.pendencias.map(p => [
+                p.ov_ref ? `${p.ov_ref}${p.remessa_numero && p.remessa_numero > 1 ? ` R${p.remessa_numero}` : ''}` : (p.titulo || 'pendência'),
+                p.dias_parada != null ? ` (${p.dias_parada}d)` : '',
+              ].join('')).join(' · ')}
+            </p>
+          ))}
+          <p className="pl-5 text-amber-800">
+            Se for o saldo da pendência, libere por{' '}
+            <Link to="/pendencias" className="underline font-medium">Pendências</Link>{' '}
+            em vez de adicionar aqui — assim o saldo antigo fecha. Se for venda nova, siga em frente.
+          </p>
         </div>
       )}
 

@@ -660,7 +660,7 @@ export function ModalOportunidadeForm({ oportunidade, prefill, onClose, onSaved 
         <div>
           <label className="text-sm text-gray-600">Itens / produtos (opcional)</label>
           <p className="text-xs text-gray-400 mb-1.5">Se preencher com valor, o valor estimado é calculado automaticamente.</p>
-          <ItensPedido value={itens} onChange={setItens} comValor />
+          <ItensPedido value={itens} onChange={setItens} comValor clienteId={clienteId} />
           {/* Estoque já aqui, na criação: o comercial precisa saber se há material
               ANTES de prometer prazo ao cliente, não só ao fechar a venda. */}
           {itensValidos.length > 0 && (

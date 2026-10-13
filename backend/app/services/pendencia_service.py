@@ -1024,6 +1024,41 @@ def listar(incluir_resolvidas: bool = False) -> dict:
     }
 
 
+def do_cliente(cliente_id: str) -> dict:
+    """As pendências abertas DESTE cliente, agregadas por código de produto.
+
+    Serve a um aviso, não a uma tela. Quando alguém acrescenta à OV um item que
+    o mesmo cliente já espera, o app pergunta se aquela quantidade é para puxar
+    da pendência — porque entregar por fora deixa o saldo antigo aberto para
+    sempre, mentindo no fechamento do mês e segurando material na fila para
+    quem já recebeu.
+    """
+    alvo = str(cliente_id)
+    abertas = [p for p in (listar().get("pendencias") or [])
+               if str(p.get("cliente_id")) == alvo and not p.get("resolvido_em")]
+
+    por_codigo: dict = {}
+    for p in abertas:
+        for i in (p.get("itens") or []):
+            q = float(i.get("qtd_pendente") or 0)
+            cod = (i.get("codigo") or "").strip().upper()
+            if q <= 0 or not cod:
+                continue
+            d = por_codigo.setdefault(cod, {
+                "codigo": cod, "descricao": i.get("descricao"),
+                "qtd_pendente": 0.0, "pendencias": []})
+            d["qtd_pendente"] = round(d["qtd_pendente"] + q, 3)
+            d["pendencias"].append({
+                "fonte": p.get("fonte"), "id": p.get("id"), "titulo": p.get("titulo"),
+                "ov_ref": p.get("ov_ref"), "ov_id": p.get("ov_id"),
+                "remessa_numero": p.get("remessa_numero"),
+                "qtd_pendente": round(q, 3),
+                "decidido_em": p.get("decidido_em"),
+                "dias_parada": p.get("dias_parada"),
+            })
+    return {"cliente_id": alvo, "itens": list(por_codigo.values())}
+
+
 def por_produto(incluir_resolvidas: bool = False) -> dict:
     """As pendências viradas do avesso: por PRODUTO, não por OV.
 

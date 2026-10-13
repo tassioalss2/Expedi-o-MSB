@@ -168,6 +168,19 @@ def pendencias_por_produto(_: UsuarioOut = Depends(get_current_user)):
     return pendencia_service.por_produto()
 
 
+@router.get("/pendencias/do-cliente/{cliente_id}")
+def pendencias_do_cliente(cliente_id: UUID,
+                          _: UsuarioOut = Depends(get_current_user)):
+    """O que este cliente já espera, por código de produto.
+
+    Alimenta o aviso das telas de item: se o produto que está sendo posto na OV
+    já está na pendência deste cliente, o operador precisa decidir se aquela
+    quantidade é para puxar de lá — senão o saldo antigo fica aberto.
+
+    Declarada antes das rotas com {fonte} pelo mesmo motivo da de cima."""
+    return pendencia_service.do_cliente(str(cliente_id))
+
+
 @router.post("/pendencias/{fonte}/{registro_id}/liberar")
 def liberar_pendencia(fonte: str, registro_id: UUID,
                       payload: Optional[LiberarPendenciaRequest] = None,

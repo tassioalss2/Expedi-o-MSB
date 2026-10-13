@@ -292,7 +292,7 @@ function FormCotacao({ cotacao, prefill, onClose, onSaved, onRevisada }: {
         <div>
           <label className="text-sm text-gray-600">Itens da proposta *</label>
           <p className="text-xs text-gray-400 mb-1.5">Produto, quantidade e valor unitário.</p>
-          <ItensPedido value={itens} onChange={setItens} comValor />
+          <ItensPedido value={itens} onChange={setItens} comValor clienteId={clienteId} />
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 items-end">

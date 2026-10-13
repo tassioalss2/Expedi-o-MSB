@@ -2994,7 +2994,8 @@ function ModalAdicionarItens({ pedido, onClose }: { pedido: Pedido; onClose: () 
         </div>
         <div className="p-5 space-y-3 overflow-y-auto">
           <ItensPedido value={itens} onChange={setItens} comValor
-            clienteNome={(pedido as any).cliente?.nome || (pedido as any).cliente_nome} />
+            clienteNome={(pedido as any).cliente?.nome || (pedido as any).cliente_nome}
+            clienteId={(pedido as any).cliente_id || (pedido as any).cliente?.id} />
           {itens.length === 0 && (
             <p className="text-xs text-gray-400">Escolha ao menos um item para adicionar.</p>
           )}
@@ -3145,7 +3146,8 @@ function ModalEditarItens({ pedido, onClose }: { pedido: Pedido; onClose: () => 
         </div>
         <div className="p-5 space-y-3 overflow-y-auto">
           <ItensPedido value={itens} onChange={setItens} comValor
-            clienteNome={(pedido as any).cliente?.nome || (pedido as any).cliente_nome} />
+            clienteNome={(pedido as any).cliente?.nome || (pedido as any).cliente_nome}
+            clienteId={(pedido as any).cliente_id || (pedido as any).cliente?.id} />
 
           {itens.length > 0 && (
             <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">

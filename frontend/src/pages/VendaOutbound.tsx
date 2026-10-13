@@ -269,7 +269,7 @@ export function VendaOutbound() {
               </button>
             </div>
             <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade. Adicione ao menos um item.</p>
-            <ItensPedido value={itens} onChange={setItens} comValor />
+            <ItensPedido value={itens} onChange={setItens} comValor clienteId={form.cliente_id} />
             {itens.length === 0 && (
               <p className="text-xs text-amber-600 mt-1">Adicione pelo menos um item para lançar a venda.</p>
             )}
