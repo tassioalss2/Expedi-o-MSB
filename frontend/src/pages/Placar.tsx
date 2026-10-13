@@ -180,9 +180,22 @@ export default function Placar() {
                 {pct.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}%
               </p>
               <p className="text-2xl font-bold capitalize" style={{ color: corRitmo }}>{ritmo?.rotulo}</p>
-              <p className="text-white/50 text-lg mt-0.5">
-                {Number(barra?.falta || 0) > 0 ? <>faltam {milhar(barra.falta)}</> : 'meta batida 🎉'}
-              </p>
+              {/* Quanto falta, em reais, com o mesmo peso do percentual: "14%"
+                  não move ninguém; "faltam R$ 2,1 mi em 12 dias úteis" move. */}
+              {Number(barra?.falta || 0) > 0 ? (
+                <div className="mt-2">
+                  <p className="text-white/50 text-lg leading-none">falta faturar</p>
+                  <p className="text-4xl font-black leading-tight">{milhar(barra.falta)}</p>
+                  {ritmo?.dias_uteis_restantes > 0 && (
+                    <p className="text-white/50 text-base">
+                      em {ritmo.dias_uteis_restantes} dia(s) útil(eis) ·{' '}
+                      {milhar(Number(barra.falta) / ritmo.dias_uteis_restantes)}/dia
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-white/50 text-lg mt-0.5">meta batida 🎉</p>
+              )}
             </div>
           )}
         </div>
@@ -218,6 +231,17 @@ export default function Placar() {
                 <span className="font-bold text-white/80">{milhar(dia.alvo)}</span>
               </div>
               <Barra pct={Number(dia.pct || 0)} cor={Number(dia.pct || 0) >= 100 ? '#34d399' : '#38bdf8'} />
+              <p className="mt-2 text-lg">
+                {Number(dia.realizado || 0) >= Number(dia.alvo)
+                  ? <span className="font-bold text-emerald-400">alvo do dia batido</span>
+                  : <>
+                      <span className="text-white/50">faltam </span>
+                      <strong className="text-white/90">
+                        {milhar(Number(dia.alvo) - Number(dia.realizado || 0))}
+                      </strong>
+                      <span className="text-white/50"> hoje</span>
+                    </>}
+              </p>
             </div>
           )}
           {dia && !dia.eh_dia_util && (
