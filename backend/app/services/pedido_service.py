@@ -3085,8 +3085,15 @@ def corrigir_data_faturamento(pedido_id: str, payload, usuario: UsuarioOut) -> d
     """
     db = get_service_db()
     pedido = obter_pedido(pedido_id)
-    if pedido.get("status") not in (StatusPedido.FATURADO.value, "AGUARD_COLETA", "EXPEDIDO",
-                                    StatusPedido.CONCLUIDO.value):
+    # Todos os status que vêm DEPOIS do faturamento. CONCLUIDO não existe neste
+    # enum — a OV termina em EXPEDIDO —, e a referência inventada derrubava a
+    # correção com AttributeError antes de qualquer verificação: a tela devolvia
+    # erro 500 para toda tentativa, inclusive a da OV faturada, que é o caso que
+    # a função existe para atender.
+    if pedido.get("status") not in (StatusPedido.FATURADO.value,
+                                    StatusPedido.AGUARD_COLETA.value,
+                                    StatusPedido.COLETADO.value,
+                                    StatusPedido.EXPEDIDO.value):
         raise HTTPException(
             status_code=422,
             detail="Esta OV ainda não foi faturada — não há competência para corrigir.")
