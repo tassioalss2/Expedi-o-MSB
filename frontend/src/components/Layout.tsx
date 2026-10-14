@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2, Monitor,
+  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2, Monitor, FileCheck,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -49,6 +49,9 @@ const navComercial: NavItem[] = [
   { to: '/devolucoes', label: 'Devoluções', icone: Undo2 },
   { to: '/frete',      label: 'Conferência de Frete', icone: Truck },
   { to: '/previsao', label: 'Previsão de Faturamento', icone: TrendingUp },
+  // O faturamento conferido contra o D365: com a licitacao indo para a Bio, o
+  // numero derivado da nossa operacao deixa de ser o numero real.
+  { to: '/faturamento-d365', label: 'Faturamento conferido', icone: FileCheck },
   { to: '/crm',      label: 'CRM',                     icone: Handshake },
   { to: '/inteligencia', label: 'Inteligência',        icone: Sparkles },
   { to: '/estoque',  label: 'Estoque',                 icone: Boxes },

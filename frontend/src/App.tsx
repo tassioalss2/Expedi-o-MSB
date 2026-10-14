@@ -12,6 +12,7 @@ import { Cadastros } from './pages/Cadastros'
 import { NovoPedido } from './pages/NovoPedido'
 import { VendaOutbound } from './pages/VendaOutbound'
 import { PainelComercial } from './pages/PainelComercial'
+import FaturamentoD365 from './pages/FaturamentoD365'
 import { PrevisaoFaturamento } from './pages/PrevisaoFaturamento'
 import Pendencias from './pages/Pendencias'
 import Devolucoes from './pages/Devolucoes'
@@ -102,6 +103,7 @@ export default function App() {
             <Route path="pendencias" element={<Pendencias />} />
             <Route path="devolucoes" element={<Devolucoes />} />
             <Route path="frete" element={<ConferenciaFrete />} />
+            <Route path="faturamento-d365" element={<FaturamentoD365 />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
