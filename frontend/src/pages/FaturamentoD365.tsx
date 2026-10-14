@@ -30,6 +30,11 @@ const TIPO_LABEL: Record<string, string> = {
   BONIFICACAO: 'Bonificação',
   AMOSTRA: 'Amostra',
   'A CLASSIFICAR': 'A classificar',
+  BONIFICACAO_DOACAO: 'Bonificação/Doação',
+  COMODATO: 'Comodato',
+  RETORNO: 'Retorno',
+  COMPRA: 'Compra',
+  ENTRADA: 'Entrada',
 }
 
 type Conciliacao = {
@@ -50,6 +55,7 @@ type Conciliacao = {
   por_tipo: Array<{ tipo: string; qtd: number; valor: number }>
   por_origem: Array<{ chave: string; qtd: number; valor: number }>
   a_classificar: Array<{ chave: string; qtd: number; valor: number }>
+  saidas_sem_receita: Array<{ chave: string; qtd: number; valor: number }>
   transfer: {
     d365_qtd: number; d365_valor: number; app_qtd: number; app_valor: number
     notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
@@ -263,6 +269,28 @@ export default function FaturamentoD365() {
                   </span>
                 ))}
               </p>
+            </div>
+          )}
+
+          {/* O livro fiscal traz muito mais do que venda. O que a MSB emitiu e
+              não é receita fica aqui: passa pela logística, não pela meta. */}
+          {!!data?.saidas_sem_receita?.length && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                Saídas que não são faturamento
+              </p>
+              <div className="flex flex-wrap gap-x-6 gap-y-2">
+                {data.saidas_sem_receita.map(o => (
+                  <div key={o.chave}>
+                    <p className="text-sm font-semibold text-gray-700 tabular-nums">
+                      {fmtBRL(o.valor)}
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      {TIPO_LABEL[o.chave] || o.chave} · {o.qtd} NF(s)
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

@@ -60,8 +60,23 @@ create table if not exists public.notas_d365 (
   importado_em     timestamptz not null default now(),
   importado_por    uuid references public.usuarios(id),
 
-  constraint notas_d365_identidade unique (numero, serie, estabelecimento)
+  -- Quem emitiu: "Estabelecimento fiscal" (nota nossa) ou "Terceiro" (nota do
+  -- fornecedor, que entra no livro como compra). Só a nossa é faturamento.
+  emissor          text,
+  -- A nota, sem o status: direcao|numero|serie|cnpj. É por aqui que uma
+  -- reimportação apaga a versão antiga — se a chave levasse o status, a nota
+  -- que foi cancelada depois ficaria duas vezes, uma aprovada e uma cancelada.
+  chave_nota       text,
+  -- A linha exata do livro, com o status. Duas linhas da mesma nota existem de
+  -- verdade (o frete 34469 veio Aprovado 440,23 e Revertido 792,50), e o número
+  -- sozinho não serve de identidade: a nota de entrada é numerada pelo
+  -- FORNECEDOR, então dois fornecedores têm a nota 1234.
+  identidade       text
 );
+
+create unique index if not exists idx_notas_d365_identidade
+  on public.notas_d365 (identidade);
+create index if not exists idx_notas_d365_chave_nota on public.notas_d365 (chave_nota);
 
 create index if not exists idx_notas_d365_data    on public.notas_d365 (data_documento);
 create index if not exists idx_notas_d365_chave   on public.notas_d365 (chave_numero);

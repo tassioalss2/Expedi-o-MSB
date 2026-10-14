@@ -63,6 +63,7 @@ COLUNAS = {
     "valor_produtos":  ["valor total de produtos"],
     "operacao":        ["descricao da operacao", "operacao"],
     "chave_acesso":    ["chave de acesso"],
+    "emissor":         ["emissor da nota fiscal", "emissor"],
 }
 
 OBRIGATORIAS = ("numero", "data_documento", "valor_total")
@@ -77,6 +78,10 @@ def _mapear_colunas(df: pd.DataFrame) -> dict:
                 achadas[campo] = disponiveis[n]
                 break
     return achadas
+
+
+def _so_digitos(v) -> str:
+    return "".join(c for c in str(v or "") if c.isdigit())
 
 
 def chave_nf(numero) -> str:
@@ -150,10 +155,24 @@ MAPA_OPERACAO = (
     ("venda de producao do estabelecimento", ("VENDA_NORMAL", "COMERCIAL")),
     ("venda de mercadoria adquirida", ("VENDA_NORMAL",   "COMERCIAL")),
     ("exportacao",                    ("EXPORTACAO",     "COMERCIAL")),
+    # As de baixo não são receita. Vêm do export sem filtro (o livro fiscal
+    # inteiro) e precisam de nome para não caírem em "a classificar" todo mês.
+    # Amostra e bonificação vêm ANTES de "remessa": as duas se chamam
+    # "Remessa amostra grátis" e "Remessa bonificação, doação ou brinde", e
+    # quem casasse com "remessa" primeiro apagaria a natureza delas.
+    ("amostra",                       ("AMOSTRA",            None)),
+    ("bonificacao",                   ("BONIFICACAO_DOACAO", None)),
+    ("doacao",                        ("BONIFICACAO_DOACAO", None)),
+    ("brinde",                        ("BONIFICACAO_DOACAO", None)),
+    ("comodato",                      ("COMODATO",           None)),
     ("devolucao",                     ("DEVOLUCAO",      None)),
+    ("dev venda",                     ("DEVOLUCAO",      None)),
+    ("dev simb",                      ("DEVOLUCAO",      None)),
     ("remessa",                       ("REMESSA",        None)),
-    ("bonificacao",                   ("BONIFICACAO",    None)),
-    ("amostra",                       ("AMOSTRA",        None)),
+    ("ret merc",                      ("RETORNO",        None)),
+    ("compra",                        ("COMPRA",         None)),
+    ("aquis",                         ("COMPRA",         None)),
+    ("ent bem",                       ("ENTRADA",        None)),
 )
 
 # Praticamente toda licitação é vascular. Serve de palpite inicial para a nota
@@ -197,10 +216,13 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     refazer a linha a partir do D365 é sempre o certo.
     """
     try:
+        # Tudo como TEXTO. O pandas transformava "000021124" em 21124 e a chave
+        # de acesso de 44 dígitos em 2.926e+43 — número de nota é identificador,
+        # não quantidade. Data e valor são convertidos aqui embaixo, na mão.
         if nome_arquivo.lower().endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(conteudo), sep=";")
+            df = pd.read_csv(io.BytesIO(conteudo), sep=";", dtype=str)
         else:
-            df = pd.read_excel(io.BytesIO(conteudo))
+            df = pd.read_excel(io.BytesIO(conteudo), dtype=str)
     except Exception as e:
         return {"erro": f"Não consegui ler o arquivo: {e}", "importadas": 0}
 
@@ -239,18 +261,35 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
             sem_classificacao[operacao] = sem_classificacao.get(operacao, 0) + 1
         conta = (_txt(r[col["cliente_conta"]]) if "cliente_conta" in col else None)
         chave = chave_nf(numero)
+        serie = _txt(r[col["serie"]]) if "serie" in col else None
+        cnpj = _txt(r[col["cnpj"]]) if "cnpj" in col else None
+        direcao = _txt(r[col["direcao"]]) if "direcao" in col else None
+        status = _txt(r[col["status"]]) if "status" in col else None
+        emissor = _txt(r[col["emissor"]]) if "emissor" in col else None
+        # A nota de ENTRADA é numerada pelo fornecedor: o número sozinho não
+        # identifica nada. O CNPJ e a direção entram na chave; o status fica
+        # fora dela, para a reimportação substituir a versão anterior.
+        # Só ASCII, sem vírgula e sem espaço: esta chave viaja na URL do
+        # PostgREST num filtro `in.(…)`, e acento ou vírgula ali quebra a
+        # consulta de um jeito difícil de enxergar.
+        chave_nota = "-".join([
+            _sem_acento(direcao) or "x", chave or numero, _so_digitos(serie),
+            _so_digitos(cnpj) or _sem_acento(conta).replace("-", "") or "x"])
         linhas.append({
             "numero": numero,
-            "serie": _txt(r[col["serie"]]) if "serie" in col else None,
+            "serie": serie,
             "estabelecimento": _txt(r[col["estabelecimento"]]) if "estabelecimento" in col else None,
             "chave_numero": chave,
+            "chave_nota": chave_nota,
+            "identidade": chave_nota + "-" + (_sem_acento(status) or "x"),
+            "emissor": emissor,
             "modelo": _txt(r[col["modelo"]]) if "modelo" in col else None,
             "finalidade": _txt(r[col["finalidade"]]) if "finalidade" in col else None,
-            "status": _txt(r[col["status"]]) if "status" in col else None,
-            "direcao": _txt(r[col["direcao"]]) if "direcao" in col else None,
+            "status": status,
+            "direcao": direcao,
             "cliente_conta": conta,
             "cliente_nome": _txt(r[col["cliente_nome"]]) if "cliente_nome" in col else None,
-            "cnpj": _txt(r[col["cnpj"]]) if "cnpj" in col else None,
+            "cnpj": cnpj,
             "cliente_id": clientes.get((conta or "").strip().upper()),
             "data_documento": _data(r[col["data_documento"]]),
             "data_lancamento": _data(r[col["data_lancamento"]]) if "data_lancamento" in col else None,
@@ -279,17 +318,19 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     # A linha corrigida à mão sobrevive: é a única informação do espelho que não
     # vem do D365, e perdê-la a cada reimportação faria o operador corrigir a
     # mesma nota todo dia.
-    chaves = sorted({l["chave_numero"] for l in linhas})
+    chaves = sorted({l["chave_nota"] for l in linhas})
     ajustadas = {}
     for i in range(0, len(chaves), 40):
         lote = chaves[i:i + 40]
-        for n in db.table("notas_d365").select("chave_numero, linha, linha_ajustada")                .in_("chave_numero", lote).execute().data:
+        existentes = db.table("notas_d365").select(
+            "chave_nota, linha, linha_ajustada").in_("chave_nota", lote).execute().data
+        for n in existentes:
             if n.get("linha_ajustada"):
-                ajustadas[n["chave_numero"]] = n.get("linha")
-        db.table("notas_d365").delete().in_("chave_numero", lote).execute()
+                ajustadas[n["chave_nota"]] = n.get("linha")
+        db.table("notas_d365").delete().in_("chave_nota", lote).execute()
     for l in linhas:
-        if l["chave_numero"] in ajustadas:
-            l["linha"] = ajustadas[l["chave_numero"]]
+        if l["chave_nota"] in ajustadas:
+            l["linha"] = ajustadas[l["chave_nota"]]
             l["linha_ajustada"] = True
     for i in range(0, len(linhas), 200):
         db.table("notas_d365").insert(linhas[i:i + 200]).execute()
@@ -307,9 +348,11 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
         # Transfer price (Biomedical) fica fora do faturamento, aqui como em
         # todo o resto do app.
         "valor_total": round(sum(valor_da_nota(l) for l in saidas
-                                 if not eh_transfer_price(l.get("cliente_nome"))), 2),
+                                 if _eh_receita(l)
+                                 and not eh_transfer_price(l.get("cliente_nome"))), 2),
         "valor_transfer": round(sum(valor_da_nota(l) for l in saidas
-                                    if eh_transfer_price(l.get("cliente_nome"))), 2),
+                                    if _eh_receita(l)
+                                    and eh_transfer_price(l.get("cliente_nome"))), 2),
         "com_ov": sum(1 for l in linhas if l["pedido_id"]),
         "sem_ov": sum(1 for l in linhas if not l["pedido_id"]),
         "operacoes_sem_classificacao": [
@@ -369,6 +412,17 @@ def eh_transfer_price(nome: Optional[str]) -> bool:
     conciliação a mostra à parte para ninguém achar que sumiu por engano.
     """
     return "BIOMEDICAL" in (nome or "").upper()
+
+
+def _eh_receita(nota: dict) -> bool:
+    """Natureza de venda, dita explicitamente.
+
+    O export sem filtro traz o livro fiscal inteiro — compra, remessa para
+    industrialização, amostra, comodato. Nada disso é faturamento, e o que eu
+    ainda não sei traduzir também não entra: nota sem natureza conhecida fica
+    de fora e aparece em "a classificar".
+    """
+    return (nota.get("tipo_operacao") or "") in OPERACOES_FATURAMENTO
 
 
 def _vale_como_faturamento(nota: dict) -> bool:
@@ -434,11 +488,16 @@ def conciliacao(ini: str, fim: str) -> dict:
         "direcao, status, pedido_id"
     ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
 
-    notas = [n for n in notas if _vale_como_faturamento(n)]
+    # Saída aprovada é tudo o que a MSB emitiu e vale; dentro disso, só venda é
+    # faturamento. Com o export sem filtro vem o livro inteiro — remessa para
+    # industrialização de R$ 233 mil, amostra, comodato —, e somar isso como
+    # receita seria pior do que não ter espelho nenhum.
+    vivas = [n for n in notas if _vale_como_faturamento(n)]
+    receita = [n for n in vivas if _eh_receita(n)]
     # Transfer price sai das duas pontas ao mesmo tempo: se saísse só de uma, a
     # diferença entre D365 e app passaria a ser o próprio transfer price.
-    notas_transfer = [n for n in notas if eh_transfer_price(n.get("cliente_nome"))]
-    notas = [n for n in notas if not eh_transfer_price(n.get("cliente_nome"))]
+    notas_transfer = [n for n in receita if eh_transfer_price(n.get("cliente_nome"))]
+    notas = [n for n in receita if not eh_transfer_price(n.get("cliente_nome"))]
 
     peds = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, valor_nf, valor_produtos, data_faturamento, status, "
@@ -524,8 +583,14 @@ def conciliacao(ini: str, fim: str) -> dict:
         "por_tipo": _agrupar_por_tipo(notas),
         # Operação que o app ainda não sabe traduzir. Fica FORA do faturamento
         # até alguém dizer o que é — e aparece aqui para que seja dito.
-        "a_classificar": _agrupar([n for n in notas if not n.get("tipo_operacao")],
+        "a_classificar": _agrupar([n for n in vivas if not n.get("tipo_operacao")],
                                   lambda n: n.get("operacao") or "(sem descrição)"),
+        # O que a MSB emitiu e NÃO é venda: remessa para industrialização,
+        # amostra, bonificação, comodato. Fica à vista porque passa pela
+        # logística, e fora do faturamento porque não é receita.
+        "saidas_sem_receita": _agrupar(
+            [n for n in vivas if not _eh_receita(n) and n.get("tipo_operacao")],
+            lambda n: n.get("tipo_operacao")),
         "por_origem": _agrupar(notas, lambda n: n.get("origem_venda") or "COMERCIAL"),
         # Linha das notas que NÃO passaram pelo app: é o pedaço do faturamento
         # que o placar por canal perderia quando a licitação sair daqui.
@@ -579,7 +644,7 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
              # filtro, uma operação que eu ainda não sei traduzir (remessa para
              # conserto, por exemplo) entraria como receita. Nota sem natureza
              # conhecida fica de fora e aparece em "a classificar".
-             and (n.get("tipo_operacao") or "") in OPERACOES_FATURAMENTO]
+             and _eh_receita(n)]
     if not notas:
         return dict(VAZIO)
 
