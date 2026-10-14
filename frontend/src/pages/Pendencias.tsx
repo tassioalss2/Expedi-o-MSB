@@ -71,7 +71,12 @@ export default function Pendencias() {
   // Licitacao e comercial sao dois mundos: na licitacao o atraso tem multa
   // contratual, no comercial tem cliente ligando. Quem cuida de um raramente
   // cuida do outro, e a lista misturada obrigava a garimpar.
-  const [origem, setOrigem] = useState<'' | 'LICITACAO' | 'COMERCIAL'>('')
+  // TRANSFER e um recorte a parte, nao uma origem: transfer price (Biomedical)
+  // sai de todas as somas, entao fica fora da lista por padrao e so aparece
+  // quando alguem pede para ver — que e o unico jeito de ver o que devemos ao
+  // grupo sem misturar com o dinheiro de venda parado.
+  const [origem, setOrigem] = useState<'' | 'LICITACAO' | 'COMERCIAL' | 'TRANSFER'>('')
+  const soTransfer = origem === 'TRANSFER'
 
   const { data, isLoading } = useQuery<PendenciasResp>({
     queryKey: ['crm-pendencias', verHistorico],
@@ -93,7 +98,12 @@ export default function Pendencias() {
   const { abertas, resolvidas } = useMemo(() => {
     const b = busca.trim().toLowerCase()
     const passa = (p: Pendencia) => {
-      if (origem && p.origem_venda !== origem) return false
+      if (soTransfer) {
+        if (!p.transfer_price) return false
+      } else {
+        if (p.transfer_price) return false
+        if (origem && p.origem_venda !== origem) return false
+      }
       if (linha && LINHA_DO_CANAL[p.canal || ''] !== LINHA_DO_CANAL[linha]) return false
       if (!b) return true
       const itens = (p.itens || []).map(i => `${i.codigo || ''} ${i.descricao || ''}`).join(' ')
@@ -105,7 +115,7 @@ export default function Pendencias() {
       abertas: f.filter(p => !p.resolvido_em),
       resolvidas: f.filter(p => !!p.resolvido_em),
     }
-  }, [todas, busca, linha, origem])
+  }, [todas, busca, linha, origem, soTransfer])
 
   // Uma VENDA, um card. A pendência é gravada na linha de `pedidos`, e uma OV
   // com várias remessas tem uma linha por remessa: a OV016456 da SEVEN MEDIC
@@ -132,12 +142,12 @@ export default function Pendencias() {
         // Transfer price (Biomedical) nao entra em valor nenhum da tela: e
         // repasse dentro do grupo, nao dinheiro de venda parado. O material
         // devido continua aparecendo — em unidades, item a item.
-        valor: itens.reduce((a, p) => a + (p.transfer_price ? 0 : (p.valor || 0)), 0),
+        valor: itens.reduce((a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0),
         transfer: itens.every(p => !!p.transfer_price),
         valorTransfer: itens.reduce((a, p) => a + (p.transfer_price ? (p.valor || 0) : 0), 0),
       }))
       .sort((a, b) => b.dias - a.dias)
-  }, [abertas])
+  }, [abertas, soTransfer])
 
   // Continua servindo aos KPIs: quanto deste dinheiro a foto do estoque já cobre.
   const porFila = useMemo(() => {
@@ -147,10 +157,12 @@ export default function Pendencias() {
   }, [abertas])
 
   const liberavelAgora = porFila.COMPLETO.concat(porFila.PARCIAL)
-    .reduce((a, p) => a + (p.transfer_price ? 0 : (p.estoque_agora?.valor_disponivel || 0)), 0)
+    .reduce((a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.estoque_agora?.valor_disponivel || 0)), 0)
 
   // O que devemos a Biomedical: fica a vista, por item, mas fora das somas.
-  const transferAberto = abertas.filter(p => !!p.transfer_price)
+  // Sai de `todas`, nao de `abertas`: a lista filtrada deixa o transfer price
+  // de fora por padrao, e a faixa precisa continuar dizendo que ele existe.
+  const transferAberto = todas.filter(p => !!p.transfer_price && !p.resolvido_em)
   const transferItens = (() => {
     const m = new Map<string, { codigo: string; descricao?: string | null; qtd: number }>()
     for (const p of transferAberto) {
@@ -221,9 +233,9 @@ export default function Pendencias() {
           que já passou do prazo". */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi
-          rotulo="Parado esperando material"
-          valor={fmtBRL(abertas.reduce((a, p) => a + (p.transfer_price ? 0 : (p.valor || 0)), 0))}
-          detalhe={`${abertas.filter(p => !p.transfer_price).length} pendência(s) · ${todosGrupos.filter(g => !g.transfer).length} venda(s)`}
+          rotulo={soTransfer ? 'Material devido à Biomedical (fora da meta)' : 'Parado esperando material'}
+          valor={fmtBRL(abertas.reduce((a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0))}
+          detalhe={`${abertas.length} pendência(s) · ${todosGrupos.length} venda(s)`}
           cor="text-red-700"
           ativo={recorte === null} anel="ring-red-200 border-red-300"
           onClick={() => setRecorte(null)}
@@ -238,7 +250,7 @@ export default function Pendencias() {
         />
         <Kpi
           rotulo="Só esperando material"
-          valor={fmtBRL(porFila.NENHUM.reduce((a, p) => a + (p.transfer_price ? 0 : (p.valor || 0)), 0))}
+          valor={fmtBRL(porFila.NENHUM.reduce((a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0))}
           detalhe={`${porFila.NENHUM.length} sem estoque na foto`}
           cor="text-gray-700"
           ativo={recorte === 'esperando'} anel="ring-gray-300 border-gray-300"
@@ -267,6 +279,12 @@ export default function Pendencias() {
           <p className="mt-0.5">
             Devemos o material, mas o valor nao e receita da MSB — por isso nao soma nos numeros
             acima. {n(transferItens.reduce((a, i) => a + i.qtd, 0))} un no total:
+          </p>
+          <p className="mt-1">
+            <button onClick={() => setOrigem(o => o === 'TRANSFER' ? '' : 'TRANSFER')}
+              className="text-[11px] font-medium underline text-slate-700 hover:text-slate-900">
+              {soTransfer ? 'voltar para a pendência de venda' : 'ver estes saldos na lista →'}
+            </button>
           </p>
           <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
             {transferItens.map(i => (
@@ -300,6 +318,7 @@ export default function Pendencias() {
           <option value="">Licitação e comercial</option>
           <option value="LICITACAO">Só licitação</option>
           <option value="COMERCIAL">Só comercial</option>
+          <option value="TRANSFER">Só transfer price (Biomedical)</option>
         </select>
         <select value={linha} onChange={e => setLinha(e.target.value)}
           className="border rounded-lg px-3 py-2 text-sm">
