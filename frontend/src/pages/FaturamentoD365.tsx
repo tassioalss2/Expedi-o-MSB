@@ -64,6 +64,7 @@ function mesCorrente() {
 
 export default function FaturamentoD365() {
   const [competencia, setCompetencia] = useState(mesCorrente())
+  const [arrastando, setArrastando] = useState(false)
   const arquivoRef = useRef<HTMLInputElement>(null)
 
   const { data, isLoading, refetch } = useQuery<Conciliacao>({
@@ -89,8 +90,15 @@ export default function FaturamentoD365() {
       }
       refetch()
     },
-    onError: (e: any) => toast.error(
-      e?.response?.data?.detail || 'Não consegui importar o arquivo.', { duration: 8000 }),
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      const motivo = typeof d === 'string' ? d : d?.msg || e?.message
+      const status = e?.response?.status
+      toast.error(
+        'Não consegui importar o arquivo' + (status ? ` (erro ${status})` : '')
+        + (motivo ? `: ${motivo}` : '.'),
+        { duration: 12000 })
+    },
   })
 
   const corrigirLinha = useMutation({
@@ -102,8 +110,33 @@ export default function FaturamentoD365() {
 
   const dif = data?.diferenca || 0
 
+  // Arrastar o arquivo para a tela é o gesto natural de quem acabou de baixar
+  // o export — sem isto o navegador abre a planilha e perde a página.
+  const soltar = (e: React.DragEvent) => {
+    e.preventDefault()
+    setArrastando(false)
+    const f = e.dataTransfer.files?.[0]
+    if (!f) return
+    if (!/\.(xlsx|xls|csv)$/i.test(f.name)) {
+      toast.error('Esperava uma planilha (.xlsx, .xls ou .csv).')
+      return
+    }
+    importar.mutate(f)
+  }
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative"
+      onDragOver={e => { e.preventDefault(); setArrastando(true) }}
+      onDragLeave={e => { if (e.currentTarget === e.target) setArrastando(false) }}
+      onDrop={soltar}>
+      {arrastando && (
+        <div className="fixed inset-0 z-40 bg-indigo-600/10 border-4 border-dashed border-indigo-400
+                        rounded-xl flex items-center justify-center pointer-events-none">
+          <p className="bg-white px-5 py-3 rounded-xl shadow text-sm font-medium text-indigo-700">
+            Solte o export do D365 aqui
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-800">Faturamento conferido (D365)</h1>
@@ -141,7 +174,8 @@ export default function FaturamentoD365() {
           <p className="text-xs text-gray-500 mt-1 max-w-md mx-auto">
             Exporte as notas fiscais do mês no D365 (a lista de NFs, com Número, Data do
             documento, Conta, Valor total e Descrição da operação) e suba o arquivo aqui.
-            Reimportar o mesmo período não duplica nada.
+            Reimportar o mesmo período não duplica nada — e dá para arrastar o arquivo
+            direto para esta tela.
           </p>
         </div>
       ) : (

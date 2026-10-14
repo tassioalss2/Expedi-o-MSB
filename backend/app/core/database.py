@@ -165,6 +165,16 @@ class MutationBuilder:
         self._filters.append(f"{col}=eq.{val}")
         return self
 
+    def in_(self, col: str, vals: list):
+        """Mesma forma do filtro de leitura — apagar/atualizar um lote de uma vez.
+
+        Sem isto, regravar 61 notas custava 61 chamadas; o espelho do D365 apaga
+        o lote inteiro antes de reinserir.
+        """
+        joined = ",".join(str(v) for v in vals)
+        self._filters.append(f"{col}=in.({joined})")
+        return self
+
     def execute(self):
         url = f"{self._base_url}/{self._table}"
         if self._filters:
