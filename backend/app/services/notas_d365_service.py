@@ -303,19 +303,36 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
         "canceladas": sum(1 for l in linhas if not _aprovada(l)),
         "periodo_ini": min(datas) if datas else None,
         "periodo_fim": max(datas) if datas else None,
-        "valor_total": round(sum(l["valor_total"] for l in saidas), 2),
+        # Transfer price (Biomedical) fica fora do faturamento, aqui como em
+        # todo o resto do app.
+        "valor_total": round(sum(l["valor_total"] for l in saidas
+                                 if not eh_transfer_price(l.get("cliente_nome"))), 2),
+        "valor_transfer": round(sum(l["valor_total"] for l in saidas
+                                    if eh_transfer_price(l.get("cliente_nome"))), 2),
         "com_ov": sum(1 for l in linhas if l["pedido_id"]),
         "sem_ov": sum(1 for l in linhas if not l["pedido_id"]),
         "operacoes_sem_classificacao": [
             {"operacao": k, "qtd": v} for k, v in sorted(
                 sem_classificacao.items(), key=lambda x: -x[1])],
-        "por_tipo": _agrupar_por_tipo(saidas),
+        "por_tipo": _agrupar_por_tipo(
+            [l for l in saidas if not eh_transfer_price(l.get("cliente_nome"))]),
     }
 
 
 def _aprovada(nota: dict) -> bool:
     """Nota viva. O D365 exporta a cancelada também, e ela não é faturamento."""
     return str(nota.get("status") or "Aprovado").strip().lower().startswith("aprov")
+
+
+def eh_transfer_price(nome: Optional[str]) -> bool:
+    """Nota para a Biomedical: repasse dentro do grupo, não receita da MSB.
+
+    Mesma regra do resto do app (`_eh_biomedical` em api/pedidos.py): casa por
+    nome do cliente. O espelho guarda a nota como qualquer outra — ela existe e
+    a logística a movimenta —, mas ela fica fora do faturamento e da meta, e a
+    conciliação a mostra à parte para ninguém achar que sumiu por engano.
+    """
+    return "BIOMEDICAL" in (nome or "").upper()
 
 
 def _vale_como_faturamento(nota: dict) -> bool:
@@ -382,6 +399,10 @@ def conciliacao(ini: str, fim: str) -> dict:
     ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
 
     notas = [n for n in notas if _vale_como_faturamento(n)]
+    # Transfer price sai das duas pontas ao mesmo tempo: se saísse só de uma, a
+    # diferença entre D365 e app passaria a ser o próprio transfer price.
+    notas_transfer = [n for n in notas if eh_transfer_price(n.get("cliente_nome"))]
+    notas = [n for n in notas if not eh_transfer_price(n.get("cliente_nome"))]
 
     peds = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, valor_nf, data_faturamento, status, "
@@ -389,10 +410,14 @@ def conciliacao(ini: str, fim: str) -> dict:
     ).gte("data_faturamento", f"{ini}T00:00:00").lte("data_faturamento", f"{fim}T23:59:59")\
         .limit(5000).execute().data
 
-    app = {}
+    app, app_transfer = {}, {}
     for p in peds:
         k = chave_nf(p.get("numero_nf"))
-        if k and p.get("status") != "CANCELADO":
+        if not k or p.get("status") == "CANCELADO":
+            continue
+        if eh_transfer_price((p.get("clientes") or {}).get("nome")):
+            app_transfer[k] = p
+        else:
             app[k] = p
     d365 = {n["chave_numero"]: n for n in notas}
 
@@ -442,6 +467,20 @@ def conciliacao(ini: str, fim: str) -> dict:
         "so_d365": so_d365,
         "so_app": so_app,
         "divergentes": sorted(divergentes, key=lambda x: -abs(x["valor_d365"] - x["valor_app"])),
+        # Fora da conta, à vista: o material existe e a logística o movimenta,
+        # mas repasse dentro do grupo não é faturamento da MSB.
+        "transfer": {
+            "d365_qtd": len(notas_transfer),
+            "d365_valor": round(sum(float(n.get("valor_total") or 0) for n in notas_transfer), 2),
+            "app_qtd": len(app_transfer),
+            "app_valor": round(sum(float(p.get("valor_nf") or 0) for p in app_transfer.values()), 2),
+            "notas": sorted([{
+                "id": n.get("id"), "nf": n["numero"], "data": n.get("data_documento"),
+                "cliente": n.get("cliente_nome"),
+                "valor": round(float(n.get("valor_total") or 0), 2),
+                "no_app": n["chave_numero"] in app_transfer,
+            } for n in notas_transfer], key=lambda x: -x["valor"]),
+        },
         "por_tipo": _agrupar_por_tipo(notas),
         "por_origem": _agrupar(notas, lambda n: n.get("origem_venda") or "COMERCIAL"),
         # Linha das notas que NÃO passaram pelo app: é o pedaço do faturamento
@@ -449,6 +488,7 @@ def conciliacao(ini: str, fim: str) -> dict:
         "linha_sem_ov": _agrupar([n for n in notas if not n.get("pedido_id")],
                                  lambda n: n.get("linha") or "SEM LINHA"),
         # Sem nota importada no período não há conciliação a fazer: a tela diz
-        # "importe o export do mês" em vez de acusar um buraco de 100%.
-        "sem_espelho": len(d365) == 0,
+        # "importe o export do mês" em vez de acusar um buraco de 100%. Conta o
+        # transfer price também: mês só com nota de Biomedical tem espelho.
+        "sem_espelho": len(d365) + len(notas_transfer) == 0,
     }

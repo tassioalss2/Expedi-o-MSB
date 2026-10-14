@@ -49,6 +49,11 @@ type Conciliacao = {
                        data_app: string; data_d365: string; cliente: string | null }>
   por_tipo: Array<{ tipo: string; qtd: number; valor: number }>
   por_origem: Array<{ chave: string; qtd: number; valor: number }>
+  transfer: {
+    d365_qtd: number; d365_valor: number; app_qtd: number; app_valor: number
+    notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
+                   valor: number; no_app: boolean }>
+  }
   linha_sem_ov: Array<{ chave: string; qtd: number; valor: number }>
 }
 
@@ -172,6 +177,35 @@ export default function FaturamentoD365() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Transfer price (Biomedical) sai das duas pontas ao mesmo tempo: se
+              saísse só de uma, a diferença entre D365 e app passaria a ser o
+              próprio transfer price. Fica aqui, inteiro, e fora da conta. */}
+          {!!data?.transfer?.d365_qtd && (
+            <div className="rounded-xl border border-slate-300 bg-slate-50 px-4 py-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">
+                  Fora da conta: transfer price (Biomedical)
+                </p>
+                <p className="text-sm font-semibold tabular-nums text-slate-600">
+                  {fmtBRL(data.transfer.d365_valor)} · {data.transfer.d365_qtd} NF(s)
+                </p>
+              </div>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                Repasse dentro do grupo, não receita da MSB — não entra em nenhum número acima.
+                No app estão {data.transfer.app_qtd} dessas notas ({fmtBRL(data.transfer.app_valor)}).
+              </p>
+              <p className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-700">
+                {data.transfer.notas.map(n => (
+                  <span key={n.id}>
+                    <span className="font-mono font-medium">{n.nf}</span>{' '}
+                    {dataBR(n.data)} · {fmtBRL(n.valor)}
+                    {!n.no_app && <span className="text-amber-700"> · fora do app</span>}
+                  </span>
+                ))}
+              </p>
             </div>
           )}
 
