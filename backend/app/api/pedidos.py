@@ -36,7 +36,8 @@ from app.models.schemas import (
     DadosOVUpdate,
     AdicionarItensRequest,
 )
-from app.services import anexo_service, importacao_service, pedido_service
+from app.services import (anexo_service, importacao_service, notas_d365_service,
+                          pedido_service)
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
@@ -960,11 +961,16 @@ def dashboard_financeiro(
 
     if not faturados:
         vazio = _resumo([])
+        comp = notas_d365_service.complemento_do_periodo(inicio.isoformat(), fim.isoformat())
+        if comp["qtd"]:
+            vazio = {**vazio, "total_nf": comp["valor"], "total_produtos": comp["valor"],
+                     "faturamento_sem_frete": comp["valor"], "qtd_nfs": comp["qtd"]}
         return {
             "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
             **vazio,
-            "transfer_price": vazio,
+            "transfer_price": _resumo([]),
             "outras_vendas": vazio,
+            "complemento_d365": {k: comp[k] for k in ("qtd", "valor", "licitacao")},
             "devolucoes": vazio,
             "devolucoes_transfer": vazio,
             "outras_vendas_liquido": vazio,
@@ -1003,11 +1009,25 @@ def dashboard_financeiro(
     total = _resumo(faturaveis)
     total_devolucoes = _resumo(devolucoes + devolucoes_transfer)
 
+    # Híbrido: o que o D365 emitiu e NÃO passou pelo app entra aqui — o
+    # comunicado de uso que a Bio fatura direto no D365. Só a diferença, para
+    # não contar duas vezes o que já veio da OV.
+    comp = notas_d365_service.complemento_do_periodo(inicio.isoformat(), fim.isoformat())
+    if comp["qtd"]:
+        for alvo in (resumo_outras, total):
+            alvo["total_nf"] = round(alvo["total_nf"] + comp["valor"], 2)
+            alvo["total_produtos"] = round(alvo["total_produtos"] + comp["valor"], 2)
+            alvo["faturamento_sem_frete"] = round(
+                alvo["faturamento_sem_frete"] + comp["valor"], 2)
+            alvo["qtd_nfs"] += comp["qtd"]
+
     return {
         "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
         **total,
         "transfer_price": resumo_transfer,
         "outras_vendas": resumo_outras,
+        # O pedaço que veio do espelho, para a tela poder dizer de onde saiu.
+        "complemento_d365": {k: comp[k] for k in ("qtd", "valor", "licitacao")},
         "devolucoes": resumo_devolucoes,
         "devolucoes_transfer": resumo_dev_transfer,
         "outras_vendas_liquido": _liquido(resumo_outras, resumo_devolucoes),
@@ -1160,7 +1180,14 @@ def vendas_por_canal(
 
     faturados = _faturados_no_periodo(data_inicio, data_fim)
     if not faturados:
-        return {"canais": [], "licitacao": {"qtd": 0, "valor": 0.0},
+        from app.services import linha_produto as _lp
+        comp = notas_d365_service.complemento_do_periodo(
+            data_inicio.isoformat(), data_fim.isoformat())
+        return {"canais": [{"canal": k, "linha": k, "label": _lp.label(k),
+                            "qtd": v["qtd"], "valor": v["valor"]}
+                           for k, v in (comp.get("por_linha") or {}).items()
+                           if k != "SEM_LINHA"],
+                "licitacao": comp.get("licitacao") or {"qtd": 0, "valor": 0.0},
                 "canais_digitado": [], "sem_linha": {"qtd": 0, "valor": 0.0}}
 
     LABELS = {"URO": "Uro", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure", "LICITACAO": "Licitação"}
@@ -1215,6 +1242,22 @@ def vendas_por_canal(
             # drill-down lista. A soma das contagens pode passar do total de NFs
             # do mês, e é isso mesmo — uma NF de duas linhas aparece nas duas.
             g["qtd"] += 1
+
+    # O faturamento que não passou pelo app entra na linha gravada no espelho —
+    # licitação nasce vascular e a tela do espelho corrige a exceção. Sem isto,
+    # o comunicado de uso da Bio sumiria do placar por linha.
+    comp = notas_d365_service.complemento_do_periodo(
+        data_inicio.isoformat(), data_fim.isoformat())
+    for linha, g2 in (comp.get("por_linha") or {}).items():
+        chave = linha if linha != "SEM_LINHA" else "SEM_CANAL"
+        g = agg.setdefault(chave, {"canal": chave, "linha": None if chave == "SEM_CANAL" else chave,
+                                   "label": ("Sem linha" if chave == "SEM_CANAL"
+                                             else linha_produto.label(chave)),
+                                   "qtd": 0, "valor": 0.0})
+        g["qtd"] += g2["qtd"]
+        g["valor"] += g2["valor"]
+    licit["qtd"] += (comp.get("licitacao") or {}).get("qtd", 0)
+    licit["valor"] += (comp.get("licitacao") or {}).get("valor", 0.0)
 
     for g in list(agg.values()) + list(digitado.values()):
         g["valor"] = round(g["valor"], 2)
@@ -1277,6 +1320,14 @@ def faturamento_diario(
                 valor -= float(p.get("valor_frete") or 0)
             dias[dia]["valor"] += valor
             dias[dia]["qtd"] += 1
+
+    # As notas que não passaram pelo app entram no dia da emissão.
+    comp = notas_d365_service.complemento_do_periodo(
+        data_inicio.isoformat(), data_fim.isoformat())
+    for dia, g2 in (comp.get("por_dia") or {}).items():
+        if dia in dias:
+            dias[dia]["valor"] += g2["valor"]
+            dias[dia]["qtd"] += g2["qtd"]
 
     serie = sorted(dias.values(), key=lambda x: x["dia"])
     for g in serie:

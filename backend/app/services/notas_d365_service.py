@@ -532,3 +532,93 @@ def conciliacao(ini: str, fim: str) -> dict:
         # transfer price também: mês só com nota de Biomedical tem espelho.
         "sem_espelho": len(d365) + len(notas_transfer) == 0,
     }
+
+
+# ── Complemento: o faturamento que não passa pelo app ─────────────────────────
+
+VAZIO = {"qtd": 0, "valor": 0.0, "por_dia": {}, "por_linha": {},
+         "licitacao": {"qtd": 0, "valor": 0.0}, "notas": []}
+
+
+def complemento_do_periodo(ini: str, fim: str) -> dict:
+    """As notas do espelho que NÃO têm OV no app — e só elas.
+
+    É o modelo híbrido que o Tássio pediu (14/10/2026), e ele vem do desenho da
+    operação, não de preferência de ninguém:
+
+      · venda normal e venda direta de licitação continuam nascendo no app, com
+        kanban e expedição nossos — o faturamento delas sai da OV, como hoje,
+        e nada muda;
+      · comunicado de uso não passa por aqui: a Bio emite no D365 e não há o que
+        a logística faça. Essa nota só existe no espelho.
+
+    Somar as duas fontes direto contaria em dobro tudo o que passou pelo app.
+    Por isso o complemento é a DIFERENÇA: nota do D365 sem NF correspondente em
+    nenhuma OV viva. O par é conferido ao vivo (e não pelo `pedido_id` gravado
+    na importação), senão uma OV faturada depois do import entraria duas vezes.
+
+    Fora: transfer price, devolução, bonificação, amostra e consignado — o que
+    não é receita de venda não vira faturamento só porque veio do D365.
+    """
+    db = get_service_db()
+    notas = db.table("notas_d365").select(
+        "id, numero, chave_numero, cliente_nome, data_documento, valor_total, "
+        "valor_produtos, operacao, tipo_operacao, origem_venda, linha, direcao, status"
+    ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+
+    notas = [n for n in notas
+             if _vale_como_faturamento(n)
+             and not eh_transfer_price(n.get("cliente_nome"))
+             and conta_faturamento(n.get("tipo_operacao"))]
+    if not notas:
+        return dict(VAZIO)
+
+    # Quais desses números já existem como NF de alguma OV viva. O app guarda
+    # ora "21083", ora "000021083" — as duas formas vão na consulta.
+    chaves = sorted({n["chave_numero"] for n in notas})
+    variantes = []
+    for c in chaves:
+        variantes.append(c)
+        if len(c) < 9:
+            variantes.append(c.zfill(9))
+    no_app = set()
+    for i in range(0, len(variantes), 40):
+        rows = db.table("pedidos").select("numero_nf, status")\
+            .in_("numero_nf", variantes[i:i + 40])\
+            .neq("status", "CANCELADO").execute().data
+        for r in rows:
+            no_app.add(chave_nf(r.get("numero_nf")))
+
+    orfas = [n for n in notas if n["chave_numero"] not in no_app]
+    if not orfas:
+        return dict(VAZIO)
+
+    por_dia: dict = {}
+    por_linha: dict = {}
+    licit = {"qtd": 0, "valor": 0.0}
+    for n in orfas:
+        v = valor_da_nota(n)
+        dia = str(n.get("data_documento") or "")[:10]
+        d = por_dia.setdefault(dia, {"qtd": 0, "valor": 0.0})
+        d["qtd"] += 1
+        d["valor"] = round(d["valor"] + v, 2)
+        linha = n.get("linha") or "SEM_LINHA"
+        g = por_linha.setdefault(linha, {"qtd": 0, "valor": 0.0})
+        g["qtd"] += 1
+        g["valor"] = round(g["valor"] + v, 2)
+        if (n.get("origem_venda") or "") == "LICITACAO":
+            licit["qtd"] += 1
+            licit["valor"] = round(licit["valor"] + v, 2)
+
+    return {
+        "qtd": len(orfas),
+        "valor": round(sum(valor_da_nota(n) for n in orfas), 2),
+        "por_dia": por_dia,
+        "por_linha": por_linha,
+        "licitacao": licit,
+        "notas": sorted([{
+            "id": n.get("id"), "nf": n.get("numero"), "data": n.get("data_documento"),
+            "cliente": n.get("cliente_nome"), "valor": round(valor_da_nota(n), 2),
+            "tipo_operacao": n.get("tipo_operacao"), "linha": n.get("linha"),
+        } for n in orfas], key=lambda x: -x["valor"]),
+    }

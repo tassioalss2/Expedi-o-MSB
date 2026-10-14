@@ -390,6 +390,16 @@ export function PainelComercial() {
               <span className="text-gray-300"> · {financeiro?.outras_vendas?.qtd_nfs || 0} NF</span>
             </p>
           </div>
+          {/* O pedaço que não passou pelo kanban — hoje o comunicado de uso da
+              licitação, faturado direto no D365. Dizer de onde veio evita a
+              pergunta "esse número é do app ou do D365?". */}
+          {!!(financeiro as any)?.complemento_d365?.qtd && (
+            <Link to="/faturamento-d365"
+              className="mt-2 block text-[11px] text-indigo-700 hover:underline">
+              inclui R$ {Number((financeiro as any).complemento_d365.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              {' '}de {(financeiro as any).complemento_d365.qtd} nota(s) do D365 que não passaram pelo app →
+            </Link>
+          )}
           {financeiro && (
             <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
               {(financeiro.devolucoes?.qtd_nfs || 0) > 0 && (
