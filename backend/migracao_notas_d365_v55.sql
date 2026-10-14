@@ -40,6 +40,16 @@ create table if not exists public.notas_d365 (
   -- tipo_operacao nulo, para a tela pedir a classificação em vez de chutar.
   operacao         text,
   tipo_operacao    text,
+  -- LICITACAO ou COMERCIAL, decidido pela propria operacao fiscal:
+  -- "destinada a nao contribuinte" e venda direta de licitacao e
+  -- "remetida anteriormente em consignacao" e comunicado de uso; o resto e
+  -- venda normal, que nao e licitacao.
+  origem_venda     text,
+  -- Linha comercial da nota. Nota com OV nao usa esta coluna (a OV manda, item
+  -- a item). Nota SEM OV nasce em VASCULAR quando e de licitacao, porque e la
+  -- que praticamente toda licitacao cai, e pode ser corrigida a mao na tela.
+  linha            text,
+  linha_ajustada   boolean not null default false,
   chave_acesso     text,
 
   -- A OV do app que corresponde a esta nota, quando existe. Nulo = nota que

@@ -39,14 +39,17 @@ type Conciliacao = {
   diferenca: number
   casam: number
   sem_espelho: boolean
-  so_d365: Array<{ nf: string; data: string | null; cliente: string | null; valor: number
-                   operacao: string | null; tipo_operacao: string | null }>
+  so_d365: Array<{ id: string; nf: string; data: string | null; cliente: string | null
+                   valor: number; operacao: string | null; tipo_operacao: string | null
+                   origem_venda: string | null; linha: string | null; linha_ajustada?: boolean }>
   so_app: Array<{ nf: string | null; ov: string | null; pedido_id: string; data: string
                   valor: number; cliente: string | null }>
   divergentes: Array<{ nf: string; ov: string | null; pedido_id: string
                        valor_app: number; valor_d365: number
                        data_app: string; data_d365: string; cliente: string | null }>
   por_tipo: Array<{ tipo: string; qtd: number; valor: number }>
+  por_origem: Array<{ chave: string; qtd: number; valor: number }>
+  linha_sem_ov: Array<{ chave: string; qtd: number; valor: number }>
 }
 
 /** Competência corrente, no formato AAAA-MM. */
@@ -83,6 +86,13 @@ export default function FaturamentoD365() {
     },
     onError: (e: any) => toast.error(
       e?.response?.data?.detail || 'Não consegui importar o arquivo.', { duration: 8000 }),
+  })
+
+  const corrigirLinha = useMutation({
+    mutationFn: ({ id, linha }: { id: string; linha: string }) =>
+      api.patch(`/notas-d365/${id}/linha`, { linha: linha || null }).then(r => r.data),
+    onSuccess: () => { toast.success('Linha corrigida nesta nota.'); refetch() },
+    onError: () => toast.error('Não consegui corrigir a linha.'),
   })
 
   const dif = data?.diferenca || 0
@@ -165,6 +175,41 @@ export default function FaturamentoD365() {
             </div>
           )}
 
+          {!!data?.por_origem?.length && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                Licitação × comercial, pela própria operação fiscal
+              </p>
+              <div className="flex flex-wrap gap-x-6 gap-y-2">
+                {data.por_origem.map(o => (
+                  <div key={o.chave}>
+                    <p className="text-sm font-semibold text-gray-800 tabular-nums">
+                      {fmtBRL(o.valor)}
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      {o.chave === 'LICITACAO' ? 'Licitação' : 'Comercial'} · {o.qtd} NF(s)
+                    </p>
+                  </div>
+                ))}
+                {data.linha_sem_ov?.length > 0 && (
+                  <div className="border-l pl-6">
+                    <p className="text-[11px] text-gray-500 mb-0.5">
+                      das notas que não passaram pelo app, por linha:
+                    </p>
+                    <p className="text-xs text-gray-700">
+                      {data.linha_sem_ov.map(l => (
+                        <span key={l.chave} className="mr-3">
+                          <strong>{l.chave === 'SEM LINHA' ? 'sem linha' : l.chave}</strong>{' '}
+                          {fmtBRL(l.valor)}
+                        </span>
+                      ))}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <Secao
             titulo="No D365, fora do app"
             explicacao="Nota que a MSB emitiu e que a nossa operação não registrou. É o comunicado
@@ -177,9 +222,28 @@ export default function FaturamentoD365() {
                 <td className="py-1.5 px-3 font-mono text-gray-800">{n.nf}</td>
                 <td className="py-1.5 px-2 text-gray-500 whitespace-nowrap">{dataBR(n.data)}</td>
                 <td className="py-1.5 px-2 text-gray-700 truncate max-w-[260px]">{n.cliente}</td>
-                <td className="py-1.5 px-2 text-[11px] text-gray-500 truncate max-w-[260px]"
+                <td className="py-1.5 px-2 text-[11px] text-gray-500 truncate max-w-[220px]"
                   title={n.operacao || ''}>
                   {TIPO_LABEL[n.tipo_operacao || 'A CLASSIFICAR'] || n.tipo_operacao}
+                  {n.origem_venda === 'LICITACAO' && (
+                    <span className="ml-1 px-1 py-0.5 rounded bg-violet-100 text-violet-700">
+                      licitação
+                    </span>
+                  )}
+                </td>
+                <td className="py-1.5 px-2">
+                  {/* Licitação nasce vascular; a exceção se conserta aqui, nota
+                      a nota, e a correção sobrevive à próxima importação. */}
+                  <select value={n.linha || ''} disabled={corrigirLinha.isPending}
+                    onChange={e => corrigirLinha.mutate({ id: n.id, linha: e.target.value })}
+                    title={n.linha_ajustada ? 'Linha corrigida à mão' : 'Linha sugerida pela operação'}
+                    className={`text-[11px] border rounded px-1 py-0.5 ${
+                      n.linha_ajustada ? 'border-indigo-300 text-indigo-700' : 'text-gray-600'}`}>
+                    <option value="">sem linha</option>
+                    <option value="URO">URO</option>
+                    <option value="VASCULAR">VASCULAR</option>
+                    <option value="REALCLOSURE">REALCLOSURE</option>
+                  </select>
                 </td>
                 <td className="py-1.5 px-3 text-right tabular-nums font-medium text-gray-800">
                   {fmtBRL(n.valor)}

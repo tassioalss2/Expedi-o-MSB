@@ -7,7 +7,11 @@ extrai — por isso a importação é por arquivo.
 """
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from typing import Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 
 from app.core.deps import get_current_user
 from app.models.schemas import UsuarioOut
@@ -22,6 +26,24 @@ async def importar(arquivo: UploadFile = File(...),
     """Sobe o export de notas do D365. Reimportar o mesmo período não duplica."""
     conteudo = await arquivo.read()
     return notas_d365_service.importar(conteudo, arquivo.filename or "export.xlsx", usuario)
+
+
+class LinhaDaNota(BaseModel):
+    """URO, VASCULAR ou REALCLOSURE — ou nulo para tirar a linha."""
+    linha: Optional[str] = None
+
+
+@router.patch("/{nota_id}/linha")
+def ajustar_linha(nota_id: UUID, payload: LinhaDaNota,
+                  _: UsuarioOut = Depends(get_current_user)):
+    """Corrige a linha comercial de uma nota que não passou pelo app.
+
+    Licitação nasce VASCULAR, que é onde ela cai quase sempre; a exceção se
+    conserta nota a nota."""
+    try:
+        return notas_d365_service.ajustar_linha(str(nota_id), payload.linha)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/conciliacao")

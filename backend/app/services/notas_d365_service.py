@@ -130,32 +130,50 @@ def _txt(v) -> Optional[str]:
 
 # ── Natureza da operação ──────────────────────────────────────────────────────
 #
-# A tradução do texto fiscal do D365 para o vocabulário do app. Operação que
-# não está aqui entra com tipo nulo, e a tela pede a classificação: chutar a
-# natureza de uma nota é chutar se ela conta como receita.
+# A operação fiscal do D365 diz as DUAS coisas que o app precisa saber — a
+# natureza (é receita? é comunicado de uso?) e de onde a venda veio (licitação
+# ou comercial). A regra é do Tássio, 14/10/2026:
 #
-# "remetida anteriormente em consignação" é o comunicado de uso: o material já
-# estava no hospital e a venda se dá quando ele é usado.
+#   · "destinada a não contribuinte"          → venda DIRETA de LICITAÇÃO
+#   · "remetida anteriormente em consignação" → COMUNICADO DE USO (licitação)
+#   · qualquer outra                          → venda normal, NÃO é licitação
+#
+# A ordem importa: "destinada a não contri" é um caso particular de "venda de
+# produção do estabelecimento", então tem de ser testada antes. Operação que
+# não casa com nada entra sem classificação, e a tela pede — chutar a natureza
+# de uma nota é chutar se ela conta como receita.
 MAPA_OPERACAO = (
-    ("remet ant consignacao",        "COMUNICADO_USO"),
-    ("consignacao mercantil",        "COMUNICADO_USO"),
-    ("venda de producao do estabelecimento", "VENDA_NORMAL"),
-    ("venda de mercadoria adquirida", "VENDA_NORMAL"),
-    ("devolucao",                    "DEVOLUCAO"),
-    ("remessa",                      "REMESSA"),
-    ("bonificacao",                  "BONIFICACAO"),
-    ("amostra",                      "AMOSTRA"),
+    ("destinada a nao contri",        ("VENDA_NORMAL",   "LICITACAO")),
+    ("remet ant consignacao",         ("COMUNICADO_USO", "LICITACAO")),
+    ("consignacao mercantil",         ("COMUNICADO_USO", "LICITACAO")),
+    ("venda de producao do estabelecimento", ("VENDA_NORMAL", "COMERCIAL")),
+    ("venda de mercadoria adquirida", ("VENDA_NORMAL",   "COMERCIAL")),
+    ("exportacao",                    ("EXPORTACAO",     "COMERCIAL")),
+    ("devolucao",                     ("DEVOLUCAO",      None)),
+    ("remessa",                       ("REMESSA",        None)),
+    ("bonificacao",                   ("BONIFICACAO",    None)),
+    ("amostra",                       ("AMOSTRA",        None)),
 )
+
+# Praticamente toda licitação é vascular. Serve de palpite inicial para a nota
+# que NÃO passou pelo app — sem ela, o faturamento da Bio entraria sem linha e
+# sumiria do placar por canal. Raro não é nunca: a tela deixa corrigir a nota.
+LINHA_PADRAO_LICITACAO = "VASCULAR"
+
+
+def classificar(texto: Optional[str]) -> tuple:
+    """(tipo_operacao, origem_venda) a partir da descrição da operação."""
+    t = _sem_acento(texto)
+    if not t:
+        return None, None
+    for marca, (tipo, origem) in MAPA_OPERACAO:
+        if marca in t:
+            return tipo, origem
+    return None, None
 
 
 def tipo_da_operacao(texto: Optional[str]) -> Optional[str]:
-    t = _sem_acento(texto)
-    if not t:
-        return None
-    for marca, tipo in MAPA_OPERACAO:
-        if marca in t:
-            return tipo
-    return None
+    return classificar(texto)[0]
 
 
 # ── Importação ────────────────────────────────────────────────────────────────
@@ -215,7 +233,7 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
         if not numero:
             continue
         operacao = _txt(r[col["operacao"]]) if "operacao" in col else None
-        tipo = tipo_da_operacao(operacao)
+        tipo, origem = classificar(operacao)
         if operacao and not tipo:
             sem_classificacao[operacao] = sem_classificacao.get(operacao, 0) + 1
         conta = (_txt(r[col["cliente_conta"]]) if "cliente_conta" in col else None)
@@ -239,6 +257,12 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
             "valor_produtos": round(_num(r[col["valor_produtos"]]), 2) if "valor_produtos" in col else None,
             "operacao": operacao,
             "tipo_operacao": tipo,
+            "origem_venda": origem,
+            # Nota COM OV não usa a linha daqui: a OV manda, item a item, e é
+            # rateio melhor do que qualquer palpite. Sem OV, licitação nasce
+            # vascular e o resto fica sem linha até alguém dizer.
+            "linha": (None if ovs.get(chave)
+                      else (LINHA_PADRAO_LICITACAO if origem == "LICITACAO" else None)),
             "chave_acesso": _txt(r[col["chave_acesso"]]) if "chave_acesso" in col else None,
             "pedido_id": ovs.get(chave),
             "arquivo": nome_arquivo,
@@ -250,16 +274,33 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
 
     # Regrava as notas deste arquivo: apaga só as que vieram nele (por chave do
     # número) e insere de novo. Nenhuma nota fora do arquivo é tocada.
+    #
+    # A linha corrigida à mão sobrevive: é a única informação do espelho que não
+    # vem do D365, e perdê-la a cada reimportação faria o operador corrigir a
+    # mesma nota todo dia.
     chaves = sorted({l["chave_numero"] for l in linhas})
+    ajustadas = {}
     for i in range(0, len(chaves), 40):
-        db.table("notas_d365").delete().in_("chave_numero", chaves[i:i + 40]).execute()
+        lote = chaves[i:i + 40]
+        for n in db.table("notas_d365").select("chave_numero, linha, linha_ajustada")                .in_("chave_numero", lote).execute().data:
+            if n.get("linha_ajustada"):
+                ajustadas[n["chave_numero"]] = n.get("linha")
+        db.table("notas_d365").delete().in_("chave_numero", lote).execute()
+    for l in linhas:
+        if l["chave_numero"] in ajustadas:
+            l["linha"] = ajustadas[l["chave_numero"]]
+            l["linha_ajustada"] = True
     for i in range(0, len(linhas), 200):
         db.table("notas_d365").insert(linhas[i:i + 200]).execute()
 
     datas = [l["data_documento"] for l in linhas if l["data_documento"]]
-    saidas = [l for l in linhas if (l.get("direcao") or "Saída") == "Saída"]
+    # O export traz as canceladas, e ainda bem: é assim que uma nota que morreu
+    # depois de importada some do faturamento sem ninguém avisar o app. Elas
+    # entram no espelho (o registro é a verdade do D365) e ficam fora da conta.
+    saidas = [l for l in linhas if _vale_como_faturamento(l)]
     return {
         "importadas": len(linhas),
+        "canceladas": sum(1 for l in linhas if not _aprovada(l)),
         "periodo_ini": min(datas) if datas else None,
         "periodo_fim": max(datas) if datas else None,
         "valor_total": round(sum(l["valor_total"] for l in saidas), 2),
@@ -272,6 +313,16 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     }
 
 
+def _aprovada(nota: dict) -> bool:
+    """Nota viva. O D365 exporta a cancelada também, e ela não é faturamento."""
+    return str(nota.get("status") or "Aprovado").strip().lower().startswith("aprov")
+
+
+def _vale_como_faturamento(nota: dict) -> bool:
+    """Saída aprovada. Entrada é devolução e tem tratamento próprio no app."""
+    return _aprovada(nota) and (nota.get("direcao") or "Saída") == "Saída"
+
+
 def _agrupar_por_tipo(linhas: list) -> list:
     agg = {}
     for l in linhas:
@@ -280,6 +331,33 @@ def _agrupar_por_tipo(linhas: list) -> list:
         g["qtd"] += 1
         g["valor"] = round(g["valor"] + float(l.get("valor_total") or 0), 2)
     return sorted(agg.values(), key=lambda x: -x["valor"])
+
+
+def _agrupar(linhas: list, chave) -> list:
+    agg = {}
+    for l in linhas:
+        k = chave(l)
+        g = agg.setdefault(k, {"chave": k, "qtd": 0, "valor": 0.0})
+        g["qtd"] += 1
+        g["valor"] = round(g["valor"] + float(l.get("valor_total") or 0), 2)
+    return sorted(agg.values(), key=lambda x: -x["valor"])
+
+
+def ajustar_linha(nota_id: str, linha: Optional[str]) -> dict:
+    """Corrige a linha comercial de uma nota que não passou pelo app.
+
+    Licitação nasce vascular porque é lá que ela cai quase sempre; quando vier
+    um Uro ou um RealClosure, a correção é aqui e vale só para esta nota — não
+    vira regra, porque a exceção não é o caso.
+    """
+    valor = (linha or "").strip().upper() or None
+    if valor and valor not in ("URO", "VASCULAR", "REALCLOSURE"):
+        raise ValueError("Linha inválida: use URO, VASCULAR ou REALCLOSURE.")
+    db = get_service_db()
+    r = db.table("notas_d365").update({
+        "linha": valor, "linha_ajustada": True,
+    }).eq("id", nota_id).execute().data
+    return (r or [{}])[0]
 
 
 # ── Conciliação ───────────────────────────────────────────────────────────────
@@ -298,14 +376,12 @@ def conciliacao(ini: str, fim: str) -> dict:
     db = get_service_db()
 
     notas = db.table("notas_d365").select(
-        "numero, chave_numero, serie, cliente_nome, cliente_conta, data_documento, "
-        "valor_total, operacao, tipo_operacao, direcao, status, pedido_id"
+        "id, numero, chave_numero, serie, cliente_nome, cliente_conta, data_documento, "
+        "valor_total, operacao, tipo_operacao, origem_venda, linha, linha_ajustada, "
+        "direcao, status, pedido_id"
     ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
 
-    # Só saída aprovada é faturamento. Entrada é devolução e vive noutro lugar.
-    notas = [n for n in notas
-             if (n.get("direcao") or "Saída") == "Saída"
-             and (n.get("status") or "Aprovado").lower().startswith("aprov")]
+    notas = [n for n in notas if _vale_como_faturamento(n)]
 
     peds = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, valor_nf, data_faturamento, status, "
@@ -335,10 +411,13 @@ def conciliacao(ini: str, fim: str) -> dict:
                 })
         else:
             so_d365.append({
+                "id": n.get("id"),
                 "nf": n["numero"], "data": n.get("data_documento"),
                 "cliente": n.get("cliente_nome"), "cliente_conta": n.get("cliente_conta"),
                 "valor": round(float(n.get("valor_total") or 0), 2),
                 "operacao": n.get("operacao"), "tipo_operacao": n.get("tipo_operacao"),
+                "origem_venda": n.get("origem_venda"),
+                "linha": n.get("linha"), "linha_ajustada": n.get("linha_ajustada"),
             })
     for k, p in app.items():
         if k not in d365:
@@ -364,6 +443,11 @@ def conciliacao(ini: str, fim: str) -> dict:
         "so_app": so_app,
         "divergentes": sorted(divergentes, key=lambda x: -abs(x["valor_d365"] - x["valor_app"])),
         "por_tipo": _agrupar_por_tipo(notas),
+        "por_origem": _agrupar(notas, lambda n: n.get("origem_venda") or "COMERCIAL"),
+        # Linha das notas que NÃO passaram pelo app: é o pedaço do faturamento
+        # que o placar por canal perderia quando a licitação sair daqui.
+        "linha_sem_ov": _agrupar([n for n in notas if not n.get("pedido_id")],
+                                 lambda n: n.get("linha") or "SEM LINHA"),
         # Sem nota importada no período não há conciliação a fazer: a tela diz
         # "importe o export do mês" em vez de acusar um buraco de 100%.
         "sem_espelho": len(d365) == 0,
