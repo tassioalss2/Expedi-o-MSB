@@ -32,6 +32,7 @@ from typing import Optional
 import pandas as pd
 
 from app.core.database import get_service_db
+from app.models.enums import conta_faturamento
 from app.models.schemas import UsuarioOut
 
 
@@ -305,9 +306,9 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
         "periodo_fim": max(datas) if datas else None,
         # Transfer price (Biomedical) fica fora do faturamento, aqui como em
         # todo o resto do app.
-        "valor_total": round(sum(l["valor_total"] for l in saidas
+        "valor_total": round(sum(valor_da_nota(l) for l in saidas
                                  if not eh_transfer_price(l.get("cliente_nome"))), 2),
-        "valor_transfer": round(sum(l["valor_total"] for l in saidas
+        "valor_transfer": round(sum(valor_da_nota(l) for l in saidas
                                     if eh_transfer_price(l.get("cliente_nome"))), 2),
         "com_ov": sum(1 for l in linhas if l["pedido_id"]),
         "sem_ov": sum(1 for l in linhas if not l["pedido_id"]),
@@ -317,6 +318,41 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
         "por_tipo": _agrupar_por_tipo(
             [l for l in saidas if not eh_transfer_price(l.get("cliente_nome"))]),
     }
+
+
+def valor_da_ov(pedido: dict) -> float:
+    """O faturamento da OV sem o frete, igual ao Painel Comercial.
+
+    O `valor_nf` é a nota inteira; quando o frete vai embutido nela, o painel
+    conta `valor_produtos`. Comparar o total daqui com os produtos do D365
+    acusaria divergência onde só há frete.
+    """
+    v = pedido.get("valor_produtos")
+    try:
+        v = float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        v = 0.0
+    return v if v > 0 else float(pedido.get("valor_nf") or 0)
+
+
+def valor_da_nota(nota: dict) -> float:
+    """O que conta como faturamento nesta nota: o valor dos PRODUTOS.
+
+    "Valor total" do D365 inclui o frete embutido na nota; o faturamento do app
+    é vendas SEM frete, e o frete tem conta própria (ressarcido × custo). Somar
+    o total aqui faria a mesma nota valer uma coisa no painel e outra na
+    conciliação — foi o que aconteceu com a NF 21077, R$ 247.705,63 de total
+    contra R$ 245.219,97 de produtos.
+
+    Sem o valor de produtos (export antigo, coluna ausente), cai no total: é o
+    melhor que existe, e no export real só 3 das 61 notas tinham frete embutido.
+    """
+    v = nota.get("valor_produtos")
+    try:
+        v = float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        v = 0.0
+    return v if v > 0 else float(nota.get("valor_total") or 0)
 
 
 def _aprovada(nota: dict) -> bool:
@@ -346,7 +382,7 @@ def _agrupar_por_tipo(linhas: list) -> list:
         k = l.get("tipo_operacao") or "A CLASSIFICAR"
         g = agg.setdefault(k, {"tipo": k, "qtd": 0, "valor": 0.0})
         g["qtd"] += 1
-        g["valor"] = round(g["valor"] + float(l.get("valor_total") or 0), 2)
+        g["valor"] = round(g["valor"] + valor_da_nota(l), 2)
     return sorted(agg.values(), key=lambda x: -x["valor"])
 
 
@@ -356,7 +392,7 @@ def _agrupar(linhas: list, chave) -> list:
         k = chave(l)
         g = agg.setdefault(k, {"chave": k, "qtd": 0, "valor": 0.0})
         g["qtd"] += 1
-        g["valor"] = round(g["valor"] + float(l.get("valor_total") or 0), 2)
+        g["valor"] = round(g["valor"] + valor_da_nota(l), 2)
     return sorted(agg.values(), key=lambda x: -x["valor"])
 
 
@@ -394,7 +430,7 @@ def conciliacao(ini: str, fim: str) -> dict:
 
     notas = db.table("notas_d365").select(
         "id, numero, chave_numero, serie, cliente_nome, cliente_conta, data_documento, "
-        "valor_total, operacao, tipo_operacao, origem_venda, linha, linha_ajustada, "
+        "valor_total, valor_produtos, operacao, tipo_operacao, origem_venda, linha, linha_ajustada, "
         "direcao, status, pedido_id"
     ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
 
@@ -405,10 +441,14 @@ def conciliacao(ini: str, fim: str) -> dict:
     notas = [n for n in notas if not eh_transfer_price(n.get("cliente_nome"))]
 
     peds = db.table("pedidos").select(
-        "id, numero_pedido, numero_nf, valor_nf, data_faturamento, status, "
+        "id, numero_pedido, numero_nf, valor_nf, valor_produtos, data_faturamento, status, "
         "tipo_operacao, cliente_id, clientes(nome)"
     ).gte("data_faturamento", f"{ini}T00:00:00").lte("data_faturamento", f"{fim}T23:59:59")\
         .limit(5000).execute().data
+    # Bonificação, amostra e consignado geram NF e NÃO são faturamento — o
+    # Painel Comercial já os deixa de fora, e a conciliação tem de olhar para a
+    # mesma coisa, senão a diferença entre as duas pontas vira uma doação.
+    peds = [p for p in peds if conta_faturamento(p.get("tipo_operacao"))]
 
     app, app_transfer = {}, {}
     for p in peds:
@@ -425,7 +465,7 @@ def conciliacao(ini: str, fim: str) -> dict:
     for k, n in d365.items():
         if k in app:
             p = app[k]
-            va, vd = round(float(p.get("valor_nf") or 0), 2), round(float(n.get("valor_total") or 0), 2)
+            va, vd = round(valor_da_ov(p), 2), round(valor_da_nota(n), 2)
             da = str(p.get("data_faturamento") or "")[:10]
             dd = str(n.get("data_documento") or "")[:10]
             if abs(va - vd) > 0.01 or (da and dd and da != dd):
@@ -439,7 +479,7 @@ def conciliacao(ini: str, fim: str) -> dict:
                 "id": n.get("id"),
                 "nf": n["numero"], "data": n.get("data_documento"),
                 "cliente": n.get("cliente_nome"), "cliente_conta": n.get("cliente_conta"),
-                "valor": round(float(n.get("valor_total") or 0), 2),
+                "valor": round(valor_da_nota(n), 2),
                 "operacao": n.get("operacao"), "tipo_operacao": n.get("tipo_operacao"),
                 "origem_venda": n.get("origem_venda"),
                 "linha": n.get("linha"), "linha_ajustada": n.get("linha_ajustada"),
@@ -449,15 +489,15 @@ def conciliacao(ini: str, fim: str) -> dict:
             so_app.append({
                 "nf": p.get("numero_nf"), "ov": p.get("numero_pedido"), "pedido_id": p.get("id"),
                 "data": str(p.get("data_faturamento") or "")[:10],
-                "valor": round(float(p.get("valor_nf") or 0), 2),
+                "valor": round(valor_da_ov(p), 2),
                 "cliente": (p.get("clientes") or {}).get("nome"),
                 "tipo_operacao": p.get("tipo_operacao"),
             })
 
     so_d365.sort(key=lambda x: -x["valor"])
     so_app.sort(key=lambda x: -x["valor"])
-    total_d365 = round(sum(float(n.get("valor_total") or 0) for n in notas), 2)
-    total_app = round(sum(float(p.get("valor_nf") or 0) for p in app.values()), 2)
+    total_d365 = round(sum(valor_da_nota(n) for n in notas), 2)
+    total_app = round(sum(valor_da_ov(p) for p in app.values()), 2)
     return {
         "periodo": {"ini": ini, "fim": fim},
         "d365": {"qtd": len(d365), "valor": total_d365},
@@ -471,13 +511,13 @@ def conciliacao(ini: str, fim: str) -> dict:
         # mas repasse dentro do grupo não é faturamento da MSB.
         "transfer": {
             "d365_qtd": len(notas_transfer),
-            "d365_valor": round(sum(float(n.get("valor_total") or 0) for n in notas_transfer), 2),
+            "d365_valor": round(sum(valor_da_nota(n) for n in notas_transfer), 2),
             "app_qtd": len(app_transfer),
-            "app_valor": round(sum(float(p.get("valor_nf") or 0) for p in app_transfer.values()), 2),
+            "app_valor": round(sum(valor_da_ov(p) for p in app_transfer.values()), 2),
             "notas": sorted([{
                 "id": n.get("id"), "nf": n["numero"], "data": n.get("data_documento"),
                 "cliente": n.get("cliente_nome"),
-                "valor": round(float(n.get("valor_total") or 0), 2),
+                "valor": round(valor_da_nota(n), 2),
                 "no_app": n["chave_numero"] in app_transfer,
             } for n in notas_transfer], key=lambda x: -x["valor"]),
         },
