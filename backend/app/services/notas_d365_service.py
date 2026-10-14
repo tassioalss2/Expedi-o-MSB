@@ -32,7 +32,7 @@ from typing import Optional
 import pandas as pd
 
 from app.core.database import get_service_db
-from app.models.enums import conta_faturamento
+from app.models.enums import OPERACOES_FATURAMENTO, conta_faturamento
 from app.models.schemas import UsuarioOut
 
 
@@ -522,6 +522,10 @@ def conciliacao(ini: str, fim: str) -> dict:
             } for n in notas_transfer], key=lambda x: -x["valor"]),
         },
         "por_tipo": _agrupar_por_tipo(notas),
+        # Operação que o app ainda não sabe traduzir. Fica FORA do faturamento
+        # até alguém dizer o que é — e aparece aqui para que seja dito.
+        "a_classificar": _agrupar([n for n in notas if not n.get("tipo_operacao")],
+                                  lambda n: n.get("operacao") or "(sem descrição)"),
         "por_origem": _agrupar(notas, lambda n: n.get("origem_venda") or "COMERCIAL"),
         # Linha das notas que NÃO passaram pelo app: é o pedaço do faturamento
         # que o placar por canal perderia quando a licitação sair daqui.
@@ -569,7 +573,13 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
     notas = [n for n in notas
              if _vale_como_faturamento(n)
              and not eh_transfer_price(n.get("cliente_nome"))
-             and conta_faturamento(n.get("tipo_operacao"))]
+             # Tipo EXPLÍCITO, não o default: `conta_faturamento(None)` trata
+             # nulo como venda normal — regra boa para a OV antiga do app, que
+             # nasceu antes do campo existir, e perigosa aqui. Com o export sem
+             # filtro, uma operação que eu ainda não sei traduzir (remessa para
+             # conserto, por exemplo) entraria como receita. Nota sem natureza
+             # conhecida fica de fora e aparece em "a classificar".
+             and (n.get("tipo_operacao") or "") in OPERACOES_FATURAMENTO]
     if not notas:
         return dict(VAZIO)
 

@@ -49,6 +49,7 @@ type Conciliacao = {
                        data_app: string; data_d365: string; cliente: string | null }>
   por_tipo: Array<{ tipo: string; qtd: number; valor: number }>
   por_origem: Array<{ chave: string; qtd: number; valor: number }>
+  a_classificar: Array<{ chave: string; qtd: number; valor: number }>
   transfer: {
     d365_qtd: number; d365_valor: number; app_qtd: number; app_valor: number
     notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
@@ -211,6 +212,28 @@ export default function FaturamentoD365() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Operação que o app não sabe traduzir fica fora do faturamento até
+              alguém dizer o que é. Melhor um número a menos do que uma remessa
+              de conserto virando receita. */}
+          {!!data?.a_classificar?.length && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-900">
+                {data.a_classificar.length} operação(ões) do D365 que eu ainda não sei classificar
+              </p>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                Estas notas estão no espelho mas <strong>fora</strong> do faturamento — me diga o que
+                cada operação significa (venda? comunicado de uso? remessa?) e eu ensino o app.
+              </p>
+              <ul className="mt-1.5 text-[11px] text-amber-900 space-y-0.5">
+                {data.a_classificar.map(o => (
+                  <li key={o.chave}>
+                    <span className="font-medium">{o.chave}</span> · {o.qtd} NF(s) · {fmtBRL(o.valor)}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
