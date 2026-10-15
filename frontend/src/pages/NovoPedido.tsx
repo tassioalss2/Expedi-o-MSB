@@ -183,9 +183,12 @@ export function NovoPedido() {
   const buildBody = (extra?: Record<string, unknown>) => ({
     ...form,
     transportadora_id: form.transportadora_id || null,
-    // Licitação sai pela página de Licitações; o que passa por aqui é
-    // sempre venda direta. A linha vem dos itens, no servidor.
-    forma_venda: 'DIRETA',
+    // "Licitação" no seletor de operação é COMO a venda aconteceu, não a
+    // natureza fiscal da nota: ela sai como venda normal e conta na meta igual.
+    // Por isso vira forma_venda, que é o campo que o app usa para separar
+    // licitação de comercial. A linha vem dos itens, no servidor.
+    tipo_operacao: form.tipo_operacao === 'LICITACAO' ? 'VENDA_NORMAL' : form.tipo_operacao,
+    forma_venda: form.tipo_operacao === 'LICITACAO' ? 'LICITACAO' : 'DIRETA',
     itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
     decisao_estoque: decisao?.decisao || null,
     observacao_estoque: decisao?.observacao || null,
@@ -375,7 +378,17 @@ export function NovoPedido() {
 
           <div className="col-span-2">
             <label className="text-sm font-medium text-gray-700">Tipo de Operação *</label>
-            <select value={form.tipo_operacao} onChange={e => setForm({...form, tipo_operacao: e.target.value})}
+            <select value={form.tipo_operacao} onChange={e => setForm(f => {
+              const op = e.target.value
+              if (op !== 'LICITACAO') return { ...f, tipo_operacao: op }
+              // Na licitação o frete é sempre nosso e o prazo é sempre 30 dias.
+              // Digitar isso toda vez é o tipo de repetição que a operadora
+              // esquece — e esquecer aqui vira frete sem dono no fechamento.
+              return {
+                ...f, tipo_operacao: op, tipo_frete: 'CIF_SEM_VALOR',
+                condicao_pagamento: f.condicao_pagamento || '30 dias',
+              }
+            })}
               className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.tipo_operacao ? '' : 'border-amber-400 text-gray-400'}`}>
               {/* Comunicado de uso é lançado no módulo de Licitações; amostra e
                   consignado seguem fora daqui. Doação voltou a pedido do Tassio:
@@ -383,9 +396,17 @@ export function NovoPedido() {
                   não é faturamento — não entra na meta nem em "Vendas". */}
               <option value="" disabled>Selecione o tipo de operação…</option>
               <option value="VENDA_NORMAL">Venda normal</option>
+              <option value="LICITACAO">Licitação</option>
               <option value="EXPORTACAO">Exportação</option>
               <option value="BONIFICACAO_DOACAO">Bonificação / Doação</option>
             </select>
+            {form.tipo_operacao === 'LICITACAO' && (
+              <div className="mt-2 rounded-lg border border-violet-200 bg-violet-50 p-2.5 text-xs text-violet-900">
+                <b>Venda direta de licitação.</b> Já preenchi o que é sempre igual nela:
+                frete <b>CIF sem valor na NF</b> (o frete é nosso) e pagamento em{' '}
+                <b>30 dias</b>. Dá para mudar os dois se este caso for exceção.
+              </div>
+            )}
             {form.tipo_operacao === 'BONIFICACAO_DOACAO' && (
               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900">
                 <b>Doação não é faturamento</b> — fica fora da meta e do relatório de Vendas.
