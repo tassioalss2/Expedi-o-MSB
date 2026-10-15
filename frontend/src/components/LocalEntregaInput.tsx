@@ -32,10 +32,14 @@ export function LocalEntregaInput({ value, onChange }: { value: string; onChange
     staleTime: Infinity,
   })
 
+  // Sem acento dos dois lados: ninguém digita "São José do Rio Preto" com os
+  // acentos certos no meio de um cadastro, e "sao jose" tem de achar a cidade.
   const sugestoes = useMemo(() => {
-    const q = cidade.trim().toLowerCase()
+    const limpa = (t: string) =>
+      t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+    const q = limpa(cidade)
     if (!q) return municipios.slice(0, 30)
-    return municipios.filter(m => m.toLowerCase().includes(q)).slice(0, 30)
+    return municipios.filter(m => limpa(m).includes(q)).slice(0, 30)
   }, [municipios, cidade])
 
   useEffect(() => {
@@ -66,10 +70,24 @@ export function LocalEntregaInput({ value, onChange }: { value: string; onChange
           onFocus={() => { if (uf) setAberto(true) }}
           placeholder={!uf ? 'Selecione a UF primeiro' : isFetching ? 'Carregando cidades…' : 'Digite a cidade…'}
           className="w-full border rounded-lg px-3 py-2.5 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
+        {/* Lista vazia tem dois motivos muito diferentes: a cidade digitada
+            não existe naquela UF, ou a lista não carregou. Ficar mudo fazia o
+            operador achar que o campo estava quebrado. */}
+        {uf && !isFetching && municipios.length === 0 && (
+          <p className="mt-1 text-[11px] text-amber-700">
+            Não consegui carregar as cidades de {uf}. Recarregue a página; se continuar,
+            me avise.
+          </p>
+        )}
+        {uf && municipios.length > 0 && cidade.trim() && sugestoes.length === 0 && (
+          <p className="mt-1 text-[11px] text-gray-500">
+            Nenhuma cidade de {uf} com esse nome.
+          </p>
+        )}
         {aberto && uf && sugestoes.length > 0 && (
           <div className="absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-60 overflow-y-auto">
             {sugestoes.map(c => (
-              <button key={c} onClick={() => selecionarCidade(c)}
+              <button key={c} type="button" onClick={() => selecionarCidade(c)}
                 className="w-full text-left px-4 py-2 hover:bg-blue-50 text-sm border-b border-gray-50 last:border-0">
                 {c}
               </button>
