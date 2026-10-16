@@ -1037,12 +1037,17 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
             {/* Parada pelo cliente: sai do kanban, entao esta lista vira o unico
                 lugar onde a venda aparece. Sem o selo ela se confunde com quem
                 espera material — e aqui material costuma ter. */}
-            {(p as any).espera_tipo && (
+            {(p as any).espera_tipo === 'MATERIAL' ? (
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0"
+                title="Operações já lançou esta venda no D365. Fora do kanban até o material chegar — liberar a pendência traz o card de volta.">
+                ✅ lançada no D365
+              </span>
+            ) : (p as any).espera_tipo ? (
               <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0"
                 title={`Fora do kanban — ${(p as any).espera_motivo || 'aguardando o cliente'}`}>
                 ⏸️ parado pelo cliente
               </span>
-            )}
+            ) : null}
             <EtiquetaEstoque p={p} />
           </div>
           {/* A explicacao do saldo, visivel sem abrir o card. O rotulo sozinho

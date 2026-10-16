@@ -3424,6 +3424,21 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Nao consegui retomar a venda'),
   })
 
+  // A venda nasceu sem material: virou pendência e card no kanban. O card serve
+  // de aviso enquanto operações de vendas não lançou a venda no D365; depois
+  // disso não há o que separar até o material chegar, e ele só ocupa a esteira.
+  const lanceiNoD365 = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido?.id}/parar`, { tipo: 'MATERIAL', motivo: '' }),
+    onSuccess: () => {
+      toast.success('Marcada como lançada no D365 — saiu da esteira e ficou na pendência. '
+        + 'Volta sozinha quando o material chegar.', { duration: 8000 })
+      qc.invalidateQueries({ queryKey: ['pedido', pedido?.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      qc.invalidateQueries({ queryKey: ['crm-pendencias'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Nao consegui marcar a venda'),
+  })
+
   const [nf, setNf] = useState('')
   const [valorNf, setValorNf] = useState('')
   const [valorProdutos, setValorProdutos] = useState('')
@@ -3787,12 +3802,17 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
         <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 flex items-start gap-4">
           <div className="text-3xl">⏸️</div>
           <div className="flex-1">
-            <p className="text-sm font-bold text-amber-900">Venda parada — aguardando o cliente</p>
+            <p className="text-sm font-bold text-amber-900">
+              {pedido.espera_tipo === 'MATERIAL'
+                ? 'Lançada no D365 — aguardando material'
+                : 'Venda parada — aguardando o cliente'}
+            </p>
             <p className="text-sm text-amber-800 mt-0.5">{pedido.espera_motivo}</p>
             <p className="text-[11px] text-amber-700 mt-1">
               Fora do kanban desde {pedido.espera_desde
                 ? format(parseISO(pedido.espera_desde), "dd/MM 'às' HH:mm", { locale: ptBR })
                 : '—'} · o relógio de SLA está parado · a venda continua nas Pendências
+              {pedido.espera_tipo === 'MATERIAL' && ' · volta sozinha quando a pendência for liberada'}
             </p>
           </div>
           <button onClick={() => retomar.mutate()} disabled={retomar.isPending}
@@ -4400,6 +4420,23 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
 
               {/* O cliente adiou. Parar e diferente de cancelar: a venda some do
                   quadro mas continua viva nas Pendencias, e volta num clique. */}
+              {/* Aviso visto: a venda já foi lançada no D365 e não tem material.
+                  Tira o card da esteira sem perder nada — ela continua na
+                  pendência e volta quando o material chegar. */}
+              {!pedido.espera_tipo && status === 'AGUARD_PRODUCAO' && (pedido as any).pendencia
+                && !((pedido as any).pendencia?.resolvido_em) && (
+                <button onClick={() => {
+                  if (confirm('Confirma que esta venda já foi lançada no D365? '
+                    + 'Ela sai do kanban e fica só na pendência, e volta para a esteira '
+                    + 'sozinha quando o material chegar.')) lanceiNoD365.mutate()
+                }}
+                  disabled={lanceiNoD365.isPending}
+                  title="Tira o card da esteira: não há o que separar até o material chegar"
+                  className="w-full flex items-center gap-2 justify-center py-2 border border-sky-300 text-sky-700 rounded-lg text-sm hover:bg-sky-50 disabled:opacity-50">
+                  ✅ {lanceiNoD365.isPending ? 'Marcando…' : 'Lancei no D365 — tirar da esteira'}
+                </button>
+              )}
+
               {!pedido.espera_tipo && !['FATURADO', 'AGUARD_COLETA', 'COLETADO', 'EXPEDIDO', 'CANCELADO'].includes(status) && (
                 <button onClick={() => setModal('parar')}
                   title="O cliente adiou: tira do kanban sem cancelar a venda"

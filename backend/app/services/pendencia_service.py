@@ -1991,6 +1991,9 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
         # Venda outbound que estava aguardando a produção: agora tem material e
         # itens, então entra no kanban da expedição, na coluna "Dados da OV" —
         # é lá que operações de vendas informa o número real do D365.
+        # Estava fora do quadro porque alguém já tinha lançado a venda no D365 e
+        # tirado o card da esteira. O material chegou: ela volta.
+        pedido_service.limpar_espera_de_material(db, ov["id"])
         if ov.get("status") == StatusPedido.AGUARD_PRODUCAO.value:
             db.table("pedidos").update({
                 "status": StatusPedido.AGUARD_DADOS_OV.value, "atualizado_em": _agora(),

@@ -2822,7 +2822,20 @@ def trocar_numero_por_rejeicao(pedido_id: str, novo_numero: str, motivo: str,
 # Parar é diferente de cancelar: a venda continua viva nas Pendências, com o
 # motivo à vista, e volta ao quadro quando o cliente resolver. Cancelar perderia
 # a venda; deixar no kanban enche o quadro de card que ninguém pode tocar.
-_ESPERA_TIPOS = {"CLIENTE": "parado pelo cliente"}
+_ESPERA_TIPOS = {
+    "CLIENTE": "parado pelo cliente",
+    # A venda nasceu sem material: virou pendência E card no kanban. O card é
+    # útil enquanto operações de vendas não lançou a venda no D365 — é o aviso
+    # de que há algo a lançar lá. Depois de lançado ele só atrapalha: não há o
+    # que separar até o material chegar. Esta espera é o "já vi e lancei": a OV
+    # sai da esteira e vive na pendência, e volta sozinha quando o material
+    # chegar, porque liberar a pendência limpa a espera.
+    "MATERIAL": "aguardando material — já lançada no D365",
+}
+
+# Motivo que o app escreve sozinho quando a espera é de material: a pergunta
+# "por que está parada?" já tem resposta, e exigir que seja digitada é cerimônia.
+_MOTIVO_MATERIAL = "Pendência vista e lançada no D365 — aguardando material."
 
 
 def _sem_coluna_de_espera(exc) -> bool:
@@ -2843,6 +2856,8 @@ def marcar_espera(pedido_id: str, tipo: str, motivo: str, usuario: UsuarioOut) -
         raise HTTPException(status_code=422, detail="Tipo de espera desconhecido: %s" % tipo)
 
     motivo = (motivo or "").strip()
+    if tipo == "MATERIAL" and not motivo:
+        motivo = _MOTIVO_MATERIAL
     if len(motivo) < 5:
         raise HTTPException(
             status_code=422,
@@ -2888,6 +2903,29 @@ def marcar_espera(pedido_id: str, tipo: str, motivo: str, usuario: UsuarioOut) -
         "criado_em": agora,
     }).execute()
     return obter_pedido(pedido_id)
+
+
+def limpar_espera_de_material(db, pedido_id: str) -> None:
+    """Tira a OV da espera de material — chamado quando a pendência é liberada.
+
+    Sem isto a venda ficaria liberada e fora do quadro ao mesmo tempo: o
+    material chegou, a expedição tem o que fazer, e o card não apareceria. A
+    espera por decisão do CLIENTE não é limpa aqui de propósito — essa só o
+    comercial desfaz, porque a venda continua parada por vontade de quem compra.
+    """
+    try:
+        atual = db.table("pedidos").select("id, espera_tipo").eq("id", str(pedido_id)).execute().data
+    except Exception:
+        return
+    if not atual or (atual[0].get("espera_tipo") or "") != "MATERIAL":
+        return
+    try:
+        db.table("pedidos").update({
+            "espera_tipo": None, "espera_motivo": None,
+            "espera_desde": None, "espera_por": None, "atualizado_em": _agora(),
+        }).eq("id", str(pedido_id)).execute()
+    except Exception as exc:
+        print("nao consegui tirar a OV da espera de material: %s" % str(exc)[:120])
 
 
 def retomar_da_espera(pedido_id: str, usuario: UsuarioOut) -> dict:
