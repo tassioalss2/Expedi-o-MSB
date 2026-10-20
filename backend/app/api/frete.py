@@ -100,10 +100,25 @@ def estimativa_do_pedido(pedido_id: UUID,
         cidade, uf = local.rsplit("/", 1)
         cidade, uf = cidade.strip(), uf.strip().upper()[:2]
 
+    # Ad valorem e GRIS sao percentual do valor da mercadoria. Na cotacao a NF
+    # ainda nao existe, entao o valor vem dos ITENS — sem isso as duas taxas
+    # saiam zeradas justamente na hora de cotar, que e quando o numero serve.
+    valor = float(p.get("valor_nf") or 0) or float(p.get("valor_produtos") or 0)
+    base_valor = "nota fiscal" if p.get("valor_nf") else (
+        "valor de produtos" if p.get("valor_produtos") else None)
+    if not valor:
+        itens = db.table("itens_pedido").select(
+            "qtd_solicitada, valor_unitario").eq("pedido_id", str(pedido_id)).execute().data
+        valor = sum(float(i.get("qtd_solicitada") or 0) * float(i.get("valor_unitario") or 0)
+                    for i in itens)
+        base_valor = "itens da OV" if valor else None
+
     r = tabela_frete_service.estimar(
         uf, cidade, peso_kg=float(c.get("peso_kg") or 0) * caixas, m3=m3,
-        valor_nf=float(p.get("valor_nf") or p.get("valor_produtos") or 0))
+        valor_nf=valor)
     r["tem_cubagem"] = bool(cub)
+    r["valor_mercadoria"] = round(valor, 2)
+    r["base_valor"] = base_valor
     r["local_entrega"] = local or None
     return r
 

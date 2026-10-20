@@ -82,7 +82,12 @@ def estimar(uf: Optional[str], cidade: Optional[str] = None,
         }
 
     peso_cobrado = max(peso_taxado, float(destino["peso_minimo_kg"]))
-    frete_peso = peso_cobrado * float(destino["tarifa_kg"])
+    # A tarifa mínima é um valor declarado (R$ 110,88), não o produto do peso
+    # mínimo pela tarifa: em Brasília, 36,35 × 3,05 dá 110,8675 e a carga leve
+    # saía um centavo abaixo do que a transportadora cobra. Quem manda é o
+    # maior dos dois.
+    frete_peso = max(peso_cobrado * float(destino["tarifa_kg"]),
+                     float(t.get("tarifa_minima") or 0))
     ad_valorem = float(valor_nf or 0) * float(t.get("ad_valorem_pct") or 0) / 100
     gris_pct = float(destino.get("gris_pct", t.get("gris_pct_padrao") or 0))
     gris = float(valor_nf or 0) * gris_pct / 100

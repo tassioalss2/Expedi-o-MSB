@@ -62,8 +62,9 @@ def modalidade(destino_local: str, prazo_cliente, saida: date) -> tuple:
     except Exception:
         return "A DEFINIR", "prazo do cliente ilegível"
 
-    # A coleta de hoje só começa a contar no próximo dia útil.
-    disponivel = _dias_uteis(saida, alvo) - 1
+    # O prazo da tabela conta a partir da COLETA (confirmado com a BRIX em
+    # 20/10/2026), então o dia da coleta entra na conta.
+    disponivel = _dias_uteis(saida, alvo)
     if disponivel >= prazo_tabela:
         return "CONVENCIONAL", "tabela: %d dia(s) · disponível: %d" % (prazo_tabela, disponivel)
     return "EXPRESSA", "tabela: %d dia(s) · disponível: %d — convencional não chega" % (

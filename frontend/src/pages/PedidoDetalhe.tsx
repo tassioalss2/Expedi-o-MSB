@@ -1591,6 +1591,21 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
     staleTime: 5 * 60 * 1000,
   })
 
+  // O valor que a tabela contratada diz. Entra como SUGESTÃO, não como
+  // verdade: a tabela não cobre pedágio, ICMS nem redespacho, e cotação fora
+  // dela acontece. Quem cota confirma — mas não precisa mais fazer a conta.
+  const { data: estimativa } = useQuery<any>({
+    queryKey: ['frete-estimado', pedido.id],
+    queryFn: () => api.get(`/frete/estimativa/pedido/${pedido.id}`).then(r => r.data),
+    enabled: !!pedido.id,
+    staleTime: 60_000,
+  })
+  useEffect(() => {
+    if (estimativa?.encontrado && !valorFrete && !pedido.valor_frete) {
+      setValorFrete(String(estimativa.total))
+    }
+  }, [estimativa])
+
   const mutation = useMutation({
     mutationFn: () => api.post(`/pedidos/${pedido.id}/cotacao-frete`, {
       valor_frete: valorOk ? Number(valorFrete) : null,
@@ -1649,6 +1664,32 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
             <input type="number" step="0.01" min="0" value={valorFrete}
               onChange={e => setValorFrete(e.target.value)}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" placeholder="0,00" />
+            {estimativa?.encontrado && (
+              <div className="mt-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5">
+                <p className="text-[11px] text-emerald-900">
+                  <strong>Tabela {estimativa.transportadora}: R$ {Number(estimativa.total)
+                    .toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong>
+                  {' '}— {estimativa.destino}, {estimativa.peso_cobrado_kg} kg cobrados
+                  {estimativa.usou_peso_minimo ? ' (peso mínimo)' : ''}
+                  {' · '}frete-peso R$ {Number(estimativa.frete_peso).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  {' + '}ad valorem R$ {Number(estimativa.ad_valorem).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  {' + '}GRIS R$ {Number(estimativa.gris).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+                {Number(valorFrete) > 0
+                  && Math.abs(Number(valorFrete) - Number(estimativa.total)) > 0.01 && (
+                  <p className="text-[11px] text-amber-800 mt-0.5">
+                    Você digitou R$ {Number(valorFrete).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} —
+                    {' '}{Number(valorFrete) > Number(estimativa.total) ? 'acima' : 'abaixo'} da tabela.
+                    Vale anotar o porquê na observação.
+                  </p>
+                )}
+              </div>
+            )}
+            {estimativa && !estimativa.encontrado && (
+              <p className="text-[11px] text-amber-700 mt-1">
+                {estimativa.motivo} — cote com a transportadora antes de liberar.
+              </p>
+            )}
             <p className="text-[11px] text-gray-400 mt-1">
               {semValor
                 ? 'CIF sem valor: o frete não entra na NF — é custo nosso e sai do faturamento.'
