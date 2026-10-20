@@ -17,6 +17,7 @@ import { ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueV
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
+import { LocalEntregaExportacao } from '../components/LocalEntregaExportacao'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
 import { AnexosDaOV } from '../components/AnexosOV'
@@ -1527,7 +1528,8 @@ function ModalReativarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => v
               <div className="col-span-2">
                 <label className="text-xs font-medium text-gray-600">Local de Entrega</label>
                 <div className="mt-1">
-                  <LocalEntregaInput value={form.local_entrega} onChange={v => setForm({ ...form, local_entrega: v })} />
+                  <LocalDaOV pedido={pedido} value={form.local_entrega}
+                    onChange={v => setForm({ ...form, local_entrega: v })} />
                 </div>
               </div>
 
@@ -2326,6 +2328,16 @@ function ModalTrocarOV({ pedido, onClose }: { pedido: Pedido; onClose: () => voi
   )
 }
 
+/** O campo certo para a operação da OV: exportação entrega em outro país, e
+ *  UF + município brasileiro não representa isso. */
+function LocalDaOV({ pedido, value, onChange }: {
+  pedido: Pedido | any; value: string; onChange: (v: string) => void
+}) {
+  return (pedido as any)?.tipo_operacao === 'EXPORTACAO'
+    ? <LocalEntregaExportacao value={value} onChange={onChange} />
+    : <LocalEntregaInput value={value} onChange={onChange} />
+}
+
 function ModalRejeicaoSefaz({ pedido, onClose }: { pedido: Pedido; onClose: () => void }) {
   const qc = useQueryClient()
   const [novoNumero, setNovoNumero] = useState('')
@@ -2905,7 +2917,7 @@ function ModalCorrigirDados({ pedido, onClose }: { pedido: Pedido; onClose: () =
           <div className="col-span-2">
             <label className="text-xs font-medium text-gray-600">Local de Entrega</label>
             <div className="mt-1">
-              <LocalEntregaInput value={form.local_entrega}
+              <LocalDaOV pedido={pedido} value={form.local_entrega}
                 onChange={v => setForm({ ...form, local_entrega: v })} />
             </div>
           </div>
@@ -3349,7 +3361,7 @@ function FormCompletarDadosOV({ pedido, onCompletado, onTrocarNumero }: {
         </div>
         <div>
           <label className="text-sm font-medium text-gray-700">Local de entrega</label>
-          <LocalEntregaInput value={local} onChange={setLocal} />
+          <LocalDaOV pedido={pedido} value={local} onChange={setLocal} />
         </div>
       </div>
       <button onClick={() => mutation.mutate()} disabled={!valido || mutation.isPending}

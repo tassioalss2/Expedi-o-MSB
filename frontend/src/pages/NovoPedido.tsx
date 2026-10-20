@@ -10,6 +10,7 @@ import { BlocoDisponibilidade, ModalDecisaoEstoque, type DecisaoEstoque } from '
 import type { Disponibilidade } from '../lib/crm'
 import { erroNumeroOv, limpaNumeroOv } from '../lib/crm'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
+import { LocalEntregaExportacao } from '../components/LocalEntregaExportacao'
 import { EscolherAnexos, enviarAnexos } from '../components/AnexosOV'
 
 /** 14 digitos -> 00.000.000/0000-00; CPF (11) -> 000.000.000-00. */
@@ -380,12 +381,14 @@ export function NovoPedido() {
             <label className="text-sm font-medium text-gray-700">Tipo de Operação *</label>
             <select value={form.tipo_operacao} onChange={e => setForm(f => {
               const op = e.target.value
-              if (op !== 'LICITACAO') return { ...f, tipo_operacao: op }
+              const trocouMundo = (op === 'EXPORTACAO') !== (f.tipo_operacao === 'EXPORTACAO')
+              const local = trocouMundo ? '' : f.local_entrega
+              if (op !== 'LICITACAO') return { ...f, tipo_operacao: op, local_entrega: local }
               // Na licitação o frete é sempre nosso e o prazo é sempre 30 dias.
               // Digitar isso toda vez é o tipo de repetição que a operadora
               // esquece — e esquecer aqui vira frete sem dono no fechamento.
               return {
-                ...f, tipo_operacao: op, tipo_frete: 'CIF_SEM_VALOR',
+                ...f, tipo_operacao: op, local_entrega: local, tipo_frete: 'CIF_SEM_VALOR',
                 condicao_pagamento: f.condicao_pagamento || '30 dias',
               }
             })}
@@ -451,9 +454,19 @@ export function NovoPedido() {
           </div>
 
           <div className="col-span-2">
-            <label className="text-sm font-medium text-gray-700">Local de Entrega</label>
+            <label className="text-sm font-medium text-gray-700">
+              Local de Entrega{form.tipo_operacao === 'EXPORTACAO' && ' — país e cidade'}
+            </label>
             <div className="mt-1">
-              <LocalEntregaInput value={form.local_entrega} onChange={v => setForm({ ...form, local_entrega: v })} />
+              {/* Exportação não cabe em UF + município: o destino é outro país,
+                  e a cidade não está em nenhum cadastro nosso. */}
+              {form.tipo_operacao === 'EXPORTACAO' ? (
+                <LocalEntregaExportacao value={form.local_entrega}
+                  onChange={v => setForm({ ...form, local_entrega: v })} />
+              ) : (
+                <LocalEntregaInput value={form.local_entrega}
+                  onChange={v => setForm({ ...form, local_entrega: v })} />
+              )}
             </div>
           </div>
 

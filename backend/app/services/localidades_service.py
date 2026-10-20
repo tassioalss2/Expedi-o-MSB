@@ -45,6 +45,23 @@ def _do_arquivo() -> dict:
     return _ARQUIVO[0]
 
 
+_PAISES: list = [None]
+
+
+def listar_paises() -> list:
+    """Os 193 paises da ONU, em portugues, com a sigla ISO-2 que vai no
+    documento de exportacao. Lista do IBGE, gravada no repositorio pelo mesmo
+    motivo dos municipios: cadastro de OV nao pode depender de API externa."""
+    if _PAISES[0] is None:
+        try:
+            caminho = Path(__file__).resolve().parent.parent / "data" / "paises.json"
+            _PAISES[0] = json.loads(caminho.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print("lista de paises indisponivel: %s" % str(exc)[:120])
+            _PAISES[0] = []
+    return _PAISES[0]
+
+
 def listar_municipios(uf: str) -> list:
     uf = (uf or "").strip().upper()
     if uf not in _UFS_VALIDAS:

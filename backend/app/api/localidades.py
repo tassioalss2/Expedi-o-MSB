@@ -12,6 +12,12 @@ def estados(_: UsuarioOut = Depends(get_current_user)):
     return localidades_service.listar_estados()
 
 
+@router.get("/paises")
+def paises(_: UsuarioOut = Depends(get_current_user)):
+    """Paises para o Local de Entrega de exportacao."""
+    return localidades_service.listar_paises()
+
+
 @router.get("/municipios")
 def municipios(uf: str, _: UsuarioOut = Depends(get_current_user)):
     return localidades_service.listar_municipios(uf)

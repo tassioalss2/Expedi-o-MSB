@@ -1,0 +1,967 @@
+[
+{
+"sigla": "AF",
+"nome": "Afeganistão",
+"regiao": "Ásia"
+},
+{
+"sigla": "AL",
+"nome": "Albânia",
+"regiao": "Europa"
+},
+{
+"sigla": "DE",
+"nome": "Alemanha",
+"regiao": "Europa"
+},
+{
+"sigla": "AD",
+"nome": "Andorra",
+"regiao": "Europa"
+},
+{
+"sigla": "AO",
+"nome": "Angola",
+"regiao": "África"
+},
+{
+"sigla": "AG",
+"nome": "Antígua e Barbuda",
+"regiao": "América"
+},
+{
+"sigla": "AR",
+"nome": "Argentina",
+"regiao": "América"
+},
+{
+"sigla": "DZ",
+"nome": "Argélia",
+"regiao": "África"
+},
+{
+"sigla": "AM",
+"nome": "Armênia",
+"regiao": "Ásia"
+},
+{
+"sigla": "SA",
+"nome": "Arábia Saudita",
+"regiao": "Ásia"
+},
+{
+"sigla": "AU",
+"nome": "Austrália",
+"regiao": "Oceania"
+},
+{
+"sigla": "AZ",
+"nome": "Azerbaijão",
+"regiao": "Ásia"
+},
+{
+"sigla": "BS",
+"nome": "Bahamas",
+"regiao": "América"
+},
+{
+"sigla": "BD",
+"nome": "Bangladesh",
+"regiao": "Ásia"
+},
+{
+"sigla": "BB",
+"nome": "Barbados",
+"regiao": "América"
+},
+{
+"sigla": "BH",
+"nome": "Barein",
+"regiao": "Ásia"
+},
+{
+"sigla": "BY",
+"nome": "Belarus",
+"regiao": "Europa"
+},
+{
+"sigla": "BZ",
+"nome": "Belize",
+"regiao": "América"
+},
+{
+"sigla": "BJ",
+"nome": "Benin",
+"regiao": "África"
+},
+{
+"sigla": "BO",
+"nome": "Bolívia",
+"regiao": "América"
+},
+{
+"sigla": "BW",
+"nome": "Botsuana",
+"regiao": "África"
+},
+{
+"sigla": "BR",
+"nome": "Brasil",
+"regiao": "América"
+},
+{
+"sigla": "BN",
+"nome": "Brunei",
+"regiao": "Ásia"
+},
+{
+"sigla": "BG",
+"nome": "Bulgária",
+"regiao": "Europa"
+},
+{
+"sigla": "BF",
+"nome": "Burkina Faso",
+"regiao": "África"
+},
+{
+"sigla": "BI",
+"nome": "Burundi",
+"regiao": "África"
+},
+{
+"sigla": "BT",
+"nome": "Butão",
+"regiao": "Ásia"
+},
+{
+"sigla": "BE",
+"nome": "Bélgica",
+"regiao": "Europa"
+},
+{
+"sigla": "BA",
+"nome": "Bósnia e Herzegovina",
+"regiao": "Europa"
+},
+{
+"sigla": "CV",
+"nome": "Cabo Verde",
+"regiao": "África"
+},
+{
+"sigla": "CM",
+"nome": "Camarões",
+"regiao": "África"
+},
+{
+"sigla": "KH",
+"nome": "Camboja",
+"regiao": "Ásia"
+},
+{
+"sigla": "CA",
+"nome": "Canadá",
+"regiao": "América"
+},
+{
+"sigla": "QA",
+"nome": "Catar",
+"regiao": "Ásia"
+},
+{
+"sigla": "KZ",
+"nome": "Cazaquistão",
+"regiao": "Ásia"
+},
+{
+"sigla": "TD",
+"nome": "Chade",
+"regiao": "África"
+},
+{
+"sigla": "CL",
+"nome": "Chile",
+"regiao": "América"
+},
+{
+"sigla": "CN",
+"nome": "China",
+"regiao": "Ásia"
+},
+{
+"sigla": "CY",
+"nome": "Chipre",
+"regiao": "Ásia"
+},
+{
+"sigla": "CO",
+"nome": "Colômbia",
+"regiao": "América"
+},
+{
+"sigla": "KM",
+"nome": "Comores",
+"regiao": "África"
+},
+{
+"sigla": "CR",
+"nome": "Costa Rica",
+"regiao": "América"
+},
+{
+"sigla": "CI",
+"nome": "Costa do Marfim",
+"regiao": "África"
+},
+{
+"sigla": "HR",
+"nome": "Croácia",
+"regiao": "Europa"
+},
+{
+"sigla": "CU",
+"nome": "Cuba",
+"regiao": "América"
+},
+{
+"sigla": "DK",
+"nome": "Dinamarca",
+"regiao": "Europa"
+},
+{
+"sigla": "DJ",
+"nome": "Djibouti",
+"regiao": "África"
+},
+{
+"sigla": "DM",
+"nome": "Dominica",
+"regiao": "América"
+},
+{
+"sigla": "EG",
+"nome": "Egito",
+"regiao": "África"
+},
+{
+"sigla": "SV",
+"nome": "El Salvador",
+"regiao": "América"
+},
+{
+"sigla": "AE",
+"nome": "Emirados Árabes Unidos",
+"regiao": "Ásia"
+},
+{
+"sigla": "EC",
+"nome": "Equador",
+"regiao": "América"
+},
+{
+"sigla": "ER",
+"nome": "Eritreia",
+"regiao": "África"
+},
+{
+"sigla": "SK",
+"nome": "Eslováquia",
+"regiao": "Europa"
+},
+{
+"sigla": "SI",
+"nome": "Eslovênia",
+"regiao": "Europa"
+},
+{
+"sigla": "ES",
+"nome": "Espanha",
+"regiao": "Europa"
+},
+{
+"sigla": "US",
+"nome": "Estados Unidos da América",
+"regiao": "América"
+},
+{
+"sigla": "EE",
+"nome": "Estônia",
+"regiao": "Europa"
+},
+{
+"sigla": "SZ",
+"nome": "Eswatini",
+"regiao": "África"
+},
+{
+"sigla": "ET",
+"nome": "Etiópia",
+"regiao": "África"
+},
+{
+"sigla": "FJ",
+"nome": "Fiji",
+"regiao": "Oceania"
+},
+{
+"sigla": "PH",
+"nome": "Filipinas",
+"regiao": "Ásia"
+},
+{
+"sigla": "FI",
+"nome": "Finlândia",
+"regiao": "Europa"
+},
+{
+"sigla": "FR",
+"nome": "França",
+"regiao": "Europa"
+},
+{
+"sigla": "GA",
+"nome": "Gabão",
+"regiao": "África"
+},
+{
+"sigla": "GH",
+"nome": "Gana",
+"regiao": "África"
+},
+{
+"sigla": "GE",
+"nome": "Geórgia",
+"regiao": "Ásia"
+},
+{
+"sigla": "GD",
+"nome": "Granada",
+"regiao": "América"
+},
+{
+"sigla": "GR",
+"nome": "Grécia",
+"regiao": "Europa"
+},
+{
+"sigla": "GT",
+"nome": "Guatemala",
+"regiao": "América"
+},
+{
+"sigla": "GY",
+"nome": "Guiana",
+"regiao": "América"
+},
+{
+"sigla": "GN",
+"nome": "Guiné",
+"regiao": "África"
+},
+{
+"sigla": "GQ",
+"nome": "Guiné Equatorial",
+"regiao": "África"
+},
+{
+"sigla": "GW",
+"nome": "Guiné-Bissau",
+"regiao": "África"
+},
+{
+"sigla": "GM",
+"nome": "Gâmbia",
+"regiao": "África"
+},
+{
+"sigla": "HT",
+"nome": "Haiti",
+"regiao": "América"
+},
+{
+"sigla": "HN",
+"nome": "Honduras",
+"regiao": "América"
+},
+{
+"sigla": "HU",
+"nome": "Hungria",
+"regiao": "Europa"
+},
+{
+"sigla": "MH",
+"nome": "Ilhas Marshall",
+"regiao": "Oceania"
+},
+{
+"sigla": "SB",
+"nome": "Ilhas Salomão",
+"regiao": "Oceania"
+},
+{
+"sigla": "ID",
+"nome": "Indonésia",
+"regiao": "Ásia"
+},
+{
+"sigla": "IQ",
+"nome": "Iraque",
+"regiao": "Ásia"
+},
+{
+"sigla": "IE",
+"nome": "Irlanda",
+"regiao": "Europa"
+},
+{
+"sigla": "IR",
+"nome": "Irã",
+"regiao": "Ásia"
+},
+{
+"sigla": "IS",
+"nome": "Islândia",
+"regiao": "Europa"
+},
+{
+"sigla": "IL",
+"nome": "Israel",
+"regiao": "Ásia"
+},
+{
+"sigla": "IT",
+"nome": "Itália",
+"regiao": "Europa"
+},
+{
+"sigla": "YE",
+"nome": "Iêmen",
+"regiao": "Ásia"
+},
+{
+"sigla": "JM",
+"nome": "Jamaica",
+"regiao": "América"
+},
+{
+"sigla": "JP",
+"nome": "Japão",
+"regiao": "Ásia"
+},
+{
+"sigla": "JO",
+"nome": "Jordânia",
+"regiao": "Ásia"
+},
+{
+"sigla": "KI",
+"nome": "Kiribati",
+"regiao": "Oceania"
+},
+{
+"sigla": "KW",
+"nome": "Kuwait",
+"regiao": "Ásia"
+},
+{
+"sigla": "LA",
+"nome": "Laos",
+"regiao": "Ásia"
+},
+{
+"sigla": "LS",
+"nome": "Lesoto",
+"regiao": "África"
+},
+{
+"sigla": "LV",
+"nome": "Letônia",
+"regiao": "Europa"
+},
+{
+"sigla": "LR",
+"nome": "Libéria",
+"regiao": "África"
+},
+{
+"sigla": "LI",
+"nome": "Liechtenstein",
+"regiao": "Europa"
+},
+{
+"sigla": "LT",
+"nome": "Lituânia",
+"regiao": "Europa"
+},
+{
+"sigla": "LU",
+"nome": "Luxemburgo",
+"regiao": "Europa"
+},
+{
+"sigla": "LB",
+"nome": "Líbano",
+"regiao": "Ásia"
+},
+{
+"sigla": "LY",
+"nome": "Líbia",
+"regiao": "África"
+},
+{
+"sigla": "MK",
+"nome": "Macedônia do Norte",
+"regiao": "Europa"
+},
+{
+"sigla": "MG",
+"nome": "Madagascar",
+"regiao": "África"
+},
+{
+"sigla": "MW",
+"nome": "Malauí",
+"regiao": "África"
+},
+{
+"sigla": "MV",
+"nome": "Maldivas",
+"regiao": "Ásia"
+},
+{
+"sigla": "ML",
+"nome": "Mali",
+"regiao": "África"
+},
+{
+"sigla": "MT",
+"nome": "Malta",
+"regiao": "Europa"
+},
+{
+"sigla": "MY",
+"nome": "Malásia",
+"regiao": "Ásia"
+},
+{
+"sigla": "MA",
+"nome": "Marrocos",
+"regiao": "África"
+},
+{
+"sigla": "MR",
+"nome": "Mauritânia",
+"regiao": "África"
+},
+{
+"sigla": "MU",
+"nome": "Maurício",
+"regiao": "África"
+},
+{
+"sigla": "MM",
+"nome": "Mianmar",
+"regiao": "Ásia"
+},
+{
+"sigla": "FM",
+"nome": "Micronésia",
+"regiao": "Oceania"
+},
+{
+"sigla": "MD",
+"nome": "Moldávia",
+"regiao": "Europa"
+},
+{
+"sigla": "MN",
+"nome": "Mongólia",
+"regiao": "Ásia"
+},
+{
+"sigla": "ME",
+"nome": "Montenegro",
+"regiao": "Europa"
+},
+{
+"sigla": "MZ",
+"nome": "Moçambique",
+"regiao": "África"
+},
+{
+"sigla": "MX",
+"nome": "México",
+"regiao": "América"
+},
+{
+"sigla": "MC",
+"nome": "Mônaco",
+"regiao": "Europa"
+},
+{
+"sigla": "NA",
+"nome": "Namíbia",
+"regiao": "África"
+},
+{
+"sigla": "NR",
+"nome": "Nauru",
+"regiao": "Oceania"
+},
+{
+"sigla": "NP",
+"nome": "Nepal",
+"regiao": "Ásia"
+},
+{
+"sigla": "NI",
+"nome": "Nicarágua",
+"regiao": "América"
+},
+{
+"sigla": "NE",
+"nome": "Niger",
+"regiao": "África"
+},
+{
+"sigla": "NG",
+"nome": "Nigéria",
+"regiao": "África"
+},
+{
+"sigla": "NO",
+"nome": "Noruega",
+"regiao": "Europa"
+},
+{
+"sigla": "NZ",
+"nome": "Nova Zelândia",
+"regiao": "Oceania"
+},
+{
+"sigla": "OM",
+"nome": "Omã",
+"regiao": "Ásia"
+},
+{
+"sigla": "PW",
+"nome": "Palau",
+"regiao": "Oceania"
+},
+{
+"sigla": "PA",
+"nome": "Panamá",
+"regiao": "América"
+},
+{
+"sigla": "PG",
+"nome": "Papua Nova Guiné",
+"regiao": "Oceania"
+},
+{
+"sigla": "PK",
+"nome": "Paquistão",
+"regiao": "Ásia"
+},
+{
+"sigla": "PY",
+"nome": "Paraguai",
+"regiao": "América"
+},
+{
+"sigla": "NL",
+"nome": "Países Baixos",
+"regiao": "Europa"
+},
+{
+"sigla": "PE",
+"nome": "Peru",
+"regiao": "América"
+},
+{
+"sigla": "PL",
+"nome": "Polônia",
+"regiao": "Europa"
+},
+{
+"sigla": "PT",
+"nome": "Portugal",
+"regiao": "Europa"
+},
+{
+"sigla": "KG",
+"nome": "Quirguistão",
+"regiao": "Ásia"
+},
+{
+"sigla": "KE",
+"nome": "Quênia",
+"regiao": "África"
+},
+{
+"sigla": "GB",
+"nome": "Reino Unido",
+"regiao": "Europa"
+},
+{
+"sigla": "CF",
+"nome": "República Centro-Africana",
+"regiao": "África"
+},
+{
+"sigla": "CD",
+"nome": "República Democrática do Congo",
+"regiao": "África"
+},
+{
+"sigla": "DO",
+"nome": "República Dominicana",
+"regiao": "América"
+},
+{
+"sigla": "KP",
+"nome": "República Popular Democrática da Coreia",
+"regiao": "Ásia"
+},
+{
+"sigla": "CZ",
+"nome": "República Tcheca",
+"regiao": "Europa"
+},
+{
+"sigla": "KR",
+"nome": "República da Coreia",
+"regiao": "Ásia"
+},
+{
+"sigla": "CG",
+"nome": "República do Congo",
+"regiao": "África"
+},
+{
+"sigla": "RO",
+"nome": "Romênia",
+"regiao": "Europa"
+},
+{
+"sigla": "RW",
+"nome": "Ruanda",
+"regiao": "África"
+},
+{
+"sigla": "RU",
+"nome": "Rússia (Federação Russa)",
+"regiao": "Europa"
+},
+{
+"sigla": "WS",
+"nome": "Samoa",
+"regiao": "Oceania"
+},
+{
+"sigla": "SM",
+"nome": "San Marino",
+"regiao": "Europa"
+},
+{
+"sigla": "LC",
+"nome": "Santa Lúcia",
+"regiao": "América"
+},
+{
+"sigla": "SC",
+"nome": "Seichelles",
+"regiao": "África"
+},
+{
+"sigla": "SN",
+"nome": "Senegal",
+"regiao": "África"
+},
+{
+"sigla": "SL",
+"nome": "Serra Leoa",
+"regiao": "África"
+},
+{
+"sigla": "SG",
+"nome": "Singapura",
+"regiao": "Ásia"
+},
+{
+"sigla": "SO",
+"nome": "Somália",
+"regiao": "África"
+},
+{
+"sigla": "LK",
+"nome": "Sri Lanka",
+"regiao": "Ásia"
+},
+{
+"sigla": "SD",
+"nome": "Sudão",
+"regiao": "África"
+},
+{
+"sigla": "SS",
+"nome": "Sudão do Sul",
+"regiao": "África"
+},
+{
+"sigla": "SR",
+"nome": "Suriname",
+"regiao": "América"
+},
+{
+"sigla": "SE",
+"nome": "Suécia",
+"regiao": "Europa"
+},
+{
+"sigla": "CH",
+"nome": "Suíça",
+"regiao": "Europa"
+},
+{
+"sigla": "KN",
+"nome": "São Cristóvão e Nevis",
+"regiao": "América"
+},
+{
+"sigla": "ST",
+"nome": "São Tomé e Príncipe",
+"regiao": "África"
+},
+{
+"sigla": "VC",
+"nome": "São Vicente e Granadinas",
+"regiao": "América"
+},
+{
+"sigla": "RS",
+"nome": "Sérvia",
+"regiao": "Europa"
+},
+{
+"sigla": "SY",
+"nome": "Síria",
+"regiao": "Ásia"
+},
+{
+"sigla": "TJ",
+"nome": "Tadjiquistão",
+"regiao": "Ásia"
+},
+{
+"sigla": "TH",
+"nome": "Tailândia",
+"regiao": "Ásia"
+},
+{
+"sigla": "TZ",
+"nome": "Tanzânia",
+"regiao": "África"
+},
+{
+"sigla": "TL",
+"nome": "Timor-Leste",
+"regiao": "Ásia"
+},
+{
+"sigla": "TG",
+"nome": "Togo",
+"regiao": "África"
+},
+{
+"sigla": "TO",
+"nome": "Tonga",
+"regiao": "Oceania"
+},
+{
+"sigla": "TT",
+"nome": "Trinidad e Tobago",
+"regiao": "América"
+},
+{
+"sigla": "TN",
+"nome": "Tunísia",
+"regiao": "África"
+},
+{
+"sigla": "TM",
+"nome": "Turcomenistão",
+"regiao": "Ásia"
+},
+{
+"sigla": "TR",
+"nome": "Turquia",
+"regiao": "Ásia"
+},
+{
+"sigla": "TV",
+"nome": "Tuvalu",
+"regiao": "Oceania"
+},
+{
+"sigla": "UA",
+"nome": "Ucrânia",
+"regiao": "Europa"
+},
+{
+"sigla": "UG",
+"nome": "Uganda",
+"regiao": "África"
+},
+{
+"sigla": "UY",
+"nome": "Uruguai",
+"regiao": "América"
+},
+{
+"sigla": "UZ",
+"nome": "Uzbequistão",
+"regiao": "Ásia"
+},
+{
+"sigla": "VU",
+"nome": "Vanuatu",
+"regiao": "Oceania"
+},
+{
+"sigla": "VE",
+"nome": "Venezuela",
+"regiao": "América"
+},
+{
+"sigla": "VN",
+"nome": "Vietnã",
+"regiao": "Ásia"
+},
+{
+"sigla": "ZW",
+"nome": "Zimbábue",
+"regiao": "África"
+},
+{
+"sigla": "ZM",
+"nome": "Zâmbia",
+"regiao": "África"
+},
+{
+"sigla": "ZA",
+"nome": "África do Sul",
+"regiao": "África"
+},
+{
+"sigla": "AT",
+"nome": "Áustria",
+"regiao": "Europa"
+},
+{
+"sigla": "IN",
+"nome": "Índia",
+"regiao": "Ásia"
+}
+]
