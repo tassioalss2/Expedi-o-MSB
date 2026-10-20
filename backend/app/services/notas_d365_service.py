@@ -68,6 +68,17 @@ COLUNAS = {
 
 OBRIGATORIAS = ("numero", "data_documento", "valor_total")
 
+# Sem estas o arquivo até importa, mas não serve para o que foi feito. A
+# primeira é a que decide se a nota é VENDA — sem ela nenhuma nota entra no
+# faturamento e a tela fica vazia sem dizer por quê, que foi o que aconteceu no
+# export de 20/10/2026.
+RECOMENDADAS = {
+    "operacao": ("Descrição da operação", "sem ela não dá para separar venda de "
+                 "remessa, amostra ou compra — nenhuma nota entra no faturamento"),
+    "valor_produtos": ("Valor total de produtos", "sem ela o frete embutido na nota "
+                       "entra como venda"),
+}
+
 
 def _mapear_colunas(df: pd.DataFrame) -> dict:
     achadas = {}
@@ -236,6 +247,12 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
             "importadas": 0,
         }
 
+    # Coluna que falta e muda o resultado: avisa ALTO, porque o arquivo importa
+    # bonito e a tela fica vazia depois — o erro só aparece onde ninguém liga
+    # com a importação.
+    avisos = ["Faltou a coluna \"%s\" no export: %s." % RECOMENDADAS[c]
+              for c in RECOMENDADAS if c not in col]
+
     db = get_service_db()
 
     # Clientes pelo código do D365 (coluna "Conta") e OVs pelo número da NF:
@@ -342,6 +359,10 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     saidas = [l for l in linhas if _vale_como_faturamento(l)]
     return {
         "importadas": len(linhas),
+        "avisos": avisos,
+        # Sem natureza nenhuma classificada o espelho nao serve para faturamento:
+        # a tela precisa dizer isso em vez de parecer que nada foi importado.
+        "sem_classificacao": sum(1 for l in saidas if _eh_receita(l)) == 0,
         "canceladas": sum(1 for l in linhas if not _aprovada(l)),
         "periodo_ini": min(datas) if datas else None,
         "periodo_fim": max(datas) if datas else None,
@@ -492,6 +513,7 @@ def conciliacao(ini: str, fim: str) -> dict:
     # faturamento. Com o export sem filtro vem o livro inteiro — remessa para
     # industrialização de R$ 233 mil, amostra, comodato —, e somar isso como
     # receita seria pior do que não ter espelho nenhum.
+    notas_periodo = list(notas)
     vivas = [n for n in notas if _vale_como_faturamento(n)]
     receita = [n for n in vivas if _eh_receita(n)]
     # Transfer price sai das duas pontas ao mesmo tempo: se saísse só de uma, a
@@ -599,7 +621,12 @@ def conciliacao(ini: str, fim: str) -> dict:
         # Sem nota importada no período não há conciliação a fazer: a tela diz
         # "importe o export do mês" em vez de acusar um buraco de 100%. Conta o
         # transfer price também: mês só com nota de Biomedical tem espelho.
-        "sem_espelho": len(d365) + len(notas_transfer) == 0,
+        "sem_espelho": len(notas_periodo) == 0,
+        # Importou, mas sem a coluna que diz a natureza da nota: a tela tem de
+        # mandar reexportar em vez de dizer "nenhuma nota importada".
+        "importadas_sem_natureza": sum(1 for n in notas_periodo
+                                       if not n.get("tipo_operacao")),
+        "notas_no_periodo": len(notas_periodo),
     }
 
 

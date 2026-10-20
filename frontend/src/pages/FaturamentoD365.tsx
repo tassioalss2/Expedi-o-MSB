@@ -53,6 +53,8 @@ type Conciliacao = {
                        valor_app: number; valor_d365: number
                        data_app: string; data_d365: string; cliente: string | null }>
   por_tipo: Array<{ tipo: string; qtd: number; valor: number }>
+  notas_no_periodo?: number
+  importadas_sem_natureza?: number
   por_origem: Array<{ chave: string; qtd: number; valor: number }>
   a_classificar: Array<{ chave: string; qtd: number; valor: number }>
   saidas_sem_receita: Array<{ chave: string; qtd: number; valor: number }>
@@ -91,6 +93,9 @@ export default function FaturamentoD365() {
       toast.success(
         `${r.importadas} nota(s) importada(s) — ${dataBR(r.periodo_ini)} a ${dataBR(r.periodo_fim)}.`,
         { duration: 7000 })
+      if (r.avisos?.length) {
+        toast.error(r.avisos.join(' '), { duration: 14000 })
+      }
       if (r.operacoes_sem_classificacao?.length) {
         toast(`${r.operacoes_sem_classificacao.length} operação(ões) do D365 que eu não sei `
           + 'classificar — me diga o que são e eu ensino o app.', { duration: 11000, icon: '⚠️' })
@@ -172,6 +177,23 @@ export default function FaturamentoD365() {
 
       {isLoading ? (
         <p className="text-sm text-gray-400 py-8 text-center">Carregando…</p>
+      ) : (data?.notas_no_periodo || 0) > 0
+        && data?.importadas_sem_natureza === data?.notas_no_periodo ? (
+        <div className="bg-white border border-amber-300 rounded-xl px-4 py-8 text-center">
+          <p className="text-sm font-semibold text-amber-900">
+            {data?.notas_no_periodo} nota(s) importada(s), mas nenhuma pôde ser classificada.
+          </p>
+          <p className="text-xs text-amber-800 mt-2 max-w-xl mx-auto">
+            O export veio <strong>sem a coluna "Descrição da operação"</strong>. É ela que diz se
+            a nota é venda, comunicado de uso, remessa para industrialização ou compra — sem isso
+            o app não tem como somar faturamento, e somar tudo seria pior do que não somar.
+          </p>
+          <p className="text-xs text-gray-500 mt-2 max-w-xl mx-auto">
+            Reexporte no D365 incluindo <strong>Descrição da operação</strong> e{' '}
+            <strong>Valor total de produtos</strong> (esta última separa o frete embutido na nota)
+            e suba o arquivo de novo — reimportar substitui o que está aqui.
+          </p>
+        </div>
       ) : data?.sem_espelho ? (
         <div className="bg-white border border-gray-200 rounded-xl px-4 py-10 text-center">
           <FileSpreadsheet size={28} className="mx-auto text-gray-300 mb-2" />
