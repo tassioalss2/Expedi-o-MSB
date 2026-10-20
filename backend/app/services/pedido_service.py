@@ -2958,9 +2958,15 @@ def definir_agendamento(pedido_id: str, payload, usuario: UsuarioOut) -> dict:
 
     if quando:
         texto = "Entrega agendada para %s%s" % (
-            quando.strftime("%d/%m/%Y às %H:%M"), " — %s" % obs if obs else "")
+            quando.strftime("%d/%m/%Y às %H:%M"), " — %s" % obs[:180] if obs else "")
+    elif obs:
+        # Sem data, mas com instrução: quem marca a visita é a transportadora, e
+        # o que a MSB tem a passar é o como entregar. Registrar isso como
+        # "agendamento removido" apagaria a informação do histórico.
+        texto = "Instruções de entrega registradas (agendamento a cargo da "
+        texto += "transportadora): %s" % obs[:180]
     else:
-        texto = "Agendamento de entrega removido"
+        texto = "Agendamento e instruções de entrega removidos"
     try:
         db.table("movimentacoes").insert({
             "pedido_id": pedido_id,

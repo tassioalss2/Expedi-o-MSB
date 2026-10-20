@@ -121,6 +121,10 @@ export function AgendamentoDaEntrega({ pedido }: { pedido: Pedido | any }) {
   const [obs, setObs] = useState(pedido?.coleta_agendada_obs || '')
   const [editando, setEditando] = useState(false)
 
+  // A data pode não existir: em muito órgão quem marca a visita é a própria
+  // transportadora, e o que a MSB tem para passar são as INSTRUÇÕES — endereço
+  // exato, portão, horário de recebimento, documentos que o motorista precisa
+  // levar. Exigir data para salvar jogava essa informação fora.
   const salvar = useMutation({
     mutationFn: (limpar?: boolean) => api.patch(`/pedidos/${pedido.id}/agendamento`, {
       coleta_agendada_em: limpar ? null : (quando ? new Date(quando).toISOString() : null),
@@ -140,24 +144,29 @@ export function AgendamentoDaEntrega({ pedido }: { pedido: Pedido | any }) {
       <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2
                       border-gray-200 bg-white">
         <div className="min-w-0">
-          <p className="text-xs text-gray-500">Entrega agendada</p>
+          <p className="text-xs text-gray-500">Entrega agendada · instruções</p>
           {pedido?.coleta_agendada_em ? (
-            <>
-              <p className="text-sm font-semibold text-indigo-700">
-                {dataHoraBR(pedido.coleta_agendada_em)}
-              </p>
-              {pedido.coleta_agendada_obs && (
-                <p className="text-[11px] text-gray-500 truncate">{pedido.coleta_agendada_obs}</p>
-              )}
-            </>
+            <p className="text-sm font-semibold text-indigo-700">
+              {dataHoraBR(pedido.coleta_agendada_em)}
+            </p>
+          ) : pedido?.coleta_agendada_obs ? (
+            <p className="text-sm font-semibold text-amber-700">
+              a agendar pela transportadora
+            </p>
           ) : (
             <p className="text-sm text-gray-400">sem hora marcada</p>
+          )}
+          {pedido?.coleta_agendada_obs && (
+            <p className="text-[11px] text-gray-600 whitespace-pre-wrap mt-0.5">
+              {pedido.coleta_agendada_obs}
+            </p>
           )}
         </div>
         <button onClick={() => setEditando(true)}
           className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg
                      border border-indigo-300 text-indigo-700 hover:bg-indigo-50">
-          <CalendarClock size={14} /> {pedido?.coleta_agendada_em ? 'Alterar' : 'Agendar'}
+          <CalendarClock size={14} />
+          {pedido?.coleta_agendada_em || pedido?.coleta_agendada_obs ? 'Alterar' : 'Informar'}
         </button>
       </div>
     )
@@ -167,19 +176,28 @@ export function AgendamentoDaEntrega({ pedido }: { pedido: Pedido | any }) {
     <div className="rounded-lg border border-indigo-300 bg-indigo-50/40 p-3 space-y-2">
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-[11px] text-gray-600">Data e hora combinadas</label>
+          <label className="text-[11px] text-gray-600">
+            Data e hora <span className="text-gray-400">(se já estiver marcada)</span>
+          </label>
           <input type="datetime-local" value={quando} onChange={e => setQuando(e.target.value)}
             className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" />
+          <p className="text-[10px] text-gray-400 mt-0.5">
+            Vazio = quem agenda é a transportadora, com as instruções ao lado.
+          </p>
         </div>
         <div>
-          <label className="text-[11px] text-gray-600">O que o agendamento exige</label>
-          <input value={obs} onChange={e => setObs(e.target.value)}
-            placeholder="Ex.: protocolo 4412, almoxarifado, entrar pela portaria 2"
+          <label className="text-[11px] text-gray-600">
+            Instruções de entrega / o que o agendamento exige
+          </label>
+          <textarea value={obs} onChange={e => setObs(e.target.value)} rows={4}
+            placeholder={'Endereço exato, portão, horário de recebimento, documentos '
+              + 'que o motorista precisa levar, contato do órgão…'}
             className="w-full border rounded-lg px-2 py-1.5 text-sm mt-0.5" />
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={() => salvar.mutate(false)} disabled={salvar.isPending || !quando}
+        <button onClick={() => salvar.mutate(false)}
+          disabled={salvar.isPending || (!quando && !obs.trim())}
           className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 hover:bg-indigo-500
                      disabled:opacity-50 text-white font-medium">
           {salvar.isPending ? 'Salvando…' : 'Salvar agendamento'}

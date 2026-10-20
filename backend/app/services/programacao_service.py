@@ -155,7 +155,10 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             "modalidade_porque": porque,
             "tipo_venda": ("LICITAÇÃO" if (p.get("forma_venda") or "") == "LICITACAO"
                            else "Distribuidor"),
-            "agendamento": _br_data_hora(p.get("coleta_agendada_em")) or "NÃO",
+            # Três estados, não dois: marcado, a marcar pela transportadora
+            # (temos as instruções) e sem agendamento nenhum.
+            "agendamento": (_br_data_hora(p.get("coleta_agendada_em"))
+                            or ("A AGENDAR" if p.get("coleta_agendada_obs") else "NÃO")),
             "prazo": _br_data(p.get("data_prevista_entrega")),
             "volume": volume,
             "valor_nf": float(p.get("valor_nf") or 0),
@@ -165,6 +168,10 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
     # Expressa primeiro, depois agendada: as duas mudam a decisão do carro.
     linhas.sort(key=lambda x: (x["modalidade"] != "EXPRESSA",
                                x["agendamento"] == "NÃO", x["prazo"] or "9", x["nf"]))
+    # As instruções de entrega são para o motorista: vão inteiras, não cortadas.
+    for l in linhas:
+        if l["agendamento"] == "A AGENDAR":
+            l["observacoes"] = ("AGENDAR COM O CLIENTE · " + l["observacoes"]).strip(" ·")
     return linhas
 
 
