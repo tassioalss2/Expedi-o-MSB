@@ -1040,6 +1040,11 @@ class LiberarPendenciaRequest(BaseModel):
     # Quem leva esta remessa. Sem isso ela chegava na expedicao sem os dois
     # dados de que a expedicao precisa para tocar o pedido.
     transportadora_id: Optional[UUID] = None
+    # Quao urgente e quando o cliente espera receber. Quem libera e quem sabe —
+    # a remessa nascia com a prioridade do pedido antigo e sem prazo proprio, e
+    # esses sao justamente os dois dados que vao na mensagem da transportadora.
+    prioridade: Optional[str] = None
+    data_prevista_entrega: Optional[date] = None
 
 
 # ── CRM · Empresas (prospecção e qualificação) ─────────────────────────────────

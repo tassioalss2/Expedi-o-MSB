@@ -435,6 +435,12 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
   const [freteEscolhido, setFreteEscolhido] = useState<string>(
     abertas[0]?.tipo_frete || SUGERIDO_PENDENCIA)
   const [transportadora, setTransportadora] = useState<string>('')
+  // Urgência e prazo são de quem vende: a remessa nasce de uma conversa com o
+  // cliente ("consegue até sexta?"), e são os dois dados que a transportadora
+  // recebe junto com a carga. Antes a remessa herdava a prioridade do pedido
+  // antigo e ia sem prazo próprio.
+  const [prioridade, setPrioridade] = useState<string>('NORMAL')
+  const [chegadaCliente, setChegadaCliente] = useState<string>('')
 
   const { data: transportadoras = [] } = useQuery<any[]>({
     queryKey: ['transportadoras'],
@@ -507,6 +513,8 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
       somar_em: somarEm || null,
       tipo_frete: freteEscolhido || null,
       transportadora_id: transportadora || null,
+      prioridade: prioridade || null,
+      data_prevista_entrega: chegadaCliente || null,
     }).then(r => r.data),
     onSuccess: (r: any) => {
       toast.success(`Pendência liberada — ${(ACAO_LIBERAR_LABEL[r?.acao] || 'liberada').toLowerCase()}.`)
@@ -653,11 +661,31 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
               </select>
             </div>
           </div>
-          {freteEscolhido === SUGERIDO_PENDENCIA && (
-            <p className="mt-1 text-[11px] text-gray-400">
-              CIF sem valor é o usual em pendência: o frete desta remessa é nosso.
-            </p>
-          )}
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-[11px] text-gray-500">Prioridade</label>
+              <select value={prioridade} onChange={e => setPrioridade(e.target.value)}
+                className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm">
+                <option value="NORMAL">🟢 Normal</option>
+                <option value="ALTA">🟠 Alta</option>
+                <option value="CRITICA">🔴 Crítica</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-gray-500">
+                Chegada esperada no cliente
+              </label>
+              <input type="date" value={chegadaCliente}
+                onChange={e => setChegadaCliente(e.target.value)}
+                className="mt-0.5 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm" />
+            </div>
+          </div>
+          <p className="mt-1 text-[11px] text-gray-400">
+            {freteEscolhido === SUGERIDO_PENDENCIA
+              ? 'CIF sem valor é o usual em pendência: o frete desta remessa é nosso. '
+              : ''}
+            Prioridade e prazo vão na mensagem que a expedição manda para a transportadora.
+          </p>
         </div>
 
         <div>

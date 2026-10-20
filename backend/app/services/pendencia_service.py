@@ -1762,7 +1762,9 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
             itens_escolhidos: Optional[list] = None,
             somar_em: Optional[str] = None,
             tipo_frete: Optional[str] = None,
-            transportadora_id: Optional[str] = None) -> dict:
+            transportadora_id: Optional[str] = None,
+            prioridade: Optional[str] = None,
+            data_prevista_entrega=None) -> dict:
     """Manda o saldo para a expedição.
 
     Confere o estoque OUTRA VEZ antes de liberar — a pendência pode ter ficado
@@ -2015,6 +2017,37 @@ def liberar(fonte: str, registro_id: str, usuario: UsuarioOut,
         destino_id = resultado_ov.get("id")
     if not destino_id and acao in ("SOMAR_R1",) and ov:
         destino_id = ov.get("id")
+    # Urgência e prazo são de quem vende, não herança do pedido antigo: a
+    # remessa nasce de uma conversa com o cliente ("consegue até sexta?"), e
+    # são os dois dados que a transportadora recebe junto com a carga.
+    if destino_id and (prioridade or data_prevista_entrega):
+        mudanca = {"atualizado_em": _agora()}
+        if prioridade:
+            mudanca["prioridade"] = str(prioridade).strip().upper()
+        if data_prevista_entrega:
+            mudanca["data_prevista_entrega"] = (
+                data_prevista_entrega.isoformat()
+                if hasattr(data_prevista_entrega, "isoformat") else str(data_prevista_entrega))
+        try:
+            db.table("pedidos").update(mudanca).eq("id", str(destino_id)).execute()
+            texto = []
+            if prioridade:
+                texto.append("prioridade %s" % mudanca["prioridade"])
+            if data_prevista_entrega:
+                d = mudanca["data_prevista_entrega"]
+                texto.append("chegada esperada no cliente em %s/%s/%s"
+                             % (d[8:10], d[5:7], d[0:4]))
+            # O status não muda aqui; vai igual nos dois lados porque a coluna
+            # existe para contar a história da OV, e um nulo no meio dela
+            # atrapalha quem lê a linha do tempo depois.
+            st = (db.table("pedidos").select("status").eq("id", str(destino_id))
+                  .execute().data or [{}])[0].get("status")
+            pedido_service._registrar_movimentacao(
+                str(destino_id), st, st, str(usuario.id),
+                "Definido na liberação da pendência: " + " · ".join(texto))
+        except Exception as exc:
+            print("nao consegui aplicar prioridade/prazo na remessa: %s" % str(exc)[:140])
+
     if destino_id and (tipo_frete or transportadora_id):
         atual = db.table("pedidos").select("id, status, tipo_frete, numero_pedido")            .eq("id", str(destino_id)).execute().data
         if atual:
