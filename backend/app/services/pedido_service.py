@@ -2928,6 +2928,53 @@ def limpar_espera_de_material(db, pedido_id: str) -> None:
         print("nao consegui tirar a OV da espera de material: %s" % str(exc)[:120])
 
 
+def definir_agendamento(pedido_id: str, payload, usuario: UsuarioOut) -> dict:
+    """Marca (ou desmarca) a hora combinada para a entrega desta carga.
+
+    Nasceu do contrato com a BRIX, de 20/10/2026: a MSB fatura com o nome deles
+    e manda a carga no grupo do WhatsApp, e o grupo precisa saber se aquela
+    entrega tem hora marcada. Na licitação quase sempre tem — o órgão agenda o
+    recebimento, e chegar fora da janela é carga recusada com frete pago duas
+    vezes.
+
+    Fica em movimentação porque é compromisso com cliente: quem assumiu e
+    quando é o que se procura quando a janela é perdida.
+    """
+    from app.services.inventario_service import _get_usuario_real
+
+    db = get_service_db()
+    pedido = obter_pedido(pedido_id)
+
+    quando = getattr(payload, "coleta_agendada_em", None)
+    obs = (getattr(payload, "observacao", None) or "").strip() or None
+    agora = _agora()
+    uid = _get_usuario_real(str(usuario.id))
+
+    db.table("pedidos").update({
+        "coleta_agendada_em": quando.isoformat() if quando else None,
+        "coleta_agendada_obs": obs,
+        "atualizado_em": agora,
+    }).eq("id", pedido_id).execute()
+
+    if quando:
+        texto = "Entrega agendada para %s%s" % (
+            quando.strftime("%d/%m/%Y às %H:%M"), " — %s" % obs if obs else "")
+    else:
+        texto = "Agendamento de entrega removido"
+    try:
+        db.table("movimentacoes").insert({
+            "pedido_id": pedido_id,
+            "status_anterior": pedido.get("status"),
+            "status_novo": pedido.get("status"),
+            "usuario_id": uid,
+            "observacao": texto,
+            "criado_em": agora,
+        }).execute()
+    except Exception as exc:
+        print("movimentacao do agendamento nao registrada: %s" % str(exc)[:120])
+    return obter_pedido(pedido_id)
+
+
 def retomar_da_espera(pedido_id: str, usuario: UsuarioOut) -> dict:
     """O cliente resolveu: a venda volta ao quadro de onde parou."""
     from app.services.inventario_service import _get_usuario_real

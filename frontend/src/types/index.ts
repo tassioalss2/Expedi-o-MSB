@@ -115,6 +115,10 @@ export interface Pedido {
   data_prevista_entrega: string
   data_esperada_cliente?: string
   data_prevista_coleta?: string
+  /** Hora marcada com o cliente/órgão para receber a carga (v56). Nulo = sem
+   *  agendamento, entrega em horário comercial. */
+  coleta_agendada_em?: string | null
+  coleta_agendada_obs?: string | null
   data_real_coleta?: string
   numero_nf?: string
   valor_nf?: number

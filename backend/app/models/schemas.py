@@ -1391,6 +1391,17 @@ class EsperaRequest(BaseModel):
     motivo: str
 
 
+class AgendamentoRequest(BaseModel):
+    """Hora marcada com o cliente ou com o orgao para receber a carga.
+
+    Nulo limpa o agendamento. A transportadora precisa saber disso antes de
+    sair: entregar fora da janela, na licitacao, e carga recusada e frete pago
+    duas vezes.
+    """
+    coleta_agendada_em: Optional[datetime] = None
+    observacao: Optional[str] = None
+
+
 class TrocarOVRequest(BaseModel):
     """A remessa foi aberta na OV errada e vai para a OV certa.
 

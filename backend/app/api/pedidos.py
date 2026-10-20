@@ -29,7 +29,7 @@ from app.models.schemas import (
     PedidoCreate,
     PedidoOutboundCreate,
     ReclassificarCanalRequest,
-    RejeicaoSefazRequest, TrocarOVRequest, EsperaRequest,
+    RejeicaoSefazRequest, TrocarOVRequest, EsperaRequest, AgendamentoRequest,
     TratativaRequest,
     UsuarioOut,
     DevolverPendenciaRequest, DevolverReservaRequest,
@@ -545,6 +545,20 @@ def parar_venda(
     """
     return pedido_service.marcar_espera(
         str(pedido_id), payload.tipo, payload.motivo, usuario)
+
+
+@router.patch("/{pedido_id}/agendamento")
+def definir_agendamento(
+    pedido_id: UUID,
+    payload: AgendamentoRequest,
+    usuario: UsuarioOut = Depends(get_current_user),
+):
+    """Hora marcada com o cliente/orgao para receber a carga.
+
+    E a informacao que a transportadora precisa antes de sair: na licitacao,
+    entregar fora da janela e carga recusada. Enviar sem data limpa o
+    agendamento."""
+    return pedido_service.definir_agendamento(str(pedido_id), payload, usuario)
 
 
 @router.post("/{pedido_id}/retomar")

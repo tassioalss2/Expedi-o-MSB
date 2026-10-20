@@ -18,6 +18,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { LocalEntregaExportacao } from '../components/LocalEntregaExportacao'
+import { MensagemTransportadora, AgendamentoDaEntrega } from '../components/MensagemTransportadora'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
 import { AnexosDaOV } from '../components/AnexosOV'
@@ -3874,6 +3875,13 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
         </div>
       )}
 
+      {/* Faturou: a carga precisa ser anunciada no grupo da transportadora.
+          O texto sai pronto daqui porque são sempre os mesmos dados, e todos
+          já estão na OV — redigitar carga a carga é onde o dado se perde. */}
+      {pedido.numero_nf && ['FATURADO', 'AGUARD_COLETA', 'COLETADO'].includes(status) && (
+        <MensagemTransportadora pedido={pedido} cubagem={cubagem} />
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Info */}
         <div className="lg:col-span-2 space-y-5">
@@ -3918,6 +3926,12 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
                 : null
             } />
             <Linha label="Transportadora" valor={pedido.transportadora?.nome || pedido.transportadora_nome || null} />
+            {/* Hora marcada com o cliente ou com o órgão. Na licitação quase
+                sempre existe, e perder a janela é carga recusada com frete pago
+                duas vezes — por isso fica à vista, não escondida num modal. */}
+            <div className="py-2 border-b border-gray-50">
+              <AgendamentoDaEntrega pedido={pedido} />
+            </div>
             <Linha label="NF" valor={pedido.numero_nf} />
             {pedido.codigo_rastreio && (
               <Linha label="📮 Rastreio" valor={pedido.codigo_rastreio} />
