@@ -63,6 +63,33 @@ def _achar_destino(cidade: Optional[str], uf: Optional[str]) -> tuple:
     return None, "nao_encontrado"
 
 
+_RE_NUM = __import__("re").compile(r"\d+(?:[.,]\d+)?")
+
+
+def volume_m3(descricao: Optional[str]) -> float:
+    """m³ de uma caixa, lido da descrição do tipo cadastrado.
+
+    O cadastro guarda a medida no texto, em dois formatos que convivem:
+    "(C 1,19 x L 0,17 x A 0,11)" em metros e "(57,0 x 26,5 x 34,5)" em
+    centímetros. A unidade se descobre pela ordem de grandeza — caixa de 3
+    metros não existe aqui, e 0,05 m é uma caixa de 5 cm.
+
+    Sem três números no texto (o "Envelope P/ Amostras" é assim), devolve 0:
+    volume desconhecido não vira volume zero por engano, vira ausência — quem
+    chama decide o que fazer.
+    """
+    t = descricao or ""
+    if "(" in t and ")" in t:
+        t = t[t.index("(") + 1:t.rindex(")")]
+    nums = [float(n.replace(",", ".")) for n in _RE_NUM.findall(t)]
+    if len(nums) < 3:
+        return 0.0
+    c, l, a = nums[:3]
+    if max(c, l, a) > 3:          # centímetros
+        c, l, a = c / 100, l / 100, a / 100
+    return round(c * l * a, 5)
+
+
 def estimar(uf: Optional[str], cidade: Optional[str] = None,
             peso_kg: float = 0, m3: float = 0, valor_nf: float = 0) -> dict:
     """Quanto esta carga custa pela tabela, com a conta aberta."""

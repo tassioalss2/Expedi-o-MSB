@@ -88,11 +88,34 @@ def estimativa_do_pedido(pedido_id: UUID,
         "num_caixas, peso_kg, altura_cm, largura_cm, comprimento_cm"
     ).eq("pedido_id", str(pedido_id)).execute().data
     c = cub[0] if cub else {}
-    caixas = float(c.get("num_caixas") or 0) or 1
+
+    # O peso da cubagem e o TOTAL da carga ("Peso Total (kg)" no formulario),
+    # nao o de uma caixa: multiplicar por num_caixas transformava 609,81 kg em
+    # 47 toneladas e o frete da OV017118 em R$ 183 mil.
+    peso = float(c.get("peso_kg") or 0)
+
+    # O volume vem dos TIPOS de caixa escolhidos, cada um com sua medida no
+    # cadastro — e e por isso que a cubagem pede tipo e quantidade em vez de
+    # dimensoes soltas.
     m3 = 0.0
-    if c.get("altura_cm") and c.get("largura_cm") and c.get("comprimento_cm"):
+    itens_cub = db.table("cubagem_itens").select(
+        "tipo_caixa_id, tipo_caixa_nome, quantidade").eq(
+        "pedido_id", str(pedido_id)).execute().data
+    if itens_cub:
+        ids = [i["tipo_caixa_id"] for i in itens_cub if i.get("tipo_caixa_id")]
+        tipos = {}
+        if ids:
+            for t_ in db.table("tipos_caixa").select("id, descricao").in_(
+                    "id", ids[:40]).execute().data:
+                tipos[t_["id"]] = t_.get("descricao")
+        for i in itens_cub:
+            m3 += tabela_frete_service.volume_m3(
+                tipos.get(i.get("tipo_caixa_id"))) * float(i.get("quantidade") or 0)
+    elif c.get("altura_cm") and c.get("largura_cm") and c.get("comprimento_cm"):
+        # Registro antigo, com a medida de UMA caixa gravada na propria cubagem.
         m3 = (float(c["altura_cm"]) * float(c["largura_cm"])
-              * float(c["comprimento_cm"]) / 1_000_000) * caixas
+              * float(c["comprimento_cm"]) / 1_000_000) * (float(c.get("num_caixas") or 1))
+    m3 = round(m3, 4)
 
     local = (p.get("local_entrega") or "").strip()
     cidade, uf = None, None
@@ -113,9 +136,9 @@ def estimativa_do_pedido(pedido_id: UUID,
                     for i in itens)
         base_valor = "itens da OV" if valor else None
 
-    r = tabela_frete_service.estimar(
-        uf, cidade, peso_kg=float(c.get("peso_kg") or 0) * caixas, m3=m3,
-        valor_nf=valor)
+    r = tabela_frete_service.estimar(uf, cidade, peso_kg=peso, m3=m3, valor_nf=valor)
+    r["num_caixas"] = c.get("num_caixas")
+    r["m3"] = m3
     r["tem_cubagem"] = bool(cub)
     r["valor_mercadoria"] = round(valor, 2)
     r["base_valor"] = base_valor
