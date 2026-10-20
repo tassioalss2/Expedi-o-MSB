@@ -24,6 +24,52 @@ CINZA = "F2F2F2"
 _PRIORIDADE = {"CRITICA": "CRÍTICA", "ALTA": "ALTA", "NORMAL": "Normal"}
 
 
+def modalidade(destino_local: str, prazo_cliente, saida: date) -> tuple:
+    """Convencional ou Expressa — a pergunta é se o prazo da tabela dá conta.
+
+    A tabela da BRIX promete, por destino, um prazo em dias úteis. Se o cliente
+    espera a carga antes disso, o convencional não chega: a carga tem de ir
+    como expressa, que é cotada à parte. Essa é a decisão que eles precisam ver
+    na planilha — pela programação é que montam o carro.
+
+    Sem data prometida ao cliente ou com destino fora da tabela, não dá para
+    afirmar nem um nem outro: devolve "a definir" em vez de chutar convencional
+    e deixar a carga atrasar calada.
+    """
+    from app.services import tabela_frete_service
+    from app.services.home_service import _dias_uteis
+
+    local = (destino_local or "").strip()
+    cidade = uf = None
+    if "/" in local:
+        cidade, uf = local.rsplit("/", 1)
+        cidade, uf = cidade.strip(), uf.strip().upper()[:2]
+    if not uf:
+        return "A DEFINIR", "sem destino na OV"
+
+    est = tabela_frete_service.estimar(uf, cidade)
+    if not est.get("encontrado"):
+        return "A DEFINIR", "destino fora da tabela — cotar"
+    # Cidade do interior: o prazo que vale é o do redespacho, não o da capital.
+    prazo_tabela = (est.get("prazo_redespacho") if est.get("por_capital")
+                    else est.get("prazo_capital")) or 0
+
+    if not prazo_cliente:
+        return "CONVENCIONAL", "sem prazo do cliente — tabela entrega em %d dia(s) útil(eis)" % prazo_tabela
+
+    try:
+        alvo = date.fromisoformat(str(prazo_cliente)[:10])
+    except Exception:
+        return "A DEFINIR", "prazo do cliente ilegível"
+
+    # A coleta de hoje só começa a contar no próximo dia útil.
+    disponivel = _dias_uteis(saida, alvo) - 1
+    if disponivel >= prazo_tabela:
+        return "CONVENCIONAL", "tabela: %d dia(s) · disponível: %d" % (prazo_tabela, disponivel)
+    return "EXPRESSA", "tabela: %d dia(s) · disponível: %d — convencional não chega" % (
+        prazo_tabela, disponivel)
+
+
 def _br_data(iso) -> str:
     t = str(iso or "")[:10]
     return "%s/%s/%s" % (t[8:10], t[5:7], t[0:4]) if len(t) == 10 else ""
@@ -92,13 +138,21 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             obs.append(p["coleta_agendada_obs"])
         if p.get("observacoes"):
             obs.append(str(p["observacoes"])[:120])
+        modo, porque = modalidade(p.get("local_entrega"),
+                                  p.get("data_prevista_entrega"), dia)
+        if modo == "EXPRESSA":
+            obs.insert(0, "EXPRESSA — %s" % porque)
         linhas.append({
             "data": _br_data(p.get("data_faturamento")) or _br_data(dia.isoformat()),
             "nf": p.get("numero_nf") or "",
             "ov": p.get("numero_pedido") or "",
             "cliente": (p.get("clientes") or {}).get("nome") or "",
             "destino": p.get("local_entrega") or "",
-            "modalidade": ("LICITAÇÃO" if (p.get("forma_venda") or "") == "LICITACAO"
+            # Serviço contratado, não tipo de venda: é o que decide se a carga
+            # cabe no prazo da tabela ou precisa de expressa, cotada à parte.
+            "modalidade": modo,
+            "modalidade_porque": porque,
+            "tipo_venda": ("LICITAÇÃO" if (p.get("forma_venda") or "") == "LICITACAO"
                            else "Distribuidor"),
             "agendamento": _br_data_hora(p.get("coleta_agendada_em")) or "NÃO",
             "prazo": _br_data(p.get("data_prevista_entrega")),
@@ -107,7 +161,9 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             "observacoes": " · ".join(obs),
             "sem_cubagem": not c.get("num_caixas"),
         })
-    linhas.sort(key=lambda x: (x["agendamento"] == "NÃO", x["prazo"] or "9", x["nf"]))
+    # Expressa primeiro, depois agendada: as duas mudam a decisão do carro.
+    linhas.sort(key=lambda x: (x["modalidade"] != "EXPRESSA",
+                               x["agendamento"] == "NÃO", x["prazo"] or "9", x["nf"]))
     return linhas
 
 
@@ -120,7 +176,7 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
     ws.title = "Programação"
     ws.sheet_view.showGridLines = False
 
-    ws.merge_cells("B2:J2")
+    ws.merge_cells("B2:M2")
     t = ws["B2"]
     t.value = "PROGRAMAÇÃO DE COLETA"
     t.font = Font(bold=True, size=14, color="FFFFFF")
@@ -132,7 +188,7 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
         dia.strftime("%d/%m/%Y"), transportadora)
     ws["B3"].font = Font(size=10, color="595959")
 
-    cab = ["Data", "NF", "OV", "Cliente", "Destino", "Modalidade",
+    cab = ["Data", "NF", "OV", "Cliente", "Destino", "Modalidade", "Tipo de venda",
            "COM AGENDAMENTO", "Prazo", "Volume", "Valor NF", "Observações"]
     borda = Border(*[Side(style="thin", color="BFBFBF")] * 4)
     for j, nome in enumerate(cab, start=2):
@@ -146,36 +202,43 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
     r = 6
     for l in linhas:
         vals = [l["data"], l["nf"], l["ov"], l["cliente"][:46], l["destino"],
-                l["modalidade"], l["agendamento"], l["prazo"], l["volume"],
-                l["valor_nf"], l["observacoes"]]
+                l["modalidade"], l["tipo_venda"], l["agendamento"], l["prazo"],
+                l["volume"], l["valor_nf"], l["observacoes"]]
         for j, v in enumerate(vals, start=2):
             c = ws.cell(row=r, column=j, value=v)
             c.border = borda
             c.font = Font(size=10)
             c.alignment = Alignment(vertical="center",
-                                    wrap_text=(j in (5, 6, 12)),
-                                    horizontal="center" if j in (2, 7, 8, 9) else "left")
-        ws.cell(row=r, column=11).number_format = 'R$ #,##0.00'
+                                    wrap_text=(j in (5, 6, 13)),
+                                    horizontal="center" if j in (2, 7, 8, 9, 10) else "left")
+        ws.cell(row=r, column=12).number_format = 'R$ #,##0.00'
         # Agendamento e prioridade são o que muda a rota do carro: ficam em cor.
         if l["agendamento"] != "NÃO":
-            cel = ws.cell(row=r, column=8)
+            cel = ws.cell(row=r, column=9)
             cel.fill = PatternFill("solid", fgColor="FFF2CC")
             cel.font = Font(size=10, bold=True, color="7F6000")
         if "PRIORIDADE" in (l["observacoes"] or ""):
-            ws.cell(row=r, column=12).font = Font(size=10, bold=True, color="C00000")
+            ws.cell(row=r, column=13).font = Font(size=10, bold=True, color="C00000")
+        # Expressa é a exceção cara: tem de saltar aos olhos de quem monta o carro.
+        if l["modalidade"] == "EXPRESSA":
+            cel = ws.cell(row=r, column=7)
+            cel.fill = PatternFill("solid", fgColor="FFC7CE")
+            cel.font = Font(size=10, bold=True, color="9C0006")
+        elif l["modalidade"] == "A DEFINIR":
+            ws.cell(row=r, column=7).font = Font(size=10, italic=True, color="BF8F00")
         if l["sem_cubagem"]:
-            ws.cell(row=r, column=10).value = "a cubar"
-            ws.cell(row=r, column=10).font = Font(size=10, italic=True, color="BF8F00")
+            ws.cell(row=r, column=11).value = "a cubar"
+            ws.cell(row=r, column=11).font = Font(size=10, italic=True, color="BF8F00")
         if r % 2 == 0:
-            for j in range(2, 13):
+            for j in range(2, 14):
                 if not ws.cell(row=r, column=j).fill.fgColor.rgb or \
                         ws.cell(row=r, column=j).fill.fgColor.rgb == "00000000":
                     ws.cell(row=r, column=j).fill = PatternFill("solid", fgColor=CINZA)
         r += 1
 
     if linhas:
-        ws.cell(row=r, column=10, value="TOTAL").font = Font(bold=True)
-        tot = ws.cell(row=r, column=11, value=sum(l["valor_nf"] for l in linhas))
+        ws.cell(row=r, column=11, value="TOTAL").font = Font(bold=True)
+        tot = ws.cell(row=r, column=12, value=sum(l["valor_nf"] for l in linhas))
         tot.number_format = 'R$ #,##0.00'
         tot.font = Font(bold=True)
         ws.cell(row=r, column=3, value="%d nota(s)" % len(linhas)).font = Font(bold=True)
@@ -183,7 +246,7 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
         ws.cell(row=6, column=2, value="Nenhuma carga para coletar neste dia.").font = \
             Font(size=10, italic=True, color="808080")
 
-    for j, w in enumerate([11, 12, 12, 34, 24, 15, 19, 12, 18, 14, 42], start=2):
+    for j, w in enumerate([11, 12, 12, 32, 22, 14, 14, 19, 12, 17, 14, 44], start=2):
         ws.column_dimensions[get_column_letter(j)].width = w
     ws.freeze_panes = "B6"
 
