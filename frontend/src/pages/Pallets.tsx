@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { FileText, ExternalLink } from 'lucide-react'
+import { FileText, ExternalLink, FileSpreadsheet } from 'lucide-react'
 import api from '../lib/api'
 import { errMsg } from '../lib/errMsg'
 import { resolveNomeTransportadora } from '../lib/statusConfig'
@@ -107,6 +107,30 @@ export function Pallets() {
           <p className="text-sm text-gray-500">{todos.reduce((a, p) => a + (p?.pedidos?.length || 0), 0)} OV(s) aguardando</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* O que sai hoje, no modelo que a transportadora usa para montar o
+              carro. Baixa e vai para o grupo — substitui o aviso carga a carga. */}
+          <button
+            onClick={async () => {
+              try {
+                const r = await api.get('/programacao-coleta/planilha',
+                  { responseType: 'blob' })
+                const url = URL.createObjectURL(new Blob([r.data]))
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `Programacao de coleta ${new Date()
+                  .toLocaleDateString('pt-BR').replace(/\//g, '-')} - BRIX.xlsx`
+                a.click()
+                URL.revokeObjectURL(url)
+                toast.success('Programação baixada — mande no grupo da transportadora.')
+              } catch {
+                toast.error('Não consegui gerar a programação.')
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium shadow-sm"
+          >
+            <FileSpreadsheet size={16} />
+            Programação de coleta
+          </button>
           <button
             onClick={() => navigate('/relatorio/coleta')}
             className="flex items-center gap-2 px-4 py-2.5 border border-gray-300 bg-white text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-sm"

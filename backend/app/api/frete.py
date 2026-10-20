@@ -1,21 +1,111 @@
 # -*- coding: utf-8 -*-
 """Conferência da fatura de frete — sobe o zip da transportadora e confere."""
+from datetime import date
 from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 
 from app.core.deps import get_current_user
 from app.models.schemas import UsuarioOut
-from app.services import frete_service
+from app.services import frete_service, programacao_service, tabela_frete_service
 
 router = APIRouter(tags=["frete"])
 
 # 40 MB. O pacote de 16 a 31/08 tem 6 MB com 88 arquivos; o teto é folga para um
 # período cheio, e existe para um upload errado não virar timeout.
 TETO = 40 * 1024 * 1024
+
+
+@router.get("/programacao-coleta")
+def programacao_coleta(
+    data: Optional[str] = None,
+    transportadora: str = "BRIX",
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """As cargas que saem no dia, para conferir antes de mandar."""
+    dia = date.fromisoformat(data) if data else date.today()
+    return {"data": dia.isoformat(), "transportadora": transportadora,
+            "linhas": programacao_service.listar(dia, transportadora)}
+
+
+@router.get("/programacao-coleta/planilha")
+def programacao_coleta_planilha(
+    data: Optional[str] = None,
+    transportadora: str = "BRIX",
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """O xlsx no modelo da transportadora, pronto para mandar no grupo."""
+    dia = date.fromisoformat(data) if data else date.today()
+    conteudo = programacao_service.planilha(dia, transportadora)
+    nome = "Programacao de coleta %s - %s.xlsx" % (
+        dia.strftime("%d-%m-%Y"), transportadora)
+    return Response(
+        content=conteudo,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="%s"' % nome})
+
+
+@router.get("/frete/tabela")
+def tabela_contratada(_: UsuarioOut = Depends(get_current_user)):
+    """A tabela de frete contratada, como ela esta no app."""
+    return tabela_frete_service.tabela()
+
+
+@router.get("/frete/estimativa")
+def estimativa(
+    uf: Optional[str] = None,
+    cidade: Optional[str] = None,
+    peso_kg: float = 0,
+    m3: float = 0,
+    valor_nf: float = 0,
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Quanto a transportadora deve cobrar nesta carga, pela tabela."""
+    return tabela_frete_service.estimar(uf, cidade, peso_kg, m3, valor_nf)
+
+
+@router.get("/frete/estimativa/pedido/{pedido_id}")
+def estimativa_do_pedido(pedido_id: UUID,
+                         _: UsuarioOut = Depends(get_current_user)):
+    """A estimativa desta OV: le a cubagem, o destino e o valor da nota.
+
+    Dimensoes vem em cm e a tabela cobra por m3 — a conversao fica aqui para a
+    tela nao ter de saber disso."""
+    from app.core.database import get_service_db
+    db = get_service_db()
+
+    ped = db.table("pedidos").select(
+        "id, numero_pedido, numero_nf, local_entrega, valor_nf, valor_produtos"
+    ).eq("id", str(pedido_id)).execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV nao encontrada")
+    p = ped[0]
+
+    cub = db.table("cubagem").select(
+        "num_caixas, peso_kg, altura_cm, largura_cm, comprimento_cm"
+    ).eq("pedido_id", str(pedido_id)).execute().data
+    c = cub[0] if cub else {}
+    caixas = float(c.get("num_caixas") or 0) or 1
+    m3 = 0.0
+    if c.get("altura_cm") and c.get("largura_cm") and c.get("comprimento_cm"):
+        m3 = (float(c["altura_cm"]) * float(c["largura_cm"])
+              * float(c["comprimento_cm"]) / 1_000_000) * caixas
+
+    local = (p.get("local_entrega") or "").strip()
+    cidade, uf = None, None
+    if "/" in local:
+        cidade, uf = local.rsplit("/", 1)
+        cidade, uf = cidade.strip(), uf.strip().upper()[:2]
+
+    r = tabela_frete_service.estimar(
+        uf, cidade, peso_kg=float(c.get("peso_kg") or 0) * caixas, m3=m3,
+        valor_nf=float(p.get("valor_nf") or p.get("valor_produtos") or 0))
+    r["tem_cubagem"] = bool(cub)
+    r["local_entrega"] = local or None
+    return r
 
 
 @router.post("/frete/conferencia")

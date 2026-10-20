@@ -18,7 +18,8 @@ import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
 import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { LocalEntregaExportacao } from '../components/LocalEntregaExportacao'
-import { MensagemTransportadora, AgendamentoDaEntrega } from '../components/MensagemTransportadora'
+import { AgendamentoDaEntrega } from '../components/MensagemTransportadora'
+import { FreteEstimado } from '../components/FreteEstimado'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
 import { AnexosDaOV } from '../components/AnexosOV'
@@ -3875,11 +3876,14 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
         </div>
       )}
 
-      {/* Faturou: a carga precisa ser anunciada no grupo da transportadora.
-          O texto sai pronto daqui porque são sempre os mesmos dados, e todos
-          já estão na OV — redigitar carga a carga é onde o dado se perde. */}
-      {pedido.numero_nf && ['FATURADO', 'AGUARD_COLETA', 'COLETADO'].includes(status) && (
-        <MensagemTransportadora pedido={pedido} cubagem={cubagem} />
+      {/* Cubada a carga, já dá para dizer quanto a transportadora vai cobrar.
+          Serve antes (vale cotar fora da tabela?) e depois (a fatura bateu?).
+          O aviso da carga para o grupo saiu daqui: virou a programação do dia,
+          que é o que a BRIX usa para montar o carro. */}
+      {cubagem?.num_caixas && ['EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA',
+        'AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'COLETADO',
+        'EXPEDIDO'].includes(status) && (
+        <FreteEstimado pedidoId={pedido.id} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
