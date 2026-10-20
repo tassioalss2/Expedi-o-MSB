@@ -131,14 +131,16 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             volume = "%s vol" % c["num_caixas"]
             if c.get("peso_kg"):
                 volume += " · %s kg" % str(c["peso_kg"]).replace(".", ",")
+        # Só o que o motorista e a torre da transportadora precisam saber:
+        # urgência, como entregar e por que a carga é expressa. A observação
+        # interna da OV NÃO entra — "liberado acima do estoque da última foto"
+        # é conversa nossa, e enche a coluna de ruído que ninguém lê.
         obs = []
         pr = _PRIORIDADE.get(p.get("prioridade") or "", "")
         if pr and pr != "Normal":
             obs.append("PRIORIDADE %s" % pr)
         if p.get("coleta_agendada_obs"):
             obs.append(p["coleta_agendada_obs"])
-        if p.get("observacoes"):
-            obs.append(str(p["observacoes"])[:120])
         modo, porque = modalidade(p.get("local_entrega"),
                                   p.get("data_prevista_entrega"), dia)
         if modo == "EXPRESSA":
