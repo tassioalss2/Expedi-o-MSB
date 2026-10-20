@@ -680,9 +680,11 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
     chaves = sorted({n["chave_numero"] for n in notas})
     variantes = []
     for c in chaves:
-        variantes.append(c)
-        if len(c) < 9:
-            variantes.append(c.zfill(9))
+        # TODOS os zeros à esquerda possíveis, não só "nenhum" e "nove dígitos".
+        # A OV017097 gravou a NF como "0021178" — um zero — e escapou das duas
+        # variantes que eu testava: a nota entrou como se não tivesse OV e foi
+        # somada em cima dela, inflando o dia em R$ 7.840,00.
+        variantes.extend({c.zfill(n) for n in range(len(c), 10)})
     no_app = set()
     for i in range(0, len(variantes), 40):
         rows = db.table("pedidos").select("numero_nf, status")\
