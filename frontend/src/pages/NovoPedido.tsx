@@ -145,6 +145,9 @@ export function NovoPedido() {
   })
 
   const [itens, setItens] = useState<ItemLinha[]>([])
+  // Marca que a data da entrega foi digitada por gente: o preenchimento
+  // automático nunca sobrescreve o que alguém escolheu.
+  const [dataManual, setDataManual] = useState(false)
 
   // Estado do modal de recriação de OV cancelada
   const [modalRecriar, setModalRecriar] = useState({
@@ -184,6 +187,33 @@ export function NovoPedido() {
     enabled: itensValidos.length > 0,
     staleTime: 30_000,
   })
+
+  // Prazo da tabela contratada. Hoje só a BRIX tem tabela no app; quando
+  // entrar outra, o backend responde por ela do mesmo jeito.
+  const nomeTransportadora = (transportadoras.find(
+    (t: any) => t.id === form.transportadora_id)?.nome || '').toUpperCase()
+  const temTabela = nomeTransportadora.includes('BRIX')
+  const [cidadeEntrega, ufEntrega] = (() => {
+    const l = (form.local_entrega || '').trim()
+    if (!l.includes('/')) return ['', '']
+    const i = l.lastIndexOf('/')
+    return [l.slice(0, i).trim(), l.slice(i + 1).trim().toUpperCase().slice(0, 2)]
+  })()
+
+  const { data: prazo } = useQuery<any>({
+    queryKey: ['frete-prazo', ufEntrega, cidadeEntrega],
+    queryFn: () => api.get('/frete/prazo', {
+      params: { uf: ufEntrega, cidade: cidadeEntrega },
+    }).then(r => r.data),
+    enabled: temTabela && !!ufEntrega,
+    staleTime: 10 * 60 * 1000,
+  })
+
+  useEffect(() => {
+    if (!temTabela || !prazo?.encontrado || dataManual) return
+    if (form.data_prevista_entrega === prazo.data_prevista) return
+    setForm(f => ({ ...f, data_prevista_entrega: prazo.data_prevista }))
+  }, [prazo, temTabela, dataManual])
 
   /** Monta o body base da requisição */
   const buildBody = (extra?: Record<string, unknown>) => ({
@@ -450,8 +480,20 @@ export function NovoPedido() {
 
           <div>
             <label className="text-sm font-medium text-gray-700">Data Prevista de Entrega *</label>
-            <input type="date" value={form.data_prevista_entrega} onChange={e => setForm({...form, data_prevista_entrega: e.target.value})}
+            <input type="date" value={form.data_prevista_entrega}
+              onChange={e => { setDataManual(true); setForm({...form, data_prevista_entrega: e.target.value}) }}
               className="w-full border rounded-lg px-3 py-2.5 text-sm mt-1" />
+            {temTabela && prazo?.encontrado && !dataManual && (
+              <p className="text-[11px] text-emerald-700 mt-1">
+                Prazo da tabela {prazo.transportadora}: <strong>{prazo.dias_uteis} dia(s)
+                útil(eis)</strong> para {prazo.destino}
+                {prazo.por_capital && ' (via capital, com redespacho)'} — contado da coleta.
+                Dá para mudar se o cliente combinou outra data.
+              </p>
+            )}
+            {temTabela && prazo && !prazo.encontrado && (
+              <p className="text-[11px] text-amber-700 mt-1">{prazo.motivo}</p>
+            )}
           </div>
 
           <div>

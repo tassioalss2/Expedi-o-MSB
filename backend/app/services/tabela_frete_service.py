@@ -90,6 +90,49 @@ def volume_m3(descricao: Optional[str]) -> float:
     return round(c * l * a, 5)
 
 
+def somar_dias_uteis(inicio, dias: int):
+    """A data que cai N dias úteis depois da coleta, contando o dia da coleta.
+
+    A BRIX conta o prazo a partir da coleta (confirmado em 20/10/2026), então
+    um prazo de 3 dias úteis coletado numa segunda vence na quarta. Sem
+    feriados: a tabela promete dia útil, e feriado regional não está nela.
+    """
+    from datetime import timedelta
+    d, restantes = inicio, max(int(dias or 0), 1)
+    # O próprio dia da coleta conta como o primeiro, se for útil.
+    if d.weekday() < 5:
+        restantes -= 1
+    while restantes > 0:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            restantes -= 1
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def prazo_de_entrega(uf: Optional[str], cidade: Optional[str], saida=None) -> dict:
+    """Quando a carga chega, pelo prazo contratado do destino."""
+    from datetime import date as _date
+    saida = saida or _date.today()
+    destino, como = _achar_destino(cidade, uf)
+    if not destino:
+        return {"encontrado": False,
+                "motivo": "Destino fora da tabela — prazo a combinar com a transportadora."}
+    # Cidade do interior entrega por redespacho, e o prazo que vale é o dele.
+    dias = (destino.get("prazo_redespacho") if como == "capital_da_uf"
+            else destino.get("prazo_capital")) or 0
+    return {
+        "encontrado": True,
+        "transportadora": tabela().get("transportadora"),
+        "destino": "%s/%s" % (destino["cidade"], destino["uf"]),
+        "por_capital": como == "capital_da_uf",
+        "dias_uteis": dias,
+        "saida": saida.isoformat(),
+        "data_prevista": somar_dias_uteis(saida, dias).isoformat(),
+    }
+
+
 def estimar(uf: Optional[str], cidade: Optional[str] = None,
             peso_kg: float = 0, m3: float = 0, valor_nf: float = 0) -> dict:
     """Quanto esta carga custa pela tabela, com a conta aberta."""

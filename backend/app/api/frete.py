@@ -54,6 +54,18 @@ def tabela_contratada(_: UsuarioOut = Depends(get_current_user)):
     return tabela_frete_service.tabela()
 
 
+@router.get("/frete/prazo")
+def prazo(
+    uf: Optional[str] = None,
+    cidade: Optional[str] = None,
+    saida: Optional[str] = None,
+    _: UsuarioOut = Depends(get_current_user),
+):
+    """Quando a carga chega, pelo prazo contratado do destino."""
+    base = date.fromisoformat(saida) if saida else date.today()
+    return tabela_frete_service.prazo_de_entrega(uf, cidade, base)
+
+
 @router.get("/frete/estimativa")
 def estimativa(
     uf: Optional[str] = None,
