@@ -136,6 +136,11 @@ export function NovoPedido() {
     condicao_pagamento: '',
     prioridade: 'NORMAL',
     observacoes: '',
+    // Hora marcada e instruções de entrega. Em licitação vêm no próprio pedido
+    // do órgão ("portão 08, das 8h às 17h, motorista com RG e crachá") — e
+    // deixar para depois é redigitar o que já está na tela de quem cadastra.
+    coleta_agendada_em: '',
+    coleta_agendada_obs: '',
     em_gerenciamento_credito: false,
   })
 
@@ -189,6 +194,9 @@ export function NovoPedido() {
     // Por isso vira forma_venda, que é o campo que o app usa para separar
     // licitação de comercial. A linha vem dos itens, no servidor.
     tipo_operacao: form.tipo_operacao === 'LICITACAO' ? 'VENDA_NORMAL' : form.tipo_operacao,
+    coleta_agendada_em: form.coleta_agendada_em
+      ? new Date(form.coleta_agendada_em).toISOString() : null,
+    coleta_agendada_obs: form.coleta_agendada_obs.trim() || null,
     forma_venda: form.tipo_operacao === 'LICITACAO' ? 'LICITACAO' : 'DIRETA',
     itens: itens.map(i => ({ produto_id: i.produto_id, qtd_solicitada: i.qtd, valor_unitario: i.valor ?? null })),
     decisao_estoque: decisao?.decisao || null,
@@ -467,6 +475,26 @@ export function NovoPedido() {
                 <LocalEntregaInput value={form.local_entrega}
                   onChange={v => setForm({ ...form, local_entrega: v })} />
               )}
+            </div>
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-sm font-medium text-gray-700">
+              Entrega agendada <span className="text-gray-400 font-normal">(opcional)</span>
+            </label>
+            <div className="grid grid-cols-2 gap-3 mt-1">
+              <div>
+                <input type="datetime-local" value={form.coleta_agendada_em}
+                  onChange={e => setForm({ ...form, coleta_agendada_em: e.target.value })}
+                  className="w-full border rounded-lg px-3 py-2.5 text-sm" />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Vazio = quem agenda é a transportadora, com as instruções ao lado.
+                </p>
+              </div>
+              <textarea value={form.coleta_agendada_obs} rows={3}
+                onChange={e => setForm({ ...form, coleta_agendada_obs: e.target.value })}
+                placeholder="Instruções de entrega: endereço exato, portão, horário de recebimento, documentos do motorista, contato do órgão…"
+                className="w-full border rounded-lg px-3 py-2.5 text-sm" />
             </div>
           </div>
 

@@ -371,6 +371,11 @@ class PedidoCreate(DecisaoEstoqueMixin, CondicaoPagamentoMixin):
     itens: list[ItemPedidoCreate] = []
     # Frete cotado antes da OV (licitações) — pré-preenche o custo no faturamento
     valor_frete: Optional[float] = None
+    # Hora marcada e instruções de entrega. Em licitação elas chegam JUNTO com o
+    # pedido ("entregar no portão 08, das 8h às 17h, motorista com RG e crachá"),
+    # e guardá-las só depois significava redigitar o que já estava na mão.
+    coleta_agendada_em: Optional[datetime] = None
+    coleta_agendada_obs: Optional[str] = None
     # Vínculo com contrato/empenho de licitação (baixa de saldo em venda direta)
     empenho_id: Optional[UUID] = None
     # Recriação de OV cancelada — preenchidos apenas quando o operador confirma a duplicata

@@ -554,6 +554,12 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         "data_prevista_entrega": payload.data_prevista_entrega.isoformat(),
         "data_prevista_coleta": payload.data_prevista_coleta.isoformat() if payload.data_prevista_coleta else None,
         "observacoes": payload.observacoes,
+        # Agendamento e instruções já na criação: em licitação eles vêm no
+        # próprio pedido do órgão, e adiar o registro é perder o que já estava
+        # escrito na mão de quem cadastra.
+        "coleta_agendada_em": (payload.coleta_agendada_em.isoformat()
+                               if getattr(payload, "coleta_agendada_em", None) else None),
+        "coleta_agendada_obs": getattr(payload, "coleta_agendada_obs", None),
         "condicao_pagamento": payload.condicao_pagamento,
         "criado_por": None,
         "criado_em": _agora(),
