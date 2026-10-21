@@ -18,6 +18,7 @@ type Estimativa = {
   peso_cobrado_kg?: number; usou_peso_minimo?: boolean; fator_cubagem?: number
   tarifa_kg?: number; frete_peso?: number; ad_valorem?: number; ad_valorem_pct?: number
   gris?: number; gris_pct?: number; total?: number
+  taxa_coleta?: number; taxa_entrega?: number; tipo_entrega?: string
   prazo_capital?: number; prazo_redespacho?: number; premissa_cubagem?: string
 }
 
@@ -69,7 +70,7 @@ export function FreteEstimado({ pedidoId }: { pedidoId: string }) {
         </p>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+      <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
         <div className="rounded-lg bg-gray-50 px-2 py-1.5">
           <p className="text-gray-500">Peso cobrado</p>
           <p className="font-semibold text-gray-800">{kg(data.peso_cobrado_kg)}</p>
@@ -81,6 +82,23 @@ export function FreteEstimado({ pedidoId }: { pedidoId: string }) {
           <p className="text-gray-500">Frete-peso</p>
           <p className="font-semibold text-gray-800">{brl(data.frete_peso)}</p>
           <p className="text-gray-400">{brl(data.tarifa_kg)}/kg</p>
+        </div>
+        <div className="rounded-lg bg-gray-50 px-2 py-1.5">
+          <p className="text-gray-500">Taxa de coleta</p>
+          <p className="font-semibold text-gray-800">{brl(data.taxa_coleta)}</p>
+          <p className="text-gray-400">por envio</p>
+        </div>
+        <div className="rounded-lg bg-gray-50 px-2 py-1.5">
+          <p className="text-gray-500">Taxa de entrega</p>
+          <p className="font-semibold text-gray-800">{brl(data.taxa_entrega)}</p>
+          <p className="text-gray-400">
+            {{
+              CAPITAL: 'capital',
+              GRANDE_CAPITAL: 'grande capital',
+              INTERIOR_REDESPACHO: 'interior / redespacho',
+              INTERIOR_NORTE: 'interior Norte',
+            }[data.tipo_entrega || ''] || '—'}
+          </p>
         </div>
         <div className="rounded-lg bg-gray-50 px-2 py-1.5">
           <p className="text-gray-500">Ad valorem</p>

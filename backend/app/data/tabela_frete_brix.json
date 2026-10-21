@@ -1,272 +1,343 @@
 {
-  "transportadora": "BRIX",
-  "tabela": "Convencional",
-  "origem": "Lauro de Freitas/BA",
-  "vigencia": "2026-10",
-  "emitida_em": "2026-10-20",
-  "contato": "Lucimara Bispo — Executiva de Contas",
-  "tarifa_minima": 110.88,
-  "ad_valorem_pct": 0.33,
-  "gris_pct_padrao": 0.05,
-  "fator_cubagem_kg_m3": 300,
-  "observacao_fator": "Fator de cubagem NÃO consta na tabela enviada: 300 kg/m³ é o usual do rodoviário e está aqui como premissa, a confirmar com a BRIX.",
-  "destinos": [
-    {
-      "cidade": "ARACAJU",
-      "uf": "SE",
-      "peso_minimo_kg": 12.76,
-      "tarifa_kg": 8.69,
-      "prazo_capital": 3,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "BELEM",
-      "uf": "PA",
-      "peso_minimo_kg": 10.91,
-      "tarifa_kg": 10.16,
-      "prazo_capital": 4,
-      "prazo_redespacho": 10
-    },
-    {
-      "cidade": "BELO HORIZONTE",
-      "uf": "MG",
-      "peso_minimo_kg": 28.8,
-      "tarifa_kg": 3.85,
-      "prazo_capital": 3,
-      "prazo_redespacho": 7
-    },
-    {
-      "cidade": "BOA VISTA",
-      "uf": "RR",
-      "peso_minimo_kg": 3.36,
-      "tarifa_kg": 33.03,
-      "prazo_capital": 5,
-      "prazo_redespacho": 16
-    },
-    {
-      "cidade": "BRASILIA",
-      "uf": "DF",
-      "peso_minimo_kg": 36.35,
-      "tarifa_kg": 3.05,
-      "prazo_capital": 3,
-      "prazo_redespacho": 7
-    },
-    {
-      "cidade": "CAMPO GRANDE",
-      "uf": "MS",
-      "peso_minimo_kg": 9.63,
-      "tarifa_kg": 11.52,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "CUIABA",
-      "uf": "MT",
-      "peso_minimo_kg": 9.63,
-      "tarifa_kg": 11.52,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "CURITIBA",
-      "uf": "PR",
-      "peso_minimo_kg": 24.21,
-      "tarifa_kg": 4.58,
-      "prazo_capital": 3,
-      "prazo_redespacho": 7
-    },
-    {
-      "cidade": "FLORIANOPOLIS",
-      "uf": "SC",
-      "peso_minimo_kg": 29.1,
-      "tarifa_kg": 3.81,
-      "prazo_capital": 3,
-      "prazo_redespacho": 7
-    },
-    {
-      "cidade": "FORTALEZA",
-      "uf": "CE",
-      "peso_minimo_kg": 12.35,
-      "tarifa_kg": 8.98,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "GOIANIA",
-      "uf": "GO",
-      "peso_minimo_kg": 18.7,
-      "tarifa_kg": 5.93,
-      "prazo_capital": 3,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "IMPERATRIZ",
-      "uf": "MA",
-      "peso_minimo_kg": 8.03,
-      "tarifa_kg": 13.81,
-      "prazo_capital": 4,
-      "prazo_redespacho": 10
-    },
-    {
-      "cidade": "JOAO PESSOA",
-      "uf": "PB",
-      "peso_minimo_kg": 7.24,
-      "tarifa_kg": 15.31,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "JOINVILLE",
-      "uf": "SC",
-      "peso_minimo_kg": 29.1,
-      "tarifa_kg": 3.81,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "LONDRINA",
-      "uf": "PR",
-      "peso_minimo_kg": 24.21,
-      "tarifa_kg": 4.58,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "MACAPA",
-      "uf": "AP",
-      "peso_minimo_kg": 3.79,
-      "tarifa_kg": 29.22,
-      "prazo_capital": 5,
-      "prazo_redespacho": 16
-    },
-    {
-      "cidade": "MACEIO",
-      "uf": "AL",
-      "peso_minimo_kg": 18.7,
-      "tarifa_kg": 5.93,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "MANAUS",
-      "uf": "AM",
-      "peso_minimo_kg": 7.6,
-      "tarifa_kg": 14.58,
-      "prazo_capital": 5,
-      "prazo_redespacho": 26
-    },
-    {
-      "cidade": "MARINGA",
-      "uf": "PR",
-      "peso_minimo_kg": 24.21,
-      "tarifa_kg": 4.58,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "NATAL",
-      "uf": "RN",
-      "peso_minimo_kg": 14.55,
-      "tarifa_kg": 7.62,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "NAVEGANTES",
-      "uf": "SC",
-      "peso_minimo_kg": 29.1,
-      "tarifa_kg": 3.81,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "PALMAS",
-      "uf": "TO",
-      "peso_minimo_kg": 9.55,
-      "tarifa_kg": 11.61,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "PORTO ALEGRE",
-      "uf": "RS",
-      "peso_minimo_kg": 25.2,
-      "tarifa_kg": 4.4,
-      "prazo_capital": 3,
-      "prazo_redespacho": 7
-    },
-    {
-      "cidade": "PORTO VELHO",
-      "uf": "RO",
-      "peso_minimo_kg": 3.97,
-      "tarifa_kg": 27.95,
-      "prazo_capital": 5,
-      "prazo_redespacho": 16
-    },
-    {
-      "cidade": "RECIFE",
-      "uf": "PE",
-      "peso_minimo_kg": 10.91,
-      "tarifa_kg": 10.16,
-      "prazo_capital": 3,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "RIO BRANCO",
-      "uf": "AC",
-      "peso_minimo_kg": 5.24,
-      "tarifa_kg": 21.18,
-      "prazo_capital": 5,
-      "prazo_redespacho": 16
-    },
-    {
-      "cidade": "RIO DE JANEIRO",
-      "uf": "RJ",
-      "peso_minimo_kg": 22.54,
-      "tarifa_kg": 4.92,
-      "prazo_capital": 3,
-      "prazo_redespacho": 7
-    },
-    {
-      "cidade": "SAO LUIS",
-      "uf": "MA",
-      "peso_minimo_kg": 8.03,
-      "tarifa_kg": 13.81,
-      "prazo_capital": 4,
-      "prazo_redespacho": 10
-    },
-    {
-      "cidade": "SAO PAULO",
-      "uf": "SP",
-      "peso_minimo_kg": 43.65,
-      "tarifa_kg": 2.54,
-      "prazo_capital": 3,
-      "prazo_redespacho": 7,
-      "gris_pct": 0.02
-    },
-    {
-      "cidade": "TERESINA",
-      "uf": "PI",
-      "peso_minimo_kg": 5.1,
-      "tarifa_kg": 21.73,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "UBERLANDIA",
-      "uf": "MG",
-      "peso_minimo_kg": 22.22,
-      "tarifa_kg": 4.99,
-      "prazo_capital": 4,
-      "prazo_redespacho": 8
-    },
-    {
-      "cidade": "VITORIA",
-      "uf": "ES",
-      "peso_minimo_kg": 24.69,
-      "tarifa_kg": 4.49,
-      "prazo_capital": 3,
-      "prazo_redespacho": 8
-    }
-  ]
+ "transportadora": "BRIX",
+ "tabela": "Convencional",
+ "origem": "Lauro de Freitas/BA",
+ "vigencia": "2026-10",
+ "emitida_em": "2026-10-20",
+ "contato": "Lucimara Bispo — Executiva de Contas",
+ "tarifa_minima": 110.88,
+ "ad_valorem_pct": 0.333,
+ "gris_pct_padrao": 0.05,
+ "fator_cubagem_kg_m3": 166.67,
+ "observacao_fator": "A formula de cubagem aparece cortada na tabela ('comprimento x largura x altura ('). 166,67 kg/m3 e o divisor aereo 6.000 cm3/kg, coerente com a tabela se reajustar pelas cias aereas; confere com as duas cargas pesadas ja faturadas (OV017118 e OV017054, erro de 1,6% e 2,1%), enquanto 300 kg/m3 errava mais de 60%. Confirmar com a BRIX.",
+ "taxa_coleta": {
+  "ate_10kg": 22.0,
+  "excedente_kg": 0.49
+ },
+ "taxas_entrega": {
+  "CAPITAL": {
+   "ate_10kg": 49.5,
+   "excedente_kg": 0.55
+  },
+  "GRANDE_CAPITAL": {
+   "ate_10kg": 71.5,
+   "excedente_kg": 0.55
+  },
+  "INTERIOR_REDESPACHO": {
+   "ate_10kg": 165.0,
+   "excedente_kg": 1.65
+  },
+  "INTERIOR_NORTE": {
+   "ate_10kg": 209.0,
+   "excedente_kg": 1.65
+  }
+ },
+ "interior_dedicado_km": 2.2,
+ "taxa_emergencia": {
+  "ate_500kg": 275.0,
+  "ate_1000kg": 770.0
+ },
+ "hora_parada": 66.0,
+ "reentrega_pct": 50,
+ "devolucao_pct": 100,
+ "coleta_improdutiva_pct": 50,
+ "pagamento": "Quinzenal",
+ "ufs_norte": [
+  "AC",
+  "AP",
+  "AM",
+  "PA",
+  "RO",
+  "RR",
+  "TO"
+ ],
+ "restricoes": {
+  "redespacho_ba_mg": {
+   "ufs": [
+    "BA",
+    "MG"
+   ],
+   "valor_nf_max": 30000.0,
+   "peso_max_kg": 50,
+   "texto": "Redespacho BA e MG so para nota ate R$ 30.000,00 e peso real ou cubado ate 50 kg. Acima disso, somente entrega dedicada."
+  },
+  "rio_de_janeiro": {
+   "ufs": [
+    "RJ"
+   ],
+   "dedicada_acima": 150000.0,
+   "escolta_acima": 200000.0,
+   "texto": "RJ: nota acima de R$ 150.000,00 so com veiculo dedicado; acima de R$ 200.000,00 com escolta."
+  },
+  "pgr_carga_geral": {
+   "valor_nf_max": 199999.99,
+   "texto": "Carga geral segurada ate R$ 199.999,99 — acima disso, consultar a BRIX antes do embarque."
+  },
+  "capacidade_veiculo": {
+   "peso_max_kg": 500,
+   "texto": "Proposta para veiculo de ate 500 kg — acima disso, cotacao a parte."
+  }
+ },
+ "observacao_taxas": "Taxa de coleta e taxa de entrega sao da 2a parte da tabela (TAXA DE COLETA / TAXAS DE ENTREGA) e entram em todo envio. Cidade fora da tabela entra como interior/redespacho; se a BRIX tratar o destino como grande capital, a taxa de entrega cai de R$ 165,00 para R$ 71,50.",
+ "grande_capital": {},
+ "observacao_grande_capital": "Cidades que a BRIX cobra como GRANDE CAPITAL (R$ 71,50 em vez de R$ 165,00 de interior). A tabela nao lista quais sao: preencher por UF conforme a transportadora confirmar, ex. \"SP\": [\"BARUERI\", \"OSASCO\"].",
+ "destinos": [
+  {
+   "cidade": "ARACAJU",
+   "uf": "SE",
+   "peso_minimo_kg": 12.76,
+   "tarifa_kg": 8.69,
+   "prazo_capital": 3,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "BELEM",
+   "uf": "PA",
+   "peso_minimo_kg": 10.91,
+   "tarifa_kg": 10.16,
+   "prazo_capital": 4,
+   "prazo_redespacho": 10
+  },
+  {
+   "cidade": "BELO HORIZONTE",
+   "uf": "MG",
+   "peso_minimo_kg": 28.8,
+   "tarifa_kg": 3.85,
+   "prazo_capital": 3,
+   "prazo_redespacho": 7
+  },
+  {
+   "cidade": "BOA VISTA",
+   "uf": "RR",
+   "peso_minimo_kg": 3.36,
+   "tarifa_kg": 33.03,
+   "prazo_capital": 5,
+   "prazo_redespacho": 16
+  },
+  {
+   "cidade": "BRASILIA",
+   "uf": "DF",
+   "peso_minimo_kg": 36.35,
+   "tarifa_kg": 3.05,
+   "prazo_capital": 3,
+   "prazo_redespacho": 7
+  },
+  {
+   "cidade": "CAMPO GRANDE",
+   "uf": "MS",
+   "peso_minimo_kg": 9.63,
+   "tarifa_kg": 11.52,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "CUIABA",
+   "uf": "MT",
+   "peso_minimo_kg": 9.63,
+   "tarifa_kg": 11.52,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "CURITIBA",
+   "uf": "PR",
+   "peso_minimo_kg": 24.21,
+   "tarifa_kg": 4.58,
+   "prazo_capital": 3,
+   "prazo_redespacho": 7
+  },
+  {
+   "cidade": "FLORIANOPOLIS",
+   "uf": "SC",
+   "peso_minimo_kg": 29.1,
+   "tarifa_kg": 3.81,
+   "prazo_capital": 3,
+   "prazo_redespacho": 7
+  },
+  {
+   "cidade": "FORTALEZA",
+   "uf": "CE",
+   "peso_minimo_kg": 12.35,
+   "tarifa_kg": 8.98,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "GOIANIA",
+   "uf": "GO",
+   "peso_minimo_kg": 18.7,
+   "tarifa_kg": 5.93,
+   "prazo_capital": 3,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "IMPERATRIZ",
+   "uf": "MA",
+   "peso_minimo_kg": 8.03,
+   "tarifa_kg": 13.81,
+   "prazo_capital": 4,
+   "prazo_redespacho": 10
+  },
+  {
+   "cidade": "JOAO PESSOA",
+   "uf": "PB",
+   "peso_minimo_kg": 7.24,
+   "tarifa_kg": 15.31,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "JOINVILLE",
+   "uf": "SC",
+   "peso_minimo_kg": 29.1,
+   "tarifa_kg": 3.81,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "LONDRINA",
+   "uf": "PR",
+   "peso_minimo_kg": 24.21,
+   "tarifa_kg": 4.58,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "MACAPA",
+   "uf": "AP",
+   "peso_minimo_kg": 3.79,
+   "tarifa_kg": 29.22,
+   "prazo_capital": 5,
+   "prazo_redespacho": 16
+  },
+  {
+   "cidade": "MACEIO",
+   "uf": "AL",
+   "peso_minimo_kg": 18.7,
+   "tarifa_kg": 5.93,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "MANAUS",
+   "uf": "AM",
+   "peso_minimo_kg": 7.6,
+   "tarifa_kg": 14.58,
+   "prazo_capital": 5,
+   "prazo_redespacho": 26
+  },
+  {
+   "cidade": "MARINGA",
+   "uf": "PR",
+   "peso_minimo_kg": 24.21,
+   "tarifa_kg": 4.58,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "NATAL",
+   "uf": "RN",
+   "peso_minimo_kg": 14.55,
+   "tarifa_kg": 7.62,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "NAVEGANTES",
+   "uf": "SC",
+   "peso_minimo_kg": 29.1,
+   "tarifa_kg": 3.81,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "PALMAS",
+   "uf": "TO",
+   "peso_minimo_kg": 9.55,
+   "tarifa_kg": 11.61,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "PORTO ALEGRE",
+   "uf": "RS",
+   "peso_minimo_kg": 25.2,
+   "tarifa_kg": 4.4,
+   "prazo_capital": 3,
+   "prazo_redespacho": 7
+  },
+  {
+   "cidade": "PORTO VELHO",
+   "uf": "RO",
+   "peso_minimo_kg": 3.97,
+   "tarifa_kg": 27.95,
+   "prazo_capital": 5,
+   "prazo_redespacho": 16
+  },
+  {
+   "cidade": "RECIFE",
+   "uf": "PE",
+   "peso_minimo_kg": 10.91,
+   "tarifa_kg": 10.16,
+   "prazo_capital": 3,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "RIO BRANCO",
+   "uf": "AC",
+   "peso_minimo_kg": 5.24,
+   "tarifa_kg": 21.18,
+   "prazo_capital": 5,
+   "prazo_redespacho": 16
+  },
+  {
+   "cidade": "RIO DE JANEIRO",
+   "uf": "RJ",
+   "peso_minimo_kg": 22.54,
+   "tarifa_kg": 4.92,
+   "prazo_capital": 3,
+   "prazo_redespacho": 7
+  },
+  {
+   "cidade": "SAO LUIS",
+   "uf": "MA",
+   "peso_minimo_kg": 8.03,
+   "tarifa_kg": 13.81,
+   "prazo_capital": 4,
+   "prazo_redespacho": 10
+  },
+  {
+   "cidade": "SAO PAULO",
+   "uf": "SP",
+   "peso_minimo_kg": 43.65,
+   "tarifa_kg": 2.54,
+   "prazo_capital": 3,
+   "prazo_redespacho": 7,
+   "gris_pct": 0.02
+  },
+  {
+   "cidade": "TERESINA",
+   "uf": "PI",
+   "peso_minimo_kg": 5.1,
+   "tarifa_kg": 21.73,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "UBERLANDIA",
+   "uf": "MG",
+   "peso_minimo_kg": 22.22,
+   "tarifa_kg": 4.99,
+   "prazo_capital": 4,
+   "prazo_redespacho": 8
+  },
+  {
+   "cidade": "VITORIA",
+   "uf": "ES",
+   "peso_minimo_kg": 24.69,
+   "tarifa_kg": 4.49,
+   "prazo_capital": 3,
+   "prazo_redespacho": 8
+  }
+ ]
 }
