@@ -220,8 +220,12 @@ def painel(desde: Optional[date] = None, transportadora: Optional[str] = None) -
             **r,
         })
 
-    # Quem precisa de ação primeiro: atenção no topo, mais antiga antes.
-    linhas.sort(key=lambda l: (0 if l["atencao"] else 1, -(l["dias_desde_saida"] or 0)))
+    # Pela data que o cliente espera a carga: a mais próxima primeiro. Como
+    # previsão vencida é a mais "próxima" de todas, o atraso sobe sozinho ao
+    # topo — sem precisar de uma regra à parte para isso. Carga sem previsão vai
+    # para o fim, porque não há data para cobrar.
+    linhas.sort(key=lambda l: (l["previsao"] is None, l["previsao"] or "",
+                               l["numero_nf"] or ""))
 
     contagem = {"aberto": 0, "canhoto": 0, "concluidas": 0, "atencao": 0}
     for l in linhas:
