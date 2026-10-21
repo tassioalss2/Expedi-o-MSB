@@ -5,7 +5,7 @@ import api from '../lib/api'
 import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
-  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2, Monitor, FileCheck,
+  DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2, Monitor, FileCheck, MapPin,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -28,6 +28,7 @@ const navOperacoes: NavItem[] = [
   { to: '/dashboard',  label: 'Painel Operacional', icone: LayoutDashboard },
   { to: '/expedicao',  label: 'Expedição',          icone: Package, badge: 'expedicao' },
   { to: '/pallets',    label: 'Pallets',            icone: Layers },
+  { to: '/rastreio',   label: 'Rastreio de Entregas', icone: MapPin },
   { to: '/inventario', label: 'Inventário Contínuo',icone: ScanLine },
   { to: '/ocorrencias',label: 'Ocorrências',        icone: AlertTriangle, badge: 'ocorrencias' },
   { to: '/indicadores',label: 'Indicadores',        icone: Activity },

@@ -16,6 +16,7 @@ import FaturamentoD365 from './pages/FaturamentoD365'
 import { PrevisaoFaturamento } from './pages/PrevisaoFaturamento'
 import Pendencias from './pages/Pendencias'
 import Devolucoes from './pages/Devolucoes'
+import Rastreio from './pages/Rastreio'
 import ConferenciaFrete from './pages/ConferenciaFrete'
 import { Inicio } from './pages/Inicio'
 import { Pallets } from './pages/Pallets'
@@ -102,6 +103,7 @@ export default function App() {
             <Route path="previsao" element={<PrevisaoFaturamento />} />
             <Route path="pendencias" element={<Pendencias />} />
             <Route path="devolucoes" element={<Devolucoes />} />
+            <Route path="rastreio" element={<Rastreio />} />
             <Route path="frete" element={<ConferenciaFrete />} />
             <Route path="faturamento-d365" element={<FaturamentoD365 />} />
           </Route>
