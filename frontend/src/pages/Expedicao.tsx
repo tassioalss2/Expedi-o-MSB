@@ -25,6 +25,29 @@ type View = 'lista' | 'kanban'
 // Venda ganha SEM estoque não aparece aqui: fica na coluna Pendência de estoque
 // do CRM até o material chegar, e só então abre a OV.
 
+/** A OV casa com o que foi digitado: número, cliente ou NF.
+ *
+ *  A NF entra porque é por ela que a conversa com o cliente e com a
+ *  transportadora acontece — "a nota 21178 chegou?" é a pergunta real, e até
+ *  agora ela não achava nada aqui. Compara só os dígitos, sem zeros à
+ *  esquerda: o app guarda ora "21178", ora "0021178", e quem digita não sabe
+ *  qual das duas está gravada.
+ */
+function casaBusca(p: any, busca: string): boolean {
+  const q = (busca || '').trim().toLowerCase()
+  if (!q) return true
+  const so = (t: any) => String(t ?? '').replace(/\D/g, '').replace(/^0+/, '')
+  const qNum = so(q)
+  const nf = p.numero_nf || ''
+  return (
+    (p.numero_pedido || '').toLowerCase().includes(q)
+    || (p.cliente_nome || '').toLowerCase().includes(q)
+    || (p.cliente?.nome || '').toLowerCase().includes(q)
+    || String(nf).toLowerCase().includes(q)
+    || (!!qNum && !!so(nf) && so(nf).includes(qNum))
+  )
+}
+
 // ── Busca com autocomplete ────────────────────────────────────────────────────
 function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
   busca: string
@@ -44,15 +67,7 @@ function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
   }, [])
 
   const sugestoes = busca.length >= 1
-    ? pedidos
-        .filter(p => {
-          const q = busca.toLowerCase()
-          return (
-            p.numero_pedido.toLowerCase().includes(q) ||
-            (p.cliente_nome || p.cliente?.nome || '').toLowerCase().includes(q)
-          )
-        })
-        .slice(0, 8)
+    ? pedidos.filter(p => casaBusca(p, busca)).slice(0, 8)
     : []
 
   const STATUS_COR: Record<string, string> = {
@@ -86,7 +101,7 @@ function BuscaAutocomplete({ busca, setBusca, pedidos, onSelecionar }: {
       <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10" />
       <input
         type="text"
-        placeholder="Buscar OV ou cliente..."
+        placeholder="Buscar OV, cliente ou NF..."
         value={busca}
         onChange={e => { setBusca(e.target.value); setAberto(true) }}
         onFocus={() => busca.length >= 1 && setAberto(true)}
@@ -777,15 +792,7 @@ export function Expedicao() {
     refetchInterval: 30000,
   })
 
-  const pedidosFiltrados = pedidos.filter((p) => {
-    if (!busca) return true
-    const q = busca.toLowerCase()
-    return (
-      p.numero_pedido.toLowerCase().includes(q) ||
-      (p.cliente_nome || '').toLowerCase().includes(q) ||
-      (p.cliente?.nome || '').toLowerCase().includes(q)
-    )
-  })
+  const pedidosFiltrados = pedidos.filter(p => !busca || casaBusca(p, busca))
 
   const importarMutation = useMutation({
     mutationFn: async (arquivo: File) => {
