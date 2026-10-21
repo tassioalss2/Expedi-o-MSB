@@ -76,11 +76,19 @@
   "capacidade_veiculo": {
    "peso_max_kg": 500,
    "texto": "Proposta para veiculo de ate 500 kg — acima disso, cotacao a parte."
+  },
+  "pgr_carga_valor": {
+   "texto": "Mercadoria enquadrada como Carga Valor tem seguro obrigatorio da cia aerea — consultar a BRIX antes do embarque."
+  },
+  "pgr_carga_usada": {
+   "valor_nf_max": 30000.0,
+   "texto": "Carga usada: ate R$ 30.000,00, com seguro so contra extravio ou roubo — nao cobre avaria."
   }
  },
  "observacao_taxas": "Taxa de coleta e taxa de entrega sao da 2a parte da tabela (TAXA DE COLETA / TAXAS DE ENTREGA) e entram em todo envio. Cidade fora da tabela entra como interior/redespacho; se a BRIX tratar o destino como grande capital, a taxa de entrega cai de R$ 165,00 para R$ 71,50.",
  "grande_capital": {},
  "observacao_grande_capital": "Cidades que a BRIX cobra como GRANDE CAPITAL (R$ 71,50 em vez de R$ 165,00 de interior). A tabela nao lista quais sao: preencher por UF conforme a transportadora confirmar, ex. \"SP\": [\"BARUERI\", \"OSASCO\"].",
+ "nao_incluido": "ICMS (cobrado conforme a legislacao), pedagio, hora parada, taxa de emergencia, veiculo dedicado e trecho de redespacho de interior.",
  "destinos": [
   {
    "cidade": "ARACAJU",

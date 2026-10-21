@@ -265,4 +265,17 @@ def estimar(uf: Optional[str], cidade: Optional[str] = None,
         "prazo_capital": destino.get("prazo_capital"),
         "prazo_redespacho": destino.get("prazo_redespacho"),
         "premissa_cubagem": t.get("observacao_fator"),
+        # O resto da tabela não entra na conta, mas decide dinheiro depois do
+        # embarque: emergência, hora parada, reentrega, devolução e o ICMS que
+        # vem por fora. Viajam junto com a estimativa para o app poder mostrar.
+        "referencias": {
+            "taxa_emergencia": t.get("taxa_emergencia"),
+            "hora_parada": t.get("hora_parada"),
+            "reentrega_pct": t.get("reentrega_pct"),
+            "devolucao_pct": t.get("devolucao_pct"),
+            "coleta_improdutiva_pct": t.get("coleta_improdutiva_pct"),
+            "interior_dedicado_km": t.get("interior_dedicado_km"),
+            "pagamento": t.get("pagamento"),
+            "nao_incluido": t.get("nao_incluido"),
+        },
     }

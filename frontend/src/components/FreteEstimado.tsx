@@ -20,6 +20,13 @@ type Estimativa = {
   gris?: number; gris_pct?: number; total?: number
   taxa_coleta?: number; taxa_entrega?: number; tipo_entrega?: string
   prazo_capital?: number; prazo_redespacho?: number; premissa_cubagem?: string
+  avisos?: string[]
+  referencias?: {
+    taxa_emergencia?: { ate_500kg?: number; ate_1000kg?: number }
+    hora_parada?: number; reentrega_pct?: number; devolucao_pct?: number
+    coleta_improdutiva_pct?: number; interior_dedicado_km?: number
+    pagamento?: string; nao_incluido?: string
+  }
 }
 
 const brl = (v?: number | null) =>
@@ -118,19 +125,42 @@ export function FreteEstimado({ pedidoId }: { pedidoId: string }) {
           ({kg(data.peso_cobrado_kg)}) — é a tarifa mínima da tabela.
         </p>
       )}
-      {data.aviso && (
-        <p className="mt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200
-                      rounded-lg px-2 py-1.5">{data.aviso}</p>
-      )}
+      {(data.avisos?.length ? data.avisos : data.aviso ? [data.aviso] : []).map((a, i) => (
+        <p key={i} className="mt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200
+                              rounded-lg px-2 py-1.5">{a}</p>
+      ))}
       {!data.tem_cubagem && (
         <p className="mt-2 text-[11px] text-amber-800">
           Sem cubagem registrada: a conta foi só pelo peso informado, sem volume. Carga
           volumosa vai sair mais cara do que isto.
         </p>
       )}
+      {data.referencias && (
+        <details className="mt-2 text-[11px] text-gray-600">
+          <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+            Outras regras da tabela
+          </summary>
+          <ul className="mt-1.5 space-y-0.5 pl-3 list-disc marker:text-gray-300">
+            <li>
+              Taxa de emergência (entrega expressa):{' '}
+              {brl(data.referencias.taxa_emergencia?.ate_500kg)} até 500 kg ·{' '}
+              {brl(data.referencias.taxa_emergencia?.ate_1000kg)} até 1.000 kg
+            </li>
+            <li>Hora parada: {brl(data.referencias.hora_parada)}/h depois da 1ª hora na coleta ou na entrega</li>
+            <li>
+              Reentrega {data.referencias.reentrega_pct}% · devolução{' '}
+              {data.referencias.devolucao_pct}% · coleta improdutiva{' '}
+              {data.referencias.coleta_improdutiva_pct}% do frete
+            </li>
+            <li>Veículo dedicado no interior: {brl(data.referencias.interior_dedicado_km)}/km rodado, ida e volta</li>
+            <li>Pagamento: {data.referencias.pagamento?.toLowerCase()}</li>
+          </ul>
+        </details>
+      )}
       <p className="mt-2 text-[10px] text-gray-400">
-        Estimativa pela tabela contratada: não inclui pedágio, ICMS nem o trecho de
-        redespacho. {data.premissa_cubagem}
+        Estimativa pela tabela contratada: não inclui{' '}
+        {data.referencias?.nao_incluido?.replace(/\.$/, '') || 'pedágio, ICMS nem o trecho de redespacho'}.{' '}
+        {data.premissa_cubagem}
       </p>
     </div>
   )
