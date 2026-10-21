@@ -27,14 +27,12 @@ class EventoIn(BaseModel):
 @router.get("")
 def painel(
     desde: Optional[str] = None,
-    ate: Optional[str] = None,
     transportadora: Optional[str] = None,
     _: UsuarioOut = Depends(get_current_user),
 ):
     """As cargas CIF em rota, separadas pelo que cada uma exige."""
     return rastreio_service.painel(
         desde=date.fromisoformat(desde) if desde else None,
-        ate=date.fromisoformat(ate) if ate else None,
         transportadora=transportadora,
     )
 

@@ -1,47 +1,50 @@
 # -*- coding: utf-8 -*-
-"""Onde está cada carga CIF que já saiu daqui.
+"""Onde está cada carga CIF que saiu daqui nos últimos dias.
 
-A informação existe — no site da BRIX e no grupo de WhatsApp da RR —, mas vive
+A informação existe — no portal da BRIX e no grupo de WhatsApp da RR —, mas vive
 fora do sistema: quem cobrou o comprovante ontem é a única pessoa que sabe o que
-a transportadora respondeu. Aqui cada consulta vira um evento preso à OV, e o
-estado de cada carga sai do evento mais recente.
+a transportadora respondeu. Aqui cada consulta vira um evento preso à OV.
+
+O controle começa na SEGUNDA DA SEMANA PASSADA, de propósito. A primeira versão
+abria o mês inteiro e trazia 61 cargas, contra 13 em aberto no portal da BRIX:
+a diferença não era problema de entrega, era histórico que ninguém ia acompanhar.
+Controle que nasce com fila impossível não é usado.
 
 Só CIF: no FOB quem contrata o frete é o cliente, e cobrar entrega de um frete
 que não é nosso seria inventar responsabilidade.
 
-A conta de "exige atenção" é deliberadamente dura: carga sem notícia há dias
-conta como problema, porque o silêncio da transportadora é justamente o que faz
-a entrega atrasada aparecer tarde demais.
+Cada carga explica por que está onde está — `explicacao` carrega a regra e os
+números que a classificaram, para a tela poder responder "por quê?" sem que
+ninguém precise adivinhar a conta.
 """
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.database import get_service_db
 
-# Situações que a equipe lança, na ordem em que a carga costuma andar.
+# Seis situações, não dez. A lista longa (extravio, devolução, recusa…) fazia a
+# equipe parar para escolher entre rótulos parecidos; o que varia de verdade
+# entra na descrição, que é texto livre.
 SITUACOES = {
-    "EM_TRANSITO":          {"rotulo": "Em trânsito",            "atencao": False, "fim": False},
-    "SAIU_PARA_ENTREGA":    {"rotulo": "Saiu para entrega",      "atencao": False, "fim": False},
-    "AGENDADA":             {"rotulo": "Entrega agendada",       "atencao": False, "fim": False},
-    "ENTREGUE":             {"rotulo": "Entregue",               "atencao": False, "fim": False},
-    "COMPROVANTE_RECEBIDO": {"rotulo": "Comprovante recebido",   "atencao": False, "fim": True},
-    "OCORRENCIA":           {"rotulo": "Ocorrência",             "atencao": True,  "fim": False},
-    "RECUSADA":             {"rotulo": "Recusada pelo cliente",  "atencao": True,  "fim": False},
-    "EXTRAVIO":             {"rotulo": "Extravio",               "atencao": True,  "fim": False},
-    "DEVOLUCAO":            {"rotulo": "Em devolução",           "atencao": True,  "fim": False},
-    "SEM_INFORMACAO":       {"rotulo": "Transportadora não informou", "atencao": True, "fim": False},
+    "EM_TRANSITO":          {"rotulo": "Em trânsito",                "atencao": False},
+    "SAIU_PARA_ENTREGA":    {"rotulo": "Saiu para entrega",          "atencao": False},
+    "ENTREGUE":             {"rotulo": "Entregue",                   "atencao": False},
+    "COMPROVANTE_RECEBIDO": {"rotulo": "Entregue, canhoto recebido", "atencao": False},
+    "PROBLEMA":             {"rotulo": "Problema na entrega",        "atencao": True},
+    "SEM_RESPOSTA":         {"rotulo": "Transportadora não respondeu", "atencao": True},
 }
 ENTREGA = ("ENTREGUE", "COMPROVANTE_RECEBIDO")
 
-# Status de OV que significam "já saiu ou está para sair daqui".
 _EM_ROTA = ("AGUARD_COLETA", "COLETADO", "EXPEDIDO")
 
-# Dias corridos sem nenhuma notícia antes de a carga virar cobrança.
+# Dias corridos sem notícia antes de a carga virar cobrança.
 DIAS_SEM_NOTICIA = 3
 
 
-def _hoje() -> date:
-    return date.today()
+def corte_padrao(hoje: Optional[date] = None) -> date:
+    """Segunda-feira da semana passada — onde este controle começa."""
+    hoje = hoje or date.today()
+    return hoje - timedelta(days=hoje.weekday() + 7)
 
 
 def _agora() -> str:
@@ -49,7 +52,6 @@ def _agora() -> str:
 
 
 def _dia(valor) -> Optional[date]:
-    """A data de um campo que tanto pode vir como data quanto como timestamp."""
     if not valor:
         return None
     try:
@@ -58,72 +60,100 @@ def _dia(valor) -> Optional[date]:
         return None
 
 
-def _resumir(pedido: dict, eventos: list) -> dict:
-    """O estado de uma carga a partir dos eventos lançados nela."""
+def _br(d: Optional[date]) -> str:
+    return d.strftime("%d/%m") if d else "—"
+
+
+def _resumir(pedido: dict, eventos: list, hoje: date) -> dict:
+    """O estado de uma carga, com a conta aberta de como ele foi decidido."""
     eventos = sorted(eventos, key=lambda e: str(e.get("ocorrido_em") or ""))
     ultimo = eventos[-1] if eventos else None
 
     entrega = next((e for e in eventos if e["situacao"] in ENTREGA), None)
     comprovante = next((e for e in eventos if e["situacao"] == "COMPROVANTE_RECEBIDO"), None)
 
-    # A previsão vale a mais recente: a transportadora repactua prazo, e cobrar
-    # pela data velha é discutir com ela sobre um combinado que já mudou.
+    # A previsão que vale é a mais recente: a transportadora repactua prazo, e
+    # cobrar pela data velha é discutir sobre um combinado que já mudou.
     repactuadas = [e["nova_previsao"] for e in eventos if e.get("nova_previsao")]
     previsao = _dia(repactuadas[-1]) if repactuadas else _dia(pedido.get("data_prevista_entrega"))
 
     saida = (_dia(pedido.get("data_real_coleta")) or _dia(pedido.get("data_faturamento"))
              or _dia(pedido.get("criado_em")))
     ultima_noticia = _dia(ultimo["ocorrido_em"]) if ultimo else saida
-    sem_noticia = (_hoje() - ultima_noticia).days if ultima_noticia else None
+    sem_noticia = (hoje - ultima_noticia).days if ultima_noticia else None
 
     situacao = ultimo["situacao"] if ultimo else "SEM_LANCAMENTO"
-    meta = SITUACOES.get(situacao, {"rotulo": "Sem acompanhamento", "atencao": False, "fim": False})
+    meta = SITUACOES.get(situacao, {"rotulo": "Ninguém acompanhou ainda", "atencao": False})
 
-    atrasada = bool(previsao and not entrega and previsao < _hoje())
+    atrasada = bool(previsao and not entrega and previsao < hoje)
     calada = bool(not entrega and sem_noticia is not None and sem_noticia >= DIAS_SEM_NOTICIA)
     atencao = meta["atencao"] or atrasada or calada
 
     if comprovante:
-        aba = "encerradas"
+        grupo = "concluidas"
     elif entrega:
-        aba = "sem_comprovante"
-    elif atencao:
-        aba = "atencao"
+        grupo = "canhoto"
     else:
-        aba = "transito"
+        grupo = "aberto"
 
-    motivos = []
+    # Cada alerta carrega a regra e o número que a disparou: é o que a tela
+    # mostra quando alguém clica em "por quê?".
+    alertas = []
     if meta["atencao"]:
-        motivos.append(meta["rotulo"])
+        alertas.append({"texto": meta["rotulo"],
+                        "porque": "Foi o que a equipe lançou no último acompanhamento%s."
+                                  % (" — " + ultimo["descricao"] if ultimo and ultimo.get("descricao") else "")})
     if atrasada:
-        motivos.append("Passou da previsão (%s)" % previsao.strftime("%d/%m"))
+        alertas.append({"texto": "Passou da previsão (%s)" % _br(previsao),
+                        "porque": "A entrega estava prevista para %s e ainda não há lançamento de entrega. "
+                                  "Hoje é %s." % (_br(previsao), _br(hoje))})
     if calada:
-        motivos.append("Sem notícia há %d dias" % sem_noticia)
+        alertas.append({"texto": "Sem notícia há %d dias" % sem_noticia,
+                        "porque": "A última informação desta carga é de %s%s. A partir de %d dias "
+                                  "sem notícia a carga entra aqui, porque o silêncio da transportadora "
+                                  "é o que faz o atraso aparecer tarde."
+                                  % (_br(ultima_noticia),
+                                     " (saída da carga, nenhum acompanhamento lançado)" if not ultimo else "",
+                                     DIAS_SEM_NOTICIA)})
+
+    explicacao = {
+        "grupo": {
+            "aberto": "Saiu daqui e ainda não há lançamento de entrega.",
+            "canhoto": "Entrega lançada, mas o canhoto ainda não foi recebido.",
+            "concluidas": "Entregue e com canhoto em mãos — nada mais a cobrar.",
+        }[grupo],
+        "saida": "Saída em %s (%s)." % (
+            _br(saida),
+            "coleta registrada" if _dia(pedido.get("data_real_coleta")) else "data do faturamento"),
+        "previsao": ("Previsão %s, repactuada pela transportadora no acompanhamento."
+                     % _br(previsao)) if repactuadas else
+                    ("Previsão %s, do prazo da OV." % _br(previsao)) if previsao else
+                    "Esta OV não tem previsão de entrega preenchida.",
+        "situacao": ("Último acompanhamento: %s, em %s." % (meta["rotulo"], _br(ultima_noticia)))
+                    if ultimo else "Nenhum acompanhamento foi lançado nesta carga ainda.",
+    }
 
     return {
         "situacao": situacao,
         "situacao_rotulo": meta["rotulo"],
-        # separar "ninguem acompanhou ainda" de "a transportadora deu problema":
-        # as duas exigem acao, mas nao a mesma acao
         "sem_lancamento": not eventos,
-        "aba": aba,
+        "grupo": grupo,
         "atencao": atencao,
-        "motivos": motivos,
+        "alertas": alertas,
+        "explicacao": explicacao,
         "previsao": previsao.isoformat() if previsao else None,
         "previsao_repactuada": bool(repactuadas),
         "saida": saida.isoformat() if saida else None,
-        "dias_desde_saida": (_hoje() - saida).days if saida else None,
+        "dias_desde_saida": (hoje - saida).days if saida else None,
         "dias_sem_noticia": sem_noticia,
         "entregue_em": entrega["ocorrido_em"] if entrega else None,
         "recebedor": (entrega or {}).get("recebedor"),
-        "documento_recebedor": (entrega or {}).get("documento_recebedor"),
         "comprovante_em": comprovante["ocorrido_em"] if comprovante else None,
-        "ultimo_evento": ultimo,
         "eventos": eventos,
     }
 
 
-def _pedidos_em_rota(desde: Optional[date], ate: Optional[date]) -> list:
+def _pedidos_em_rota(desde: date) -> list:
     db = get_service_db()
     pedidos, offset = [], 0
     while True:
@@ -131,8 +161,7 @@ def _pedidos_em_rota(desde: Optional[date], ate: Optional[date]) -> list:
                  .select("id, numero_pedido, numero_nf, status, tipo_frete, local_entrega, "
                          "endereco_entrega, prioridade, valor_nf, valor_produtos, "
                          "data_faturamento, data_real_coleta, data_prevista_entrega, "
-                         "data_esperada_cliente, codigo_rastreio, criado_em, "
-                         "transportadoras(nome), clientes(nome)")
+                         "codigo_rastreio, criado_em, transportadoras(nome), clientes(nome)")
                  .in_("status", list(_EM_ROTA)).limit(1000).offset(offset).execute().data)
         pedidos += bloco
         if len(bloco) < 1000:
@@ -145,9 +174,7 @@ def _pedidos_em_rota(desde: Optional[date], ate: Optional[date]) -> list:
             continue
         quando = (_dia(p.get("data_real_coleta")) or _dia(p.get("data_faturamento"))
                   or _dia(p.get("criado_em")))
-        if desde and (not quando or quando < desde):
-            continue
-        if ate and quando and quando > ate:
+        if not quando or quando < desde:
             continue
         saida.append(p)
     return saida
@@ -163,10 +190,12 @@ def _eventos_de(ids: list) -> dict:
     return por_pedido
 
 
-def painel(desde: Optional[date] = None, ate: Optional[date] = None,
-           transportadora: Optional[str] = None) -> dict:
-    """Todas as cargas CIF em rota, já separadas pelo que cada uma exige."""
-    pedidos = _pedidos_em_rota(desde, ate)
+def painel(desde: Optional[date] = None, transportadora: Optional[str] = None) -> dict:
+    """As cargas CIF que saíram desde o corte, prontas para a tela."""
+    hoje = date.today()
+    desde = desde or corte_padrao(hoje)
+
+    pedidos = _pedidos_em_rota(desde)
     if transportadora:
         alvo = transportadora.strip().upper()
         pedidos = [p for p in pedidos
@@ -176,48 +205,56 @@ def painel(desde: Optional[date] = None, ate: Optional[date] = None,
 
     linhas = []
     for p in pedidos:
-        r = _resumir(p, eventos.get(p["id"], []))
+        r = _resumir(p, eventos.get(p["id"], []), hoje)
         linhas.append({
             "pedido_id": p["id"],
             "numero_pedido": p.get("numero_pedido"),
-            "numero_nf": p.get("numero_nf"),
-            "status": p.get("status"),
+            "numero_nf": (p.get("numero_nf") or "").lstrip("0") or None,
             "cliente": (p.get("clientes") or {}).get("nome"),
             "transportadora": (p.get("transportadoras") or {}).get("nome"),
             "destino": p.get("local_entrega"),
             "endereco": p.get("endereco_entrega"),
             "prioridade": p.get("prioridade"),
             "valor_nf": p.get("valor_nf") or p.get("valor_produtos"),
-            "data_esperada_cliente": p.get("data_esperada_cliente"),
             "codigo_rastreio": p.get("codigo_rastreio"),
             **r,
         })
 
-    # Quem precisa de ação primeiro: atrasada há mais tempo no topo.
-    ordem = {"atencao": 0, "transito": 1, "sem_comprovante": 2, "encerradas": 3}
-    linhas.sort(key=lambda l: (ordem.get(l["aba"], 9), -(l["dias_desde_saida"] or 0)))
+    # Quem precisa de ação primeiro: atenção no topo, mais antiga antes.
+    linhas.sort(key=lambda l: (0 if l["atencao"] else 1, -(l["dias_desde_saida"] or 0)))
 
-    contagem = {k: 0 for k in ordem}
+    contagem = {"aberto": 0, "canhoto": 0, "concluidas": 0, "atencao": 0}
     for l in linhas:
-        contagem[l["aba"]] = contagem.get(l["aba"], 0) + 1
+        contagem[l["grupo"]] += 1
+        contagem["atencao"] += 1 if l["atencao"] else 0
 
-    por_transportadora = {}
-    for l in linhas:
-        nome = l["transportadora"] or "Sem transportadora"
-        t = por_transportadora.setdefault(nome, {"total": 0, "atencao": 0, "em_aberto": 0})
-        t["total"] += 1
-        t["atencao"] += 1 if l["aba"] == "atencao" else 0
-        t["em_aberto"] += 0 if l["aba"] == "encerradas" else 1
+    transportadoras = sorted({l["transportadora"] for l in linhas if l["transportadora"]})
 
-    return {"linhas": linhas, "contagem": contagem,
-            "por_transportadora": por_transportadora,
-            "situacoes": [{"valor": k, **v} for k, v in SITUACOES.items()]}
+    return {
+        "desde": desde.isoformat(),
+        "hoje": hoje.isoformat(),
+        "linhas": linhas,
+        "contagem": contagem,
+        "transportadoras": transportadoras,
+        "situacoes": [{"valor": k, **v} for k, v in SITUACOES.items()],
+        "regras": {
+            "corte": "A tela mostra o que saiu daqui a partir de %s — a segunda-feira da semana "
+                     "passada. Cargas mais antigas ficam de fora: o controle começa agora."
+                     % _br(desde),
+            "cif": "Só frete CIF. No FOB quem contrata a transportadora é o cliente, e a entrega "
+                   "não é nossa para cobrar.",
+            "aberto": "Saiu daqui e ainda não há lançamento de entrega.",
+            "canhoto": "Entrega lançada, mas sem o canhoto — é a cobrança diária com a transportadora.",
+            "concluidas": "Entregue e com canhoto recebido.",
+            "atencao": "Carga que passou da previsão, que teve problema lançado, ou que está há %d "
+                       "dias ou mais sem nenhuma notícia." % DIAS_SEM_NOTICIA,
+        },
+    }
 
 
 def historico(pedido_id: str) -> list:
     db = get_service_db()
-    eventos = (db.table("rastreios")
-               .select("*, usuarios(nome)")
+    eventos = (db.table("rastreios").select("*, usuarios(nome)")
                .eq("pedido_id", str(pedido_id)).execute().data)
     return sorted(eventos, key=lambda e: str(e.get("ocorrido_em") or ""), reverse=True)
 
@@ -229,8 +266,7 @@ def lancar(pedido_id: str, dados: dict, usuario_id: Optional[str] = None) -> dic
         raise ValueError("Situação inválida: %s" % situacao)
 
     db = get_service_db()
-    pedido = db.table("pedidos").select("id, tipo_frete, status").eq(
-        "id", str(pedido_id)).execute().data
+    pedido = db.table("pedidos").select("id, tipo_frete").eq("id", str(pedido_id)).execute().data
     if not pedido:
         raise ValueError("OV não encontrada")
     if not (pedido[0].get("tipo_frete") or "").startswith("CIF"):
@@ -250,8 +286,7 @@ def lancar(pedido_id: str, dados: dict, usuario_id: Optional[str] = None) -> dic
     }
     criado = db.table("rastreios").insert(evento).execute().data
 
-    # A previsão repactuada vale para o resto do app (programação de coleta,
-    # cobrança do comercial), não só para esta tela.
+    # A previsão repactuada vale para o resto do app, não só para esta tela.
     if evento["nova_previsao"]:
         db.table("pedidos").update(
             {"data_prevista_entrega": evento["nova_previsao"]}).eq("id", str(pedido_id)).execute()
