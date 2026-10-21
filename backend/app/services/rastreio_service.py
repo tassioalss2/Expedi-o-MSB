@@ -228,6 +228,17 @@ def painel(desde: Optional[date] = None, transportadora: Optional[str] = None) -
         contagem[l["grupo"]] += 1
         contagem["atencao"] += 1 if l["atencao"] else 0
 
+    # Por transportadora, porque a cobranca e por transportadora: o portal da
+    # BRIX de manha, o grupo da RR durante o dia.
+    por_transportadora = {}
+    for l in linhas:
+        nome = l["transportadora"] or "Sem transportadora"
+        t = por_transportadora.setdefault(
+            nome, {"total": 0, "aberto": 0, "canhoto": 0, "concluidas": 0, "atencao": 0})
+        t["total"] += 1
+        t[l["grupo"]] += 1
+        t["atencao"] += 1 if l["atencao"] else 0
+
     transportadoras = sorted({l["transportadora"] for l in linhas if l["transportadora"]})
 
     return {
@@ -236,6 +247,7 @@ def painel(desde: Optional[date] = None, transportadora: Optional[str] = None) -
         "linhas": linhas,
         "contagem": contagem,
         "transportadoras": transportadoras,
+        "por_transportadora": por_transportadora,
         "situacoes": [{"valor": k, **v} for k, v in SITUACOES.items()],
         "regras": {
             "corte": "A tela mostra o que saiu daqui a partir de %s — a segunda-feira da semana "
