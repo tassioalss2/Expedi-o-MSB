@@ -65,6 +65,9 @@ type Painel = {
   regras: Record<string, string>
 }
 
+const GRADE =
+  'grid grid-cols-2 sm:grid-cols-[6rem_minmax(0,1fr)_7.5rem_5.5rem_7.5rem_9rem_4.5rem] gap-x-3'
+
 const GRUPOS = [
   { chave: 'aberto', rotulo: 'Em aberto' },
   { chave: 'canhoto', rotulo: 'Falta canhoto' },
@@ -245,14 +248,15 @@ export default function Rastreio() {
         <p className="mt-6 text-sm text-gray-500">Nada por aqui.</p>
       ) : (
         <div className="mt-3 border border-gray-200 rounded-xl bg-white overflow-hidden">
-          <div className="hidden sm:grid grid-cols-12 gap-3 px-3 py-2 bg-gray-50 border-b
-                          border-gray-200 text-[10px] uppercase tracking-wide text-gray-500">
-            <div className="col-span-2">NF · OV</div>
-            <div className="col-span-3">Cliente</div>
-            <div className="col-span-2">Destino</div>
-            <div className="col-span-2">Saída · previsão</div>
-            <div className="col-span-2">Situação</div>
-            <div className="col-span-1" />
+          <div className={`hidden sm:grid ${GRADE} px-3 py-2 bg-gray-50 border-b
+                          border-gray-200 text-[10px] uppercase tracking-wide text-gray-500`}>
+            <div>NF · OV</div>
+            <div>Cliente</div>
+            <div>Destino</div>
+            <div>Transp.</div>
+            <div>Saída · previsão</div>
+            <div>Situação</div>
+            <div />
           </div>
           <div className="divide-y divide-gray-100">
             {linhas.map((l) => (
@@ -327,8 +331,8 @@ function Carga({ linha: l, onLancar, onMudou }: {
 
   return (
     <div className={l.atencao ? 'bg-red-50/40' : ''}>
-      <div className="grid grid-cols-12 gap-3 px-3 py-2.5 items-start text-xs">
-        <div className="col-span-8 sm:col-span-2">
+      <div className={`${GRADE} px-3 py-2.5 items-start text-xs`}>
+        <div>
           <p className="font-semibold text-gray-900">
             {l.numero_nf ? `NF ${l.numero_nf}` : 'sem NF'}
             {l.prioridade === 'URGENTE' && (
@@ -340,20 +344,24 @@ function Carga({ linha: l, onLancar, onMudou }: {
           <p className="text-gray-400">{l.numero_pedido}</p>
         </div>
 
-        <div className="col-span-12 sm:col-span-3 order-last sm:order-none">
+        <div className="col-span-2 sm:col-span-1 order-last sm:order-none min-w-0">
           <p className="text-gray-800 truncate" title={l.cliente || ''}>{l.cliente || '—'}</p>
           <p className="text-gray-400 sm:hidden">{l.destino}</p>
         </div>
 
-        <div className="hidden sm:block sm:col-span-2 text-gray-600 truncate">{l.destino || '—'}</div>
+        <div className="hidden sm:block text-gray-600 truncate">{l.destino || '—'}</div>
 
-        <div className="col-span-6 sm:col-span-2 text-gray-600">
+        <div className="text-gray-600 truncate" title={l.transportadora || ''}>
+          {l.transportadora || '—'}
+        </div>
+
+        <div className="text-gray-600">
           <Porque texto={l.explicacao.saida}>{dia(l.saida)}</Porque>
           {' → '}
           <Porque texto={l.explicacao.previsao}>{dia(l.previsao)}</Porque>
         </div>
 
-        <div className="col-span-6 sm:col-span-2">
+        <div className="min-w-0">
           <Porque texto={l.explicacao.situacao}
             className={l.sem_lancamento ? 'text-gray-400' : 'text-gray-800'}>
             {l.sem_lancamento ? 'sem acompanhamento' : l.situacao_rotulo}
@@ -367,7 +375,7 @@ function Carga({ linha: l, onLancar, onMudou }: {
           )}
         </div>
 
-        <div className="col-span-4 sm:col-span-1 flex justify-end">
+        <div className="flex justify-end">
           <button
             onClick={onLancar}
             className="px-2 py-1.5 text-[11px] font-medium rounded-lg bg-gray-900 text-white
