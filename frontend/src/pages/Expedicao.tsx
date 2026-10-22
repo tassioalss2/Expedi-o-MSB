@@ -301,6 +301,17 @@ function EntradaOV({ pedido, onClick, onPedirTransportadora, onCotarFrete, falta
         </span>
       )}
 
+      {/* Parada esperando o cliente: fica no quadro, mas ninguem perde tempo
+          tentando tocar nela. */}
+      {(pedido as any).espera_tipo === 'CLIENTE' && (
+        <span className="flex-shrink-0 rounded border border-violet-300 bg-violet-50 px-1
+                         text-[10px] leading-4 text-violet-800"
+          title={`Parada aguardando o cliente${(pedido as any).espera_motivo
+            ? ': ' + (pedido as any).espera_motivo : ''}`}>
+          ⏸ cliente
+        </span>
+      )}
+
       {semEncerrar >= 3 && (
         <span className="flex-shrink-0 rounded border border-orange-300 bg-orange-50 px-1 text-[10px] leading-4 text-orange-800"
           title={`Faturada há ${semEncerrar} dias e ainda não marcada como expedida. Se já saiu, encerre — enquanto não encerra, ela não entra no OTIF.`}>
@@ -564,11 +575,14 @@ function KanbanView({ pedidos, onClickPedido, onPedirTransportadora, onCotarFret
 
   const hoje = hojeLocal()
 
-  // Venda parada por decisao do cliente nao entra no quadro. O kanban e a fila
-  // do que da para tocar HOJE; um card que ninguem pode mexer so ocupa espaco e
-  // ainda estraga o valor por etapa. Ela continua viva nas Pendencias, com o
-  // motivo a vista, e volta sozinha ao quadro quando for retomada.
-  const noQuadro = pedidos.filter((p) => !p.espera_tipo)
+  // Só a espera por MATERIAL sai do quadro: essa venda virou pendencia, tem
+  // lugar proprio e volta sozinha quando o estoque chegar.
+  //
+  // Espera por decisao do CLIENTE continua aqui, marcada. Ela saia junto e o
+  // Tassio nao achou mais a OV017165 (22/10): avisar que o cliente ainda nao
+  // autorizou nao e o mesmo que tirar a venda da esteira — alguem precisa
+  // enxergar que ela esta parada para poder cobrar a autorizacao.
+  const noQuadro = pedidos.filter((p) => p.espera_tipo !== 'MATERIAL')
 
   const agrupado = ORDEM_KANBAN.reduce<Record<string, Pedido[]>>((acc, status) => {
     let lista = noQuadro.filter((p) => p.status === status)
