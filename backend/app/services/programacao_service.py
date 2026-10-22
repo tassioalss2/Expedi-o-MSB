@@ -86,6 +86,32 @@ def _br_data_hora(iso) -> str:
         return _br_data(iso)
 
 
+_RE_AGENDA = __import__("re").compile(
+    r"agend(a|ar|ada|ado|amento|e|ando)", __import__("re").IGNORECASE)
+_RE_NAO_AGENDA = __import__("re").compile(
+    r"(sem|nao|não|dispensa|desnecessari|desnecessári)[^.;]{0,40}agend",
+    __import__("re").IGNORECASE)
+
+
+def pede_agendamento(texto) -> bool:
+    """O cliente exige agendar a entrega, ou só informou como entregar?
+
+    Ter instruções de entrega não é agendamento: a maioria dos hospitais manda
+    endereço, portão, horário de recebimento e telefone, e a carga chega sem
+    marcar nada. Só é agendamento quando o próprio texto pede — "precisa ser
+    agendada", "com agendamento prévio", o link de agendamento da EBSERH.
+
+    Marcar tudo como "A AGENDAR" fazia a transportadora ligar para cliente que
+    não pede ligação, e enchia a coluna de ruído até ninguém mais olhar para
+    ela (apontado pelo Tássio em 22/10/2026).
+    """
+    t = str(texto or "")
+    if not t.strip() or not _RE_AGENDA.search(t):
+        return False
+    # "sem necessidade de agendamento" fala de agendamento para dizer que não há.
+    return not _RE_NAO_AGENDA.search(t)
+
+
 def listar(dia: date, transportadora: str = "BRIX") -> list:
     """As cargas que saem: faturadas no dia, ou já faturadas e esperando coleta.
 
@@ -160,7 +186,8 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             # Três estados, não dois: marcado, a marcar pela transportadora
             # (temos as instruções) e sem agendamento nenhum.
             "agendamento": (_br_data_hora(p.get("coleta_agendada_em"))
-                            or ("A AGENDAR" if p.get("coleta_agendada_obs") else "NÃO")),
+                            or ("A AGENDAR" if pede_agendamento(p.get("coleta_agendada_obs"))
+                                else "NÃO")),
             "prazo": _br_data(p.get("data_prevista_entrega")),
             "volume": volume,
             "valor_nf": float(p.get("valor_nf") or 0),
