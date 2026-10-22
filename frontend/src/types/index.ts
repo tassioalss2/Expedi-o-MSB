@@ -241,6 +241,7 @@ export interface Indicadores {
   dias_sem?: {
     nf_rejeitada: ContadorDiasSem
     expedicao: ContadorDiasSem
+    coleta?: ContadorDiasSem | null
   }
   otif_base?: number
   otif_desde?: string

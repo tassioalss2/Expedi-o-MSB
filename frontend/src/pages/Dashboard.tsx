@@ -426,9 +426,12 @@ export function Dashboard() {
       {/* Placar de dias sem falha. Fica antes dos indicadores do mês porque é
           cumulativo: só cresce com dia bem feito e zera na hora do erro. */}
       {indicadores?.dias_sem && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <DiasSem titulo="Dias sem nota rejeitada" dados={indicadores.dias_sem.nf_rejeitada} />
           <DiasSem titulo="Dias sem problema na expedição" dados={indicadores.dias_sem.expedicao} />
+          {indicadores.dias_sem.coleta && (
+            <DiasSem titulo="Dias sem falha de coleta" dados={indicadores.dias_sem.coleta} />
+          )}
         </div>
       )}
 

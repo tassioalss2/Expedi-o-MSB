@@ -3805,9 +3805,19 @@ def dias_sem_falhas() -> dict:
     hoje = _hoje_brt()
     ocorrencias = _tudo_paginado(
         lambda: db.table("ocorrencias").select("tipo, descricao, criado_em"))
+    # A coleta não vira ocorrência: ela é inferida das coletas já registradas —
+    # registrar a coleta de uma carga já diz que o carro esteve aqui.
+    from app.services import coleta_service
+    try:
+        coleta = coleta_service.dias_sem_falha()
+    except Exception as exc:
+        print("contador de coleta indisponivel: %s" % str(exc)[:140])
+        coleta = None
+
     return {
         "nf_rejeitada": _dias_sem(ocorrencias, TIPOS_NF_REJEITADA, hoje),
         "expedicao": _dias_sem(ocorrencias, TIPOS_PROBLEMA_EXPEDICAO, hoje),
+        "coleta": coleta,
     }
 
 def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) -> list:

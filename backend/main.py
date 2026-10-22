@@ -20,6 +20,7 @@ from app.api.d365 import router as d365_router
 from app.api.devolucoes import router as devolucoes_router
 from app.api.notas_d365 import router as notas_d365_router
 from app.api.rastreio import router as rastreio_router
+from app.api.coletas import router as coletas_router
 
 app = FastAPI(
     title="ACE-MSB — Aplicativo de Controle de Expedição",
@@ -95,6 +96,7 @@ app.include_router(d365_router, prefix="/api/v1")
 app.include_router(devolucoes_router, prefix="/api/v1")
 app.include_router(notas_d365_router, prefix="/api/v1")
 app.include_router(rastreio_router, prefix="/api/v1")
+app.include_router(coletas_router, prefix="/api/v1")
 
 
 @app.on_event("startup")

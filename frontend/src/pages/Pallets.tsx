@@ -23,6 +23,21 @@ function calcDias(dt?: string): number {
   }
 }
 
+type Passagens = {
+  hoje: string
+  transportadoras: Record<string, {
+    passou_hoje: boolean
+    aguardando_agora: number
+    aguardando_desde: string | null
+    falhas: number
+    dias: Array<{
+      dia: string; passou: boolean; primeira: string | null; ultima: string | null
+      coletadas: number; entraram_depois: number; esperando: number
+      falha: boolean; hoje: boolean
+    }>
+  }>
+}
+
 export function Pallets() {
   const navigate = useNavigate()
   const qc = useQueryClient()
@@ -30,6 +45,14 @@ export function Pallets() {
   const [ovInput, setOvInput] = useState('')
   const [modoColeta, setModoColeta] = useState<string | null>(null) // pallet_id em modo coleta
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set())
+
+  // Quem passou aqui nos últimos dias. Sai das coletas que o operador já
+  // registra: registrar a coleta de uma carga é dizer que o carro esteve aqui.
+  const { data: passagens } = useQuery<Passagens>({
+    queryKey: ['coletas-passagens'],
+    queryFn: async () => (await api.get('/coletas/passagens', { params: { dias: 10 } })).data,
+    refetchInterval: 5 * 60 * 1000,
+  })
 
   const { data, isLoading } = useQuery({
     queryKey: ['pallets'],
@@ -147,6 +170,52 @@ export function Pallets() {
           </button>
         </div>
       </div>
+
+      {/* Passagem das transportadoras com coleta diária combinada. Carga que
+          entra depois do carro não é falha delas — é carga que não estava
+          pronta na hora. */}
+      {passagens && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {Object.entries(passagens.transportadoras).map(([nome, t]) => (
+            <div key={nome} className="bg-white border border-gray-200 rounded-xl px-4 py-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="font-semibold text-gray-800">{nome}</p>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                  t.passou_hoje ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                  {t.passou_hoje ? 'passou hoje' : 'ainda não passou hoje'}
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {t.aguardando_agora > 0
+                  ? `${t.aguardando_agora} carga(s) no pallet${t.aguardando_desde
+                    ? ', a mais antiga de ' + t.aguardando_desde.split('-').reverse().slice(0, 2).join('/')
+                    : ''}`
+                  : 'nada esperando'}
+              </p>
+              <div className="mt-2 flex gap-1">
+                {[...t.dias].reverse().map((d) => (
+                  <span key={d.dia}
+                    title={`${d.dia.split('-').reverse().join('/')} — ${
+                      d.passou ? `passou ${d.primeira}${d.ultima !== d.primeira ? '–' + d.ultima : ''}, ${d.coletadas} carga(s)`
+                        : d.falha ? `não passou, ${d.esperando} carga(s) esperando`
+                          : 'não passou, nada esperando'}${
+                      d.entraram_depois ? ` · ${d.entraram_depois} entrou depois do carro` : ''}`}
+                    className={`h-6 flex-1 rounded ${
+                      d.falha ? 'bg-red-400'
+                        : d.passou ? 'bg-emerald-400'
+                          : d.hoje ? 'bg-gray-200' : 'bg-gray-100'}`} />
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">
+                últimos dias úteis · {t.falhas === 0
+                  ? 'sem falha de coleta'
+                  : `${t.falhas} dia(s) sem passar tendo carga`}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {todos.map((pallet: any) => {
