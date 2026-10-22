@@ -542,6 +542,8 @@ def conciliacao(ini: str, fim: str) -> dict:
             app[k] = p
     d365 = {n["chave_numero"]: n for n in notas}
 
+    comunicado = [n for n in vivas if n.get("tipo_operacao") == "COMUNICADO_USO"]
+
     so_d365, so_app, divergentes = [], [], []
     for k, n in d365.items():
         if k in app:
@@ -601,6 +603,25 @@ def conciliacao(ini: str, fim: str) -> dict:
                 "valor": round(valor_da_nota(n), 2),
                 "no_app": n["chave_numero"] in app_transfer,
             } for n in notas_transfer], key=lambda x: -x["valor"]),
+        },
+        # Comunicado de uso tem dona: quem emite essas notas no D365 quer
+        # conferir, quando o relatorio sobe, o que foi lancado em nome dela.
+        # Elas ja estao somadas no faturamento acima — isto aqui e a lista,
+        # nao um bloco a parte da conta.
+        "comunicado_uso": {
+            "qtd": len(comunicado),
+            "valor": round(sum(valor_da_nota(n) for n in comunicado), 2),
+            "notas": sorted([{
+                "id": n.get("id"), "nf": n["numero"], "data": n.get("data_documento"),
+                "cliente": n.get("cliente_nome"), "cliente_conta": n.get("cliente_conta"),
+                "valor": round(valor_da_nota(n), 2),
+                "operacao": n.get("operacao"),
+                "origem_venda": n.get("origem_venda"),
+                "linha": n.get("linha"), "linha_ajustada": n.get("linha_ajustada"),
+                "ov": (app.get(n["chave_numero"]) or app_transfer.get(n["chave_numero"]) or {})
+                      .get("numero_pedido"),
+            } for n in comunicado], key=lambda x: (str(x["data"] or ""), x["nf"])),
+            "por_cliente": _agrupar(comunicado, lambda n: n.get("cliente_nome") or "(sem cliente)"),
         },
         "por_tipo": _agrupar_por_tipo(notas),
         # Operação que o app ainda não sabe traduzir. Fica FORA do faturamento

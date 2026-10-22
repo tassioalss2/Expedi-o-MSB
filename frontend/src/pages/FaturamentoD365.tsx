@@ -63,6 +63,13 @@ type Conciliacao = {
     notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
                    valor: number; no_app: boolean }>
   }
+  comunicado_uso: {
+    qtd: number; valor: number
+    notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
+                   cliente_conta: string | null; valor: number; operacao: string | null
+                   origem_venda: string | null; linha: string | null; ov: string | null }>
+    por_cliente: Array<{ chave: string; qtd: number; valor: number }>
+  }
   linha_sem_ov: Array<{ chave: string; qtd: number; valor: number }>
 }
 
@@ -351,6 +358,44 @@ export default function FaturamentoD365() {
             </div>
           )}
 
+          {/* Quem emite comunicado de uso no D365 nao tem onde conferir o que
+              lancou: a nota nasce fora do app. Aqui ela ve, a cada relatorio
+              importado, exatamente o que saiu em nome dela. Ja esta somado no
+              faturamento acima — isto e a lista, nao outro bloco da conta. */}
+          <Secao
+            titulo="Comunicado de uso"
+            explicacao={`Notas de consignação emitidas no D365 no período${
+              data?.comunicado_uso?.por_cliente?.length
+                ? ' — ' + data.comunicado_uso.por_cliente
+                  .map(c => `${c.chave}: ${c.qtd}`).join(' · ')
+                : ''}. Já estão somadas no faturamento acima.`}
+            vazio="Nenhum comunicado de uso no período."
+            linhas={data?.comunicado_uso?.notas || []}
+            cor="violet"
+            render={(n: any) => (
+              <>
+                <td className="py-1.5 px-3 font-mono text-gray-800">{n.nf}</td>
+                <td className="py-1.5 px-2 text-gray-500 whitespace-nowrap">{dataBR(n.data)}</td>
+                <td className="py-1.5 px-2 text-gray-700 truncate max-w-[280px]" title={n.cliente || ''}>
+                  {n.cliente}
+                </td>
+                <td className="py-1.5 px-2 text-[11px] text-gray-500">
+                  {n.linha || 'sem linha'}
+                  {n.origem_venda === 'LICITACAO' && (
+                    <span className="ml-1 px-1 py-0.5 rounded bg-violet-100 text-violet-700">
+                      licitação
+                    </span>
+                  )}
+                </td>
+                <td className="py-1.5 px-2 text-[11px] text-gray-500 whitespace-nowrap">
+                  {n.ov || <span className="text-gray-400">sem OV no app</span>}
+                </td>
+                <td className="py-1.5 px-3 text-right tabular-nums font-medium text-gray-800">
+                  {fmtBRL(n.valor)}
+                </td>
+              </>
+            )} />
+
           <Secao
             titulo="No D365, fora do app"
             explicacao="Nota que a MSB emitiu e que a nossa operação não registrou. É o comunicado
@@ -462,6 +507,7 @@ const CORES: Record<string, string> = {
   amber: 'border-amber-200 bg-amber-50',
   rose: 'border-rose-200 bg-rose-50',
   indigo: 'border-indigo-200 bg-indigo-50',
+  violet: 'border-violet-200 bg-violet-50',
 }
 
 function Secao({ titulo, explicacao, vazio, linhas, cor, render }: {
