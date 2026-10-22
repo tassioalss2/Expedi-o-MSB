@@ -95,17 +95,16 @@ def volume_m3(descricao: Optional[str]) -> float:
 
 
 def somar_dias_uteis(inicio, dias: int):
-    """A data que cai N dias úteis depois da coleta, contando o dia da coleta.
+    """A data que cai N dias úteis DEPOIS da coleta.
 
-    A BRIX conta o prazo a partir da coleta (confirmado em 20/10/2026), então
-    um prazo de 3 dias úteis coletado numa segunda vence na quarta. Sem
-    feriados: a tabela promete dia útil, e feriado regional não está nela.
+    O prazo conta da coleta, mas o dia da coleta não é o primeiro dia de
+    viagem: a carga sai e o relógio começa no dia seguinte (confirmado pelo
+    Tássio em 22/10/2026). Coletada numa quinta, com 3 dias úteis, chega na
+    terça — sexta, segunda, terça. Sem feriados: a tabela promete dia útil, e
+    feriado regional não está nela.
     """
     from datetime import timedelta
     d, restantes = inicio, max(int(dias or 0), 1)
-    # O próprio dia da coleta conta como o primeiro, se for útil.
-    if d.weekday() < 5:
-        restantes -= 1
     while restantes > 0:
         d += timedelta(days=1)
         if d.weekday() < 5:

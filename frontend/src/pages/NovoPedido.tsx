@@ -487,7 +487,7 @@ export function NovoPedido() {
               <p className="text-[11px] text-emerald-700 mt-1">
                 Prazo da tabela {prazo.transportadora}: <strong>{prazo.dias_uteis} dia(s)
                 útil(eis)</strong> para {prazo.destino}
-                {prazo.por_capital && ' (via capital, com redespacho)'} — contado da coleta.
+                {prazo.por_capital && ' (via capital, com redespacho)'} — contados a partir do dia seguinte à coleta.
                 Dá para mudar se o cliente combinou outra data.
               </p>
             )}
