@@ -495,6 +495,34 @@ def ajustar_linha(nota_id: str, linha: Optional[str]) -> dict:
 
 # ── Conciliação ───────────────────────────────────────────────────────────────
 
+def _ultima_importacao(db) -> Optional[dict]:
+    """A última subida do export: quando, qual arquivo, quem e quantas notas.
+
+    A importação substitui o espelho inteiro, então todas as notas carregam o
+    mesmo carimbo — basta ler o mais recente e contar quantas vieram com ele.
+    """
+    recente = (db.table("notas_d365").select("importado_em, importado_por, arquivo")
+               .order("importado_em", desc=True).limit(1).execute().data)
+    if not recente:
+        return None
+    r = recente[0]
+    quando = r.get("importado_em")
+    if not quando:
+        return None
+    nome = None
+    if r.get("importado_por"):
+        u = db.table("usuarios").select("nome").eq("id", r["importado_por"]).execute().data
+        nome = (u[0].get("nome") if u else None)
+    # Conta pelo ARQUIVO, não pelo carimbo: cada linha grava o seu próprio
+    # importado_em e eles diferem nos microssegundos — comparar o timestamp
+    # exato contava 133 de 333 notas da mesma subida.
+    da_leva = [n for n in _pagina(db, "notas_d365", "arquivo")
+               if n.get("arquivo") == r.get("arquivo")]
+    return {"quando": quando, "arquivo": r.get("arquivo"), "por": nome,
+            "notas": len(da_leva)}
+
+
+
 def conciliacao(ini: str, fim: str) -> dict:
     """As duas pontas lado a lado no período: o que o D365 emitiu e o que o app
     registrou.
@@ -593,6 +621,9 @@ def conciliacao(ini: str, fim: str) -> dict:
     total_app = round(sum(valor_da_ov(p) for p in app.values()), 2)
     return {
         "periodo": {"ini": ini, "fim": fim},
+        # Quando o espelho foi atualizado pela última vez. Sem isto a tela não
+        # distingue "o D365 e o app batem" de "o arquivo é de três dias atrás".
+        "ultima_importacao": _ultima_importacao(db),
         "d365": {"qtd": len(d365), "valor": total_d365},
         "app": {"qtd": len(app), "valor": total_app},
         "diferenca": round(total_d365 - total_app, 2),

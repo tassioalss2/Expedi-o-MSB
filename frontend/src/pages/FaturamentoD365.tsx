@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Upload, FileSpreadsheet, CheckCircle2, ArrowRight } from 'lucide-react'
+import { Upload, FileSpreadsheet, CheckCircle2, ArrowRight, Clock } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -64,6 +64,9 @@ type Conciliacao = {
     notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
                    valor: number; no_app: boolean }>
   }
+  ultima_importacao: {
+    quando: string; arquivo: string | null; por: string | null; notas: number
+  } | null
   devolucoes: {
     qtd: number; valor: number; liquido: number
     simbolicas_qtd: number; simbolicas_valor: number
@@ -171,6 +174,26 @@ export default function FaturamentoD365() {
             mas não passou pela nossa operação — comunicado de uso da licitação, por exemplo —
             aparece aqui como diferença, e é essa a conta que vale.
           </p>
+          {/* Sem a data da subida, a tela não distingue "as duas pontas batem"
+              de "o arquivo é de três dias atrás". */}
+          {data?.ultima_importacao && (
+            <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
+              <Clock size={12} />
+              Atualizado em {new Date(data.ultima_importacao.quando).toLocaleString('pt-BR', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit',
+              })}
+              {data.ultima_importacao.por ? ` por ${data.ultima_importacao.por}` : ''}
+              {' · '}{data.ultima_importacao.notas} nota(s)
+              {data.ultima_importacao.arquivo && (
+                <span className="text-gray-300" title={data.ultima_importacao.arquivo}>
+                  · {data.ultima_importacao.arquivo.length > 34
+                    ? data.ultima_importacao.arquivo.slice(0, 31) + '…'
+                    : data.ultima_importacao.arquivo}
+                </span>
+              )}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <input type="month" value={competencia} onChange={e => setCompetencia(e.target.value)}
