@@ -772,5 +772,6 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
             "id": n.get("id"), "nf": n.get("numero"), "data": n.get("data_documento"),
             "cliente": n.get("cliente_nome"), "valor": round(valor_da_nota(n), 2),
             "tipo_operacao": n.get("tipo_operacao"), "linha": n.get("linha"),
+            "origem_venda": n.get("origem_venda"),
         } for n in orfas], key=lambda x: -x["valor"]),
     }

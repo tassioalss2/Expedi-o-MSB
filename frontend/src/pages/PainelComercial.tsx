@@ -982,10 +982,20 @@ export function PainelComercial() {
                     <tbody className="divide-y divide-gray-100">
                       {linhas.map((r) => (
                         <tr key={r.id}
-                          onClick={() => { setDetalheFin(null); navigate(`/expedicao/${r.id}`) }}
-                          className="hover:bg-gray-50 cursor-pointer">
+                          onClick={() => {
+                            // Nota do D365 não tem OV para abrir: ela nasceu fora do app.
+                            if (r.origem === 'D365') return
+                            setDetalheFin(null); navigate(`/expedicao/${r.id}`)
+                          }}
+                          className={`hover:bg-gray-50 ${r.origem === 'D365' ? '' : 'cursor-pointer'}`}>
                           <td className="px-4 py-2.5 font-mono font-semibold text-indigo-700">
-                            {r.numero_pedido}
+                            {r.origem === 'D365' ? (
+                              <span className="font-sans text-[10px] font-medium text-gray-500 bg-gray-100
+                                               rounded px-1.5 py-0.5"
+                                title="Nota emitida direto no D365, sem OV no app — comunicado de uso e afins">
+                                sem OV · D365
+                              </span>
+                            ) : r.numero_pedido}
                             {r._parcial && (
                               <span className="ml-1.5 font-sans text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1 py-0.5"
                                 title="Esta NF tem itens de mais de uma linha — aqui aparece só a parte desta linha">

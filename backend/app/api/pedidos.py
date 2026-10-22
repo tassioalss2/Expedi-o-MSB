@@ -1070,11 +1070,8 @@ def dashboard_financeiro_detalhe(
     fim = data_fim or hoje
 
     faturados = _faturados_no_periodo(inicio, fim)
-    if not faturados:
-        return []
-
     ids = list(faturados.keys())
-    pedidos = db.table("pedidos").select(_campos_pedido(
+    pedidos = [] if not ids else db.table("pedidos").select(_campos_pedido(
         db, "id, numero_pedido, numero_nf, valor_nf, valor_produtos, valor_frete, "
             "tipo_frete, tipo_operacao, canal, status, clientes(nome)")
     ).in_("id", ids).neq("status", "CANCELADO").execute().data
@@ -1082,7 +1079,7 @@ def dashboard_financeiro_detalhe(
     # A LINHA de cada NF sai dos itens, igual ao card por linha. Sem isso o
     # drill-down (que filtra no front) não fecharia com o total do card.
     from app.services import linha_produto
-    itens_por_pedido, produtos, mapa_linha = _contexto_linha(db, ids)
+    itens_por_pedido, produtos, mapa_linha = ({}, {}, {}) if not ids else _contexto_linha(db, ids)
 
     linhas = []
     for p in pedidos:
@@ -1114,6 +1111,42 @@ def dashboard_financeiro_detalhe(
             "linhas": linha_produto.ratear_por_linha(
                 round(bruto - frete_na_nf, 2), itens_por_pedido.get(p["id"]) or [],
                 produtos, mapa_linha, p.get("canal")),
+        })
+
+    # O card financeiro soma o complemento do D365 — a nota que não passou pelo
+    # app, como o comunicado de uso que a Bio emite direto no sistema. Sem ela
+    # aqui, o drill-down de um dia em que só houve comunicado de uso abre vazio
+    # embaixo de um total que não é zero.
+    try:
+        from app.services import notas_d365_service
+        complemento = notas_d365_service.complemento_do_periodo(
+            inicio.isoformat(), fim.isoformat()).get("notas") or []
+    except Exception as exc:                       # espelho é opcional
+        print("complemento do D365 indisponivel no detalhe: %s" % str(exc)[:140])
+        complemento = []
+
+    for n in complemento:
+        valor = round(float(n.get("valor") or 0), 2)
+        linhas.append({
+            "id": "d365:%s" % n.get("id"),
+            "numero_pedido": None,
+            "numero_nf": n.get("nf"),
+            "cliente": n.get("cliente") or "—",
+            "tipo_frete": None,
+            "tipo_operacao": n.get("tipo_operacao") or "VENDA_NORMAL",
+            "canal": None,
+            "forma_venda": None,
+            "eh_licitacao": (n.get("origem_venda") or "") == "LICITACAO",
+            "eh_faturamento": True,      # o complemento já é só receita de venda
+            "eh_devolucao": False,
+            "valor_nf": valor,
+            "valor_frete": 0.0,
+            "valor_sem_frete": valor,
+            "eh_biomedical": False,      # transfer price fica fora do complemento
+            "data": str(n.get("data") or "")[:10],
+            "linhas": {n["linha"]: valor} if n.get("linha") else {},
+            # A tela mostra de onde veio: não há OV para abrir.
+            "origem": "D365",
         })
 
     return sorted(linhas, key=lambda x: (x["data"] or "", x["numero_pedido"] or ""))
