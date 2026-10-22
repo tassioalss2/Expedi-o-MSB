@@ -176,9 +176,14 @@ MAPA_OPERACAO = (
     ("doacao",                        ("BONIFICACAO_DOACAO", None)),
     ("brinde",                        ("BONIFICACAO_DOACAO", None)),
     ("comodato",                      ("COMODATO",           None)),
+    # Devolucao SIMBOLICA nao e venda desfeita: e o acerto fiscal do material
+    # que estava em consignacao e foi usado — anda junto com o comunicado de
+    # uso, nos mesmos clientes. Somada as devolucoes de verdade, ela inflava o
+    # estorno de outubro de R$ 20.033,60 para R$ 32.379,71. Vem antes das
+    # outras para nao ser capturada por elas.
+    ("dev simb",                      ("DEVOLUCAO_SIMBOLICA", None)),
     ("devolucao",                     ("DEVOLUCAO",      None)),
     ("dev venda",                     ("DEVOLUCAO",      None)),
-    ("dev simb",                      ("DEVOLUCAO",      None)),
     ("remessa",                       ("REMESSA",        None)),
     ("ret merc",                      ("RETORNO",        None)),
     ("compra",                        ("COMPRA",         None)),
@@ -543,6 +548,11 @@ def conciliacao(ini: str, fim: str) -> dict:
     d365 = {n["chave_numero"]: n for n in notas}
 
     comunicado = [n for n in vivas if n.get("tipo_operacao") == "COMUNICADO_USO"]
+    # As devolucoes sao notas de ENTRADA: nao passam por _vale_como_faturamento,
+    # que so olha a saida aprovada.
+    aprovadas = [n for n in notas_periodo if _aprovada(n)]
+    devolucoes = [n for n in aprovadas if n.get("tipo_operacao") == "DEVOLUCAO"]
+    simbolicas = [n for n in aprovadas if n.get("tipo_operacao") == "DEVOLUCAO_SIMBOLICA"]
 
     so_d365, so_app, divergentes = [], [], []
     for k, n in d365.items():
@@ -603,6 +613,23 @@ def conciliacao(ini: str, fim: str) -> dict:
                 "valor": round(valor_da_nota(n), 2),
                 "no_app": n["chave_numero"] in app_transfer,
             } for n in notas_transfer], key=lambda x: -x["valor"]),
+        },
+        # Devolucao e venda desfeita: o faturamento bruto continua sendo o que
+        # saiu, e o liquido e o que ficou. Os dois aparecem, porque a meta olha
+        # um e o caixa olha o outro.
+        "devolucoes": {
+            "qtd": len(devolucoes),
+            "valor": round(sum(valor_da_nota(n) for n in devolucoes), 2),
+            "liquido": round(total_d365 - sum(valor_da_nota(n) for n in devolucoes), 2),
+            "notas": sorted([{
+                "id": n.get("id"), "nf": n["numero"], "data": n.get("data_documento"),
+                "cliente": n.get("cliente_nome"),
+                "valor": round(valor_da_nota(n), 2),
+                "operacao": n.get("operacao"),
+                "ov": (app.get(n["chave_numero"]) or {}).get("numero_pedido"),
+            } for n in devolucoes], key=lambda x: (str(x["data"] or ""), x["nf"])),
+            "simbolicas_qtd": len(simbolicas),
+            "simbolicas_valor": round(sum(valor_da_nota(n) for n in simbolicas), 2),
         },
         # Comunicado de uso tem dona: quem emite essas notas no D365 quer
         # conferir, quando o relatorio sobe, o que foi lancado em nome dela.

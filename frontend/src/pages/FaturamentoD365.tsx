@@ -26,6 +26,7 @@ const TIPO_LABEL: Record<string, string> = {
   COMUNICADO_USO: 'Comunicado de uso',
   EXPORTACAO: 'Exportação',
   DEVOLUCAO: 'Devolução',
+  DEVOLUCAO_SIMBOLICA: 'Devolução simbólica',
   REMESSA: 'Remessa',
   BONIFICACAO: 'Bonificação',
   AMOSTRA: 'Amostra',
@@ -62,6 +63,12 @@ type Conciliacao = {
     d365_qtd: number; d365_valor: number; app_qtd: number; app_valor: number
     notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
                    valor: number; no_app: boolean }>
+  }
+  devolucoes: {
+    qtd: number; valor: number; liquido: number
+    simbolicas_qtd: number; simbolicas_valor: number
+    notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
+                   valor: number; operacao: string | null; ov: string | null }>
   }
   comunicado_uso: {
     qtd: number; valor: number
@@ -218,7 +225,10 @@ export default function FaturamentoD365() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Cartao rotulo="Faturado no D365" valor={fmtBRL(data?.d365.valor)}
-              detalhe={`${data?.d365.qtd} nota(s) de saída`} cor="text-gray-900" />
+              detalhe={data?.devolucoes?.qtd
+                ? `${data?.d365.qtd} nota(s) · líquido de devoluções ${fmtBRL(data.devolucoes.liquido)}`
+                : `${data?.d365.qtd} nota(s) de saída`}
+              cor="text-gray-900" />
             <Cartao rotulo="Registrado no app" valor={fmtBRL(data?.app.valor)}
               detalhe={`${data?.app.qtd} OV(s) faturada(s) · ${data?.casam} casam`}
               cor="text-gray-700" />
@@ -357,6 +367,39 @@ export default function FaturamentoD365() {
               </div>
             </div>
           )}
+
+          {/* Devolucao e venda desfeita, e entra por outra porta: nota de
+              ENTRADA, que nao aparece em nenhum dos blocos de saida. A
+              simbolica fica FORA — e o acerto do material consignado que foi
+              usado, nao venda que voltou. */}
+          <Secao
+            titulo="Devoluções de venda"
+            explicacao={`Notas de entrada por devolução no período. O faturamento bruto acima não as desconta: o líquido é ${
+              fmtBRL(data?.devolucoes?.liquido)}.${
+              data?.devolucoes?.simbolicas_qtd
+                ? ` Fora desta conta, ${data.devolucoes.simbolicas_qtd} devolução(ões) simbólica(s) (${
+                  fmtBRL(data.devolucoes.simbolicas_valor)}): acerto do material em consignação que foi usado, não venda desfeita.`
+                : ''}`}
+            vazio="Nenhuma devolução de venda no período."
+            linhas={data?.devolucoes?.notas || []}
+            cor="rose"
+            render={(n: any) => (
+              <>
+                <td className="py-1.5 px-3 font-mono text-gray-800">{n.nf}</td>
+                <td className="py-1.5 px-2 text-gray-500 whitespace-nowrap">{dataBR(n.data)}</td>
+                <td className="py-1.5 px-2 text-gray-700 truncate max-w-[280px]" title={n.cliente || ''}>
+                  {n.cliente}
+                </td>
+                <td className="py-1.5 px-2 text-[11px] text-gray-500 truncate max-w-[240px]"
+                  title={n.operacao || ''}>{n.operacao}</td>
+                <td className="py-1.5 px-2 text-[11px] text-gray-500 whitespace-nowrap">
+                  {n.ov || <span className="text-gray-400">sem OV no app</span>}
+                </td>
+                <td className="py-1.5 px-3 text-right tabular-nums font-medium text-rose-700">
+                  −{fmtBRL(n.valor)}
+                </td>
+              </>
+            )} />
 
           {/* Quem emite comunicado de uso no D365 nao tem onde conferir o que
               lancou: a nota nasce fora do app. Aqui ela ve, a cada relatorio
