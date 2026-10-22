@@ -3709,11 +3709,91 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         "taxa_divergencia": taxa_div if taxa_div is not None else 0,
         "taxa_retrabalho": taxa_retrab if taxa_retrab is not None else 0,
         "lead_time_medio_horas": lead_time,
+        # Contadores de placar: valem contra HOJE, não contra o período
+        # filtrado. Vêm junto para a tela não precisar de outra chamada.
+        "dias_sem": dias_sem_falhas(),
         "pedidos_expedidos": len(expedidos),
         "backlog": len(backlog),
         "aderencia_cutoff": None,
     }
 
+
+
+# ── Contadores "dias sem" ─────────────────────────────────────────────────────
+# Indicador de placar de fábrica: quanto tempo faz que o erro não acontece. Vale
+# como meta visível porque é cumulativo — ele só cresce com dia bem feito e
+# zera na hora em que o erro volta.
+#
+# As duas listas abaixo são a régua, e ela é deliberadamente estreita: entra
+# erro de EXECUÇÃO, não decisão de negócio. Cancelar uma OV porque o cliente
+# desistiu, trocar o tipo de frete ou corrigir um valor cotado não é falha da
+# expedição — se entrassem, o contador nunca sairia de zero e ninguém olharia
+# para ele.
+TIPOS_NF_REJEITADA = ("NF rejeitada pela SEFAZ",)
+
+TIPOS_PROBLEMA_EXPEDICAO = (
+    "Divergência de Estoque",        # o que estava no sistema não estava na prateleira
+    "Erro de Transportadora na NF",  # nota saiu com a transportadora errada
+    "Remessa aberta na OV errada",
+    "NF duplicada corrigida",
+    "Numero de OV corrigido",
+    "NF cancelada no D365 — reemitir",
+    "Retornou a OV",                 # a OV voltou de etapa: retrabalho
+)
+
+
+def _dias_sem(ocorrencias: list, tipos: tuple, hoje) -> dict:
+    """Quantos dias desde a última ocorrência destes tipos, e o recorde.
+
+    `ocorrencias` já vem carregada — as duas chamadas usam a mesma leitura.
+    """
+    from datetime import date as _date
+
+    datas = sorted({
+        str(o.get("criado_em"))[:10] for o in ocorrencias
+        if o.get("tipo") in tipos and o.get("criado_em")
+    })
+    if not datas:
+        return {"dias": None, "desde": None, "ultima": None, "recorde": None,
+                "nunca_aconteceu": True}
+
+    ultima = datas[-1]
+    dias = (hoje - _date.fromisoformat(ultima)).days
+
+    # Recorde: a maior sequência limpa já alcançada, inclusive a atual.
+    recorde = dias
+    for anterior, seguinte in zip(datas, datas[1:]):
+        recorde = max(recorde, (_date.fromisoformat(seguinte)
+                                - _date.fromisoformat(anterior)).days)
+
+    detalhe = max([o for o in ocorrencias
+                   if o.get("tipo") in tipos and str(o.get("criado_em"))[:10] == ultima],
+                  key=lambda o: str(o.get("criado_em")))
+    return {
+        "dias": dias,
+        "desde": ultima,
+        "recorde": recorde,
+        "no_recorde": dias >= recorde,
+        "nunca_aconteceu": False,
+        "ultima": {
+            "tipo": detalhe.get("tipo"),
+            "descricao": (detalhe.get("descricao") or "").strip()[:240] or None,
+            "quando": detalhe.get("criado_em"),
+        },
+        "tipos": list(tipos),
+    }
+
+
+def dias_sem_falhas() -> dict:
+    """Os dois contadores, sempre contra hoje — não contra o período filtrado."""
+    db = get_service_db()
+    hoje = _hoje_brt()
+    ocorrencias = _tudo_paginado(
+        lambda: db.table("ocorrencias").select("tipo, descricao, criado_em"))
+    return {
+        "nf_rejeitada": _dias_sem(ocorrencias, TIPOS_NF_REJEITADA, hoje),
+        "expedicao": _dias_sem(ocorrencias, TIPOS_PROBLEMA_EXPEDICAO, hoje),
+    }
 
 def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) -> list:
     from datetime import date as date_cls

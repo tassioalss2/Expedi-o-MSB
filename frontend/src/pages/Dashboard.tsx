@@ -7,7 +7,7 @@ import { Package, AlertTriangle, CheckCircle, Clock, Plus, FileText, Timer, X } 
 import { calcHorasComerciais, formatarTempo, corSLA, bgSLA } from '../lib/horasComerciais'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, ComposedChart, Line, CartesianGrid } from 'recharts'
 import api from '../lib/api'
-import type { DashboardOperacional, Indicadores } from '../types'
+import type { ContadorDiasSem, DashboardOperacional, Indicadores } from '../types'
 import { STATUS_CONFIG } from '../lib/statusConfig'
 import { dataLocal } from '../lib/dataLocal'
 
@@ -422,6 +422,15 @@ export function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Placar de dias sem falha. Fica antes dos indicadores do mês porque é
+          cumulativo: só cresce com dia bem feito e zera na hora do erro. */}
+      {indicadores?.dias_sem && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <DiasSem titulo="Dias sem nota rejeitada" dados={indicadores.dias_sem.nf_rejeitada} />
+          <DiasSem titulo="Dias sem problema na expedição" dados={indicadores.dias_sem.expedicao} />
+        </div>
+      )}
 
       {/* Indicadores do mês */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -921,6 +930,71 @@ export function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+/** Quanto tempo faz que o erro não acontece — e qual foi o melhor tempo já feito. */
+function DiasSem({ titulo, dados }: { titulo: string; dados: ContadorDiasSem }) {
+  const dias = dados?.dias
+  // Verde a partir de duas semanas limpas, âmbar na primeira, vermelho no dia
+  // em que aconteceu: a cor é o aviso, o número é a conversa.
+  const cor = dados?.nunca_aconteceu || (dias ?? 0) >= 14 ? '#16A34A'
+    : (dias ?? 0) >= 7 ? '#CA8A04' : (dias ?? 0) >= 1 ? '#EA580C' : '#DC2626'
+  const [aberto, setAberto] = useState(false)
+
+  return (
+    <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm text-gray-500">{titulo}</p>
+          <div className="flex items-end gap-2 mt-1">
+            <span className="text-5xl font-bold leading-none" style={{ color: cor }}>
+              {dados?.nunca_aconteceu ? '—' : dias}
+            </span>
+            {!dados?.nunca_aconteceu && (
+              <span className="text-sm text-gray-400 mb-1">
+                {dias === 1 ? 'dia' : 'dias'}
+              </span>
+            )}
+          </div>
+        </div>
+        {!!dados?.recorde && (
+          <div className="text-right">
+            <p className="text-[11px] text-gray-400">recorde</p>
+            <p className="text-sm font-semibold text-gray-700">{dados.recorde} dias</p>
+            {dados.no_recorde && (
+              <p className="text-[10px] font-medium text-emerald-600">no melhor momento</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {dados?.nunca_aconteceu ? (
+        <p className="text-xs text-gray-400 mt-2">Nunca aconteceu desde que o app registra.</p>
+      ) : (
+        <>
+          <p className="text-xs text-gray-400 mt-2">
+            Última em {dados.desde ? format(new Date(dados.desde + 'T12:00:00'), 'dd/MM/yyyy') : '—'}
+            {dados.ultima?.tipo ? ` · ${dados.ultima.tipo}` : ''}
+          </p>
+          {dados.ultima?.descricao && (
+            <button onClick={() => setAberto(!aberto)}
+              className="mt-1 text-[11px] text-blue-600 hover:text-blue-700">
+              {aberto ? 'ocultar' : 'o que aconteceu'}
+            </button>
+          )}
+          {aberto && (
+            <p className="mt-1.5 text-[11px] text-gray-600 whitespace-pre-line bg-gray-50
+                          rounded-lg px-2 py-1.5">{dados.ultima?.descricao}</p>
+          )}
+          {!!dados.tipos?.length && (
+            <p className="mt-1.5 text-[10px] text-gray-400">
+              Conta: {dados.tipos.join(' · ')}
+            </p>
+          )}
+        </>
       )}
     </div>
   )

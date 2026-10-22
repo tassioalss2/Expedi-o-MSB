@@ -225,9 +225,23 @@ export interface DashboardOperacional {
   ocorrencias_abertas: number
 }
 
+export interface ContadorDiasSem {
+  dias: number | null
+  desde: string | null
+  recorde: number | null
+  no_recorde?: boolean
+  nunca_aconteceu: boolean
+  ultima?: { tipo: string; descricao: string | null; quando: string } | null
+  tipos?: string[]
+}
+
 export interface Indicadores {
   otif: number
   otif_on_time?: number
+  dias_sem?: {
+    nf_rejeitada: ContadorDiasSem
+    expedicao: ContadorDiasSem
+  }
   otif_base?: number
   otif_cobertura?: number | null
   otif_cif_expedidas?: number
