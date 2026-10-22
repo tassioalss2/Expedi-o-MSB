@@ -39,6 +39,7 @@ type Linha = {
   transportadora: string | null
   destino: string | null
   prioridade: string | null
+  tipo_operacao: string | null
   situacao: string
   situacao_rotulo: string
   sem_lancamento: boolean
@@ -66,7 +67,7 @@ type Painel = {
 }
 
 const GRADE =
-  'grid grid-cols-2 sm:grid-cols-[6rem_minmax(0,1fr)_7.5rem_5.5rem_7.5rem_9rem_4.5rem] gap-x-3'
+  'grid grid-cols-2 sm:grid-cols-[6rem_minmax(0,1fr)_7rem_7rem_5.5rem_7.5rem_9rem_4.5rem] gap-x-3'
 
 const GRUPOS = [
   { chave: 'aberto', rotulo: 'Em aberto' },
@@ -80,6 +81,20 @@ const FONTES = [
   { valor: 'CLIENTE', rotulo: 'Cliente' },
   { valor: 'OUTRO', rotulo: 'Outro' },
 ]
+
+/** O que vai dentro da caixa: venda, amostra, bonificação, consignado. */
+const OPERACAO: Record<string, { rotulo: string; destaque?: boolean }> = {
+  VENDA_NORMAL: { rotulo: 'Venda' },
+  COMUNICADO_USO: { rotulo: 'Comunicado de uso' },
+  EXPORTACAO: { rotulo: 'Exportação' },
+  AMOSTRA: { rotulo: 'Amostra', destaque: true },
+  BONIFICACAO: { rotulo: 'Bonificação', destaque: true },
+  BONIFICACAO_DOACAO: { rotulo: 'Bonificação/Doação', destaque: true },
+  CONSIGNADO: { rotulo: 'Consignado', destaque: true },
+  COMODATO: { rotulo: 'Comodato', destaque: true },
+  REMESSA: { rotulo: 'Remessa', destaque: true },
+  TRANSFERENCIA: { rotulo: 'Transferência', destaque: true },
+}
 
 const ROTULOS: Record<string, string> = {
   EM_TRANSITO: 'Em trânsito',
@@ -252,6 +267,7 @@ export default function Rastreio() {
                           border-gray-200 text-[10px] uppercase tracking-wide text-gray-500`}>
             <div>NF · OV</div>
             <div>Cliente</div>
+            <div>Operação</div>
             <div>Destino</div>
             <div>Transp.</div>
             <div>Saída · previsão</div>
@@ -347,6 +363,22 @@ function Carga({ linha: l, onLancar, onMudou }: {
         <div className="col-span-2 sm:col-span-1 order-last sm:order-none min-w-0">
           <p className="text-gray-800 truncate" title={l.cliente || ''}>{l.cliente || '—'}</p>
           <p className="text-gray-400 sm:hidden">{l.destino}</p>
+        </div>
+
+        <div className="min-w-0">
+          {(() => {
+            const op = OPERACAO[l.tipo_operacao || ''] ||
+              (l.tipo_operacao ? { rotulo: l.tipo_operacao.toLowerCase() } : null)
+            if (!op) return <span className="text-gray-300">—</span>
+            // Venda é o caso comum e fica discreta; o resto aparece, porque
+            // cobrar entrega de amostra não é cobrar entrega de venda.
+            return (
+              <span className={`text-[11px] rounded px-1.5 py-0.5 ${op.destaque
+                ? 'bg-amber-100 text-amber-800' : 'text-gray-500'}`}>
+                {op.rotulo}
+              </span>
+            )
+          })()}
         </div>
 
         <div className="hidden sm:block text-gray-600 truncate">{l.destino || '—'}</div>

@@ -159,7 +159,7 @@ def _pedidos_em_rota(desde: date) -> list:
     while True:
         bloco = (db.table("pedidos")
                  .select("id, numero_pedido, numero_nf, status, tipo_frete, local_entrega, "
-                         "endereco_entrega, prioridade, valor_nf, valor_produtos, "
+                         "endereco_entrega, prioridade, valor_nf, valor_produtos, tipo_operacao, "
                          "data_faturamento, data_real_coleta, data_prevista_entrega, "
                          "codigo_rastreio, criado_em, transportadoras(nome), clientes(nome)")
                  .in_("status", list(_EM_ROTA)).limit(1000).offset(offset).execute().data)
@@ -215,6 +215,10 @@ def painel(desde: Optional[date] = None, transportadora: Optional[str] = None) -
             "destino": p.get("local_entrega"),
             "endereco": p.get("endereco_entrega"),
             "prioridade": p.get("prioridade"),
+            # Amostra, bonificação e consignado andam na mesma esteira da
+            # venda, mas a cobrança de entrega muda de tom conforme o que vai
+            # dentro da caixa.
+            "tipo_operacao": p.get("tipo_operacao"),
             "valor_nf": p.get("valor_nf") or p.get("valor_produtos"),
             "codigo_rastreio": p.get("codigo_rastreio"),
             **r,
