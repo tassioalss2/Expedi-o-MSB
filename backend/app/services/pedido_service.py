@@ -2245,11 +2245,16 @@ def listar_pedidos(
     # `atualizado_em` muda a cada toque na linha (correção de frete, troca de
     # transportadora, qualquer script de manutenção), e aí OVs expedidas meses
     # antes voltavam a aparecer como se fossem de hoje.
+    # Só a movimentação que de fato MUDOU o status conta como expedição. Uma
+    # correção registrada numa OV já expedida (frete, previsão de entrega) grava
+    # EXPEDIDO -> EXPEDIDO e fazia a OV reaparecer no quadro no dia da correção:
+    # 16 OVs de dias anteriores voltaram ao kanban em 22/10 por causa disso.
     ids_exp = {p["id"] for p in pedidos if p.get("status") == StatusPedido.EXPEDIDO.value}
     expedido_em: dict[str, str] = {}
     for m in _tudo_paginado(lambda: db.table("movimentacoes")
-                            .select("pedido_id, criado_em")
-                            .eq("status_novo", StatusPedido.EXPEDIDO.value)):
+                            .select("pedido_id, criado_em, status_anterior")
+                            .eq("status_novo", StatusPedido.EXPEDIDO.value)
+                            .neq("status_anterior", StatusPedido.EXPEDIDO.value)):
         pid, ts = m.get("pedido_id"), m.get("criado_em")
         if pid in ids_exp and ts and ts > expedido_em.get(pid, ""):
             expedido_em[pid] = ts
@@ -3492,13 +3497,15 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
     # pontualidade; medido pela expedição real são 83,6%.
     expedido_ts: dict = {}
     for m in _tudo_paginado(lambda: db.table("movimentacoes")
-                            .select("pedido_id, criado_em")
-                            .eq("status_novo", StatusPedido.EXPEDIDO.value)):
+                            .select("pedido_id, criado_em, status_anterior")
+                            .eq("status_novo", StatusPedido.EXPEDIDO.value)
+                            .neq("status_anterior", StatusPedido.EXPEDIDO.value)):
         pid, ts = m.get("pedido_id"), m.get("criado_em")
         if not pid or not ts:
             continue
         # A ÚLTIMA ida para EXPEDIDO é a que vale: OV que voltou de etapa e foi
-        # expedida de novo saiu mesmo na segunda vez.
+        # expedida de novo saiu mesmo na segunda vez. Correção anotada numa OV
+        # já expedida grava EXPEDIDO -> EXPEDIDO e não é saída nenhuma.
         if ts > expedido_ts.get(pid, ""):
             expedido_ts[pid] = ts
 
@@ -3728,8 +3735,9 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
         # sido editada depois de expedida.
         exp_ts = {}
         for m in _tudo_paginado(lambda: db.table("movimentacoes")
-                                .select("pedido_id, criado_em")
-                                .eq("status_novo", StatusPedido.EXPEDIDO.value)):
+                                .select("pedido_id, criado_em, status_anterior")
+                                .eq("status_novo", StatusPedido.EXPEDIDO.value)
+                                .neq("status_anterior", StatusPedido.EXPEDIDO.value)):
             pid, ts = m.get("pedido_id"), m.get("criado_em")
             if pid and ts and ts > exp_ts.get(pid, ""):
                 exp_ts[pid] = ts
