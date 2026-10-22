@@ -6,8 +6,11 @@ const CONFIG: Record<Prioridade, { label: string; cor: string }> = {
   CRITICA: { label: 'Crítica', cor: 'bg-red-100 text-red-800 font-bold' },
 }
 
-export function PrioridadeBadge({ prioridade }: { prioridade: Prioridade }) {
-  const cfg = CONFIG[prioridade]
+export function PrioridadeBadge({ prioridade }: { prioridade?: Prioridade | null }) {
+  // OV sem prioridade gravada existe (importação antiga, correção manual) e
+  // derrubava a tela inteira num `cfg.cor` de undefined. Dado que falta vira
+  // "normal", não tela branca.
+  const cfg = CONFIG[prioridade as Prioridade] || CONFIG.NORMAL
   return (
     <span className={`px-2 py-0.5 rounded text-xs ${cfg.cor}`}>
       {prioridade === 'CRITICA' && '🔴 '}{cfg.label}
