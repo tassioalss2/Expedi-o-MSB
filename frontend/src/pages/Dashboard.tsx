@@ -438,7 +438,11 @@ export function Dashboard() {
         <button onClick={() => setDetalheAberto('otif_atrasados')}
           className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 text-left hover:border-blue-300 hover:shadow-md transition-all group">
           <p className="text-sm text-gray-500 mb-2 flex items-center gap-1">
-            OTIF — {format(hoje, 'MMMM', { locale: ptBR })}
+            {/* O OTIF nao e mais "do mes": ele conta a partir da data em que a
+                promessa de entrega passou a ser confiavel (ver OTIF_DESDE). */}
+            OTIF — desde {indicadores?.otif_desde
+              ? format(new Date(indicadores.otif_desde + 'T12:00:00'), 'dd/MM')
+              : format(hoje, 'MMMM', { locale: ptBR })}
             <span className="text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity ml-1">ver →</span>
           </p>
           <div className="flex items-end gap-2">

@@ -243,6 +243,7 @@ export interface Indicadores {
     expedicao: ContadorDiasSem
   }
   otif_base?: number
+  otif_desde?: string
   otif_cobertura?: number | null
   otif_cif_expedidas?: number
   otif_transportadora?: number | null

@@ -3571,8 +3571,11 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         d = p.get("data_esperada_cliente") or p.get("data_prevista_entrega")
         return str(d)[:10] if d else None
 
-    cif = [p for p in expedidos if (p.get("tipo_frete") or "").startswith("CIF")]
-    fob = [p for p in expedidos if (p.get("tipo_frete") or "") == "FOB"]
+    # Só o que saiu depois do corte entra na medição — ver OTIF_DESDE.
+    medidos = [p for p in expedidos
+               if (saida_em.get(p["id"]) or "") >= OTIF_DESDE.isoformat()]
+    cif = [p for p in medidos if (p.get("tipo_frete") or "").startswith("CIF")]
+    fob = [p for p in medidos if (p.get("tipo_frete") or "") == "FOB"]
 
     # Base do OTIF: carga CIF com entrega registrada E com promessa. Sem um dos
     # dois a OV sai da conta em vez de contar como acerto — a regra antiga dava
@@ -3706,6 +3709,9 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         "fob_no_prazo": fob_no_prazo,
         "fob_base": len(base_fob),
         "fob_expedidas": len(fob),
+        # A tela precisa dizer desde quando o indicador vale: 95% sobre três
+        # dias não é a mesma frase que 95% sobre o mês.
+        "otif_desde": OTIF_DESDE.isoformat(),
         "taxa_divergencia": taxa_div if taxa_div is not None else 0,
         "taxa_retrabalho": taxa_retrab if taxa_retrab is not None else 0,
         "lead_time_medio_horas": lead_time,
@@ -3717,6 +3723,15 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         "aderencia_cutoff": None,
     }
 
+
+
+
+# A partir de quando o OTIF conta. Antes desta data a data prometida era
+# preenchida sem critério — "qualquer data", nas palavras do Tássio
+# (22/10/2026) —, e medir pontualidade contra promessa inventada dá um número
+# que não corresponde a nada. A medição começa com o contrato da BRIX já valendo
+# e a previsão vindo da tabela.
+OTIF_DESDE = date(2026, 10, 21)
 
 
 # ── Contadores "dias sem" ─────────────────────────────────────────────────────
@@ -3858,6 +3873,8 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
         for p in expedidos:
             # FOB fica fora: a entrega é do transporte do cliente.
             if not (p.get("tipo_frete") or "").startswith("CIF"):
+                continue
+            if (saiu.get(p["id"]) or "") < OTIF_DESDE.isoformat():
                 continue
             prometida = p.get("data_esperada_cliente") or p.get("data_prevista_entrega")
             chegou = entregue.get(p["id"])

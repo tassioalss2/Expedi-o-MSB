@@ -205,7 +205,8 @@ export function Indicadores() {
           <MetaBar valor={indicadores?.otif || 0} meta={95} label="OTIF"
             onClick={() => setDrill({
               titulo: 'OTIF (On Time In Full)', valorTexto: `${(indicadores?.otif || 0).toFixed(1)}%`,
-              fonte: `${indicadores?.otif_base ?? 0} entrega(s) CIF com data de entrega registrada no rastreio — ${(indicadores?.otif_cobertura ?? 0).toFixed(0)}% do CIF expedido no período. On Time = ${(indicadores?.otif_on_time ?? 0).toFixed(1)}% · In Full = ${(indicadores?.otif_in_full ?? 0).toFixed(1)}%.`,
+              fonte: `Medição a partir de ${indicadores?.otif_desde
+                ? indicadores.otif_desde.split('-').reverse().join('/') : '—'}, quando a data prometida passou a vir da tabela da transportadora (antes era preenchida sem critério). ${indicadores?.otif_base ?? 0} entrega(s) CIF com data de entrega registrada no rastreio — ${(indicadores?.otif_cobertura ?? 0).toFixed(0)}% do CIF expedido no período. On Time = ${(indicadores?.otif_on_time ?? 0).toFixed(1)}% · In Full = ${(indicadores?.otif_in_full ?? 0).toFixed(1)}%.`,
               formula: 'OTIF = (entregas no prazo E completas ÷ entregas medidas) × 100. On Time: a carga CHEGOU até a data que o cliente espera (não até a data em que saiu daqui). In Full: unidades separadas ≥ unidades pedidas. Carga sem entrega registrada ou sem data prometida fica FORA da base — não conta como acerto. FOB não entra: a transportadora é do cliente e a entrega não passa por nós.',
               metrica: 'otif_falhas', listaLabel: 'OVs que furaram o OTIF (atraso e/ou incompletas)',
             })} />
