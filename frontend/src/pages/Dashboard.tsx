@@ -50,7 +50,7 @@ function DetalheModal({ metrica, dataInicio, dataFim, onClose }: {
   })
 
   const titulos: Record<string, string> = {
-    otif_atrasados: 'OVs Expedidas com Atraso',
+    otif_atrasados: 'Entregas fora do prazo prometido ao cliente',
     divergencias: 'Ocorrências de Divergência',
     backlog: 'Backlog — OVs em Aberto',
     retrabalhos: 'Ocorrências de Retrabalho',
@@ -443,8 +443,17 @@ export function Dashboard() {
               style={{ width: `${Math.min(otifValor || 0, 100)}%`, backgroundColor: otifColor }} />
           </div>
           <p className="text-xs text-gray-400 mt-1.5">
-            {otifValor === null ? 'Sem OVs expedidas' : `Meta: 95% · ${indicadores?.pedidos_expedidos} exp.`}
+            {otifValor === null
+              ? 'Sem entrega registrada no período'
+              : `Meta: 95% · ${indicadores?.otif_base} entrega(s) medida(s)`}
           </p>
+          {/* Cobertura ao lado do número: OTIF feito sobre um terço das cargas
+              é a média de quem alguém lembrou de acompanhar, não da operação. */}
+          {indicadores?.otif_cobertura != null && (
+            <p className="text-[11px] text-gray-400">
+              {indicadores.otif_cobertura.toFixed(0)}% do CIF expedido já tem entrega lançada
+            </p>
+          )}
         </button>
 
         {/* Taxa de divergência */}

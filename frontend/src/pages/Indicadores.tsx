@@ -205,9 +205,27 @@ export function Indicadores() {
           <MetaBar valor={indicadores?.otif || 0} meta={95} label="OTIF"
             onClick={() => setDrill({
               titulo: 'OTIF (On Time In Full)', valorTexto: `${(indicadores?.otif || 0).toFixed(1)}%`,
-              fonte: `OVs com status EXPEDIDO no período. On Time = ${(indicadores?.otif_on_time ?? 0).toFixed(1)}% · In Full = ${(indicadores?.otif_in_full ?? 0).toFixed(1)}%.`,
-              formula: 'OTIF = (OVs expedidas no prazo E completas ÷ total expedidas) × 100. On Time: expedida até a data prevista. In Full: unidades separadas ≥ unidades pedidas na OV (OVs sem itens cadastrados não são penalizadas).',
+              fonte: `${indicadores?.otif_base ?? 0} entrega(s) CIF com data de entrega registrada no rastreio — ${(indicadores?.otif_cobertura ?? 0).toFixed(0)}% do CIF expedido no período. On Time = ${(indicadores?.otif_on_time ?? 0).toFixed(1)}% · In Full = ${(indicadores?.otif_in_full ?? 0).toFixed(1)}%.`,
+              formula: 'OTIF = (entregas no prazo E completas ÷ entregas medidas) × 100. On Time: a carga CHEGOU até a data que o cliente espera (não até a data em que saiu daqui). In Full: unidades separadas ≥ unidades pedidas. Carga sem entrega registrada ou sem data prometida fica FORA da base — não conta como acerto. FOB não entra: a transportadora é do cliente e a entrega não passa por nós.',
               metrica: 'otif_falhas', listaLabel: 'OVs que furaram o OTIF (atraso e/ou incompletas)',
+            })} />
+          <MetaBar valor={indicadores?.otif_transportadora || 0} meta={95}
+            label="Entregas no prazo da transportadora"
+            onClick={() => setDrill({
+              titulo: 'Aderência da transportadora',
+              valorTexto: `${(indicadores?.otif_transportadora || 0).toFixed(1)}%`,
+              fonte: `${indicadores?.otif_transportadora_base ?? 0} entrega(s) com data registrada, medidas contra o prazo contratado (tabela da BRIX / prazo da RR), não contra a data que o cliente espera.`,
+              formula: 'Aderência = (entregas até o prazo da transportadora ÷ entregas medidas) × 100. Serve para cobrar a BRIX e a RR: quando este número é alto e o OTIF é baixo, o prazo contratado não cabe no que foi prometido ao cliente.',
+              metrica: 'otif_atrasados', listaLabel: 'Entregas fora do prazo',
+            })} />
+          <MetaBar valor={indicadores?.fob_no_prazo || 0} meta={95}
+            label="FOB pronto no prazo"
+            onClick={() => setDrill({
+              titulo: 'FOB — pronto no prazo',
+              valorTexto: `${(indicadores?.fob_no_prazo || 0).toFixed(1)}%`,
+              fonte: `${indicadores?.fob_base ?? 0} de ${indicadores?.fob_expedidas ?? 0} OV(s) FOB expedidas no período.`,
+              formula: 'No FOB a transportadora é do cliente: a entrega não passa por nós e não entra no OTIF. O que medimos é a parte sob nossa mão — a carga saiu até a data em que o cliente esperava receber. Se saiu depois disso, falhamos com certeza; se saiu antes, a chegada depende do transporte dele.',
+              metrica: 'otif_falhas', listaLabel: 'OVs FOB expedidas no período',
             })} />
           <MetaBar valor={100 - div} meta={99} label="Acuracidade da Expedição"
             onClick={() => setDrill({

@@ -3520,11 +3520,6 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         lambda: db.table("pedidos").select("*").eq("status", StatusPedido.EXPEDIDO.value))
         if _ini <= saida_em.get(p["id"], "") <= _fim]
 
-    # OTIF = On Time In Full.
-    #  - On Time: expedida até a data prevista de entrega.
-    #  - In Full: unidades separadas (inventário) >= unidades pedidas (itens da OV).
-    #    OVs sem itens cadastrados na criação entram como "in full" (não há dado que
-    #    prove falta) — a medida fica mais precisa conforme os itens são preenchidos.
     exp_ids = [p["id"] for p in expedidos]
     pedidas: dict = {}
     separadas: dict = {}
@@ -3537,14 +3532,48 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         for it in db.table("inventario_itens").select("pedido_id, qtd_venda").in_("pedido_id", lote).execute().data:
             separadas[it["pedido_id"]] = separadas.get(it["pedido_id"], 0.0) + float(it.get("qtd_venda") or 0)
 
+    # ── OTIF ──────────────────────────────────────────────────────────────────
+    # On Time é medido na ENTREGA, não na saída. A conta antiga comparava o dia
+    # em que a carga saiu daqui com a data prometida de ENTREGA: outubro marcava
+    # 95,6% enquanto, das cargas com entrega registrada, só 56,7% tinham chegado
+    # no prazo. Treze cargas "passavam" tendo chegado dias depois.
+    #
+    # A régua oficial é a data que o CLIENTE espera (decisão do Tássio,
+    # 22/10/2026). O prazo da transportadora vira indicador separado: um é
+    # promessa nossa, o outro é contrato com a BRIX e a RR.
+    #
+    # FOB fica FORA do OTIF: a transportadora é do cliente e a entrega não passa
+    # por nós. O que medimos dele é outra coisa — se a carga ficou pronta a
+    # tempo — e tem nome próprio para ninguém somar as duas.
+    entregue_em: dict = {}
+    for e in _tudo_paginado(lambda: db.table("rastreios")
+                            .select("pedido_id, situacao, ocorrido_em")):
+        if e.get("situacao") not in ("ENTREGUE", "COMPROVANTE_RECEBIDO"):
+            continue
+        dia = _dia_brt(e.get("ocorrido_em") or "")
+        if not dia:
+            continue
+        pid = e["pedido_id"]
+        # A PRIMEIRA entrega é a que vale: o canhoto chega depois e não é uma
+        # segunda entrega.
+        if pid not in entregue_em or dia < entregue_em[pid]:
+            entregue_em[pid] = dia
+
+    def _promessa(p):
+        """A data que o cliente espera. Sem ela, o prazo que a OV registrou."""
+        d = p.get("data_esperada_cliente") or p.get("data_prevista_entrega")
+        return str(d)[:10] if d else None
+
+    cif = [p for p in expedidos if (p.get("tipo_frete") or "").startswith("CIF")]
+    fob = [p for p in expedidos if (p.get("tipo_frete") or "") == "FOB"]
+
+    # Base do OTIF: carga CIF com entrega registrada E com promessa. Sem um dos
+    # dois a OV sai da conta em vez de contar como acerto — a regra antiga dava
+    # "on time" a quem não tinha data, e o indicador premiava cadastro vazio.
+    base_otif = [p for p in cif if p["id"] in entregue_em and _promessa(p)]
+
     def _on_time(p):
-        # Expedicao real contra data prometida. Sem uma das duas nao se
-        # afirma atraso — OV sem data prometida nao e penalizada.
-        saiu = saida_em.get(p["id"])
-        prometida = p.get("data_prevista_entrega")
-        if not saiu or not prometida:
-            return True
-        return saiu <= prometida
+        return entregue_em[p["id"]] <= _promessa(p)
 
     def _in_full(p):
         ped = pedidas.get(p["id"])
@@ -3552,11 +3581,29 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
             return True
         return separadas.get(p["id"], 0.0) >= ped - 0.001
 
-    n_exp = len(expedidos)
-    otif_n = sum(1 for p in expedidos if _on_time(p) and _in_full(p))
-    otif = round(otif_n / n_exp * 100, 2) if n_exp else None
-    otif_on_time = round(sum(1 for p in expedidos if _on_time(p)) / n_exp * 100, 2) if n_exp else None
-    otif_in_full = round(sum(1 for p in expedidos if _in_full(p)) / n_exp * 100, 2) if n_exp else None
+    n = len(base_otif)
+    otif = round(sum(1 for p in base_otif if _on_time(p) and _in_full(p)) / n * 100, 2) if n else None
+    otif_on_time = round(sum(1 for p in base_otif if _on_time(p)) / n * 100, 2) if n else None
+    otif_in_full = round(sum(1 for p in base_otif if _in_full(p)) / n * 100, 2) if n else None
+
+    # Quanto do que saiu CIF já tem entrega registrada. Sem este número ao lado,
+    # o OTIF é a média de quem alguém se lembrou de acompanhar.
+    cobertura = round(len([p for p in cif if p["id"] in entregue_em]) / len(cif) * 100, 2) if cif else None
+
+    # Aderência da transportadora: mesma entrega, régua do contrato dela.
+    base_transp = [p for p in cif if p["id"] in entregue_em and p.get("data_prevista_entrega")]
+    otif_transportadora = round(
+        sum(1 for p in base_transp
+            if entregue_em[p["id"]] <= str(p["data_prevista_entrega"])[:10]) / len(base_transp) * 100, 2
+    ) if base_transp else None
+
+    # FOB: a entrega é do transporte do cliente e não temos como medi-la. O que
+    # está sob nossa mão é a carga sair a tempo — se saiu DEPOIS da data em que
+    # o cliente esperava receber, falhamos com certeza.
+    base_fob = [p for p in fob if saida_em.get(p["id"]) and _promessa(p)]
+    fob_no_prazo = round(
+        sum(1 for p in base_fob if saida_em[p["id"]] <= _promessa(p)) / len(base_fob) * 100, 2
+    ) if base_fob else None
 
     # Divergência e retrabalho: % das OVs EXPEDIDAS no período que tiveram ao
     # menos uma ocorrência daquele tipo.
@@ -3640,6 +3687,18 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         "otif": otif,
         "otif_on_time": otif_on_time,
         "otif_in_full": otif_in_full,
+        # Quantas entregas sustentam o número, e quanto do CIF expedido elas
+        # representam: o OTIF sem isto ao lado é média de amostra escolhida.
+        "otif_base": len(base_otif),
+        "otif_cobertura": cobertura,
+        "otif_cif_expedidas": len(cif),
+        # Mesma entrega, régua do contrato da transportadora.
+        "otif_transportadora": otif_transportadora,
+        "otif_transportadora_base": len(base_transp),
+        # FOB não tem entrega medível aqui — só saída no prazo.
+        "fob_no_prazo": fob_no_prazo,
+        "fob_base": len(base_fob),
+        "fob_expedidas": len(fob),
         "taxa_divergencia": taxa_div if taxa_div is not None else 0,
         "taxa_retrabalho": taxa_retrab if taxa_retrab is not None else 0,
         "lead_time_medio_horas": lead_time,
@@ -3684,23 +3743,49 @@ def obter_indicadores_detalhes(metrica: str, data_inicio: date, data_fim: date) 
         _i, _f = data_inicio.isoformat(), data_fim.isoformat()
         expedidos = [p for p in _tudo_paginado(
             lambda: db.table("pedidos").select(
-                "id,numero_pedido,data_prevista_entrega,clientes(nome)")
+                "id,numero_pedido,numero_nf,tipo_frete,data_prevista_entrega,"
+                "data_esperada_cliente,clientes(nome),transportadoras(nome)")
             .eq("status", StatusPedido.EXPEDIDO.value))
             if _i <= saiu.get(p["id"], "") <= _f]
+
+        # O atraso que importa é o da ENTREGA, contra a data que o cliente
+        # espera. A lista antiga mostrava atraso de SAÍDA contra a data de
+        # entrega — comparava duas coisas diferentes e acusava quem tinha
+        # chegado no prazo.
+        entregue = {}
+        for e in _tudo_paginado(lambda: db.table("rastreios")
+                                .select("pedido_id, situacao, ocorrido_em")):
+            if e.get("situacao") not in ("ENTREGUE", "COMPROVANTE_RECEBIDO"):
+                continue
+            try:
+                dia = (datetime.fromisoformat(str(e["ocorrido_em"]).replace("Z", "+00:00"))
+                       .astimezone(timezone.utc) - timedelta(hours=3)).date().isoformat()
+            except Exception:
+                continue
+            pid = e["pedido_id"]
+            if pid not in entregue or dia < entregue[pid]:
+                entregue[pid] = dia
+
         result = []
         for p in expedidos:
-            data_exp = saiu.get(p["id"])
-            data_prev = p["data_prevista_entrega"]
-            if not data_exp or not data_prev:
+            # FOB fica fora: a entrega é do transporte do cliente.
+            if not (p.get("tipo_frete") or "").startswith("CIF"):
                 continue
-            if data_exp > data_prev:
-                dias = (date_cls.fromisoformat(data_exp) - date_cls.fromisoformat(data_prev)).days
+            prometida = p.get("data_esperada_cliente") or p.get("data_prevista_entrega")
+            chegou = entregue.get(p["id"])
+            if not prometida or not chegou:
+                continue
+            prometida = str(prometida)[:10]
+            if chegou > prometida:
                 result.append({
                     "numero_pedido": p["numero_pedido"],
+                    "numero_nf": p.get("numero_nf"),
                     "cliente": (p.get("clientes") or {}).get("nome", "—"),
-                    "data_prevista": data_prev,
-                    "data_real": data_exp,
-                    "dias_atraso": dias,
+                    "transportadora": (p.get("transportadoras") or {}).get("nome"),
+                    "data_prevista": prometida,
+                    "data_real": chegou,
+                    "dias_atraso": (date_cls.fromisoformat(chegou)
+                                    - date_cls.fromisoformat(prometida)).days,
                 })
         return sorted(result, key=lambda x: x["dias_atraso"], reverse=True)
 

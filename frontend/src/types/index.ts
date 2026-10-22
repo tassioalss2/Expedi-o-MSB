@@ -228,6 +228,14 @@ export interface DashboardOperacional {
 export interface Indicadores {
   otif: number
   otif_on_time?: number
+  otif_base?: number
+  otif_cobertura?: number | null
+  otif_cif_expedidas?: number
+  otif_transportadora?: number | null
+  otif_transportadora_base?: number
+  fob_no_prazo?: number | null
+  fob_base?: number
+  fob_expedidas?: number
   otif_in_full?: number
   taxa_divergencia: number
   taxa_retrabalho: number
