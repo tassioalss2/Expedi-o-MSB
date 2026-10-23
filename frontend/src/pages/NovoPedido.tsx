@@ -431,14 +431,16 @@ export function NovoPedido() {
               }
             })}
               className={`w-full border rounded-lg px-3 py-2.5 text-sm mt-1 ${form.tipo_operacao ? '' : 'border-amber-400 text-gray-400'}`}>
-              {/* Comunicado de uso é lançado no módulo de Licitações; amostra e
-                  consignado seguem fora daqui. Doação voltou a pedido do Tassio:
-                  ela sai com nota e passa pela expedição como qualquer OV, só
-                  não é faturamento — não entra na meta nem em "Vendas". */}
+              {/* Comunicado de uso é lançado no módulo de Licitações; amostra
+                  segue fora daqui. Doação e consignado voltaram a pedido do
+                  Tassio: saem com nota e passam pela expedição como qualquer
+                  OV, só não são faturamento — não entram na meta nem em
+                  "Vendas". */}
               <option value="" disabled>Selecione o tipo de operação…</option>
               <option value="VENDA_NORMAL">Venda normal</option>
               <option value="LICITACAO">Licitação</option>
               <option value="EXPORTACAO">Exportação</option>
+              <option value="CONSIGNADO">Consignado</option>
               <option value="BONIFICACAO_DOACAO">Bonificação / Doação</option>
             </select>
             {form.tipo_operacao === 'LICITACAO' && (
@@ -446,6 +448,14 @@ export function NovoPedido() {
                 <b>Venda direta de licitação.</b> Já preenchi o que é sempre igual nela:
                 frete <b>CIF sem valor na NF</b> (o frete é nosso) e pagamento em{' '}
                 <b>30 dias</b>. Dá para mudar os dois se este caso for exceção.
+              </div>
+            )}
+            {form.tipo_operacao === 'CONSIGNADO' && (
+              <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 p-2.5 text-xs text-sky-900">
+                <b>Remessa em consignação, não faturamento.</b> O material vai para o cliente e a
+                venda só acontece quando ele usa — aí sai o <b>comunicado de uso</b>, que é o que
+                entra na meta. Esta OV fica fora da meta e de "Vendas", mas a nota sai{' '}
+                <b>com valor</b>: preencha o preço unitário dos itens.
               </div>
             )}
             {form.tipo_operacao === 'BONIFICACAO_DOACAO' && (
