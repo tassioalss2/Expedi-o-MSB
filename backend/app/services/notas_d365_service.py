@@ -162,6 +162,12 @@ def _txt(v) -> Optional[str]:
 MAPA_OPERACAO = (
     ("destinada a nao contri",        ("VENDA_NORMAL",   "LICITACAO")),
     ("remet ant consignacao",         ("COMUNICADO_USO", "LICITACAO")),
+    # "Remessa merc consignação mercantil" é o material SAINDO para o cliente,
+    # não a venda dele. A regra de baixo pegava as duas pelo "consignacao
+    # mercantil" e três remessas entraram como faturamento em outubro, R$ 18 mil
+    # de receita que não existia. A venda vem depois, no comunicado de uso.
+    ("remessa merc consignacao",      ("CONSIGNADO",     "LICITACAO")),
+    ("remessa em consignacao",        ("CONSIGNADO",     "LICITACAO")),
     ("consignacao mercantil",         ("COMUNICADO_USO", "LICITACAO")),
     ("venda de producao do estabelecimento", ("VENDA_NORMAL", "COMERCIAL")),
     ("venda de mercadoria adquirida", ("VENDA_NORMAL",   "COMERCIAL")),
