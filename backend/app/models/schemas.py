@@ -47,6 +47,10 @@ class UsuarioOut(BaseModel):
     email: str
     perfil: PerfilUsuario
     ativo: bool
+    # Senha provisoria ainda nao trocada: o app pede uma nova antes de deixar
+    # usar. Default False para o token antigo e o usuario antigo seguirem
+    # validos enquanto a coluna nao existir no banco.
+    trocar_senha: bool = False
 
 
 class UsuarioUpdate(BaseModel):
@@ -57,6 +61,17 @@ class UsuarioUpdate(BaseModel):
 
 class SenhaUpdate(BaseModel):
     nova_senha: str
+
+
+class MinhaSenha(BaseModel):
+    """Troca feita pela propria pessoa.
+
+    `senha_atual` e obrigatoria no uso normal e dispensada no primeiro acesso:
+    la a senha atual e a provisoria, que todo o grupo conhece — pedir de novo
+    so atrapalharia sem proteger nada.
+    """
+    nova_senha: str
+    senha_atual: Optional[str] = None
 
 
 # ── Cliente ───────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ import { PrevisaoFaturamento } from './pages/PrevisaoFaturamento'
 import Pendencias from './pages/Pendencias'
 import Devolucoes from './pages/Devolucoes'
 import Rastreio from './pages/Rastreio'
+import TrocarSenha from './pages/TrocarSenha'
 import ConferenciaFrete from './pages/ConferenciaFrete'
 import { Inicio } from './pages/Inicio'
 import { Pallets } from './pages/Pallets'
@@ -47,8 +48,11 @@ const ROTAS_DA_BIO = ['/expedicao', '/rastreio']
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const autenticado = useAuthStore((s) => !!s.token && !!s.usuario)
   const daBio = useAuthStore((s) => s.usuario?.perfil === 'BIO')
+  const precisaTrocarSenha = useAuthStore((s) => !!s.usuario?.trocar_senha)
   const { pathname } = useLocation()
   if (!autenticado) return <Navigate to="/login" replace />
+  // Senha provisoria vale uma vez: enquanto nao trocar, nenhuma tela abre.
+  if (precisaTrocarSenha) return <TrocarSenha />
   if (daBio && !ROTAS_DA_BIO.some((r) => pathname === r || pathname.startsWith(r + '/'))) {
     return <Navigate to="/expedicao" replace />
   }

@@ -5,6 +5,7 @@ interface AuthState {
   usuario: Usuario | null
   token: string | null
   setAuth: (usuario: Usuario, token: string) => void
+  senhaTrocada: () => void
   logout: () => void
   isAuthenticated: () => boolean
 }
@@ -27,6 +28,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.setItem('ace_token', token)
     localStorage.setItem('ace_usuario', JSON.stringify(usuario))
     set({ usuario, token })
+  },
+
+  // Depois da troca no primeiro acesso: sem isto a tela de senha voltaria a
+  // cada recarga, porque o usuario guardado no localStorage ainda diria que a
+  // senha e provisoria.
+  senhaTrocada: () => {
+    const atual = get().usuario
+    if (!atual) return
+    const usuario = { ...atual, trocar_senha: false }
+    localStorage.setItem('ace_usuario', JSON.stringify(usuario))
+    set({ usuario })
   },
 
   logout: () => {

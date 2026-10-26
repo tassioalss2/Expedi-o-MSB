@@ -6,6 +6,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.models.enums import PerfilUsuario
 from app.models.schemas import (
     LoginRequest,
+    MinhaSenha,
     SenhaUpdate,
     TokenResponse,
     UsuarioCreate,
@@ -30,6 +31,33 @@ def login(payload: LoginRequest):
     usuario = UsuarioOut(**result.data)
     token = create_access_token({"sub": str(usuario.id), "perfil": usuario.perfil})
     return TokenResponse(access_token=token, usuario=usuario)
+
+
+@router.post("/minha-senha", status_code=204)
+def trocar_minha_senha(payload: MinhaSenha, usuario: UsuarioOut = Depends(get_current_user)):
+    """A pessoa define a propria senha — e o que encerra o primeiro acesso."""
+    if not payload.nova_senha or len(payload.nova_senha) < 6:
+        raise HTTPException(status_code=400, detail="A senha deve ter ao menos 6 caracteres")
+
+    db = get_service_db()
+    atual = db.table("usuarios").select("senha_hash, trocar_senha").eq(
+        "id", str(usuario.id)).single().execute().data or {}
+
+    # Fora do primeiro acesso, trocar senha exige saber a senha de agora: sem
+    # isso um token roubado viraria conta roubada.
+    if not atual.get("trocar_senha"):
+        if not payload.senha_atual or not verify_password(
+                payload.senha_atual, atual.get("senha_hash") or ""):
+            raise HTTPException(status_code=400, detail="A senha atual não confere")
+
+    if verify_password(payload.nova_senha, atual.get("senha_hash") or ""):
+        raise HTTPException(status_code=400, detail="A senha nova precisa ser diferente da atual")
+
+    db.table("usuarios").update({
+        "senha_hash": hash_password(payload.nova_senha),
+        "trocar_senha": False,
+    }).eq("id", str(usuario.id)).execute()
+    return None
 
 
 @router.get("/me", response_model=UsuarioOut)

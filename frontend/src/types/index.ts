@@ -31,6 +31,8 @@ export interface Usuario {
   email: string
   perfil: PerfilUsuario
   ativo: boolean
+  /** Senha provisória ainda não trocada: o app pede uma nova antes de usar. */
+  trocar_senha?: boolean
 }
 
 export interface Cliente {
