@@ -1,8 +1,9 @@
 {
   "_leia": "Feriados MUNICIPAIS de Lauro de Freitas/BA e qualquer dia em que a MSB nao opera (ponto facultativo, recesso, parada de inventario). Os nacionais e os da Bahia ja estao no codigo, em calendario.py — nao repita aqui. Formato: \"AAAA-MM-DD\": \"motivo\".",
-  "_pendente": "A confirmar com o Tassio: aniversario do municipio (31/05) e dia do padroeiro.",
   "feriados": {
     "2026-02-18": "Quarta-feira de Cinzas — a MSB nao trabalha (Tassio, 26/10/2026)",
-    "2027-02-10": "Quarta-feira de Cinzas — a MSB nao trabalha"
+    "2026-07-31": "Feriado municipal de Lauro de Freitas (Tassio, 26/10/2026)",
+    "2027-02-10": "Quarta-feira de Cinzas — a MSB nao trabalha",
+    "2027-07-31": "Feriado municipal de Lauro de Freitas"
   }
 }
