@@ -161,6 +161,11 @@ class PerfilUsuario(str, Enum):
     # feito uma vez so, no middleware (main.py), e nao rota a rota, porque
     # rota a rota alguem esquece na proxima que criar.
     CONSELHO = "CONSELHO"
+    # A Biomedical passou a soltar pedido para a MSB (26/10/2026). Entra para
+    # lancar OV e acompanhar a entrega — nada de faturamento, margem, CRM ou
+    # licitacao. O escopo e aplicado no middleware (main.py), pelo mesmo motivo
+    # do CONSELHO: rota a rota alguem esquece na proxima que criar.
+    BIO = "BIO"
 
 
 # Rótulos amigáveis para exibição
@@ -171,6 +176,7 @@ PERFIL_LABELS = {
     PerfilUsuario.COMERCIAL.value: "Comercial",
     PerfilUsuario.DIRETORIA.value: "Diretoria",
     PerfilUsuario.ADMIN.value: "Admin / TI",
+    PerfilUsuario.BIO.value: "Biomedical (pedidos e entregas)",
 }
 
 

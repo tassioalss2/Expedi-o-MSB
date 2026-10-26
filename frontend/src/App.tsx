@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'react-hot-toast'
 import { Layout } from './components/Layout'
@@ -40,9 +40,18 @@ const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 10_000 } },
 })
 
+// A Biomedical entra para lancar pedido e acompanhar entrega. Esconder o menu
+// nao basta: a URL continua la para quem digitar ou guardar nos favoritos.
+const ROTAS_DA_BIO = ['/expedicao', '/rastreio']
+
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const autenticado = useAuthStore((s) => !!s.token && !!s.usuario)
+  const daBio = useAuthStore((s) => s.usuario?.perfil === 'BIO')
+  const { pathname } = useLocation()
   if (!autenticado) return <Navigate to="/login" replace />
+  if (daBio && !ROTAS_DA_BIO.some((r) => pathname === r || pathname.startsWith(r + '/'))) {
+    return <Navigate to="/expedicao" replace />
+  }
   return <>{children}</>
 }
 

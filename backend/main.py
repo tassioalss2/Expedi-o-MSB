@@ -40,6 +40,76 @@ app.add_middleware(
 )
 
 
+# O que o perfil BIO alcanca. Lista branca, e nao lista de proibidos: o app
+# cresce toda semana, e uma tela nova nasceria aberta para eles se a regra fosse
+# "tudo menos X". Aqui ela nasce fechada.
+#
+# E o conjunto exato do que as duas telas deles chamam — kanban da expedicao
+# (com Nova OV e o detalhe) e rastreio de entregas.
+ESCOPO_BIO = (
+    "/api/v1/auth",
+    "/api/v1/pedidos",
+    "/api/v1/rastreio",
+    "/api/v1/pallets",
+    "/api/v1/clientes",
+    "/api/v1/transportadoras",
+    "/api/v1/produtos",
+    "/api/v1/estoque",
+    "/api/v1/localidades",
+    "/api/v1/frete/prazo",
+    "/api/v1/frete/estimativa",
+    "/api/v1/impressao",
+    "/api/v1/inventario/ultimo-lote",
+    "/api/v1/motivos-ocorrencia",
+    "/api/v1/ocorrencias",
+    "/api/v1/crm/disponibilidade",
+)
+
+# Dentro de /pedidos moram os paineis de dinheiro — faturamento, meta, vendas
+# por cliente. Eles ficam de fora mesmo com /pedidos liberado.
+FORA_DO_ESCOPO_BIO = (
+    "/api/v1/pedidos/dashboard",
+    "/api/v1/pedidos/meta",
+    "/api/v1/pedidos/indicadores",
+)
+
+
+def _perfil_do_token(request) -> str:
+    cabecalho = request.headers.get("authorization") or ""
+    if not cabecalho.lower().startswith("bearer "):
+        return ""
+    try:
+        from app.core.security import decode_token
+        dados = decode_token(cabecalho.split(" ", 1)[1]) or {}
+    except Exception:
+        return ""
+    # str(...) e o split: o perfil vai para o token como enum de string e
+    # serializa como "CONSELHO", mas comparar com o valor cru quebraria em
+    # silencio se um dia virasse "PerfilUsuario.CONSELHO" — e quebrar em
+    # silencio aqui significa liberar acesso.
+    return str(dados.get("perfil") or "").split(".")[-1]
+
+
+@app.middleware("http")
+async def escopo_da_biomedical(request, call_next):
+    """O perfil BIO so enxerga as duas telas combinadas.
+
+    A Biomedical lanca pedido para a MSB e acompanha a entrega. Faturamento,
+    margem, CRM, licitacao e indicadores nao sao assunto dela — e esconder o
+    menu nao basta, porque a URL continua la para quem digitar.
+    """
+    if _perfil_do_token(request) == "BIO":
+        caminho = request.url.path
+        liberado = (caminho.startswith(ESCOPO_BIO)
+                    and not caminho.startswith(FORA_DO_ESCOPO_BIO))
+        if not liberado and caminho.startswith("/api/"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Seu acesso cobre os pedidos e o rastreio de entregas."})
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def somente_leitura_para_o_conselho(request, call_next):
     """O perfil CONSELHO acompanha e não opera.

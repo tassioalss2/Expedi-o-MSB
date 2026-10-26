@@ -118,6 +118,15 @@ export function Layout() {
   // ja chegar do tamanho do acesso.
   const soAcompanha = usuario?.perfil === 'CONSELHO'
 
+  // A Biomedical lanca pedido e acompanha a entrega: duas telas, e so. O
+  // backend recusa o resto de qualquer jeito, mas um 403 no meio do trabalho
+  // parece defeito do app — melhor nem oferecer o caminho.
+  const daBio = usuario?.perfil === 'BIO'
+  const navBio: NavItem[] = [
+    { to: '/expedicao', label: 'Expedição', icone: Package, badge: 'expedicao' },
+    { to: '/rastreio', label: 'Rastreio de Entregas', icone: MapPin },
+  ]
+
   const navGeralFiltrado: NavItem[] = [
     ...navGeral,
     ...(usuario?.perfil === 'ADMIN'
@@ -138,6 +147,7 @@ export function Layout() {
     queryKey: ['ocorrencias-abertas-count'],
     queryFn: () => api.get('/ocorrencias', { params: { status: 'ABERTA' } }).then(r => r.data),
     refetchInterval: 60000,
+    enabled: !daBio,
   })
   // Badge: vendas fechadas esperando material. Vale no menu porque é dinheiro
   // parado — e porque a fila só anda quando alguém olha.
@@ -145,6 +155,8 @@ export function Layout() {
     queryKey: ['pendencias-count'],
     queryFn: () => api.get('/crm/pendencias').then(r => r.data),
     refetchInterval: 60000,
+    // /crm esta fora do escopo da Bio: a chamada voltaria 403 a cada minuto.
+    enabled: !daBio,
   })
   const badges: Record<string, number> = {
     expedicao: (ovsPendentes as any[]).length,
@@ -284,13 +296,18 @@ export function Layout() {
               e não em Comercial: ele é a tela da parede, que qualquer área
               liga — e quem liga não entra pelo menu do comercial. Abre em aba
               nova para não derrubar a tela em que a pessoa estava. */}
-          <div style={{ marginTop: 12 }}>
-            <Item item={{ to: '/', label: 'Início', icone: Home }} />
-            <Item item={{ to: '/placar', label: 'Placar Comercial',
-                          icone: Monitor, novaAba: true }} />
-          </div>
+          {/* Inicio e placar sao painel de dinheiro: fora do acesso da Bio. */}
+          {!daBio && (
+            <div style={{ marginTop: 12 }}>
+              <Item item={{ to: '/', label: 'Início', icone: Home }} />
+              <Item item={{ to: '/placar', label: 'Placar Comercial',
+                            icone: Monitor, novaAba: true }} />
+            </div>
+          )}
 
-          {soAcompanha ? (
+          {daBio ? (
+            <Grupo titulo="Pedidos e entregas" itens={navBio} />
+          ) : soAcompanha ? (
             <Grupo titulo="Acompanhamento" itens={[
               { to: '/solicitacoes', label: 'Solicitações', icone: Inbox },
             ]} />

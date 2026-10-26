@@ -7,7 +7,7 @@ import { PERFIL_LABELS } from '../types'
 import type { Usuario, PerfilUsuario } from '../types'
 import { useAuthStore } from '../store/authStore'
 
-const PERFIS: PerfilUsuario[] = ['LOGISTICA', 'OPERACOES_VENDAS', 'COMERCIAL', 'DIRETORIA', 'ADMIN', 'CONSELHO']
+const PERFIS: PerfilUsuario[] = ['LOGISTICA', 'OPERACOES_VENDAS', 'COMERCIAL', 'DIRETORIA', 'ADMIN', 'CONSELHO', 'BIO']
 
 const PERFIL_COR: Record<PerfilUsuario, string> = {
   LOGISTICA: 'bg-blue-100 text-blue-700',
@@ -17,6 +17,7 @@ const PERFIL_COR: Record<PerfilUsuario, string> = {
   ADMIN: 'bg-gray-800 text-white',
   // Cinza claro de proposito: e um acesso de leitura, nao um cargo operacional.
   CONSELHO: 'bg-slate-100 text-slate-700',
+  BIO: 'bg-cyan-100 text-cyan-700',
 }
 
 // Extrai SEMPRE uma string do erro — nunca passar array/objeto ao toast
