@@ -31,13 +31,6 @@ app = FastAPI(
 import os
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Produção: qualquer origem (Vercel gera URLs dinâmicas)
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 # O que o perfil BIO alcanca. Lista branca, e nao lista de proibidos: o app
@@ -146,6 +139,14 @@ async def somente_leitura_para_o_conselho(request, call_next):
                                        "esta ação altera dados e não está liberada."},
                 )
     return await call_next(request)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Produção: qualquer origem (Vercel gera URLs dinâmicas)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(pedidos_router, prefix="/api/v1")

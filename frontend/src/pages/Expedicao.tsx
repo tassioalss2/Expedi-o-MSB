@@ -5,6 +5,7 @@ import { Search, Plus, Upload, RefreshCw, Info, X, FileText, Send } from 'lucide
 import { formatDistanceToNow, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import api from '../lib/api'
+import { useAuthStore } from '../store/authStore'
 import type { Pedido, StatusPedido } from '../types'
 import { StatusBadge } from '../components/StatusBadge'
 import { PrioridadeBadge } from '../components/PrioridadeBadge'
@@ -573,6 +574,8 @@ function KanbanView({ pedidos, onClickPedido, onPedirTransportadora, onCotarFret
     refetchInterval: 5 * 60 * 1000,
   })
 
+  const daBio = useAuthStore((e: any) => e.usuario?.perfil) === 'BIO'
+
   const hoje = hojeLocal()
 
   // Só a espera por MATERIAL sai do quadro: essa venda virou pendencia, tem
@@ -768,6 +771,7 @@ function ListaView({ pedidos, onClickPedido }: { pedidos: Pedido[]; onClickPedid
 
 export function Expedicao() {
   const navigate = useNavigate()
+  const daBio = useAuthStore((e: any) => e.usuario?.perfil) === 'BIO'
   // O texto que pede a transportadora ao cliente FOB. Vive aqui, e nao no card,
   // porque o modal e da tela — o card so dispara.
   const [avisoColeta, setAvisoColeta] = useState<any>(null)
@@ -849,27 +853,34 @@ export function Expedicao() {
           >
             <RefreshCw size={18} />
           </button>
-          <button
-            onClick={handleImport}
-            className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
-          >
-            <Upload size={16} />
-            Importar CSV
-          </button>
-          <button
-            onClick={() => navigate('/licitacoes?novo=COMUNICADO_USO')}
-            className="flex items-center gap-2 px-3 py-2 border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50"
-          >
-            <FileText size={16} />
-            Comunicado de Uso
-          </button>
-          <button
-            onClick={() => navigate('/expedicao/outbound')}
-            className="flex items-center gap-2 px-3 py-2 border border-blue-300 text-blue-700 rounded-lg text-sm hover:bg-blue-50"
-          >
-            <Send size={16} />
-            Venda Outbound
-          </button>
+          {/* Importacao em massa, comunicado de uso (licitacao) e venda
+              outbound sao da operacao da MSB. A Bio lanca pedido — e e so o
+              botao que ela precisa. */}
+          {!daBio && (
+            <>
+              <button
+                onClick={handleImport}
+                className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50"
+              >
+                <Upload size={16} />
+                Importar CSV
+              </button>
+              <button
+                onClick={() => navigate('/licitacoes?novo=COMUNICADO_USO')}
+                className="flex items-center gap-2 px-3 py-2 border border-emerald-300 text-emerald-700 rounded-lg text-sm hover:bg-emerald-50"
+              >
+                <FileText size={16} />
+                Comunicado de Uso
+              </button>
+              <button
+                onClick={() => navigate('/expedicao/outbound')}
+                className="flex items-center gap-2 px-3 py-2 border border-blue-300 text-blue-700 rounded-lg text-sm hover:bg-blue-50"
+              >
+                <Send size={16} />
+                Venda Outbound
+              </button>
+            </>
+          )}
           <button
             onClick={() => navigate('/expedicao/novo')}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500"

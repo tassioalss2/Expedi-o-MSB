@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import api from '../lib/api'
+import { useAuthStore } from '../store/authStore'
 
 interface Ritmo {
   pct_esperado: number
@@ -68,6 +69,9 @@ export function BarraMeta() {
   const { data } = useQuery<BarraMetaResp>({
     queryKey: ['barra-meta'],
     queryFn: () => api.get('/home/barra-meta').then(r => r.data),
+    // Meta e faturamento nao estao no acesso da Bio: a barra nem aparece para
+    // eles, e sem isto a chamada ficaria batendo em 403.
+    enabled: useAuthStore.getState().usuario?.perfil !== 'BIO',
     refetchInterval: 120000,
     // Sem meta definida a barra não aparece; não vale piscar "carregando" numa
     // faixa que fica em todas as telas.
