@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.database import get_service_db
+from app.services import calendario
 
 # Seis situações, não dez. A lista longa (extravio, devolução, recusa…) fazia a
 # equipe parar para escolher entre rótulos parecidos; o que varia de verdade
@@ -37,7 +38,9 @@ ENTREGA = ("ENTREGUE", "COMPROVANTE_RECEBIDO")
 
 _EM_ROTA = ("AGUARD_COLETA", "COLETADO", "EXPEDIDO")
 
-# Dias corridos sem notícia antes de a carga virar cobrança.
+# Dias ÚTEIS sem notícia antes de a carga virar cobrança. Sábado e domingo
+# não contam: ninguém trabalhou, e a tela acusava abandono onde havia
+# fim de semana.
 DIAS_SEM_NOTICIA = 3
 
 
@@ -80,7 +83,8 @@ def _resumir(pedido: dict, eventos: list, hoje: date) -> dict:
     saida = (_dia(pedido.get("data_real_coleta")) or _dia(pedido.get("data_faturamento"))
              or _dia(pedido.get("criado_em")))
     ultima_noticia = _dia(ultimo["ocorrido_em"]) if ultimo else saida
-    sem_noticia = (hoje - ultima_noticia).days if ultima_noticia else None
+    sem_noticia = (calendario.dias_uteis_entre(ultima_noticia, hoje)
+                   if ultima_noticia else None)
 
     situacao = ultimo["situacao"] if ultimo else "SEM_LANCAMENTO"
     meta = SITUACOES.get(situacao, {"rotulo": "Ninguém acompanhou ainda", "atencao": False})
@@ -108,10 +112,11 @@ def _resumir(pedido: dict, eventos: list, hoje: date) -> dict:
                         "porque": "A entrega estava prevista para %s e ainda não há lançamento de entrega. "
                                   "Hoje é %s." % (_br(previsao), _br(hoje))})
     if calada:
-        alertas.append({"texto": "Sem notícia há %d dias" % sem_noticia,
+        alertas.append({"texto": "Sem notícia há %d dia(s) útil(eis)" % sem_noticia,
                         "porque": "A última informação desta carga é de %s%s. A partir de %d dias "
-                                  "sem notícia a carga entra aqui, porque o silêncio da transportadora "
-                                  "é o que faz o atraso aparecer tarde."
+                                  "ÚTEIS sem notícia a carga entra aqui — sábado, domingo e feriado "
+                                  "não contam —, porque o silêncio da transportadora é o que faz o "
+                                  "atraso aparecer tarde."
                                   % (_br(ultima_noticia),
                                      " (saída da carga, nenhum acompanhamento lançado)" if not ultimo else "",
                                      DIAS_SEM_NOTICIA)})
@@ -144,7 +149,7 @@ def _resumir(pedido: dict, eventos: list, hoje: date) -> dict:
         "previsao": previsao.isoformat() if previsao else None,
         "previsao_repactuada": bool(repactuadas),
         "saida": saida.isoformat() if saida else None,
-        "dias_desde_saida": (hoje - saida).days if saida else None,
+        "dias_desde_saida": calendario.dias_uteis_entre(saida, hoje) if saida else None,
         "dias_sem_noticia": sem_noticia,
         "entregue_em": entrega["ocorrido_em"] if entrega else None,
         "recebedor": (entrega or {}).get("recebedor"),
@@ -267,7 +272,8 @@ def painel(desde: Optional[date] = None, transportadora: Optional[str] = None) -
             "canhoto": "Entrega lançada, mas sem o canhoto — é a cobrança diária com a transportadora.",
             "concluidas": "Entregue e com canhoto recebido.",
             "atencao": "Carga que passou da previsão, que teve problema lançado, ou que está há %d "
-                       "dias ou mais sem nenhuma notícia." % DIAS_SEM_NOTICIA,
+                       "dias ÚTEIS ou mais sem nenhuma notícia. Sábado, domingo e feriado não "
+                       "contam como dia sem notícia." % DIAS_SEM_NOTICIA,
         },
     }
 

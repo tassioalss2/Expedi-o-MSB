@@ -962,7 +962,7 @@ function DiasSem({ titulo, dados }: { titulo: string; dados: ContadorDiasSem }) 
             </span>
             {!dados?.nunca_aconteceu && (
               <span className="text-sm text-gray-400 mb-1">
-                {dias === 1 ? 'dia' : 'dias'}
+                {dias === 1 ? 'dia útil' : 'dias úteis'}
               </span>
             )}
           </div>
@@ -970,7 +970,7 @@ function DiasSem({ titulo, dados }: { titulo: string; dados: ContadorDiasSem }) 
         {!!dados?.recorde && (
           <div className="text-right">
             <p className="text-[11px] text-gray-400">recorde</p>
-            <p className="text-sm font-semibold text-gray-700">{dados.recorde} dias</p>
+            <p className="text-sm font-semibold text-gray-700">{dados.recorde} dias úteis</p>
             {dados.no_recorde && (
               <p className="text-[10px] font-medium text-emerald-600">no melhor momento</p>
             )}

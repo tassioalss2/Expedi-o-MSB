@@ -1,0 +1,5 @@
+{
+  "_leia": "Feriados MUNICIPAIS de Lauro de Freitas/BA e qualquer dia em que a MSB nao opera (ponto facultativo, recesso, parada de inventario). Os nacionais e os da Bahia ja estao no codigo, em calendario.py — nao repita aqui. Formato: \"AAAA-MM-DD\": \"motivo\".",
+  "_pendente": "A confirmar com o Tassio: aniversario do municipio (31/05), dia do padroeiro e se a quarta de cinzas para o dia inteiro.",
+  "feriados": {}
+}

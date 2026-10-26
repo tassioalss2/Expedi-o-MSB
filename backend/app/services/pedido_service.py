@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 
 from app.core.database import get_service_db
+from app.services import calendario
 from app.models.enums import (
     conta_faturamento,
     DecisaoTratativa,
@@ -2329,7 +2330,10 @@ def listar_pedidos(
         if not d:
             continue
         try:
-            p["dias_sem_encerrar"] = (hoje_brt - date.fromisoformat(d)).days
+            # Em dias ÚTEIS: ninguém encerra OV no domingo, e o marcador
+            # amarelo aparecia na segunda em carga faturada na sexta.
+            p["dias_sem_encerrar"] = calendario.dias_uteis_entre(
+                date.fromisoformat(d), hoje_brt)
         except Exception:
             pass
 
@@ -3773,13 +3777,14 @@ def _dias_sem(ocorrencias: list, tipos: tuple, hoje) -> dict:
                 "nunca_aconteceu": True}
 
     ultima = datas[-1]
-    dias = (hoje - _date.fromisoformat(ultima)).days
+    # Em dias ÚTEIS: fim de semana não é dia sem erro, é dia sem trabalho.
+    dias = calendario.dias_uteis_entre(_date.fromisoformat(ultima), hoje)
 
     # Recorde: a maior sequência limpa já alcançada, inclusive a atual.
     recorde = dias
     for anterior, seguinte in zip(datas, datas[1:]):
-        recorde = max(recorde, (_date.fromisoformat(seguinte)
-                                - _date.fromisoformat(anterior)).days)
+        recorde = max(recorde, calendario.dias_uteis_entre(
+            _date.fromisoformat(anterior), _date.fromisoformat(seguinte)))
 
     detalhe = max([o for o in ocorrencias
                    if o.get("tipo") in tipos and str(o.get("criado_em"))[:10] == ultima],

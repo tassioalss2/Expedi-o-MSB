@@ -100,18 +100,13 @@ def somar_dias_uteis(inicio, dias: int):
     O prazo conta da coleta, mas o dia da coleta não é o primeiro dia de
     viagem: a carga sai e o relógio começa no dia seguinte (confirmado pelo
     Tássio em 22/10/2026). Coletada numa quinta, com 3 dias úteis, chega na
-    terça — sexta, segunda, terça. Sem feriados: a tabela promete dia útil, e
-    feriado regional não está nela.
+    terça — sexta, segunda, terça.
+
+    Feriado também não conta: a conta sai do calendário da MSB, que conhece os
+    nacionais, os da Bahia e os de Lauro de Freitas.
     """
-    from datetime import timedelta
-    d, restantes = inicio, max(int(dias or 0), 1)
-    while restantes > 0:
-        d += timedelta(days=1)
-        if d.weekday() < 5:
-            restantes -= 1
-    while d.weekday() >= 5:
-        d += timedelta(days=1)
-    return d
+    from app.services import calendario
+    return calendario.somar_dias_uteis(inicio, dias)
 
 
 def prazo_de_entrega(uf: Optional[str], cidade: Optional[str], saida=None) -> dict:

@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from app.core.database import get_service_db
+from app.services import calendario
 
 # Transportadoras com coleta diária combinada. As demais vêm quando chamadas:
 # cobrar passagem diária delas seria inventar um acordo que não existe.
@@ -27,15 +28,6 @@ COM_COLETA_DIARIA = ("BRIX", "RR CARGO")
 
 # Carga esperando há mais de uma semana não é falha de coleta do dia.
 JANELA_DIAS = 7
-
-# Feriados em que ninguém espera o carro. Nacionais de 2026 mais o 2 de julho,
-# que para pela Bahia inteira — a expedição é em Lauro de Freitas.
-FERIADOS = {
-    "2026-01-01", "2026-02-17", "2026-04-03", "2026-04-21", "2026-05-01",
-    "2026-06-04", "2026-07-02", "2026-09-07", "2026-10-12", "2026-11-02",
-    "2026-11-15", "2026-11-20", "2026-12-25",
-}
-
 
 def _brt(ts) -> Optional[datetime]:
     if not ts:
@@ -52,7 +44,7 @@ def _hoje() -> date:
 
 
 def _util(d: date) -> bool:
-    return d.weekday() < 5 and d.isoformat() not in FERIADOS
+    return calendario.eh_util(d)
 
 
 def _nome(pallet: dict) -> str:
@@ -200,7 +192,7 @@ def dias_sem_falha() -> dict:
     if ultima is None:
         return {"dias": None, "desde": None, "ultima": None, "nunca_aconteceu": True}
     return {
-        "dias": (hoje - ultima).days,
+        "dias": calendario.dias_uteis_entre(ultima, hoje),
         "desde": ultima.isoformat(),
         "nunca_aconteceu": False,
         "ultima": {
