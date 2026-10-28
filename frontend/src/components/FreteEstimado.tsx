@@ -21,6 +21,12 @@ type Estimativa = {
   taxa_coleta?: number; taxa_entrega?: number; tipo_entrega?: string
   prazo_capital?: number; prazo_redespacho?: number; premissa_cubagem?: string
   avisos?: string[]
+  // A modalidade vem decidida do backend, pela data de entrega da OV.
+  modalidade?: 'CONVENCIONAL' | 'EXPRESSO'; motivo_modalidade?: string | null
+  data_entrega_alvo?: string | null; chegada_convencional?: string | null
+  chegada_expresso?: string | null; nem_expresso_alcanca?: boolean
+  diferenca_modalidade?: number | null
+  alternativa?: { tabela?: string; total?: number } | null
   referencias?: {
     taxa_emergencia?: { ate_500kg?: number; ate_1000kg?: number }
     hora_parada?: number; reentrega_pct?: number; devolucao_pct?: number
@@ -31,6 +37,9 @@ type Estimativa = {
 
 const brl = (v?: number | null) =>
   (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+/** Data vem do backend como AAAA-MM-DD: fatiar evita o fuso jogar para o dia anterior. */
+const dia = (iso?: string | null) =>
+  iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : '—'
 const kg = (v?: number | null) =>
   `${(Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg`
 
@@ -58,13 +67,21 @@ export function FreteEstimado({ pedidoId }: { pedidoId: string }) {
     )
   }
 
+  const expresso = data.modalidade === 'EXPRESSO'
+
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
+    <div className={`rounded-xl border p-4 ${expresso ? 'border-orange-300 bg-orange-50/40'
+                                                      : 'border-gray-200 bg-white'}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
-            <Truck size={15} className="text-gray-500" />
+            <Truck size={15} className={expresso ? 'text-orange-600' : 'text-gray-500'} />
             Frete estimado — tabela {data.transportadora}
+            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded
+                             ${expresso ? 'bg-orange-600 text-white'
+                                        : 'bg-gray-200 text-gray-700'}`}>
+              {expresso ? 'Expresso · próximo voo' : 'Convencional'}
+            </span>
           </p>
           <p className="text-[11px] text-gray-500">
             {data.destino} · prazo {data.prazo_capital} dia(s) úteis
@@ -76,6 +93,30 @@ export function FreteEstimado({ pedidoId }: { pedidoId: string }) {
           {brl(data.total)}
         </p>
       </div>
+
+      {data.motivo_modalidade && (
+        <div className={`mt-2 rounded-lg px-2.5 py-2 text-[11px] border
+                        ${expresso ? 'bg-orange-100/70 border-orange-200 text-orange-900'
+                                   : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+          <p>
+            <strong>Por que {expresso ? 'expresso' : 'convencional'}:</strong>{' '}
+            {data.motivo_modalidade}
+          </p>
+          {expresso && data.alternativa?.total != null && (
+            <p className="mt-1">
+              Pelo convencional seriam {brl(data.alternativa.total)} com chegada em{' '}
+              {dia(data.chegada_convencional)} — o expresso custa{' '}
+              <strong>{brl(data.diferenca_modalidade)}</strong> a mais para ganhar o prazo.
+            </p>
+          )}
+          {data.nem_expresso_alcanca && (
+            <p className="mt-1 font-semibold">
+              Atenção: nem o expresso alcança a data de {dia(data.data_entrega_alvo)}.
+              Renegociar a data com o cliente ou cotar veículo dedicado.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
         <div className="rounded-lg bg-gray-50 px-2 py-1.5">
@@ -141,11 +182,13 @@ export function FreteEstimado({ pedidoId }: { pedidoId: string }) {
             Outras regras da tabela
           </summary>
           <ul className="mt-1.5 space-y-0.5 pl-3 list-disc marker:text-gray-300">
-            <li>
-              Taxa de emergência (entrega expressa):{' '}
-              {brl(data.referencias.taxa_emergencia?.ate_500kg)} até 500 kg ·{' '}
-              {brl(data.referencias.taxa_emergencia?.ate_1000kg)} até 1.000 kg
-            </li>
+            {data.referencias.taxa_emergencia?.ate_500kg != null && (
+              <li>
+                Taxa de emergência (entrega expressa):{' '}
+                {brl(data.referencias.taxa_emergencia?.ate_500kg)} até 500 kg ·{' '}
+                {brl(data.referencias.taxa_emergencia?.ate_1000kg)} até 1.000 kg
+              </li>
+            )}
             <li>Hora parada: {brl(data.referencias.hora_parada)}/h depois da 1ª hora na coleta ou na entrega</li>
             <li>
               Reentrega {data.referencias.reentrega_pct}% · devolução{' '}

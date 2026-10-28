@@ -22,7 +22,9 @@ fora da tabela. Cubagem fora do
 padrão continua sendo cotada com eles antes do faturamento.
 """
 import json
+import math
 import unicodedata
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -273,3 +275,246 @@ def estimar(uf: Optional[str], cidade: Optional[str] = None,
             "nao_incluido": t.get("nao_incluido"),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Proximo Voo: a entrega expressa da BRIX, usada quando o prazo convencional
+# nao atende. E outra tabela, nao um acrescimo na convencional — a conta muda
+# inteira: o frete-peso vira R$ 308,00 + R$ 44,00 por quilo (escada de meio em
+# meio quilo, ate 30 kg), e coleta e entrega tambem sao mais caras.
+# ---------------------------------------------------------------------------
+
+_TABELA_VOO: list = [None]
+
+
+def tabela_proximo_voo() -> dict:
+    if _TABELA_VOO[0] is None:
+        try:
+            caminho = (Path(__file__).resolve().parent.parent / "data"
+                       / "tabela_frete_brix_proximo_voo.json")
+            _TABELA_VOO[0] = json.loads(caminho.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print("tabela proximo voo indisponivel: %s" % str(exc)[:140])
+            _TABELA_VOO[0] = {"destinos": []}
+    return _TABELA_VOO[0]
+
+
+def _destino_voo(cidade: Optional[str], uf: Optional[str]) -> tuple:
+    """Mesma logica da convencional: cidade exata e, se nao achar, capital da UF."""
+    t = tabela_proximo_voo()
+    alvo = _sem_acento(cidade)
+    if alvo:
+        for d in t.get("destinos", []):
+            if _sem_acento(d["cidade"]) == alvo:
+                return d, "cidade"
+    if uf:
+        for d in t.get("destinos", []):
+            if _sem_acento(d["uf"]) == _sem_acento(uf):
+                return d, "capital_da_uf"
+    return None, None
+
+
+def estimar_proximo_voo(uf: Optional[str], cidade: Optional[str] = None,
+                        peso_kg: float = 0, m3: float = 0,
+                        valor_nf: float = 0) -> dict:
+    """Quanto a mesma carga custa indo no proximo voo."""
+    t = tabela_proximo_voo()
+    destino, como = _destino_voo(cidade, uf)
+    fator = float(t.get("fator_cubagem_kg_m3") or 166.67)
+    peso_cubado = round(float(m3 or 0) * fator, 2)
+    peso_taxado = max(float(peso_kg or 0), peso_cubado)
+
+    if not destino:
+        return {"encontrado": False,
+                "motivo": "Destino fora da tabela de Proximo Voo — precisa de cotacao.",
+                "peso_taxado_kg": round(peso_taxado, 2)}
+
+    regra = t.get("frete_peso") or {}
+    passo = float(regra.get("passo_kg") or 0.5)
+    teto = float(regra.get("peso_maximo_kg") or 30)
+    # A tabela e uma escada: quem pesa 2,1 kg paga a faixa de 2,5 kg.
+    faixas = math.ceil(max(peso_taxado, passo) / passo)
+    peso_cobrado = round(faixas * passo, 2)
+    frete_peso = float(regra.get("base") or 0) + float(regra.get("por_kg") or 0) * peso_cobrado
+
+    tipo_entrega = "CAPITAL" if como == "cidade" else "GRANDE_CAPITAL"
+    taxa_coleta = _taxa_por_faixa(t.get("taxa_coleta"), peso_taxado)
+    taxa_entrega = _taxa_por_faixa((t.get("taxas_entrega") or {}).get(tipo_entrega), peso_taxado)
+    ad_valorem = float(valor_nf or 0) * float(t.get("ad_valorem_pct") or 0) / 100
+    total = frete_peso + taxa_coleta + taxa_entrega + ad_valorem
+
+    avisos = []
+    if peso_cobrado > teto:
+        avisos.append("Carga de %.1f kg passa do teto de %.0f kg da tabela expressa: "
+                      "o valor acima e extrapolacao e precisa de cotacao."
+                      % (peso_cobrado, teto))
+    if como == "capital_da_uf":
+        avisos.append(
+            "%s nao esta na tabela expressa, que so cobre capitais. O valor acima usa %s/%s "
+            "como referencia, mas no Proximo Voo o interior e atendido por VEICULO DEDICADO "
+            "(R$ %.2f por km rodado, ida e volta): este numero nao e cotacao, e ordem de grandeza."
+            % ((cidade or "A cidade").strip().title(), destino["cidade"], destino["uf"],
+               float(t.get("interior_dedicado_km") or 0)))
+    if float(valor_nf or 0) > 199999.99:
+        avisos.append("Nota acima de R$ 199.999,99: carga geral precisa de consulta previa a BRIX.")
+    if _sem_acento(destino["uf"]) == "RJ" and float(valor_nf or 0) > 150000:
+        avisos.append("Rio de Janeiro acima de R$ 150 mil so com entrega dedicada "
+                      "(acima de R$ 200 mil, escolta e carro dedicado).")
+    if not float(t.get("gris_pct_padrao") or 0):
+        avisos.append("A tabela expressa nao menciona GRIS — confirmar com a BRIX antes de fechar preco.")
+
+    return {
+        "encontrado": True,
+        "transportadora": t.get("transportadora"),
+        "tabela": t.get("tabela"),
+        "vigencia": t.get("vigencia"),
+        "destino": "%s/%s" % (destino["cidade"], destino["uf"]),
+        "por_capital": como == "capital_da_uf",
+        "peso_real_kg": round(float(peso_kg or 0), 2),
+        "peso_cubado_kg": peso_cubado,
+        "peso_taxado_kg": round(peso_taxado, 2),
+        "peso_cobrado_kg": peso_cobrado,
+        "fator_cubagem": fator,
+        "tarifa_kg": float(regra.get("por_kg") or 0),
+        "frete_peso": round(frete_peso, 2),
+        "tipo_entrega": tipo_entrega,
+        "taxa_coleta": round(taxa_coleta, 2),
+        "taxa_entrega": round(taxa_entrega, 2),
+        "ad_valorem": round(ad_valorem, 2),
+        "ad_valorem_pct": float(t.get("ad_valorem_pct") or 0),
+        "gris": 0.0,
+        "gris_pct": 0.0,
+        "total": round(total, 2),
+        "prazo": destino.get("prazo"),
+        # A tela le prazo_capital; o expresso tem um prazo so.
+        "prazo_capital": destino.get("prazo"),
+        "premissa_cubagem": t.get("observacao_fator"),
+        "aviso": " ".join(avisos) if avisos else None,
+        "avisos": avisos,
+        "referencias": {
+            "taxa_emergencia_capitais": t.get("taxa_emergencia_capitais"),
+            "taxa_produto_perigoso": t.get("taxa_produto_perigoso"),
+            "hora_parada": t.get("hora_parada"),
+            "reentrega_pct": t.get("reentrega_pct"),
+            "devolucao_pct": t.get("devolucao_pct"),
+            "coleta_improdutiva_pct": t.get("coleta_improdutiva_pct"),
+            "interior_dedicado_km": t.get("interior_dedicado_km"),
+            "capacidade_veiculo_kg": t.get("capacidade_veiculo_kg"),
+            "pagamento": t.get("pagamento"),
+            "nao_incluido": t.get("nao_incluido"),
+        },
+    }
+
+
+def comparar_modalidades(uf: Optional[str], cidade: Optional[str] = None,
+                         peso_kg: float = 0, m3: float = 0,
+                         valor_nf: float = 0) -> dict:
+    """As duas tabelas lado a lado: o que custa a mais e quantos dias isso compra.
+
+    Quem decide pagar expresso precisa ver as duas contas juntas. Separadas,
+    a decisao vira "quanto custa" sem o "para ganhar o que".
+    """
+    conv = estimar(uf, cidade, peso_kg, m3, valor_nf)
+    voo = estimar_proximo_voo(uf, cidade, peso_kg, m3, valor_nf)
+
+    diferenca = dias = None
+    if conv.get("encontrado") and voo.get("encontrado"):
+        diferenca = round(float(voo["total"]) - float(conv["total"]), 2)
+        prazo_conv = conv.get("prazo_capital")
+        if prazo_conv and voo.get("prazo"):
+            dias = int(prazo_conv) - int(voo["prazo"])
+
+    return {
+        "convencional": conv,
+        "proximo_voo": voo,
+        "diferenca": diferenca,
+        "dias_ganhos": dias,
+        "custo_por_dia_ganho": (round(diferenca / dias, 2)
+                                if diferenca is not None and dias else None),
+    }
+
+
+def escolher_modalidade(uf: Optional[str], cidade: Optional[str] = None,
+                        peso_kg: float = 0, m3: float = 0, valor_nf: float = 0,
+                        data_entrega=None, saida=None) -> dict:
+    """Qual modalidade atende a data combinada com o cliente.
+
+    O padrao e sempre CONVENCIONAL: expresso custa de tres a quatro vezes mais
+    e so se justifica quando o prazo contratado nao alcanca a data. A conta e
+    de data, nao de preco — por isso ela mora aqui, e nao na tela.
+
+    Sem data de entrega, devolve convencional sem sequer cotar o expresso.
+    """
+    from app.services import calendario
+
+    base = saida or date.today()
+    if isinstance(base, str):
+        base = date.fromisoformat(base)
+    alvo = data_entrega
+    if isinstance(alvo, str):
+        alvo = date.fromisoformat(alvo) if alvo else None
+
+    conv = estimar(uf, cidade, peso_kg, m3, valor_nf)
+    prazo_conv = (conv.get("prazo_redespacho") if conv.get("por_capital")
+                  else conv.get("prazo_capital"))
+    chegada_conv = (calendario.somar_dias_uteis(base, int(prazo_conv))
+                    if conv.get("encontrado") and prazo_conv else None)
+
+    resultado = {
+        "data_entrega_alvo": alvo.isoformat() if alvo else None,
+        "saida": base.isoformat(),
+        "chegada_convencional": chegada_conv.isoformat() if chegada_conv else None,
+        "prazo_convencional": prazo_conv,
+    }
+
+    if not alvo or not conv.get("encontrado"):
+        resultado.update({"modalidade": "CONVENCIONAL", "estimativa": conv,
+                          "alternativa": None,
+                          "motivo": "Sem data de entrega definida: vale o convencional, que e o padrao."
+                                    if not alvo else conv.get("motivo")})
+        return resultado
+
+    if chegada_conv and chegada_conv <= alvo:
+        folga = calendario.dias_uteis_entre(chegada_conv, alvo)
+        resultado.update({
+            "modalidade": "CONVENCIONAL",
+            "estimativa": conv,
+            "alternativa": None,
+            "motivo": ("O convencional chega em %s, dentro da data combinada (%s)%s."
+                       % (chegada_conv.strftime("%d/%m"), alvo.strftime("%d/%m"),
+                          " com %d dia(s) util(eis) de folga" % folga if folga else "")),
+        })
+        return resultado
+
+    voo = estimar_proximo_voo(uf, cidade, peso_kg, m3, valor_nf)
+    chegada_voo = (calendario.somar_dias_uteis(base, int(voo["prazo"]))
+                   if voo.get("encontrado") and voo.get("prazo") else None)
+    resultado["chegada_expresso"] = chegada_voo.isoformat() if chegada_voo else None
+    resultado["prazo_expresso"] = voo.get("prazo")
+    if conv.get("encontrado") and voo.get("encontrado"):
+        resultado["diferenca"] = round(float(voo["total"]) - float(conv["total"]), 2)
+
+    atraso = calendario.dias_uteis_entre(alvo, chegada_conv) if chegada_conv else None
+    motivo = ("O convencional chegaria em %s, %s dia(s) util(eis) depois da data combinada (%s)."
+              % (chegada_conv.strftime("%d/%m"), atraso, alvo.strftime("%d/%m"))
+              if chegada_conv else "O convencional nao cobre este destino.")
+
+    if chegada_voo and chegada_voo <= alvo:
+        resultado.update({
+            "modalidade": "EXPRESSO",
+            "estimativa": voo,
+            "alternativa": conv,
+            "motivo": motivo + " O Proximo Voo chega em %s." % chegada_voo.strftime("%d/%m"),
+        })
+        return resultado
+
+    resultado.update({
+        "modalidade": "EXPRESSO",
+        "estimativa": voo,
+        "alternativa": conv,
+        "nem_expresso_alcanca": True,
+        "motivo": motivo + (" Nem o Proximo Voo alcanca: chegaria em %s."
+                            % chegada_voo.strftime("%d/%m") if chegada_voo
+                            else " O destino nao esta na tabela expressa."),
+    })
+    return resultado

@@ -90,7 +90,8 @@ def estimativa_do_pedido(pedido_id: UUID,
     db = get_service_db()
 
     ped = db.table("pedidos").select(
-        "id, numero_pedido, numero_nf, local_entrega, valor_nf, valor_produtos"
+        "id, numero_pedido, numero_nf, local_entrega, valor_nf, valor_produtos, "
+        "data_esperada_cliente"
     ).eq("id", str(pedido_id)).execute().data
     if not ped:
         raise HTTPException(status_code=404, detail="OV nao encontrada")
@@ -148,7 +149,23 @@ def estimativa_do_pedido(pedido_id: UUID,
                     for i in itens)
         base_valor = "itens da OV" if valor else None
 
-    r = tabela_frete_service.estimar(uf, cidade, peso_kg=peso, m3=m3, valor_nf=valor)
+    # A modalidade sai da DATA, nao do preco: convencional sempre que ele chegar
+    # a tempo, Proximo Voo so quando o prazo contratado nao alcanca a data
+    # combinada com o cliente. Quem decide isso e o calendario, nao a tela.
+    escolha = tabela_frete_service.escolher_modalidade(
+        uf, cidade, peso_kg=peso, m3=m3, valor_nf=valor,
+        data_entrega=p.get("data_esperada_cliente"))
+    r = escolha["estimativa"]
+    r["modalidade"] = escolha["modalidade"]
+    r["motivo_modalidade"] = escolha.get("motivo")
+    r["data_entrega_alvo"] = escolha.get("data_entrega_alvo")
+    r["chegada_convencional"] = escolha.get("chegada_convencional")
+    r["chegada_expresso"] = escolha.get("chegada_expresso")
+    r["nem_expresso_alcanca"] = escolha.get("nem_expresso_alcanca", False)
+    r["diferenca_modalidade"] = escolha.get("diferenca")
+    alt = escolha.get("alternativa")
+    r["alternativa"] = ({"tabela": alt.get("tabela") or "Convencional",
+                         "total": alt.get("total")} if alt else None)
     r["num_caixas"] = c.get("num_caixas")
     r["m3"] = m3
     r["tem_cubagem"] = bool(cub)

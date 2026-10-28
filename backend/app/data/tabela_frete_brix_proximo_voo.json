@@ -1,0 +1,90 @@
+{
+  "transportadora": "BRIX",
+  "tabela": "Proximo Voo",
+  "descricao": "Entrega expressa: embarque no proximo voo. Usar quando o prazo convencional nao atende.",
+  "origem": "Lauro de Freitas/BA",
+  "vigencia": "2026-10",
+  "emitida_em": "2026-10-20",
+  "contato": "Lucimara Bispo — Executiva de Contas",
+
+  "frete_peso": {
+    "base": 308.0,
+    "por_kg": 44.0,
+    "passo_kg": 0.5,
+    "peso_maximo_kg": 30.0,
+    "observacao": "A tabela e uma escada de 0,5 em 0,5 kg, de R$ 330,00 (0,5 kg) a R$ 1.628,00 (30 kg). A regra exata e R$ 308,00 + R$ 44,00 por kg, com o peso arredondado para cima no proximo meio quilo. Acima de 30 kg a tabela nao cobre: consultar."
+  },
+
+  "ad_valorem_pct": 0.333,
+  "gris_pct_padrao": 0.0,
+  "observacao_gris": "A tabela do Proximo Voo nao menciona GRIS (a convencional cobra 0,05%). Confirmar com a Lucimara antes de usar a estimativa para fechar preco.",
+
+  "fator_cubagem_kg_m3": 166.67,
+  "observacao_fator": "Cubagem: comprimento x largura x altura (cm) / 6.000, declarada na propria tabela. Equivale a 166,67 kg/m3.",
+
+  "taxa_coleta": {"ate_10kg": 55.0, "excedente_kg": 0.82},
+  "taxas_entrega": {
+    "CAPITAL": {"ate_10kg": 77.0, "excedente_kg": 0.80},
+    "GRANDE_CAPITAL": {"ate_10kg": 110.0, "excedente_kg": 0.82}
+  },
+  "interior_dedicado_km": 2.75,
+  "observacao_interior": "Interior e atendido por veiculo dedicado: R$ 2,75 por km rodado, ida e volta.",
+
+  "taxa_produto_perigoso": 77.0,
+  "taxa_emergencia_capitais": 308.0,
+  "hora_parada": 66.0,
+  "observacao_hora_parada": "R$ 66,00 por hora apos o veiculo passar 1 hora no local de coleta ou entrega.",
+  "reentrega_pct": 50,
+  "devolucao_pct": 100,
+  "coleta_improdutiva_pct": 50,
+  "pagamento": "Quinzenal",
+  "capacidade_veiculo_kg": 500,
+
+  "nao_incluido": "ICMS (conforme a legislacao), hora parada, taxa de emergencia, produto perigoso, veiculo dedicado de interior e custo excedente (cobrado em DACTE complementar).",
+
+  "restricoes": {
+    "pgr_carga_geral": "Ate R$ 199.999,99 para carga geral; acima disso consultar previamente.",
+    "pgr_carga_usada": "Ate R$ 30.000,00, com seguro somente contra extravio ou roubo — nao cobre avaria.",
+    "redespacho_ba_mg": "Permitido somente para nota ate R$ 30.000,00 e peso real ou cubado ate 50 kg. Acima disso, somente entrega dedicada.",
+    "rio_de_janeiro_150k": "Envio com nota acima de R$ 150.000,00 somente com entrega dedicada.",
+    "rio_de_janeiro_200k": "Envio com nota acima de R$ 200.000,00 somente com escolta e carro dedicado.",
+    "carga_valor": "Mercadoria enquadrada como Carga Valor tem seguro obrigatorio da cia aerea — consultar."
+  },
+
+  "observacao_reajuste": "Os reajustes praticados pelas cias aereas sao repassados na tabela.",
+
+  "destinos": [
+    {"cidade": "ARACAJU", "uf": "SE", "prazo": 2},
+    {"cidade": "BELEM", "uf": "PA", "prazo": 2},
+    {"cidade": "BELO HORIZONTE", "uf": "MG", "prazo": 1},
+    {"cidade": "BOA VISTA", "uf": "RR", "prazo": 2},
+    {"cidade": "BRASILIA", "uf": "DF", "prazo": 1},
+    {"cidade": "CAMPINAS", "uf": "SP", "prazo": 1},
+    {"cidade": "CAMPO GRANDE", "uf": "MS", "prazo": 2},
+    {"cidade": "CUIABA", "uf": "MT", "prazo": 2},
+    {"cidade": "CURITIBA", "uf": "PR", "prazo": 2},
+    {"cidade": "FLORIANOPOLIS", "uf": "SC", "prazo": 2},
+    {"cidade": "FORTALEZA", "uf": "CE", "prazo": 2},
+    {"cidade": "GOIANIA", "uf": "GO", "prazo": 1},
+    {"cidade": "JOAO PESSOA", "uf": "PB", "prazo": 2},
+    {"cidade": "LONDRINA", "uf": "PR", "prazo": 2},
+    {"cidade": "MACAPA", "uf": "AP", "prazo": 2},
+    {"cidade": "MACEIO", "uf": "AL", "prazo": 2},
+    {"cidade": "MANAUS", "uf": "AM", "prazo": 2},
+    {"cidade": "MARABA", "uf": "PA", "prazo": 2},
+    {"cidade": "NATAL", "uf": "RN", "prazo": 2},
+    {"cidade": "NAVEGANTES", "uf": "SC", "prazo": 2},
+    {"cidade": "PALMAS", "uf": "TO", "prazo": 2},
+    {"cidade": "PORTO ALEGRE", "uf": "RS", "prazo": 2},
+    {"cidade": "PORTO VELHO", "uf": "RO", "prazo": 2},
+    {"cidade": "RECIFE", "uf": "PE", "prazo": 2},
+    {"cidade": "RIO BRANCO", "uf": "AC", "prazo": 2},
+    {"cidade": "RIO DE JANEIRO", "uf": "RJ", "prazo": 1},
+    {"cidade": "SAO LUIS", "uf": "MA", "prazo": 2},
+    {"cidade": "SAO PAULO", "uf": "SP", "prazo": 1},
+    {"cidade": "TERESINA", "uf": "PI", "prazo": 2},
+    {"cidade": "VITORIA", "uf": "ES", "prazo": 1}
+  ],
+
+  "observacao_cobertura": "A tabela expressa cobre CAMPINAS e MARABA, que a convencional nao tem; e nao cobre IMPERATRIZ, JOINVILLE, MARINGA e UBERLANDIA, que a convencional tem."
+}
