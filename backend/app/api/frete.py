@@ -91,7 +91,7 @@ def estimativa_do_pedido(pedido_id: UUID,
 
     ped = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, local_entrega, valor_nf, valor_produtos, "
-        "data_esperada_cliente"
+        "data_prevista_entrega, data_esperada_cliente"
     ).eq("id", str(pedido_id)).execute().data
     if not ped:
         raise HTTPException(status_code=404, detail="OV nao encontrada")
@@ -152,9 +152,14 @@ def estimativa_do_pedido(pedido_id: UUID,
     # A modalidade sai da DATA, nao do preco: convencional sempre que ele chegar
     # a tempo, Proximo Voo so quando o prazo contratado nao alcanca a data
     # combinada com o cliente. Quem decide isso e o calendario, nao a tela.
+    #
+    # O alvo e a data_prevista_entrega — o COMPROMISSO que Operacoes de Vendas
+    # define na cotacao (migracao v14) e edita na tela. A data_esperada_cliente
+    # e o que o cliente pediu na abertura e so entra como reserva: cotar pela
+    # esperada fazia a tela ignorar a data que o usuario acabara de mudar.
+    alvo = p.get("data_prevista_entrega") or p.get("data_esperada_cliente")
     escolha = tabela_frete_service.escolher_modalidade(
-        uf, cidade, peso_kg=peso, m3=m3, valor_nf=valor,
-        data_entrega=p.get("data_esperada_cliente"))
+        uf, cidade, peso_kg=peso, m3=m3, valor_nf=valor, data_entrega=alvo)
     r = escolha["estimativa"]
     r["modalidade"] = escolha["modalidade"]
     r["motivo_modalidade"] = escolha.get("motivo")
@@ -166,6 +171,22 @@ def estimativa_do_pedido(pedido_id: UUID,
     alt = escolha.get("alternativa")
     r["alternativa"] = ({"tabela": alt.get("tabela") or "Convencional",
                          "total": alt.get("total")} if alt else None)
+    # Duas coisas que so dao para ver aqui, onde as duas datas estao na mao.
+    esperada = p.get("data_esperada_cliente")
+    if esperada and alvo and str(esperada) < str(alvo):
+        r.setdefault("avisos", []).append(
+            "O cliente pediu para %s e o compromisso da OV esta em %s: a cotacao segue "
+            "o compromisso." % (date.fromisoformat(str(esperada)).strftime("%d/%m"),
+                                date.fromisoformat(str(alvo)).strftime("%d/%m")))
+    if alvo:
+        from app.services import calendario
+        d_alvo = date.fromisoformat(str(alvo))
+        if not calendario.eh_util(d_alvo):
+            r.setdefault("avisos", []).append(
+                "%s nao e dia util: nao ha entrega nesse dia. Conferir a data com o cliente."
+                % d_alvo.strftime("%d/%m"))
+    r["aviso"] = " ".join(r["avisos"]) if r.get("avisos") else r.get("aviso")
+
     r["num_caixas"] = c.get("num_caixas")
     r["m3"] = m3
     r["tem_cubagem"] = bool(cub)
