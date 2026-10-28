@@ -24,7 +24,8 @@ CINZA = "F2F2F2"
 _PRIORIDADE = {"CRITICA": "CRÍTICA", "ALTA": "ALTA", "NORMAL": "Normal"}
 
 
-def modalidade(destino_local: str, prazo_cliente, saida: date) -> tuple:
+def modalidade(destino_local: str, prazo_cliente, saida: date,
+               tipo_frete: str = "") -> tuple:
     """Convencional ou Expressa — a pergunta é se o prazo da tabela dá conta.
 
     A tabela da BRIX promete, por destino, um prazo em dias úteis. Se o cliente
@@ -35,9 +36,17 @@ def modalidade(destino_local: str, prazo_cliente, saida: date) -> tuple:
     Sem data prometida ao cliente ou com destino fora da tabela, não dá para
     afirmar nem um nem outro: devolve "a definir" em vez de chutar convencional
     e deixar a carga atrasar calada.
+
+    No FOB a escolha não é nossa: quem contratou o frete foi o cliente, e a
+    expressa que a planilha sugeriria seria conta dele. A carga continua na
+    programação — a transportadora vem buscar no nosso dock do mesmo jeito —
+    mas sem palpite de modalidade.
     """
     from app.services import tabela_frete_service
     from app.services.home_service import _dias_uteis
+
+    if (tipo_frete or "").upper().startswith("FOB"):
+        return "FOB — CLIENTE", "frete contratado pelo cliente — não é custo nosso"
 
     local = (destino_local or "").strip()
     cidade = uf = None
@@ -124,6 +133,7 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
 
     peds = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, status, valor_nf, prioridade, forma_venda, "
+        "tipo_frete, "
         "local_entrega, data_faturamento, data_prevista_entrega, coleta_agendada_em, "
         "coleta_agendada_obs, observacoes, transportadora_id, clientes(nome), "
         "transportadoras(nome)"
@@ -168,7 +178,8 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
         if p.get("coleta_agendada_obs"):
             obs.append(p["coleta_agendada_obs"])
         modo, porque = modalidade(p.get("local_entrega"),
-                                  p.get("data_prevista_entrega"), dia)
+                                  p.get("data_prevista_entrega"), dia,
+                                  p.get("tipo_frete"))
         if modo == "EXPRESSA":
             obs.insert(0, "EXPRESSA — %s" % porque)
         linhas.append({
@@ -195,7 +206,10 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             "sem_cubagem": not c.get("num_caixas"),
         })
     # Expressa primeiro, depois agendada: as duas mudam a decisão do carro.
-    linhas.sort(key=lambda x: (x["modalidade"] != "EXPRESSA",
+    # Expressa primeiro porque muda a decisão do carro; FOB por último porque
+    # a modalidade ali não é escolha nossa.
+    linhas.sort(key=lambda x: (x["modalidade"].startswith("FOB"),
+                               x["modalidade"] != "EXPRESSA",
                                x["agendamento"] == "NÃO", x["prazo"] or "9", x["nf"]))
     # As instruções de entrega são para o motorista: vão inteiras, não cortadas.
     for l in linhas:
@@ -263,6 +277,10 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
             cel.font = Font(size=10, bold=True, color="9C0006")
         elif l["modalidade"] == "A DEFINIR":
             ws.cell(row=r, column=7).font = Font(size=10, italic=True, color="BF8F00")
+        elif l["modalidade"].startswith("FOB"):
+            # Apagada de propósito: a carga está na lista para ser coletada,
+            # mas a modalidade é decisão de quem paga, e não somos nós.
+            ws.cell(row=r, column=7).font = Font(size=10, italic=True, color="808080")
         if l["sem_cubagem"]:
             ws.cell(row=r, column=11).value = "a cubar"
             ws.cell(row=r, column=11).font = Font(size=10, italic=True, color="BF8F00")
