@@ -467,12 +467,18 @@ function ModalLancamento({ linha, situacoes, onFechar, onSalvo }: {
   onFechar: () => void
   onSalvo: () => void
 }) {
+  const hoje = new Date().toLocaleDateString('sv')  // AAAA-MM-DD no fuso local
   const [situacao, setSituacao] = useState('EM_TRANSITO')
   const [descricao, setDescricao] = useState('')
   const [recebedor, setRecebedor] = useState('')
   const [novaPrevisao, setNovaPrevisao] = useState('')
+  // O rastreio é feito quando sobra tempo, e a carga raramente chegou no
+  // mesmo instante. Hoje é só o palpite inicial — quem lança corrige.
+  const [quando, setQuando] = useState(hoje)
 
   const entrega = situacao === 'ENTREGUE' || situacao === 'COMPROVANTE_RECEBIDO'
+  const saida = /^\d{4}-\d{2}-\d{2}$/.test(linha.saida || '') ? linha.saida! : undefined
+  const atrasado = quando !== hoje
   const fonte = (linha.transportadora || '').toUpperCase().includes('BRIX')
     ? 'BRIX_SISTEMA' : 'RR_WHATSAPP'
 
@@ -480,6 +486,7 @@ function ModalLancamento({ linha, situacoes, onFechar, onSalvo }: {
     mutationFn: () => api.post(`/rastreio/${linha.pedido_id}`, {
       situacao,
       fonte,
+      ocorrido_em: quando || null,
       descricao: descricao || null,
       recebedor: recebedor || null,
       nova_previsao: novaPrevisao || null,
@@ -524,6 +531,24 @@ function ModalLancamento({ linha, situacoes, onFechar, onSalvo }: {
               </button>
             ))}
           </div>
+
+          <label className="block text-xs text-gray-600">
+            {entrega ? 'Quando a carga chegou' : 'Quando aconteceu'}
+            <input
+              type="date"
+              value={quando}
+              min={saida}
+              max={hoje}
+              onChange={(e) => setQuando(e.target.value)}
+              className={`mt-1 w-full px-2.5 py-2 text-sm rounded-lg border
+                ${atrasado ? 'border-amber-300 bg-amber-50' : 'border-gray-200'}`}
+            />
+            <span className="text-[11px] text-gray-400">
+              {atrasado
+                ? 'Lançamento atrasado: vale esta data, não a de hoje.'
+                : 'Se a carga chegou antes, troque a data — o prazo é contado por ela.'}
+            </span>
+          </label>
 
           {entrega && (
             <input

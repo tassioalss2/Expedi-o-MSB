@@ -298,10 +298,22 @@ def lancar(pedido_id: str, dados: dict, usuario_id: Optional[str] = None) -> dic
     if not (pedido[0].get("tipo_frete") or "").startswith("CIF"):
         raise ValueError("Esta OV não é CIF — o frete é do cliente, não há o que rastrear aqui")
 
+    # O dia em que a carga chegou não é o dia em que alguém teve tempo de
+    # lançar. O rastreio é feito quando dá — às vezes dois dias depois — e,
+    # carimbando a hora do lançamento, a entrega de ontem virava entrega de
+    # hoje e o OTIF contava atraso que não houve. Quem lança informa a data.
+    ocorrido = str(dados.get("ocorrido_em") or "").strip()
+    if len(ocorrido) == 10:
+        # Veio só o dia, do seletor de data. Meio-dia porque 00:00 em UTC cai
+        # na véspera no horário de Brasília e mudaria o dia da entrega.
+        ocorrido += "T12:00:00+00:00"
+    if ocorrido and ocorrido[:10] > date.today().isoformat():
+        raise ValueError("A data informada está no futuro")
+
     evento = {
         "pedido_id": str(pedido_id),
         "situacao": situacao,
-        "ocorrido_em": dados.get("ocorrido_em") or _agora(),
+        "ocorrido_em": ocorrido or _agora(),
         "fonte": dados.get("fonte"),
         "descricao": (dados.get("descricao") or "").strip() or None,
         "recebedor": (dados.get("recebedor") or "").strip() or None,
