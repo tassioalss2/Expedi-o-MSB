@@ -179,8 +179,15 @@ def ler_conversa(conteudo: bytes, nome: str = "") -> dict:
     else:
         texto = conteudo.decode("utf-8", "replace")
     if not texto.strip():
-        raise HTTPException(422, "não encontrei o texto da conversa — exporte o "
-                                 "chat pelo WhatsApp e mande o .txt ou o .zip")
+        # Mensagem nomeando o arquivo: o engano comum é mandar aqui o pacote de
+        # comprovantes da transportadora, que também é .zip e também "é da
+        # transportadora" — mas não tem o .txt do chat dentro.
+        raise HTTPException(
+            422, "'%s' não tem o texto da conversa dentro. Este campo espera a "
+                 "exportação do WhatsApp (no chat: Mais ▸ Exportar conversa ▸ Sem "
+                 "mídia), que gera um .txt ou um .zip com um .txt dentro — não o "
+                 "pacote de comprovantes da transportadora."
+                 % (nome or "o arquivo enviado"))
 
     mensagens = []
     for linha in texto.splitlines():

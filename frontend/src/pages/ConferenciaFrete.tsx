@@ -71,6 +71,11 @@ export default function ConferenciaFrete() {
   // ela a conferencia roda igual, so nao consegue dizer se a cobranca a mais
   // foi combinada — e essa e a diferenca entre acusar e contestar com razao.
   const [conversa, setConversa] = useState<File | null>(null)
+  // O pacote que acabou de ser conferido fica guardado para a conversa poder
+  // ser escolhida DEPOIS: antes, quem anexava a conversa com o resultado ja na
+  // tela nao via nada acontecer — o pedido so levava a conversa no envio do zip,
+  // e ninguem ia adivinhar que tinha de subir o pacote de novo.
+  const [pacote, setPacote] = useState<File | null>(null)
   // A OV aberta para analise. Nasceu da pergunta do Tassio sobre a OV016406
   // ("o que ta de errado com essa OV nos fretes?"): a resposta era "nada, ela
   // foi pela BRIX", e ele teve de perguntar para saber.
@@ -83,16 +88,18 @@ export default function ConferenciaFrete() {
   })
 
   const conferir = useMutation({
-    mutationFn: (arquivo: File) => {
+    mutationFn: ({ arquivo, comConversa }: { arquivo: File; comConversa?: File | null }) => {
       const fd = new FormData()
       fd.append('arquivo', arquivo)
-      if (conversa) fd.append('conversa', conversa)
+      const conv = comConversa !== undefined ? comConversa : conversa
+      if (conv) fd.append('conversa', conv)
       return api.post('/frete/conferencia', fd,
         { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
     },
-    onSuccess: (r: any) => {
+    onSuccess: (r: any, vars: any) => {
       setResultado(r)
       setFiltro('')
+      setPacote(vars.arquivo)
       qc.invalidateQueries({ queryKey: ['frete-conferencias'] })
       toast.success(`${r.qtd_ctes} CT-e conferidos`)
     },
@@ -196,7 +203,19 @@ export default function ConferenciaFrete() {
           </span>
         )}
         <input type="file" accept=".txt,.zip" className="hidden"
-          onChange={e => { setConversa(e.target.files?.[0] || null); e.target.value = '' }} />
+          onChange={e => {
+            const f = e.target.files?.[0] || null
+            e.target.value = ''
+            setConversa(f)
+            // Ja ha um pacote conferido na tela: refaz a conferencia agora, com
+            // a conversa. Escolher o arquivo e ver a tela parada era o mesmo que
+            // nao ter funcionado.
+            if (f && pacote) {
+              toast.loading('refazendo a conferência com a conversa…', { id: 'reconf' })
+              conferir.mutate({ arquivo: pacote, comConversa: f },
+                { onSettled: () => toast.dismiss('reconf') })
+            }
+          }} />
       </label>
 
       {/* Subir o pacote */}
@@ -216,7 +235,7 @@ export default function ConferenciaFrete() {
         <input type="file" accept=".zip" className="hidden" disabled={conferir.isPending}
           onChange={e => {
             const f = e.target.files?.[0]
-            if (f) conferir.mutate(f)
+            if (f) conferir.mutate({ arquivo: f })
             e.target.value = ''
           }} />
       </label>
@@ -323,7 +342,11 @@ export default function ConferenciaFrete() {
                 {a.valor_diferente} cobrança(s) vieram diferentes do previsto na OV.
                 Com esta transportadora a cotação é feita por WhatsApp — sem a
                 conversa não dá para saber quais foram combinadas. Escolha o
-                arquivo lá em cima e suba o pacote de novo.
+                arquivo lá em cima: a conferência refaz sozinha.
+                {' '}<span className="text-sky-700">
+                  É a exportação do chat (no WhatsApp: Mais ▸ Exportar conversa ▸
+                  Sem mídia), não o pacote de comprovantes.
+                </span>
               </p>
             </div>
           )}
