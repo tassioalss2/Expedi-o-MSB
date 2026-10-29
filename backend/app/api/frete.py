@@ -172,12 +172,18 @@ def estimativa_do_pedido(pedido_id: UUID,
     r["alternativa"] = ({"tabela": alt.get("tabela") or "Convencional",
                          "total": alt.get("total")} if alt else None)
     # Duas coisas que so dao para ver aqui, onde as duas datas estao na mao.
+    #
+    # A data_esperada_cliente NAO e uma data coletada com o cliente: o app a
+    # preenche copiando a entrega prevista na abertura da OV (em 77% das OVs
+    # desde agosto as duas sao identicas). Entao a unica coisa que ela permite
+    # afirmar e que a data foi empurrada DEPOIS da abertura — que e o que o
+    # aviso diz. Chamar isso de "o cliente pediu" era inventar uma origem.
     esperada = p.get("data_esperada_cliente")
     if esperada and alvo and str(esperada) < str(alvo):
         r.setdefault("avisos", []).append(
-            "O cliente pediu para %s e o compromisso da OV esta em %s: a cotacao segue "
-            "o compromisso." % (date.fromisoformat(str(esperada)).strftime("%d/%m"),
-                                date.fromisoformat(str(alvo)).strftime("%d/%m")))
+            "A OV foi aberta com entrega em %s e hoje esta em %s: a cotacao segue a "
+            "data atual." % (date.fromisoformat(str(esperada)).strftime("%d/%m"),
+                             date.fromisoformat(str(alvo)).strftime("%d/%m")))
     if alvo:
         from app.services import calendario
         d_alvo = date.fromisoformat(str(alvo))
