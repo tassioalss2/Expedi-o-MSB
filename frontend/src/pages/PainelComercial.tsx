@@ -178,7 +178,15 @@ export function PainelComercial() {
   // `canais` vem pela LINHA do SKU (é a base da meta). `canais_digitado` é o que
   // o canal escrito na OV diria — serve para conferir a diferença.
   const { data: vendasCanalResp } = useQuery<{
-    canais: Array<{ canal: string; linha?: string | null; label: string; qtd: number; valor: number }>
+    // `valor` é o LÍQUIDO (bruto − devolução) — é o que a meta enxerga.
+    canais: Array<{ canal: string; linha?: string | null; label: string; qtd: number
+                    valor: number; bruto?: number; devolucao?: number }>
+    devolucoes?: {
+      qtd: number; valor: number
+      sem_linha: { qtd: number; valor: number }
+      notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
+                     valor: number; linha: string | null }>
+    }
     licitacao: { qtd: number; valor: number }
     canais_digitado: Array<{ canal: string; label: string; qtd: number; valor: number }>
     sem_linha: { qtd: number; valor: number }
@@ -191,6 +199,7 @@ export function PainelComercial() {
   })
   const vendasCanal = vendasCanalResp?.canais ?? []
   const licitacaoInfo = vendasCanalResp?.licitacao ?? { qtd: 0, valor: 0 }
+  const devolucoes = vendasCanalResp?.devolucoes
   const vendasDigitado = vendasCanalResp?.canais_digitado ?? []
 
   // Faturamento diário (Vendas sem frete) do mês selecionado — para o gráfico.
@@ -261,7 +270,12 @@ export function PainelComercial() {
       }
       // Uma NF com itens de duas linhas aparece nas duas, mas com a PARCELA de
       // cada uma — senão a soma do drill-down não fecharia com o card.
-      return rows.filter(r => doEscopo(r) && Number((r.linhas || {})[k] || 0) > 0)
+      //
+      // A devolução da linha entra junto, negativa: o card mostra o líquido, e
+      // a lista tem de somar o mesmo. A que ainda não tem linha não aparece em
+      // linha nenhuma — é exatamente o que o aviso em cima do card diz.
+      return rows.filter(r => (doEscopo(r) || (r.eh_devolucao && !r.eh_biomedical))
+                              && Number((r.linhas || {})[k] || 0) !== 0)
         .map(r => {
           const partes: Record<string, number> = r.linhas || {}
           const total = Object.values(partes).reduce((a, v) => a + Number(v || 0), 0)
@@ -753,10 +767,11 @@ export function PainelComercial() {
       <div id="canais" className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 scroll-mt-4">
         <div className="mb-4">
           <h2 className="text-sm font-semibold text-gray-700">Vendas por Linha</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Realizado × meta · sem frete · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
+          <p className="text-xs text-gray-400 mt-0.5">Realizado × meta · sem frete · líquido de devoluções · {format(mesFinanceiro, 'MMMM/yyyy', { locale: ptBR })}</p>
           <p className="text-[11px] text-gray-400 mt-0.5">
             A linha vem dos itens da OV: uma venda com produtos de duas linhas entra
-            dividida em cada meta, pelo valor de cada item.
+            dividida em cada meta, pelo valor de cada item. Devolução é venda desfeita
+            e sai da meta da linha que a fez.
           </p>
         </div>
         {(() => {
@@ -778,13 +793,19 @@ export function PainelComercial() {
           return (
             <div className="space-y-4">
               {CANAIS.map((ch) => {
+                // `rz` já é o líquido — é contra ele que a meta é medida.
                 const rz = de(ch.key)?.valor || 0
+                const brutoCh = de(ch.key)?.bruto ?? rz
+                const devolCh = de(ch.key)?.devolucao || 0
                 const qtd = de(ch.key)?.qtd || 0
                 const mt = meta?.por_canal?.[ch.key] ?? null
                 const pct = mt && mt > 0 ? (rz / mt) * 100 : 0
                 const ritmo = ritmoMeta(rz, mt)
-                // Quanto esta linha mudou por vir dos itens em vez do canal digitado.
-                const dif = rz - digitadoDe(ch.key)
+                // Quanto esta linha mudou por vir dos itens em vez do canal
+                // digitado. Compara BRUTO com bruto: o canal digitado não sabe
+                // de devolução, e misturar as duas coisas aqui faria a conta
+                // parecer um erro de classificação que não existe.
+                const dif = brutoCh - digitadoDe(ch.key)
                 const editing = editandoCanal === ch.key
                 return (
                   <div key={ch.key}
@@ -846,6 +867,12 @@ export function PainelComercial() {
                             {rz < mt && <span>faltam {fmtR$(mt - rz)}</span>}
                           </div>
                         )}
+                        {devolCh > 0 && (
+                          <p className="text-[11px] text-gray-400 mt-0.5">
+                            faturou {fmtR$(brutoCh)} e voltou
+                            <span className="text-rose-600 font-medium"> {fmtR$(devolCh)}</span> em devolução
+                          </p>
+                        )}
                         {Math.abs(dif) >= 1 && (
                           <p className="text-[11px] text-gray-400 mt-0.5">
                             {dif > 0 ? '+' : '−'}{fmtR$(Math.abs(dif))} em relação ao canal digitado
@@ -857,6 +884,37 @@ export function PainelComercial() {
                   </div>
                 )
               })}
+              {!!devolucoes?.qtd && (
+                <div className="pt-3 border-t border-dashed border-gray-200">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-xs font-medium text-gray-500 flex-1">
+                      Devoluções no mês
+                      <span className="block text-[11px] text-gray-400 font-normal">
+                        venda desfeita · já descontada das linhas acima
+                      </span>
+                    </span>
+                    <span className="text-xs text-gray-400 tabular-nums">{devolucoes.qtd} NF</span>
+                    <span className="text-sm font-semibold text-rose-600 tabular-nums">
+                      −{fmtR$(devolucoes.valor)}
+                    </span>
+                  </div>
+                  {devolucoes.sem_linha.valor > 0 && (
+                    // Enquanto a nota não tem linha, o estorno sai do total e
+                    // de nenhuma meta — e isso precisa doer na tela, senão a
+                    // meta fica certa no total e errada em cada linha.
+                    <Link to="/faturamento-d365"
+                      className="mt-1.5 block rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 hover:bg-amber-100 transition-colors">
+                      <p className="text-[11px] text-amber-800 leading-snug">
+                        <strong>{fmtR$(devolucoes.sem_linha.valor)}</strong> em {devolucoes.sem_linha.qtd} devolução(ões)
+                        ainda sem linha: saem do total, mas não saem de nenhuma meta.
+                        <span className="block text-amber-700 underline">
+                          Informar a linha no Faturamento conferido →
+                        </span>
+                      </p>
+                    </Link>
+                  )}
+                </div>
+              )}
               {daBio.length > 0 && (
                 <div className="pt-3 border-t border-dashed border-gray-200">
                   <div className="flex items-baseline justify-between gap-2 mb-1.5">

@@ -690,6 +690,11 @@ def conciliacao(ini: str, fim: str) -> dict:
                 "valor": round(valor_da_nota(n), 2),
                 "operacao": n.get("operacao"),
                 "ov": (app.get(n["chave_numero"]) or {}).get("numero_pedido"),
+                # A linha da devolução decide de QUAL meta o estorno sai. O
+                # D365 não diz, e o espelho não guarda item: quem sabe é quem
+                # olha a nota. Sem isso, a devolução some do total e não sai de
+                # meta nenhuma.
+                "linha": n.get("linha"), "linha_ajustada": n.get("linha_ajustada"),
             } for n in devolucoes], key=lambda x: (str(x["data"] or ""), x["nf"])),
             "simbolicas_qtd": len(simbolicas),
             "simbolicas_valor": round(sum(valor_da_nota(n) for n in simbolicas), 2),
@@ -745,6 +750,68 @@ def conciliacao(ini: str, fim: str) -> dict:
 
 VAZIO = {"qtd": 0, "valor": 0.0, "por_dia": {}, "por_linha": {},
          "licitacao": {"qtd": 0, "valor": 0.0}, "notas": []}
+
+VAZIO_DEVOLUCAO = {"qtd": 0, "valor": 0.0, "por_linha": {},
+                   "sem_linha": {"qtd": 0, "valor": 0.0}, "notas": []}
+
+
+def devolucoes_do_periodo(ini: str, fim: str) -> dict:
+    """Venda desfeita no período — o que a meta tem de devolver.
+
+    Fica fora daqui, de propósito:
+
+      · DEVOLUCAO_SIMBOLICA, que não é venda desfeita: é o acerto fiscal do
+        material que estava em consignação e foi usado. Somá-la inflaria o
+        estorno de outubro de R$ 51.705,85 para R$ 84 mil, estornando vendas
+        que aconteceram;
+      · transfer price, que não entrou na receita e por isso não sai dela.
+
+    A devolução vem só do espelho: ela é nota de ENTRADA e não nasce de OV
+    nenhuma — em outubro, as 6 que existem não têm OV do lado de cá.
+
+    `por_linha` só tem o que dá para afirmar. A nota de devolução chega sem
+    linha (o D365 não diz, e o espelho não guarda item), então o normal é cair
+    tudo em `sem_linha` até alguém dizer qual é, na tela do faturamento
+    conferido. Chutar a linha aqui seria tirar dinheiro da meta de alguém no
+    palpite.
+    """
+    db = get_service_db()
+    notas = db.table("notas_d365").select(
+        "id, numero, chave_numero, cliente_nome, data_documento, valor_total, "
+        "valor_produtos, operacao, tipo_operacao, origem_venda, linha, linha_ajustada, "
+        "direcao, status"
+    ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+    classificar_na_leitura(notas)
+
+    devolucoes = [n for n in notas
+                  if _aprovada(n)
+                  and n.get("tipo_operacao") == "DEVOLUCAO"
+                  and not eh_transfer_price(n.get("cliente_nome"))
+                  and "ESTERILIZE" not in (n.get("cliente_nome") or "").upper()]
+    if not devolucoes:
+        return {**VAZIO_DEVOLUCAO, "por_linha": {}, "sem_linha": {"qtd": 0, "valor": 0.0},
+                "notas": []}
+
+    por_linha: dict = {}
+    sem_linha = {"qtd": 0, "valor": 0.0}
+    for n in devolucoes:
+        v = valor_da_nota(n)
+        alvo = por_linha.setdefault(n["linha"], {"qtd": 0, "valor": 0.0}) if n.get("linha") else sem_linha
+        alvo["qtd"] += 1
+        alvo["valor"] = round(alvo["valor"] + v, 2)
+
+    return {
+        "qtd": len(devolucoes),
+        "valor": round(sum(valor_da_nota(n) for n in devolucoes), 2),
+        "por_linha": por_linha,
+        "sem_linha": sem_linha,
+        "notas": sorted([{
+            "id": n.get("id"), "nf": n.get("numero"), "data": n.get("data_documento"),
+            "cliente": n.get("cliente_nome"), "valor": round(valor_da_nota(n), 2),
+            "operacao": n.get("operacao"), "linha": n.get("linha"),
+            "linha_ajustada": n.get("linha_ajustada"),
+        } for n in devolucoes], key=lambda x: (str(x["data"] or ""), x["nf"])),
+    }
 
 
 def complemento_do_periodo(ini: str, fim: str) -> dict:

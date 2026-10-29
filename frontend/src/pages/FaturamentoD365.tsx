@@ -71,7 +71,8 @@ type Conciliacao = {
     qtd: number; valor: number; liquido: number
     simbolicas_qtd: number; simbolicas_valor: number
     notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
-                   valor: number; operacao: string | null; ov: string | null }>
+                   valor: number; operacao: string | null; ov: string | null
+                   linha: string | null; linha_ajustada?: boolean }>
   }
   comunicado_uso: {
     qtd: number; valor: number
@@ -398,7 +399,7 @@ export default function FaturamentoD365() {
           <Secao
             titulo="Devoluções de venda"
             explicacao={`Notas de entrada por devolução no período. O faturamento bruto acima não as desconta: o líquido é ${
-              fmtBRL(data?.devolucoes?.liquido)}.${
+              fmtBRL(data?.devolucoes?.liquido)} — e é o líquido que vale para a meta. Informe a LINHA de cada uma: sem ela o estorno sai do total e não sai de meta nenhuma.${
               data?.devolucoes?.simbolicas_qtd
                 ? ` Fora desta conta, ${data.devolucoes.simbolicas_qtd} devolução(ões) simbólica(s) (${
                   fmtBRL(data.devolucoes.simbolicas_valor)}): acerto do material em consignação que foi usado, não venda desfeita.`
@@ -417,6 +418,20 @@ export default function FaturamentoD365() {
                   title={n.operacao || ''}>{n.operacao}</td>
                 <td className="py-1.5 px-2 text-[11px] text-gray-500 whitespace-nowrap">
                   {n.ov || <span className="text-gray-400">sem OV no app</span>}
+                </td>
+                <td className="py-1.5 px-2">
+                  {/* De qual meta este estorno sai. Enquanto ficar "sem
+                      linha", ele desconta do total e de nenhuma linha. */}
+                  <select value={n.linha || ''} disabled={corrigirLinha.isPending}
+                    onChange={e => corrigirLinha.mutate({ id: n.id, linha: e.target.value })}
+                    title={n.linha ? 'Linha de onde o estorno sai' : 'Sem linha: não sai de nenhuma meta'}
+                    className={`text-[11px] border rounded px-1 py-0.5 ${
+                      n.linha ? 'border-indigo-300 text-indigo-700' : 'border-amber-300 text-amber-700'}`}>
+                    <option value="">sem linha</option>
+                    <option value="URO">URO</option>
+                    <option value="VASCULAR">VASCULAR</option>
+                    <option value="REALCLOSURE">REALCLOSURE</option>
+                  </select>
                 </td>
                 <td className="py-1.5 px-3 text-right tabular-nums font-medium text-rose-700">
                   −{fmtBRL(n.valor)}

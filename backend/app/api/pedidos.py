@@ -1059,6 +1059,23 @@ def dashboard_financeiro(
     devolucoes = [p for p in pedidos if _eh_devolucao(p) and not _eh_biomedical(p)]
     devolucoes_transfer = [p for p in pedidos if _eh_devolucao(p) and _eh_biomedical(p)]
 
+    # A devolução quase nunca passa pelo app: ela é nota de ENTRADA e não nasce
+    # de OV (em outubro, nenhuma das 6). Sem o espelho aqui, este card mostrava
+    # devolução zero enquanto o Faturamento conferido mostrava R$ 51.705,85 —
+    # dois números para a mesma pergunta, na mesma semana.
+    #
+    # Entram como negativo porque é assim que `_liquido` as consome: ele SOMA o
+    # resumo da devolução ao do bruto.
+    try:
+        espelho_dev = notas_d365_service.devolucoes_do_periodo(
+            inicio.isoformat(), fim.isoformat()).get("notas") or []
+    except Exception as exc:                       # espelho é opcional
+        print("devolucoes do D365 indisponiveis: %s" % str(exc)[:140])
+        espelho_dev = []
+    devolucoes += [{"valor_nf": -float(n.get("valor") or 0),
+                    "valor_produtos": -float(n.get("valor") or 0),
+                    "valor_frete": 0.0, "tipo_frete": None} for n in espelho_dev]
+
     def _liquido(bruto: dict, devolucao: dict) -> dict:
         return {
             **bruto,
@@ -1201,6 +1218,40 @@ def dashboard_financeiro_detalhe(
             "origem": "D365",
         })
 
+    # Devolução entra NEGATIVA, e na linha dela quando houver. Sem isto, abrir
+    # uma linha cujo card já mostra o líquido listaria só as vendas e somaria o
+    # bruto — a lista diria um número e o card, outro.
+    try:
+        from app.services import notas_d365_service
+        devolvidas = notas_d365_service.devolucoes_do_periodo(
+            inicio.isoformat(), fim.isoformat()).get("notas") or []
+    except Exception as exc:                       # espelho é opcional
+        print("devolucoes do D365 indisponiveis no detalhe: %s" % str(exc)[:140])
+        devolvidas = []
+
+    for n in devolvidas:
+        valor = -round(float(n.get("valor") or 0), 2)
+        linhas.append({
+            "id": "d365dev:%s" % n.get("id"),
+            "numero_pedido": None,
+            "numero_nf": n.get("nf"),
+            "cliente": n.get("cliente") or "—",
+            "tipo_frete": None,
+            "tipo_operacao": "DEVOLUCAO",
+            "canal": None,
+            "forma_venda": None,
+            "eh_licitacao": False,
+            "eh_faturamento": False,
+            "eh_devolucao": True,
+            "valor_nf": valor,
+            "valor_frete": 0.0,
+            "valor_sem_frete": valor,
+            "eh_biomedical": False,   # transfer price fica fora destas devoluções
+            "data": str(n.get("data") or "")[:10],
+            "linhas": {n["linha"]: valor} if n.get("linha") else {},
+            "origem": "D365",
+        })
+
     return sorted(linhas, key=lambda x: (x["data"] or "", x["numero_pedido"] or ""))
 
 
@@ -1277,6 +1328,12 @@ def vendas_por_canal(
     O que a Biomedical vendeu sai em balde próprio ("Vascular - Bio"): a NF é
     da MSB e a receita é real, mas quem vendeu não foi o comercial da linha —
     somar na meta dela seria creditar a alguém uma venda que não fez.
+
+    Cada linha vem com três números, porque a pergunta é diferente em cada um:
+    `bruto` é o que saiu, `devolucao` é o que voltou e `valor` é o líquido —
+    bruto menos devolução. A meta é medida contra o LÍQUIDO: venda desfeita não
+    é venda. `valor` é o líquido justamente para que quem já lê esse campo (o
+    placar da TV, entre outros) passe a medir certo sem precisar saber disso.
     """
     from app.core.database import get_service_db
     db = get_service_db()
@@ -1287,11 +1344,14 @@ def vendas_por_canal(
         comp = notas_d365_service.complemento_do_periodo(
             data_inicio.isoformat(), data_fim.isoformat())
         return {"canais": [{"canal": k, "linha": k, "label": _lp.label(k),
-                            "qtd": v["qtd"], "valor": v["valor"]}
+                            "qtd": v["qtd"], "bruto": v["valor"], "devolucao": 0.0,
+                            "valor": v["valor"]}
                            for k, v in (comp.get("por_linha") or {}).items()
                            if k != "SEM_LINHA"],
                 "licitacao": comp.get("licitacao") or {"qtd": 0, "valor": 0.0},
-                "canais_digitado": [], "sem_linha": {"qtd": 0, "valor": 0.0}}
+                "canais_digitado": [], "sem_linha": {"qtd": 0, "valor": 0.0},
+                "devolucoes": {"qtd": 0, "valor": 0.0,
+                               "sem_linha": {"qtd": 0, "valor": 0.0}, "notas": []}}
 
     LABELS = {"URO": "Uro", "VASCULAR": "Vascular", "REALCLOSURE": "Realclosure", "LICITACAO": "Licitação"}
     ids = list(faturados.keys())
@@ -1340,8 +1400,8 @@ def vendas_por_canal(
         for linha, v in rateio.items():
             g = agg.setdefault(linha, {"canal": linha, "linha": linha,
                                        "label": linha_produto.label(linha),
-                                       "qtd": 0, "valor": 0.0})
-            g["valor"] += v
+                                       "qtd": 0, "bruto": 0.0, "devolucao": 0.0})
+            g["bruto"] += v
             # A NF dividida conta em CADA linha que ela toca: é o que o
             # drill-down lista. A soma das contagens pode passar do total de NFs
             # do mês, e é isso mesmo — uma NF de duas linhas aparece nas duas.
@@ -1352,30 +1412,56 @@ def vendas_por_canal(
     # o comunicado de uso da Bio sumiria do placar por linha.
     comp = notas_d365_service.complemento_do_periodo(
         data_inicio.isoformat(), data_fim.isoformat())
+    def _balde(chave: str) -> dict:
+        return agg.setdefault(chave, {
+            "canal": chave, "linha": None if chave == "SEM_CANAL" else chave,
+            "label": "Sem linha" if chave == "SEM_CANAL" else linha_produto.label(chave),
+            "qtd": 0, "bruto": 0.0, "devolucao": 0.0})
+
     for linha, g2 in (comp.get("por_linha") or {}).items():
-        chave = linha if linha != "SEM_LINHA" else "SEM_CANAL"
-        g = agg.setdefault(chave, {"canal": chave, "linha": None if chave == "SEM_CANAL" else chave,
-                                   "label": ("Sem linha" if chave == "SEM_CANAL"
-                                             else linha_produto.label(chave)),
-                                   "qtd": 0, "valor": 0.0})
+        g = _balde(linha if linha != "SEM_LINHA" else "SEM_CANAL")
         g["qtd"] += g2["qtd"]
-        g["valor"] += g2["valor"]
+        g["bruto"] += g2["valor"]
     licit["qtd"] += (comp.get("licitacao") or {}).get("qtd", 0)
     licit["valor"] += (comp.get("licitacao") or {}).get("valor", 0.0)
 
-    for g in list(agg.values()) + list(digitado.values()):
+    # Venda desfeita sai da meta da linha que a fez. A devolução chega sem
+    # linha (o espelho guarda a nota, não o item), então quase tudo cai no
+    # balde sem linha até alguém dizer qual é — e isso fica à vista em
+    # `devolucoes.sem_linha`, para não parecer que o estorno sumiu.
+    dev = notas_d365_service.devolucoes_do_periodo(
+        data_inicio.isoformat(), data_fim.isoformat())
+    for linha, g2 in (dev.get("por_linha") or {}).items():
+        g = _balde(linha)
+        g["devolucao"] += g2["valor"]
+
+    if sem_linha["qtd"]:
+        # Soma, não substitui: o complemento do D365 também cai aqui, e
+        # sobrescrever apagaria o que ele tinha posto.
+        g = _balde("SEM_CANAL")
+        g["qtd"] += sem_linha["qtd"]
+        g["bruto"] += sem_linha["valor"]
+
+    for g in agg.values():
+        g["bruto"] = round(g["bruto"], 2)
+        g["devolucao"] = round(g["devolucao"], 2)
+        # `valor` é o LÍQUIDO: é ele que a meta enxerga, e é o campo que todo
+        # mundo que já lia esta resposta continua lendo.
+        g["valor"] = round(g["bruto"] - g["devolucao"], 2)
+    for g in digitado.values():
         g["valor"] = round(g["valor"], 2)
     licit["valor"] = round(licit["valor"], 2)
     sem_linha["valor"] = round(sem_linha["valor"], 2)
-    if sem_linha["qtd"]:
-        agg["SEM_CANAL"] = {"canal": "SEM_CANAL", "linha": None, "label": "Sem linha",
-                            "qtd": sem_linha["qtd"], "valor": sem_linha["valor"]}
     return {
         "canais": sorted(agg.values(), key=lambda x: -x["valor"]),
         "licitacao": licit,
         # O que o canal digitado diria — para conferir a virada, não para a meta.
         "canais_digitado": sorted(digitado.values(), key=lambda x: -x["valor"]),
         "sem_linha": sem_linha,
+        # O estorno do mês inteiro, com a parte que ainda não tem linha —
+        # essa já sai do total e ainda não sai de nenhuma meta.
+        "devolucoes": {"qtd": dev["qtd"], "valor": dev["valor"],
+                       "sem_linha": dev["sem_linha"], "notas": dev["notas"]},
     }
 
 
