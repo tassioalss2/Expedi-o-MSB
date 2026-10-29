@@ -160,6 +160,25 @@ def _txt(v) -> Optional[str]:
 # não casa com nada entra sem classificação, e a tela pede — chutar a natureza
 # de uma nota é chutar se ela conta como receita.
 MAPA_OPERACAO = (
+    # ── Devolução vem ANTES de tudo ───────────────────────────────────────────
+    # A devolução se chama pelo nome da venda que ela desfaz: "Dev venda merc
+    # adquirida ou receb terceiros". Qualquer regra de venda testada primeiro
+    # captura esse texto e transforma o estorno em receita — foi o que
+    # aconteceu em 29/10/2026 com as NFs 21069 e 21075, R$ 3.649,60 que
+    # entraram como venda E deixaram de sair da meta, errando R$ 7.299,20 numa
+    # tacada. Com o prefixo testado antes, o nome da venda lá dentro é
+    # inofensivo.
+    #
+    # Entre elas a ordem também importa: "dev simb" primeiro, porque devolução
+    # SIMBÓLICA não é venda desfeita — é o acerto fiscal do material que estava
+    # em consignação e foi usado, e anda junto com o comunicado de uso, nos
+    # mesmos clientes. Somada às devoluções de verdade, ela inflava o estorno
+    # de outubro de R$ 20.033,60 para R$ 32.379,71.
+    ("dev simb",                      ("DEVOLUCAO_SIMBOLICA", None)),
+    ("devolucao",                     ("DEVOLUCAO",      None)),
+    ("dev venda",                     ("DEVOLUCAO",      None)),
+    ("ret merc",                      ("RETORNO",        None)),
+
     ("destinada a nao contri",        ("VENDA_NORMAL",   "LICITACAO")),
     ("remet ant consignacao",         ("COMUNICADO_USO", "LICITACAO")),
     # "Remessa merc consignação mercantil" é o material SAINDO para o cliente,
@@ -189,16 +208,7 @@ MAPA_OPERACAO = (
     ("doacao",                        ("BONIFICACAO_DOACAO", None)),
     ("brinde",                        ("BONIFICACAO_DOACAO", None)),
     ("comodato",                      ("COMODATO",           None)),
-    # Devolucao SIMBOLICA nao e venda desfeita: e o acerto fiscal do material
-    # que estava em consignacao e foi usado — anda junto com o comunicado de
-    # uso, nos mesmos clientes. Somada as devolucoes de verdade, ela inflava o
-    # estorno de outubro de R$ 20.033,60 para R$ 32.379,71. Vem antes das
-    # outras para nao ser capturada por elas.
-    ("dev simb",                      ("DEVOLUCAO_SIMBOLICA", None)),
-    ("devolucao",                     ("DEVOLUCAO",      None)),
-    ("dev venda",                     ("DEVOLUCAO",      None)),
     ("remessa",                       ("REMESSA",        None)),
-    ("ret merc",                      ("RETORNO",        None)),
     ("compra",                        ("COMPRA",         None)),
     ("aquis",                         ("COMPRA",         None)),
     ("ent bem",                       ("ENTRADA",        None)),
