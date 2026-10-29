@@ -42,6 +42,10 @@ FAMILIA_LINHA = {
     "CAMERA DE DRENAGEM": "VASCULAR",
     "CATETER ARTERIAL": "VASCULAR",
     "CATETER BALAO PTA": "VASCULAR",
+    # Produto da Spectrumedics que entrou pela venda direta da Bio (OV017355).
+    # A familia diz a LINHA e so isso: que a venda foi da Bio quem responde e
+    # `pedidos.venda_bio`, e e o que a separa da meta da Vascular.
+    "CATETER SONICO": "VASCULAR",
     "CATETER DIAGNOSTICO": "VASCULAR",
     "CATETER EMBOLECTOMIA": "VASCULAR",
     "CATETER LACO SNARE": "VASCULAR",
