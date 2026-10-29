@@ -118,7 +118,10 @@ export default function Placar() {
     refetchInterval: REFRESCO,
   })
 
+  // `realizado` já vem líquido de devoluções — é o que a meta mede.
   const realizado = Number(barra?.realizado || 0)
+  const devolucoes = barra?.devolucoes || { qtd: 0, valor: 0, bruto: 0 }
+  const devolvido = Number(devolucoes.valor || 0)
   const valorMeta = barra?.meta ? Number(barra.meta) : null
   const pct = Number(barra?.pct || 0)
   const ritmo = barra?.ritmo
@@ -168,11 +171,22 @@ export default function Placar() {
       <div className="rounded-3xl bg-white/5 border border-white/10 p-8">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <p className="text-white/50 text-lg">Faturamento do mês</p>
+            <p className="text-white/50 text-lg">
+              Faturamento do mês{devolvido > 0 && <span className="text-white/35"> · líquido de devoluções</span>}
+            </p>
             <p className="text-[5.5rem] font-black leading-[0.95] tracking-tight">{milhar(realizado)}</p>
             <p className="text-white/50 text-xl mt-1">
               {valorMeta ? <>meta {milhar(valorMeta)}</> : 'sem meta cadastrada para o mês'}
             </p>
+            {/* O desconto escrito, não só embutido: um mês que faturou bem e
+                devolveu muito conta uma história que o total sozinho esconde. */}
+            {devolvido > 0 && (
+              <p className="text-xl mt-2">
+                <span className="text-white/50">{milhar(devolucoes.bruto)} faturado</span>
+                <span className="text-rose-400 font-bold"> − {milhar(devolvido)}</span>
+                <span className="text-white/50"> devolvido em {devolucoes.qtd} NF</span>
+              </p>
+            )}
           </div>
           {valorMeta && (
             <div className="text-right">

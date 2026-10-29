@@ -30,6 +30,9 @@ interface BarraMetaResp {
   falta: number
   ritmo: Ritmo | null
   dia: DiaMeta | null
+  /** `realizado` já é líquido disto. Aqui fica a conta, para a faixa poder
+   *  explicar o desconto sem gastar espaço mostrando dois valores. */
+  devolucoes?: { qtd: number; valor: number; bruto: number }
 }
 
 const fmtR$ = (v: number) =>
@@ -110,8 +113,13 @@ export function BarraMeta() {
         {/* Os valores absolutos do mês são o bloco mais largo e o mais
             redundante (o % já diz a posição), então são os primeiros a sair
             quando falta espaço. */}
-        <span className="text-xs text-cyan-100/80 tabular-nums whitespace-nowrap hidden xl:inline">
+        <span className="text-xs text-cyan-100/80 tabular-nums whitespace-nowrap hidden xl:inline"
+          title={data.devolucoes && data.devolucoes.valor > 0
+            ? `Líquido de devoluções: ${fmtR$(data.devolucoes.bruto)} faturado − ${
+                fmtR$(data.devolucoes.valor)} devolvido em ${data.devolucoes.qtd} NF`
+            : undefined}>
           {fmtR$(data.realizado)} / {fmtR$(data.meta)}
+          {!!data.devolucoes?.valor && <span className="text-rose-200"> líq.</span>}
         </span>
 
         {data.ritmo && (

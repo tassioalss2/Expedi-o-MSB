@@ -100,13 +100,21 @@ def barra_meta() -> dict:
 
     def _vendas(ini: date, fim: date) -> tuple:
         fin = dashboard_financeiro(data_inicio=ini, data_fim=fim, _=None)
-        ov = fin.get("outras_vendas") or {}
-        return float(ov.get("faturamento_sem_frete") or 0), int(ov.get("qtd_nfs") or 0)
+        # LÍQUIDO, não bruto: venda desfeita não é venda, e é contra o líquido
+        # que a meta é medida em todo o resto do app. Enquanto aqui era o bruto,
+        # a barra do topo e o placar da parede diziam um número e a meta por
+        # linha dizia outro — e quem olha a parede não tem como saber qual.
+        ov = fin.get("outras_vendas_liquido") or {}
+        dev = fin.get("devolucoes") or {}
+        return (float(ov.get("faturamento_sem_frete") or 0),
+                int(ov.get("qtd_nfs") or 0),
+                abs(float(dev.get("faturamento_sem_frete") or 0)),
+                int(dev.get("qtd_nfs") or 0))
 
-    realizado, _qtd_mes = _vendas(inicio, hoje)
+    realizado, _qtd_mes, dev_valor, dev_qtd = _vendas(inicio, hoje)
     # Intervalo de um dia: consulta estreita, barata o suficiente para a barra
     # que roda em toda navegação.
-    realizado_hoje, nfs_hoje = _vendas(hoje, hoje)
+    realizado_hoje, nfs_hoje, _dvh, _dqh = _vendas(hoje, hoje)
 
     meta = pedido_service.obter_meta(competencia)
     valor_meta = meta.get("valor")
@@ -146,12 +154,17 @@ def barra_meta() -> dict:
 
     return {
         "competencia": competencia,
+        # Já líquido de devoluções — é o que vale para a meta.
         "realizado": round(realizado, 2),
         "meta": valor_meta,
         "pct": pct,
         "falta": falta,
         "ritmo": _ritmo(pct, hoje) if valor_meta else None,
         "dia": dia,
+        # O que foi desfeito no mês, para a tela poder mostrar de onde veio o
+        # desconto em vez de só entregar um total menor.
+        "devolucoes": {"qtd": dev_qtd, "valor": round(dev_valor, 2),
+                       "bruto": round(realizado + dev_valor, 2)},
     }
 
 

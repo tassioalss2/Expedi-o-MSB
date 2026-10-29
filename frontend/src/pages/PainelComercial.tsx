@@ -115,7 +115,12 @@ export function PainelComercial() {
 
   const metaValor = meta?.valor ?? null
   // Meta é sobre Vendas (exclui Transfer Price / Biomedical)
-  const realizado = financeiro?.outras_vendas?.faturamento_sem_frete || 0
+  // LÍQUIDO: venda desfeita não é venda, e a meta é medida contra o líquido em
+  // todo o resto da tela. Com o bruto aqui, este card dizia um número e as
+  // metas por linha, logo abaixo, diziam outro.
+  const realizado = financeiro?.outras_vendas_liquido?.faturamento_sem_frete || 0
+  const brutoMes = financeiro?.outras_vendas?.faturamento_sem_frete || 0
+  const devolvidoMes = Math.abs(financeiro?.devolucoes?.faturamento_sem_frete || 0)
   const percentualMeta = metaValor && metaValor > 0 ? (realizado / metaValor) * 100 : 0
   const faltaMeta = metaValor ? metaValor - realizado : 0
   const fmtR$ = (v: number) => `R$ ${Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -365,8 +370,13 @@ export function PainelComercial() {
                 <p className="text-2xl font-bold text-gray-800">{fmtR$(metaValor)}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-gray-400">Vendas</p>
+                <p className="text-xs text-gray-400">Vendas{devolvidoMes > 0 && ' (líquido)'}</p>
                 <p className="text-xl font-bold text-green-600">{fmtR$(realizado)}</p>
+                {devolvidoMes > 0 && (
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {fmtR$(brutoMes)} faturado <span className="text-rose-600">− {fmtR$(devolvidoMes)}</span> devolvido
+                  </p>
+                )}
               </div>
             </div>
             <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
