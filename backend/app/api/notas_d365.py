@@ -28,6 +28,20 @@ async def importar(arquivo: UploadFile = File(...),
     return notas_d365_service.importar(conteudo, arquivo.filename or "export.xlsx", usuario)
 
 
+@router.post("/base-itens")
+async def importar_base_itens(arquivo: UploadFile = File(...),
+                              _: UsuarioOut = Depends(get_current_user)):
+    """Sobe a base de notas item a item e preenche a LINHA das notas do espelho.
+
+    Não substitui o export de notas: aquele diz o que foi faturado e atualiza o
+    dia inteiro; este diz o que tinha dentro de cada nota. Pode subir quantas
+    vezes quiser — nota que já tem linha não é tocada.
+    """
+    conteudo = await arquivo.read()
+    return notas_d365_service.importar_base_itens(
+        conteudo, arquivo.filename or "base_itens.xlsx")
+
+
 class LinhaDaNota(BaseModel):
     """URO, VASCULAR ou REALCLOSURE — ou nulo para tirar a linha."""
     linha: Optional[str] = None

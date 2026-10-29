@@ -507,6 +507,150 @@ def _agrupar(linhas: list, chave) -> list:
     return sorted(agg.values(), key=lambda x: -x["valor"])
 
 
+def importar_base_itens(conteudo: bytes, nome_arquivo: str) -> dict:
+    """Preenche a LINHA das notas do espelho a partir da base item a item.
+
+    O espelho do D365 é nota a nota: ele sabe o valor e a natureza, e não sabe
+    o que tinha dentro. A base de itens sabe — uma linha por item de fatura,
+    com família e produto —, e a família responde a linha comercial pelo mesmo
+    mapa que o resto do app usa (`linha_produto`).
+
+    É por isso que as duas planilhas convivem em vez de uma substituir a outra:
+    o export de notas é o que foi faturado, e atualiza o dia inteiro; a base de
+    itens é o que foi vendido, e atualiza algumas vezes ao dia. A linha de uma
+    nota não muda durante o dia, então o atraso dela não atrapalha.
+
+    Duas formas de casar, nessa ordem:
+
+      1. pelo NÚMERO da nota — o caso normal;
+      2. só para DEVOLUÇÃO que sobrou: por cliente + valor. A devolução costuma
+         vir em nota do PRÓPRIO cliente (a H W devolveu com a numeração dela),
+         e aí o número não existe do nosso lado — mas a nota de crédito está na
+         base, negativa, com o mesmo cliente e o mesmo valor. Só vale quando há
+         UM candidato; com dois, fica sem linha, porque metade de um palpite é
+         pior do que nenhum.
+
+    Não mexe em nota que já tem linha: correção feita à mão continua valendo.
+    """
+    from app.services import linha_produto
+
+    try:
+        if nome_arquivo.lower().endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(conteudo), sep=";", dtype=str)
+        else:
+            df = pd.read_excel(io.BytesIO(conteudo), dtype=str)
+    except Exception as e:
+        return {"erro": "Não consegui ler o arquivo: %s" % e, "atualizadas": 0}
+
+    cols = {_sem_acento(c): c for c in df.columns}
+
+    def _col(exato: str, *pedacos: str):
+        """Nome exato primeiro; só depois o pedaço.
+
+        Procurar só por pedaço erra feio nesta planilha: "faturamento" casa
+        antes com "Ano/Mês do faturamento" (202610) do que com a receita, e
+        "cliente" casa com "Tipo de cliente" (DISTRIBUIDOR) antes do nome. Nos
+        dois casos a importação rodava bonito e respondia errado.
+        """
+        if exato in cols:
+            return cols[exato]
+        for chave, original in cols.items():
+            if pedacos and all(p in chave for p in pedacos):
+                return original
+        return None
+
+    c_nf = _col("numero da fatura", "numero", "fatura")
+    c_fam = _col("familia", "familia")
+    c_val = _col("faturamento")          # a receita, e só ela
+    c_cli = _col("cliente")              # o nome, não o tipo
+    if not (c_nf and c_fam and c_val):
+        return {"erro": "Não parece a base de notas item a item: faltam as colunas de "
+                        "número da fatura, família e faturamento.",
+                "colunas_encontradas": list(df.columns)[:30], "atualizadas": 0}
+
+    def _texto(v) -> str:
+        # Célula vazia vem como NaN (float) mesmo com dtype=str.
+        return "" if v is None or v != v else str(v).strip()
+
+    def _numero(v) -> str:
+        return _texto(v).lstrip("0")
+
+    def _valor(v) -> float:
+        try:
+            return float(str(v).replace(".", "").replace(",", ".")) if "," in str(v) else float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    # Linha de cada NF: a que concentra mais VALOR entre os itens dela. Mesma
+    # regra do rateio das OVs — um cateter caro e cinquenta fios baratos não
+    # repartem meio a meio.
+    por_nf: dict = {}
+    creditos: list = []          # linhas negativas, para casar devolução
+    for _, r in df.iterrows():
+        linha = linha_produto.linha_da_familia(_texto(r[c_fam]))
+        if not linha:
+            continue
+        valor = _valor(r[c_val])
+        por_nf.setdefault(_numero(r[c_nf]), {})
+        por_nf[_numero(r[c_nf])][linha] = por_nf[_numero(r[c_nf])].get(linha, 0.0) + abs(valor)
+        if valor < 0 and c_cli:
+            creditos.append({"cliente": _texto(r[c_cli]).upper(),
+                             "valor": round(abs(valor), 2), "linha": linha})
+    por_nf = {nf: max(p, key=p.get) for nf, p in por_nf.items() if p}
+
+    db = get_service_db()
+    notas = db.table("notas_d365").select(
+        "id, numero, chave_numero, cliente_nome, valor_total, valor_produtos, "
+        "tipo_operacao, linha, pedido_id, direcao, status").limit(20000).execute().data
+
+    por_numero, por_valor, ja_tinha, com_ov = 0, 0, 0, 0
+    sem_resposta: list = []
+    for n in notas:
+        if n.get("linha"):
+            ja_tinha += 1
+            continue
+        # Nota COM OV não usa a linha daqui: a OV manda, item a item, e o
+        # rateio dela é por valor de cada item — melhor do que a linha
+        # predominante da nota. Preencher aqui só encheria o espelho de um
+        # dado que ninguém lê. A devolução é a exceção: ela não tem OV deste
+        # lado nem quando parece ter.
+        if n.get("pedido_id") and n.get("tipo_operacao") != "DEVOLUCAO":
+            com_ov += 1
+            continue
+        linha = por_nf.get(_numero(n.get("chave_numero")) or _numero(n.get("numero")))
+        origem = "numero"
+        if not linha and n.get("tipo_operacao") == "DEVOLUCAO":
+            nome = (n.get("cliente_nome") or "").strip().upper()
+            alvo = round(valor_da_nota(n), 2)
+            candidatos = {c["linha"] for c in creditos
+                          if c["cliente"] == nome and abs(c["valor"] - alvo) < 0.01}
+            if len(candidatos) == 1:
+                linha, origem = candidatos.pop(), "valor"
+        if not linha:
+            if n.get("tipo_operacao") == "DEVOLUCAO":
+                sem_resposta.append({"nf": n.get("numero"), "cliente": n.get("cliente_nome"),
+                                     "valor": round(valor_da_nota(n), 2)})
+            continue
+        db.table("notas_d365").update({"linha": linha, "linha_ajustada": True})\
+            .eq("id", n["id"]).execute()
+        if origem == "numero":
+            por_numero += 1
+        else:
+            por_valor += 1
+
+    return {
+        "arquivo": nome_arquivo,
+        "notas_na_planilha": len(por_nf),
+        "atualizadas": por_numero + por_valor,
+        "por_numero": por_numero,
+        "por_valor": por_valor,
+        "ja_tinham_linha": ja_tinha,
+        # Fora da conta de propósito: nota com OV tira a linha da própria OV.
+        "com_ov_nao_precisam": com_ov,
+        "devolucoes_sem_resposta": sem_resposta,
+    }
+
+
 def ajustar_linha(nota_id: str, linha: Optional[str]) -> dict:
     """Corrige a linha comercial de uma nota que não passou pelo app.
 

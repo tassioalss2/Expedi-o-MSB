@@ -93,6 +93,7 @@ export default function FaturamentoD365() {
   const [competencia, setCompetencia] = useState(mesCorrente())
   const [arrastando, setArrastando] = useState(false)
   const arquivoRef = useRef<HTMLInputElement>(null)
+  const itensRef = useRef<HTMLInputElement>(null)
 
   const { data, isLoading, refetch } = useQuery<Conciliacao>({
     queryKey: ['notas-d365', competencia],
@@ -128,6 +129,38 @@ export default function FaturamentoD365() {
         'Não consegui importar o arquivo' + (status ? ` (erro ${status})` : '')
         + (motivo ? `: ${motivo}` : '.'),
         { duration: 12000 })
+    },
+  })
+
+  /** A base item a item não substitui o export de notas: aquele diz o que foi
+   *  faturado e atualiza o dia inteiro; esta diz o que tinha DENTRO de cada
+   *  nota, e é daí que sai a linha da devolução. Pode subir quando quiser. */
+  const importarItens = useMutation({
+    mutationFn: (arquivo: File) => {
+      const fd = new FormData()
+      fd.append('arquivo', arquivo)
+      return api.post('/notas-d365/base-itens', fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } }).then(r => r.data)
+    },
+    onSuccess: (r: any) => {
+      if (r?.erro) { toast.error(r.erro, { duration: 9000 }); return }
+      toast.success(
+        r.atualizadas
+          ? `Linha preenchida em ${r.atualizadas} nota(s)` +
+            (r.por_valor ? ` — ${r.por_valor} por cliente e valor, porque a devolução veio em nota do próprio cliente.` : '.')
+          : 'Nenhuma nota precisava de linha: todas já tinham, ou vêm da OV.',
+        { duration: 9000 })
+      if (r.devolucoes_sem_resposta?.length) {
+        toast(`${r.devolucoes_sem_resposta.length} devolução(ões) continuam sem linha — `
+          + 'não achei o item delas nesta planilha. Dá para informar na mão abaixo.',
+          { duration: 12000, icon: '⚠️' })
+      }
+      refetch()
+    },
+    onError: (e: any) => {
+      const d = e?.response?.data?.detail
+      toast.error('Não consegui ler a base de itens'
+        + (typeof d === 'string' ? `: ${d}` : '.'), { duration: 10000 })
     },
   })
 
@@ -205,6 +238,18 @@ export default function FaturamentoD365() {
               if (f) importar.mutate(f)
               e.target.value = ''
             }} />
+          <input ref={itensRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
+            onChange={e => {
+              const f = e.target.files?.[0]
+              if (f) importarItens.mutate(f)
+              e.target.value = ''
+            }} />
+          <button onClick={() => itensRef.current?.click()} disabled={importarItens.isPending}
+            title="Base de notas item a item: é dela que sai a linha de cada devolução"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm border border-indigo-300
+                       text-indigo-700 hover:bg-indigo-50 disabled:opacity-50 font-medium rounded-lg">
+            <Upload size={15} /> {importarItens.isPending ? 'Lendo…' : 'Base de itens'}
+          </button>
           <button onClick={() => arquivoRef.current?.click()} disabled={importar.isPending}
             className="flex items-center gap-1.5 px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-500
                        disabled:opacity-50 text-white font-medium rounded-lg">
