@@ -22,10 +22,24 @@ import type { PendenciasResp } from '../lib/crm'
  *  a identidade nunca depende só da cor. */
 const TIPOS_VENDA = [
   { key: 'DIRETA', label: 'Venda direta', cor: '#16a34a' },
+  // Venda da Bio é venda direta — o que muda é de quem foi. Por isso o mesmo
+  // verde, hachurado, em vez de uma quinta cor: uma cor nova diria "outro tipo
+  // de venda", e cinco matizes numa pilha já começam a brigar entre si. A
+  // hachura também é o que o guia de paleta pede como segunda pista quando as
+  // cores se aproximam.
+  { key: 'BIO', label: 'Venda da Bio', cor: '#16a34a', hachura: true },
   { key: 'LICITACAO', label: 'Licitação', cor: '#2563eb' },
   { key: 'COMUNICADO_USO', label: 'Comunicado de uso', cor: '#d97706' },
   { key: 'EXPORTACAO', label: 'Exportação', cor: '#be185d' },
 ] as const
+
+/** Fundo da amostra na legenda e no tooltip — mesma hachura do gráfico. */
+function fundoDoTipo(t: { cor: string; hachura?: boolean }) {
+  return t.hachura
+    ? { backgroundColor: t.cor,
+        backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.85) 0 1.5px, transparent 1.5px 4px)' }
+    : { backgroundColor: t.cor }
+}
 
 /** Topo arredondado só no último pedaço com valor do dia, e 2px de respiro
  *  entre as fatias — encostadas, duas cores viram uma mancha só. */
@@ -641,6 +655,13 @@ export function PainelComercial() {
           ) : (
             <ResponsiveContainer width="100%" height={256}>
               <BarChart data={fatDiario!.dias} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <pattern id="hachuraBio" width="6" height="6" patternUnits="userSpaceOnUse"
+                    patternTransform="rotate(45)">
+                    <rect width="6" height="6" fill="#16a34a" />
+                    <rect width="2" height="6" fill="#ffffff" opacity="0.85" />
+                  </pattern>
+                </defs>
                 <CartesianGrid vertical={false} stroke="#f1f5f9" />
                 <XAxis
                   dataKey="dia"
@@ -674,7 +695,7 @@ export function PainelComercial() {
                             lida na tela. Só os tipos que o dia teve. */}
                         {[...TIPOS_VENDA].reverse().filter(t => Number(p[t.key] || 0) > 0).map(t => (
                           <div key={t.key} className="flex items-baseline gap-2">
-                            <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: t.cor }} />
+                            <span className="w-2 h-2 rounded-sm shrink-0" style={fundoDoTipo(t)} />
                             <span className="text-gray-500 flex-1">{t.label}</span>
                             <span className="text-gray-400 tabular-nums">{p.qtds?.[t.key]} NF</span>
                             <span className="text-gray-800 font-medium tabular-nums">{fmtR$(p[t.key])}</span>
@@ -690,7 +711,8 @@ export function PainelComercial() {
                   }}
                 />
                 {TIPOS_VENDA.map(t => (
-                  <Bar key={t.key} dataKey={t.key} stackId="dia" fill={t.cor}
+                  <Bar key={t.key} dataKey={t.key} stackId="dia"
+                    fill={(t as any).hachura ? 'url(#hachuraBio)' : t.cor}
                     maxBarSize={28} className="cursor-pointer" shape={<FatiaEmpilhada />}
                     onClick={(d: any) => {
                       if (!d?.payload?.dia) return
@@ -711,7 +733,7 @@ export function PainelComercial() {
               {(fatDiario?.tipos ?? []).filter(t => t.valor > 0).map(t => (
                 <div key={t.tipo} className="flex items-baseline gap-1.5 text-xs">
                   <span className="w-2.5 h-2.5 rounded-sm shrink-0 translate-y-px"
-                    style={{ backgroundColor: TIPOS_VENDA.find(x => x.key === t.tipo)?.cor }} />
+                    style={fundoDoTipo(TIPOS_VENDA.find(x => x.key === t.tipo) || { cor: '#94a3b8' })} />
                   <span className="text-gray-500">{t.label}</span>
                   <span className="text-gray-800 font-medium tabular-nums">{fmtR$(t.valor)}</span>
                   <span className="text-gray-400 tabular-nums">· {t.qtd} NF</span>

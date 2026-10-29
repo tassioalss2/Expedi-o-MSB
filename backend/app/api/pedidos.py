@@ -782,10 +782,11 @@ def _eh_licitacao(pedido: dict) -> bool:
 # outubro, nenhuma exceção), então perguntar "é licitação?" primeiro deixaria o
 # balde do comunicado vazio. Comunicado de uso é a natureza da nota; licitação
 # é como a venda foi ganha. A natureza vem antes.
-_TIPOS_VENDA = ("DIRETA", "LICITACAO", "COMUNICADO_USO", "EXPORTACAO")
+_TIPOS_VENDA = ("DIRETA", "BIO", "LICITACAO", "COMUNICADO_USO", "EXPORTACAO")
 
 _TIPO_VENDA_LABEL = {
     "DIRETA": "Venda direta",
+    "BIO": "Venda da Bio",
     "LICITACAO": "Licitação",
     "COMUNICADO_USO": "Comunicado de uso",
     "EXPORTACAO": "Exportação",
@@ -793,6 +794,13 @@ _TIPO_VENDA_LABEL = {
 
 
 def _tipo_venda(pedido: dict) -> str:
+    # A venda da Bio vem antes de tudo porque ela é a pergunta "de quem foi",
+    # e é a única que o resto da tela não responde: a receita dela fica fora
+    # das metas, e aqui fica à vista de que dia ela veio. Hoje a Bio só fecha
+    # venda direta — se um dia fechar uma licitação, ela vai contar aqui e sair
+    # de "Licitação", e aí é o caso de conversar sobre a ordem.
+    if pedido.get("venda_bio"):
+        return "BIO"
     op = pedido.get("tipo_operacao") or "VENDA_NORMAL"
     if op in ("COMUNICADO_USO", "EXPORTACAO"):
         return op
