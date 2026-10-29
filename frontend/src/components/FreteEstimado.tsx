@@ -43,9 +43,15 @@ const dia = (iso?: string | null) =>
 const kg = (v?: number | null) =>
   `${(Number(v) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg`
 
-export function FreteEstimado({ pedidoId }: { pedidoId: string }) {
+/** `versao` carrega o que muda a conta: data de entrega, destino, valor e
+ *  cubagem. Entra na chave da query para a estimativa ser refeita quando um
+ *  desses muda — sem isso, corrigir a data da OV deixava na tela o cálculo da
+ *  data antiga, com a modalidade errada junto. */
+export function FreteEstimado({ pedidoId, versao }: {
+  pedidoId: string; versao?: string
+}) {
   const { data, isLoading } = useQuery<Estimativa>({
-    queryKey: ['frete-estimado', pedidoId],
+    queryKey: ['frete-estimado', pedidoId, versao || ''],
     queryFn: () => api.get(`/frete/estimativa/pedido/${pedidoId}`).then(r => r.data),
     enabled: !!pedidoId,
     staleTime: 60_000,

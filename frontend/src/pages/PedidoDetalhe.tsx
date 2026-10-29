@@ -3924,7 +3924,11 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
       {cubagem?.num_caixas && ['EM_COTACAO_FRETE', 'AGUARD_TRANSPORTADORA',
         'AGUARD_FATURAMENTO', 'FATURADO', 'AGUARD_COLETA', 'COLETADO',
         'EXPEDIDO'].includes(status) && (
-        <FreteEstimado pedidoId={pedido.id} />
+        <FreteEstimado pedidoId={pedido.id} versao={[
+          pedido.data_prevista_entrega, pedido.local_entrega,
+          pedido.valor_nf, (pedido as any).valor_produtos,
+          cubagem?.num_caixas, cubagem?.peso_kg,
+        ].join('|')} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
