@@ -2842,6 +2842,7 @@ function ModalCorrigirDados({ pedido, onClose }: { pedido: Pedido; onClose: () =
     condicao_pagamento: (pedido as any).condicao_pagamento || '',
     local_entrega: pedido.local_entrega || '',
     data_prevista_entrega: pedido.data_prevista_entrega || '',
+    data_cliente: (pedido as any).data_cliente || '',
     observacoes: (pedido as any).observacoes || '',
   })
 
@@ -2856,6 +2857,7 @@ function ModalCorrigirDados({ pedido, onClose }: { pedido: Pedido; onClose: () =
       condicao_pagamento: form.condicao_pagamento.trim() || null,
       local_entrega: form.local_entrega.trim() || null,
       data_prevista_entrega: form.data_prevista_entrega || null,
+      data_cliente: form.data_cliente || null,
       observacoes: form.observacoes.trim() || null,
     }),
     onSuccess: () => {
@@ -2955,6 +2957,19 @@ function ModalCorrigirDados({ pedido, onClose }: { pedido: Pedido; onClose: () =
             <label className="text-xs font-medium text-gray-600">Entrega Prevista</label>
             <input type="date" value={form.data_prevista_entrega}
               onChange={e => setForm({ ...form, data_prevista_entrega: e.target.value })} className={cls} />
+            <p className="mt-0.5 text-[10px] text-gray-400">O que a MSB promete entregar.</p>
+          </div>
+
+          {/* Duas datas porque sao duas coisas: esta vem do empenho, do contrato
+              ou do pedido, e NAO se ajusta para caber na operacao. E contra ela
+              que a pontualidade passa a ser medida. */}
+          <div>
+            <label className="text-xs font-medium text-gray-600">Data pedida pelo cliente</label>
+            <input type="date" value={form.data_cliente}
+              onChange={e => setForm({ ...form, data_cliente: e.target.value })} className={cls} />
+            <p className="mt-0.5 text-[10px] text-gray-400">
+              Do empenho ou do pedido. Em branco se ninguém informou.
+            </p>
           </div>
 
           <div className="col-span-2">
@@ -3969,6 +3984,11 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
             </div>
             <Linha label="Condição de Pagamento" valor={pedido.condicao_pagamento} />
             <Linha label="Local de Entrega" valor={pedido.local_entrega} />
+            <Linha label="Data pedida pelo cliente" valor={
+              (pedido as any).data_cliente
+                ? new Date((pedido as any).data_cliente + 'T12:00:00').toLocaleDateString('pt-BR')
+                : null
+            } />
             <Linha label="Entrega Prevista" valor={
               pedido.data_prevista_entrega
                 ? new Date(pedido.data_prevista_entrega + 'T12:00:00').toLocaleDateString('pt-BR')

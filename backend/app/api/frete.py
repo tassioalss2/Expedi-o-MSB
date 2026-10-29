@@ -91,7 +91,7 @@ def estimativa_do_pedido(pedido_id: UUID,
 
     ped = db.table("pedidos").select(
         "id, numero_pedido, numero_nf, local_entrega, valor_nf, valor_produtos, "
-        "data_prevista_entrega, data_esperada_cliente"
+        "data_prevista_entrega, data_esperada_cliente, data_cliente"
     ).eq("id", str(pedido_id)).execute().data
     if not ped:
         raise HTTPException(status_code=404, detail="OV nao encontrada")
@@ -178,8 +178,16 @@ def estimativa_do_pedido(pedido_id: UUID,
     # desde agosto as duas sao identicas). Entao a unica coisa que ela permite
     # afirmar e que a data foi empurrada DEPOIS da abertura — que e o que o
     # aviso diz. Chamar isso de "o cliente pediu" era inventar uma origem.
+    pedida = p.get("data_cliente")
     esperada = p.get("data_esperada_cliente")
-    if esperada and alvo and str(esperada) < str(alvo):
+    if pedida and alvo and str(pedida) < str(alvo):
+        # Esta data foi informada, nao copiada: da para dizer "o cliente pediu".
+        r.setdefault("avisos", []).append(
+            "O cliente pediu para %s e a OV promete %s: estamos prometendo depois do "
+            "que foi pedido, e a cotacao segue o que a OV promete."
+            % (date.fromisoformat(str(pedida)).strftime("%d/%m"),
+               date.fromisoformat(str(alvo)).strftime("%d/%m")))
+    elif esperada and alvo and str(esperada) < str(alvo):
         r.setdefault("avisos", []).append(
             "A OV foi aberta com entrega em %s e hoje esta em %s: a cotacao segue a "
             "data atual." % (date.fromisoformat(str(esperada)).strftime("%d/%m"),

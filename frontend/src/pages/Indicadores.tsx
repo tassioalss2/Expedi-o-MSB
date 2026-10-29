@@ -219,6 +219,20 @@ export function Indicadores() {
               formula: 'Aderência = (entregas até o prazo da transportadora ÷ entregas medidas) × 100. Serve para cobrar a BRIX e a RR: quando este número é alto e o OTIF é baixo, o prazo contratado não cabe no que foi prometido ao cliente.',
               metrica: 'otif_atrasados', listaLabel: 'Entregas fora do prazo',
             })} />
+          {/* A unica regua que a operacao nao consegue afrouxar: a data que o
+              CLIENTE pediu. So aparece quando alguem ja informou a data em
+              alguma OV — ate la o cartao seria 0% de nada. */}
+          {(indicadores?.pontualidade_cliente_base ?? 0) > 0 && (
+            <MetaBar valor={indicadores?.pontualidade_cliente || 0} meta={95}
+              label="Entregas na data pedida pelo cliente"
+              onClick={() => setDrill({
+                titulo: 'Pontualidade na régua do cliente',
+                valorTexto: `${(indicadores?.pontualidade_cliente || 0).toFixed(1)}%`,
+                fonte: `${indicadores?.pontualidade_cliente_base ?? 0} entrega(s) CIF com a data pedida pelo cliente informada na OV — ${(indicadores?.cobertura_data_cliente ?? 0).toFixed(0)}% do CIF expedido no período tem essa data. Enquanto a cobertura for baixa, o número vale para a amostra, não para o setor.`,
+                formula: 'Pontualidade = (entregas até a data que o cliente pediu ÷ entregas medidas) × 100. É a única data que a operação não pode ajustar para caber: a entrega prevista nós escolhemos, esta vem do empenho, do contrato ou do pedido. OV sem a data informada fica fora da base.',
+                metrica: 'otif_atrasados', listaLabel: 'Entregas depois da data pedida',
+              })} />
+          )}
           <MetaBar valor={indicadores?.fob_no_prazo || 0} meta={95}
             label="FOB pronto no prazo"
             onClick={() => setDrill({

@@ -196,12 +196,15 @@ class DadosOVUpdate(BaseModel):
     condicao_pagamento: Optional[str] = None
     local_entrega: Optional[str] = None
     data_prevista_entrega: Optional[date] = None
+    # O que o cliente pediu, que é outra coisa do que o que prometemos: só a
+    # segunda a operação consegue ajustar para caber.
+    data_cliente: Optional[date] = None
     observacoes: Optional[str] = None
 
     def alteracoes(self) -> dict:
         """Só o que veio no corpo — distingue "não mandou" de "mandou vazio"."""
         d = self.model_dump(exclude_unset=True)
-        for k in ("cliente_id", "data_prevista_entrega"):
+        for k in ("cliente_id", "data_prevista_entrega", "data_cliente"):
             if d.get(k) is not None:
                 d[k] = str(d[k])
         return d

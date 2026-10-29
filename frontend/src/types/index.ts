@@ -117,6 +117,8 @@ export interface Pedido {
   condicao_pagamento?: string
   data_prevista_entrega: string
   data_esperada_cliente?: string
+  /** Data que o cliente pediu — informada, nunca copiada. */
+  data_cliente?: string
   data_prevista_coleta?: string
   /** Hora marcada com o cliente/órgão para receber a carga (v56). Nulo = sem
    *  agendamento, entrega em horário comercial. */
@@ -252,6 +254,10 @@ export interface Indicadores {
   otif_cif_expedidas?: number
   otif_transportadora?: number | null
   otif_transportadora_base?: number
+  /** Regua do cliente: medida so onde data_cliente foi informada. */
+  pontualidade_cliente?: number
+  pontualidade_cliente_base?: number
+  cobertura_data_cliente?: number
   fob_no_prazo?: number | null
   fob_base?: number
   fob_expedidas?: number

@@ -726,6 +726,15 @@ def vincular_ov(demanda_id: str, numero_pedido: str) -> dict:
     if _ETAPA_LEGADA.get(d.get("etapa"), d.get("etapa")) == "RECEBIDO":
         update["etapa"] = "PROCESSANDO"
     db.table("licitacao_demandas").update(update).eq("id", demanda_id).execute()
+
+    # Aqui caberia levar o `prazo` da demanda para pedidos.data_cliente e poupar
+    # a digitação. Não leva, de propósito: medindo as 114 demandas com prazo, a
+    # distância entre a criação da demanda e esse prazo vai de -19 a 357 dias
+    # (mediana 33). Prazo anterior à própria demanda, ou a quase um ano dela,
+    # não é a data de entrega daquela OV — o campo acumulou vigência de contrato
+    # e prazo de amostra junto com prazo de empenho. Importar isso encheria o
+    # indicador de datas erradas logo no primeiro dia. Quando o campo da demanda
+    # separar as três coisas, esta ligação passa a valer.
     return obter_demanda(demanda_id)
 
 

@@ -1456,6 +1456,10 @@ def adicionar_itens(pedido_id: str, itens: list, usuario: UsuarioOut,
 _CAMPOS_EDITAVEIS_DADOS = {
     "cliente_id", "tipo_operacao", "forma_venda", "prioridade",
     "condicao_pagamento", "local_entrega", "data_prevista_entrega", "observacoes",
+    # data_cliente entra aqui de proposito: e a unica das duas datas que NAO se
+    # ajusta para caber na operacao, entao tem de poder ser corrigida quando
+    # chega o empenho ou o cliente repactua.
+    "data_cliente",
 }
 
 
@@ -1878,6 +1882,7 @@ _CAMPOS_LABEL_REATIVAR = {
     "canal": "Canal de venda", "local_entrega": "Local de entrega", "data_prevista_entrega": "Data prevista de entrega",
     "data_prevista_coleta": "Data prevista de coleta", "prioridade": "Prioridade", "observacoes": "Observações",
     "condicao_pagamento": "Condição de pagamento", "forma_venda": "Forma de venda",
+    "data_cliente": "Data pedida pelo cliente",
 }
 
 
@@ -3571,8 +3576,15 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
             entregue_em[pid] = dia
 
     def _promessa(p):
-        """A data que o cliente espera. Sem ela, o prazo que a OV registrou."""
-        d = p.get("data_esperada_cliente") or p.get("data_prevista_entrega")
+        """A régua do cliente, na melhor fonte disponível.
+
+        data_cliente é a única informada: as outras duas o app preenche copiando
+        a entrega prevista da abertura. Enquanto a cobertura dela for baixa, o
+        OTIF continua caindo nas cópias — por isso `pontualidade_cliente`
+        aparece ao lado, medida só onde a data do cliente existe de verdade.
+        """
+        d = (p.get("data_cliente") or p.get("data_esperada_cliente")
+             or p.get("data_prevista_entrega"))
         return str(d)[:10] if d else None
 
     # Só o que saiu depois do corte entra na medição — ver OTIF_DESDE.
@@ -3603,6 +3615,19 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
     # Quanto do que saiu CIF já tem entrega registrada. Sem este número ao lado,
     # o OTIF é a média de quem alguém se lembrou de acompanhar.
     cobertura = round(len([p for p in cif if p["id"] in entregue_em]) / len(cif) * 100, 2) if cif else None
+
+    # A pergunta que nenhuma das outras responde: entregamos quando o CLIENTE
+    # pediu? As demais medem contra a data que nós mesmos escolhemos, e essa a
+    # operação sempre pode afrouxar até caber. Só entram as OVs com a data
+    # pedida informada, e a cobertura vai junto para ninguém ler 100% de três
+    # OVs como se fosse o indicador do setor.
+    base_cliente = [p for p in cif if p["id"] in entregue_em and p.get("data_cliente")]
+    pontualidade_cliente = round(
+        sum(1 for p in base_cliente
+            if entregue_em[p["id"]] <= str(p["data_cliente"])[:10]) / len(base_cliente) * 100, 2
+    ) if base_cliente else None
+    cobertura_data_cliente = round(
+        len([p for p in cif if p.get("data_cliente")]) / len(cif) * 100, 2) if cif else None
 
     # Aderência da transportadora: mesma entrega, régua do contrato dela.
     base_transp = [p for p in cif if p["id"] in entregue_em and p.get("data_prevista_entrega")]
@@ -3709,6 +3734,10 @@ def obter_indicadores(data_inicio: date, data_fim: date) -> dict:
         # Mesma entrega, régua do contrato da transportadora.
         "otif_transportadora": otif_transportadora,
         "otif_transportadora_base": len(base_transp),
+        # Régua do cliente: a data que ELE pediu, não a que nós prometemos.
+        "pontualidade_cliente": pontualidade_cliente,
+        "pontualidade_cliente_base": len(base_cliente),
+        "cobertura_data_cliente": cobertura_data_cliente,
         # FOB não tem entrega medível aqui — só saída no prazo.
         "fob_no_prazo": fob_no_prazo,
         "fob_base": len(base_fob),
