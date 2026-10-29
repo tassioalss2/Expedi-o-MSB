@@ -519,9 +519,26 @@ export function PainelComercial() {
                 onClick={() => setDetalheFin({ categoria: 'todos', titulo: 'Faturamento — todas as NFs' })}
                 className="flex items-center justify-between cursor-pointer rounded-lg -mx-1 px-1 py-1 hover:bg-gray-50 transition-colors"
               >
-                <span className="text-xs text-gray-400">Total líquido (Vendas + Transfer)</span>
-                <span className="text-sm font-medium text-gray-500">
-                  R$ {Number(financeiro.faturamento_liquido?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                <span className="text-xs text-gray-400">Total (Vendas + Transfer)</span>
+                {/* Os dois lados da mesma linha: o que saiu e o que ficou. Só o
+                    líquido deixava a conta pela metade — a devolução aparecia
+                    acima, mas não dava para ver de que total ela saiu. */}
+                <span className="text-right">
+                  <span className="block text-sm font-medium text-gray-500">
+                    R$ {Number(financeiro.faturamento_liquido?.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    <span className="text-[11px] text-gray-400 font-normal"> líquido</span>
+                  </span>
+                  <span className="block text-[11px] text-gray-400">
+                    bruto R$ {Number(financeiro.faturamento_sem_frete || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    {(financeiro.devolucoes?.qtd_nfs || 0) + (financeiro.devolucoes_transfer?.qtd_nfs || 0) > 0 && (
+                      <span className="text-rose-600">
+                        {' '}− {Math.abs(
+                          Number(financeiro.devolucoes?.faturamento_sem_frete || 0)
+                          + Number(financeiro.devolucoes_transfer?.faturamento_sem_frete || 0)
+                        ).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} devolvido
+                      </span>
+                    )}
+                  </span>
                 </span>
               </div>
               <button
