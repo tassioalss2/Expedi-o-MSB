@@ -775,6 +775,30 @@ def _eh_licitacao(pedido: dict) -> bool:
     return str(pedido.get("canal") or "").startswith("LICITACAO")
 
 
+# Como a venda aconteceu, em baldes que não se sobrepõem — é o que o gráfico
+# empilha, e empilhar exige que cada NF caia em um só.
+#
+# A ordem importa: todo comunicado de uso do mês é de licitação (90 notas em
+# outubro, nenhuma exceção), então perguntar "é licitação?" primeiro deixaria o
+# balde do comunicado vazio. Comunicado de uso é a natureza da nota; licitação
+# é como a venda foi ganha. A natureza vem antes.
+_TIPOS_VENDA = ("DIRETA", "LICITACAO", "COMUNICADO_USO", "EXPORTACAO")
+
+_TIPO_VENDA_LABEL = {
+    "DIRETA": "Venda direta",
+    "LICITACAO": "Licitação",
+    "COMUNICADO_USO": "Comunicado de uso",
+    "EXPORTACAO": "Exportação",
+}
+
+
+def _tipo_venda(pedido: dict) -> str:
+    op = pedido.get("tipo_operacao") or "VENDA_NORMAL"
+    if op in ("COMUNICADO_USO", "EXPORTACAO"):
+        return op
+    return "LICITACAO" if _eh_licitacao(pedido) else "DIRETA"
+
+
 # O deploy do código sobe antes de a migration rodar. Sem isto, pedir a coluna
 # nova no select derrubaria o Painel Comercial nesse intervalo — e as duas têm
 # comportamento de reserva: `forma_venda` cai no canal legado, `venda_bio` cai
@@ -1358,6 +1382,10 @@ def faturamento_diario(
     Mesmo escopo de "Vendas": faturamento, sem Transfer Price nem Esterilize.
     Retorna a série completa de dias (com zeros) para desenhar o gráfico do mês
     e o total do período.
+
+    Cada dia vem quebrado por COMO a venda aconteceu (venda direta, licitação,
+    comunicado de uso, exportação), para o gráfico empilhar. Os baldes não se
+    sobrepõem — ver `_tipo_venda` — então a soma deles é o valor do dia.
     """
     from datetime import timedelta
     from app.core.database import get_service_db
@@ -1370,42 +1398,64 @@ def faturamento_diario(
     d = data_inicio
     while d <= data_fim:
         iso = d.isoformat()
-        dias[iso] = {"dia": iso, "valor": 0.0, "qtd": 0}
+        dias[iso] = {"dia": iso, "valor": 0.0, "qtd": 0,
+                     **{t: 0.0 for t in _TIPOS_VENDA},
+                     "qtds": {t: 0 for t in _TIPOS_VENDA}}
         d += timedelta(days=1)
+
+    totais = {t: {"valor": 0.0, "qtd": 0} for t in _TIPOS_VENDA}
+
+    def _somar(dia: str, tipo: str, valor: float) -> None:
+        if dia not in dias:
+            return
+        dias[dia]["valor"] += valor
+        dias[dia]["qtd"] += 1
+        dias[dia][tipo] += valor
+        dias[dia]["qtds"][tipo] += 1
+        totais[tipo]["valor"] += valor
+        totais[tipo]["qtd"] += 1
 
     if faturados:
         ids = list(faturados.keys())
         peds: list = []
         for i in range(0, len(ids), 40):
-            peds += db.table("pedidos").select(
-                "id, valor_nf, valor_frete, tipo_frete, tipo_operacao, status, clientes(nome)"
+            peds += db.table("pedidos").select(_campos_pedido(
+                db, "id, valor_nf, valor_frete, tipo_frete, tipo_operacao, canal, "
+                    "status, clientes(nome)")
             ).in_("id", ids[i:i + 40]).neq("status", "CANCELADO").execute().data
         for p in peds:
             nome = ((p.get("clientes") or {}).get("nome") or "").upper()
             if "ESTERILIZE" in nome or _eh_biomedical(p) or not _conta_faturamento(p):
                 continue
-            dia = faturados.get(p["id"])
-            if dia not in dias:
-                continue
             valor = float(p.get("valor_nf") or 0)
             if p.get("tipo_frete") == "CIF_COM_VALOR":
                 valor -= float(p.get("valor_frete") or 0)
-            dias[dia]["valor"] += valor
-            dias[dia]["qtd"] += 1
+            _somar(faturados.get(p["id"]), _tipo_venda(p), valor)
 
-    # As notas que não passaram pelo app entram no dia da emissão.
+    # As notas que não passaram pelo app entram no dia da emissão. Vão pela
+    # lista de notas, e não por `por_dia`, porque só a nota carrega a natureza —
+    # e é daqui que sai praticamente todo o comunicado de uso: a Bio emite
+    # direto no D365, sem OV nenhuma deste lado.
     comp = notas_d365_service.complemento_do_periodo(
         data_inicio.isoformat(), data_fim.isoformat())
-    for dia, g2 in (comp.get("por_dia") or {}).items():
-        if dia in dias:
-            dias[dia]["valor"] += g2["valor"]
-            dias[dia]["qtd"] += g2["qtd"]
+    for n in (comp.get("notas") or []):
+        op = n.get("tipo_operacao") or "VENDA_NORMAL"
+        tipo = (op if op in ("COMUNICADO_USO", "EXPORTACAO")
+                else "LICITACAO" if (n.get("origem_venda") or "") == "LICITACAO"
+                else "DIRETA")
+        _somar(str(n.get("data") or "")[:10], tipo, float(n.get("valor") or 0))
 
     serie = sorted(dias.values(), key=lambda x: x["dia"])
     for g in serie:
         g["valor"] = round(g["valor"], 2)
+        for t in _TIPOS_VENDA:
+            g[t] = round(g[t], 2)
+    for t in _TIPOS_VENDA:
+        totais[t]["valor"] = round(totais[t]["valor"], 2)
     total = round(sum(g["valor"] for g in serie), 2)
-    return {"dias": serie, "total": total}
+    return {"dias": serie, "total": total,
+            "tipos": [{"tipo": t, "label": _TIPO_VENDA_LABEL[t], **totais[t]}
+                      for t in _TIPOS_VENDA]}
 
 
 @router.get("/dashboard/vendas-por-produto")

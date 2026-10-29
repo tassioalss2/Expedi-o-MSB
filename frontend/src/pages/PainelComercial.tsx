@@ -4,12 +4,40 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { DollarSign, Truck, FileText, X, Pencil, CalendarDays, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Rectangle } from 'recharts'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
 import { hojeLocal } from '../lib/dataLocal'
 import type { PendenciasResp } from '../lib/crm'
+
+/** Como a venda aconteceu — a ordem aqui é a ordem da pilha, de baixo para
+ *  cima. Venda direta fica colada no eixo porque é a maior e a que se lê
+ *  primeiro; exportação, que aparece uma vez por mês, fica no topo.
+ *
+ *  As quatro cores passaram no validador de paleta (banda de luminosidade,
+ *  croma, contraste contra o branco e separação para daltonismo). O par verde
+ *  ↔ âmbar fica na faixa de piso para deuteranopia, e é por isso que cada
+ *  fatia tem 2px de respiro e a legenda traz o valor escrito ao lado do nome:
+ *  a identidade nunca depende só da cor. */
+const TIPOS_VENDA = [
+  { key: 'DIRETA', label: 'Venda direta', cor: '#16a34a' },
+  { key: 'LICITACAO', label: 'Licitação', cor: '#2563eb' },
+  { key: 'COMUNICADO_USO', label: 'Comunicado de uso', cor: '#d97706' },
+  { key: 'EXPORTACAO', label: 'Exportação', cor: '#be185d' },
+] as const
+
+/** Topo arredondado só no último pedaço com valor do dia, e 2px de respiro
+ *  entre as fatias — encostadas, duas cores viram uma mancha só. */
+function FatiaEmpilhada(props: any) {
+  const { payload, dataKey, height, y } = props
+  if (!height || height <= 0) return <g />
+  const topo = [...TIPOS_VENDA].reverse().find(t => Number(payload?.[t.key] || 0) > 0)?.key
+  const noTopo = topo === dataKey
+  const respiro = !noTopo && height > 3 ? 2 : 0
+  return <Rectangle {...props} y={y + respiro} height={height - respiro}
+    radius={noTopo ? [4, 4, 0, 0] : 0} />
+}
 
 export function PainelComercial() {
   const navigate = useNavigate()
@@ -148,8 +176,14 @@ export function PainelComercial() {
   const licitacaoInfo = vendasCanalResp?.licitacao ?? { qtd: 0, valor: 0 }
   const vendasDigitado = vendasCanalResp?.canais_digitado ?? []
 
-  // Faturamento diário (Vendas sem frete) do mês selecionado — para o gráfico
-  const { data: fatDiario } = useQuery<{ dias: Array<{ dia: string; valor: number; qtd: number }>; total: number }>({
+  // Faturamento diário (Vendas sem frete) do mês selecionado — para o gráfico.
+  // Cada dia vem quebrado por tipo de venda; os baldes não se sobrepõem, então
+  // a soma deles é o valor do dia e a barra empilha sem contar nada duas vezes.
+  const { data: fatDiario } = useQuery<{
+    dias: Array<{ dia: string; valor: number; qtd: number; qtds: Record<string, number> } & Record<string, any>>
+    total: number
+    tipos: Array<{ tipo: string; label: string; valor: number; qtd: number }>
+  }>({
     queryKey: ['faturamento-diario', inicioFinanceiro, fimFinanceiro],
     queryFn: () => api.get('/pedidos/dashboard/faturamento-diario', {
       params: { data_inicio: inicioFinanceiro, data_fim: fimFinanceiro },
@@ -598,7 +632,7 @@ export function PainelComercial() {
           <div className="flex items-baseline justify-between mb-3">
             <div>
               <h2 className="text-sm font-semibold text-gray-700">Faturamento por dia</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Clique numa barra para ver as NFs do dia · {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Empilhado por tipo de venda · clique numa barra para ver as NFs do dia · {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })}</p>
             </div>
             <span className="text-sm font-semibold text-gray-700 tabular-nums">Total {fmtR$(fatDiario?.total ?? 0)}</span>
           </div>
@@ -610,8 +644,15 @@ export function PainelComercial() {
                 <CartesianGrid vertical={false} stroke="#f1f5f9" />
                 <XAxis
                   dataKey="dia"
-                  tickFormatter={(v: string) => v.slice(8, 10)}
-                  tick={{ fontSize: 11, fill: '#94a3b8' }}
+                  // Hoje vinha marcado pela cor da barra, que agora é do tipo
+                  // de venda. O dia é que fica em negrito.
+                  tick={({ x, y, payload }: any) => (
+                    <text x={x} y={y + 12} textAnchor="middle" fontSize={11}
+                      fill={payload.value === hojeStr ? '#0f172a' : '#94a3b8'}
+                      fontWeight={payload.value === hojeStr ? 700 : 400}>
+                      {String(payload.value).slice(8, 10)}
+                    </text>
+                  )}
                   axisLine={{ stroke: '#e5e7eb' }} tickLine={false} interval="preserveStartEnd" minTickGap={8}
                 />
                 <YAxis
@@ -620,35 +661,63 @@ export function PainelComercial() {
                   axisLine={false} tickLine={false} width={44}
                 />
                 <Tooltip
-                  cursor={{ fill: 'rgba(34,197,94,0.06)' }}
+                  cursor={{ fill: 'rgba(100,116,139,0.06)' }}
                   content={({ active, payload }: any) => {
                     if (!active || !payload?.length) return null
                     const p = payload[0].payload
                     return (
                       <div className="bg-white border border-gray-200 rounded-lg shadow-sm px-3 py-2 text-xs">
-                        <p className="font-semibold text-gray-700 mb-0.5 capitalize">
+                        <p className="font-semibold text-gray-700 mb-1 capitalize">
                           {format(new Date(p.dia + 'T00:00:00'), "EEEE, dd 'de' MMM", { locale: ptBR })}
                         </p>
-                        <p className="text-green-600 font-bold text-sm">{fmtR$(p.valor)}</p>
-                        <p className="text-gray-400">{p.qtd} NF</p>
+                        {/* De cima para baixo, na mesma ordem em que a pilha é
+                            lida na tela. Só os tipos que o dia teve. */}
+                        {[...TIPOS_VENDA].reverse().filter(t => Number(p[t.key] || 0) > 0).map(t => (
+                          <div key={t.key} className="flex items-baseline gap-2">
+                            <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: t.cor }} />
+                            <span className="text-gray-500 flex-1">{t.label}</span>
+                            <span className="text-gray-400 tabular-nums">{p.qtds?.[t.key]} NF</span>
+                            <span className="text-gray-800 font-medium tabular-nums">{fmtR$(p[t.key])}</span>
+                          </div>
+                        ))}
+                        <div className="flex items-baseline gap-2 mt-1 pt-1 border-t border-gray-100">
+                          <span className="text-gray-500 flex-1">Total</span>
+                          <span className="text-gray-400 tabular-nums">{p.qtd} NF</span>
+                          <span className="text-gray-900 font-bold tabular-nums">{fmtR$(p.valor)}</span>
+                        </div>
                       </div>
                     )
                   }}
                 />
-                <Bar dataKey="valor" radius={[4, 4, 0, 0]} maxBarSize={28} className="cursor-pointer"
-                  onClick={(d: any) => {
-                    if (!d?.payload?.dia) return
-                    setDetalheFin({
-                      categoria: `dia:${d.payload.dia}`,
-                      titulo: `Faturamento · ${format(new Date(d.payload.dia + 'T00:00:00'), "dd 'de' MMMM", { locale: ptBR })}`,
-                    })
-                  }}>
-                  {fatDiario!.dias.map((d) => (
-                    <Cell key={d.dia} fill={d.dia === hojeStr ? '#15803d' : '#22c55e'} />
-                  ))}
-                </Bar>
+                {TIPOS_VENDA.map(t => (
+                  <Bar key={t.key} dataKey={t.key} stackId="dia" fill={t.cor}
+                    maxBarSize={28} className="cursor-pointer" shape={<FatiaEmpilhada />}
+                    onClick={(d: any) => {
+                      if (!d?.payload?.dia) return
+                      setDetalheFin({
+                        categoria: `dia:${d.payload.dia}`,
+                        titulo: `Faturamento · ${format(new Date(d.payload.dia + 'T00:00:00'), "dd 'de' MMMM", { locale: ptBR })}`,
+                      })
+                    }} />
+                ))}
               </BarChart>
             </ResponsiveContainer>
+          )}
+          {/* Legenda com o valor do mês ao lado do nome: quem não distingue
+              verde de âmbar lê o número, e de quebra o mês inteiro aparece
+              sem precisar passar o mouse em 31 barras. */}
+          {(fatDiario?.tipos ?? []).some(t => t.valor > 0) && (
+            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 mt-3 pt-3 border-t border-gray-100">
+              {(fatDiario?.tipos ?? []).filter(t => t.valor > 0).map(t => (
+                <div key={t.tipo} className="flex items-baseline gap-1.5 text-xs">
+                  <span className="w-2.5 h-2.5 rounded-sm shrink-0 translate-y-px"
+                    style={{ backgroundColor: TIPOS_VENDA.find(x => x.key === t.tipo)?.cor }} />
+                  <span className="text-gray-500">{t.label}</span>
+                  <span className="text-gray-800 font-medium tabular-nums">{fmtR$(t.valor)}</span>
+                  <span className="text-gray-400 tabular-nums">· {t.qtd} NF</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
