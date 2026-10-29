@@ -146,19 +146,29 @@ class Table:
     def delete(self) -> "MutationBuilder":
         return MutationBuilder(self._base_url, self._headers, self._table, "DELETE", None)
 
-    def upsert(self, data: dict) -> "MutationBuilder":
-        return MutationBuilder(self._base_url, self._headers, self._table, "POST", data, upsert=True)
+    def upsert(self, data: Any, on_conflict: Optional[str] = None) -> "MutationBuilder":
+        """`on_conflict` nomeia a coluna única que decide o que é a mesma linha.
+
+        Sem ele o PostgREST resolve pela chave primária — e numa tabela cujo id
+        é gerado no banco isso nunca casa, então o upsert vira insert e esbarra
+        no índice único. É o caso do espelho do D365, que se reconhece por
+        `identidade`, não por `id`.
+        """
+        return MutationBuilder(self._base_url, self._headers, self._table, "POST", data,
+                               upsert=True, on_conflict=on_conflict)
 
 
 class MutationBuilder:
     def __init__(self, base_url: str, headers: dict, table: str,
-                 method: str, data: Any, upsert: bool = False):
+                 method: str, data: Any, upsert: bool = False,
+                 on_conflict: Optional[str] = None):
         self._base_url = base_url
         self._headers = headers
         self._table = table
         self._method = method
         self._data = data
         self._upsert = upsert
+        self._on_conflict = on_conflict
         self._filters: list[str] = []
 
     def eq(self, col: str, val: Any):
@@ -177,8 +187,11 @@ class MutationBuilder:
 
     def execute(self):
         url = f"{self._base_url}/{self._table}"
-        if self._filters:
-            url += "?" + "&".join(self._filters)
+        partes = list(self._filters)
+        if self._on_conflict:
+            partes.append(f"on_conflict={self._on_conflict}")
+        if partes:
+            url += "?" + "&".join(partes)
 
         headers = {**self._headers, "Prefer": "return=representation"}
         if self._upsert:
@@ -193,7 +206,15 @@ class MutationBuilder:
         else:
             resp = requests.post(url, headers=headers, json=self._data)
 
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # O corpo do PostgREST diz QUAL coluna, QUAL constraint e por quê;
+            # `raise_for_status` sozinho devolve só "400 Bad Request" e manda
+            # todo mundo adivinhar. Numa gravação que falha pela metade, essa
+            # frase é a diferença entre consertar e ficar olhando.
+            raise requests.HTTPError(
+                "%s %s em %s — %s" % (resp.status_code, resp.reason,
+                                      f"{self._method} {self._table}", resp.text[:500]),
+                response=resp)
         data = resp.json() if resp.text else []
         if not isinstance(data, list):
             data = [data]

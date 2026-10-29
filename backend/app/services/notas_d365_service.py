@@ -356,6 +356,13 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
             # vascular e o resto fica sem linha até alguém dizer.
             "linha": (None if ovs.get(chave)
                       else (LINHA_PADRAO_LICITACAO if origem == "LICITACAO" else None)),
+            # Sempre presente, mesmo falso. O PostgREST recusa a gravação em
+            # lote quando os objetos não têm exatamente as mesmas chaves
+            # ("All object keys must match"), e esta era acrescentada só nas
+            # notas que tinham linha corrigida à mão. Enquanto ninguém corrigia
+            # nenhuma, todos os objetos eram iguais e o defeito não aparecia;
+            # bastou existir UMA correção para a gravação inteira ser recusada.
+            "linha_ajustada": False,
             "chave_acesso": _txt(r[col["chave_acesso"]]) if "chave_acesso" in col else None,
             "pedido_id": ovs.get(chave),
             "arquivo": nome_arquivo,
@@ -365,28 +372,53 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     if not linhas:
         return {"erro": "O arquivo não tem nenhuma nota.", "importadas": 0}
 
-    # Regrava as notas deste arquivo: apaga só as que vieram nele (por chave do
-    # número) e insere de novo. Nenhuma nota fora do arquivo é tocada.
+    # Regrava as notas deste arquivo. Nenhuma nota fora do arquivo é tocada.
+    #
+    # A ORDEM aqui não é detalhe: GRAVA primeiro, APAGA depois.
+    #
+    # Antes era o contrário — apagava todas as chaves do arquivo e só então
+    # inseria. Entre as duas coisas o espelho ficava vazio, e qualquer soluço
+    # na inserção (rede, timeout, uma linha recusada) deixava assim: como o
+    # export é o livro fiscal inteiro, "todas as chaves do arquivo" é tudo. Foi
+    # o que aconteceu em 29/10/2026 — a tabela zerou, o faturamento do painel
+    # perdeu o que não vinha de OV e as devoluções sumiram das metas.
+    #
+    # Agora o upsert por `identidade` reescreve cada nota no lugar, então em
+    # nenhum instante a nota deixa de existir. Se algo falhar no meio, o que
+    # sobra é o espelho antigo misturado com o novo — e esse é o lado certo de
+    # falhar: dado a mais se conserta reimportando, dado a menos ninguém vê.
     #
     # A linha corrigida à mão sobrevive: é a única informação do espelho que não
     # vem do D365, e perdê-la a cada reimportação faria o operador corrigir a
     # mesma nota todo dia.
     chaves = sorted({l["chave_nota"] for l in linhas})
-    ajustadas = {}
+    ajustadas: dict = {}
+    existentes: dict = {}          # chave_nota -> {identidades no banco}
     for i in range(0, len(chaves), 40):
         lote = chaves[i:i + 40]
-        existentes = db.table("notas_d365").select(
-            "chave_nota, linha, linha_ajustada").in_("chave_nota", lote).execute().data
-        for n in existentes:
+        for n in db.table("notas_d365").select(
+                "chave_nota, identidade, linha, linha_ajustada"
+        ).in_("chave_nota", lote).execute().data:
             if n.get("linha_ajustada"):
                 ajustadas[n["chave_nota"]] = n.get("linha")
-        db.table("notas_d365").delete().in_("chave_nota", lote).execute()
+            existentes.setdefault(n["chave_nota"], set()).add(n.get("identidade"))
+
     for l in linhas:
         if l["chave_nota"] in ajustadas:
             l["linha"] = ajustadas[l["chave_nota"]]
             l["linha_ajustada"] = True
+
     for i in range(0, len(linhas), 200):
-        db.table("notas_d365").insert(linhas[i:i + 200]).execute()
+        db.table("notas_d365").upsert(linhas[i:i + 200], on_conflict="identidade").execute()
+
+    # Só agora o que sobrou: a versão antiga de uma nota cujo status mudou (a
+    # aprovada que virou cancelada), que tem a mesma chave e outra identidade.
+    no_arquivo = {l["identidade"] for l in linhas}
+    obsoletas = sorted({ident for chave, idents in existentes.items()
+                        for ident in idents
+                        if ident and ident not in no_arquivo})
+    for i in range(0, len(obsoletas), 40):
+        db.table("notas_d365").delete().in_("identidade", obsoletas[i:i + 40]).execute()
 
     datas = [l["data_documento"] for l in linhas if l["data_documento"]]
     # O export traz as canceladas, e ainda bem: é assim que uma nota que morreu
