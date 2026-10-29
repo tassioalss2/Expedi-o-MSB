@@ -171,6 +171,13 @@ MAPA_OPERACAO = (
     ("consignacao mercantil",         ("COMUNICADO_USO", "LICITACAO")),
     ("venda de producao do estabelecimento", ("VENDA_NORMAL", "COMERCIAL")),
     ("venda de mercadoria adquirida", ("VENDA_NORMAL",   "COMERCIAL")),
+    # O D365 escreve a mesma operacao abreviada em algumas notas ("Venda merc
+    # adquirida ou receb terceiros"), e "mercadoria" por extenso nao casa com
+    # "merc". Casou com nada, e a NF 21335 (MEDINTERP, R$ 50.000) ficou pedindo
+    # classificacao todo mes. Nao da para encurtar para "adquirida" sozinho:
+    # "Devolucao de venda de merc adquirida" tem a mesma palavra e viraria
+    # receita, porque esta regra e testada antes das de devolucao.
+    ("venda merc adquirida",          ("VENDA_NORMAL",   "COMERCIAL")),
     ("exportacao",                    ("EXPORTACAO",     "COMERCIAL")),
     # As de baixo não são receita. Vêm do export sem filtro (o livro fiscal
     # inteiro) e precisam de nome para não caírem em "a classificar" todo mês.
@@ -216,6 +223,24 @@ def classificar(texto: Optional[str]) -> tuple:
 
 def tipo_da_operacao(texto: Optional[str]) -> Optional[str]:
     return classificar(texto)[0]
+
+
+def classificar_na_leitura(notas: list) -> list:
+    """Aplica o mapa às notas que foram importadas antes de ele aprender.
+
+    A classificação acontece na importação e fica gravada. Então, toda vez que
+    eu ensino uma operação nova ao app, as notas que já estão no espelho
+    continuam pedindo classificação até alguém reimportar o mês — e ninguém
+    reimporta um mês fechado só por causa disso. Aqui a tradução vale na hora
+    da leitura, sem escrever nada: o espelho continua sendo o que o D365 disse.
+    """
+    for n in notas:
+        if not n.get("tipo_operacao") and n.get("operacao"):
+            tipo, origem = classificar(n.get("operacao"))
+            if tipo:
+                n["tipo_operacao"] = tipo
+                n["origem_venda"] = n.get("origem_venda") or origem
+    return notas
 
 
 # ── Importação ────────────────────────────────────────────────────────────────
@@ -547,6 +572,7 @@ def conciliacao(ini: str, fim: str) -> dict:
         "valor_total, valor_produtos, operacao, tipo_operacao, origem_venda, linha, linha_ajustada, "
         "direcao, status, pedido_id"
     ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+    classificar_na_leitura(notas)
 
     # Saída aprovada é tudo o que a MSB emitiu e vale; dentro disso, só venda é
     # faturamento. Com o export sem filtro vem o livro inteiro — remessa para
@@ -746,6 +772,7 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
         "id, numero, chave_numero, cliente_nome, data_documento, valor_total, "
         "valor_produtos, operacao, tipo_operacao, origem_venda, linha, direcao, status"
     ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+    classificar_na_leitura(notas)
 
     notas = [n for n in notas
              if _vale_como_faturamento(n)
