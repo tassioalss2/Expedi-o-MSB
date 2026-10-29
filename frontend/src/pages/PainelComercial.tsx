@@ -98,6 +98,9 @@ export function PainelComercial() {
 
   const [editandoCanal, setEditandoCanal] = useState<string | null>(null)
   const [valorMeta, setValorMeta] = useState('')
+  // A lista de produtos abre nos 10 maiores. O resto estava resumido numa
+  // linha só, sem jeito nenhum de ver o que havia dentro.
+  const [todosProdutos, setTodosProdutos] = useState(false)
 
   const salvarMeta = useMutation({
     mutationFn: (vars: { canal: string; valor: number }) =>
@@ -1011,13 +1014,13 @@ export function PainelComercial() {
         ) : (() => {
           const totalQtd = vendasProduto.reduce((a, p) => a + (p.qtd || 0), 0)
           const maxQ = vendasProduto[0]?.qtd || 1
-          const topN = vendasProduto.slice(0, 10)
           const resto = vendasProduto.slice(10)
+          const visiveis = todosProdutos ? vendasProduto : vendasProduto.slice(0, 10)
           const restoQtd = resto.reduce((a, p) => a + p.qtd, 0)
           const fmtQtd = (n: number) => Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 })
           return (
             <div className="space-y-2.5">
-              {topN.map((p) => (
+              {visiveis.map((p) => (
                 <div key={p.codigo}>
                   <div className="flex items-baseline justify-between gap-3 mb-1">
                     <span className="text-sm text-gray-700 truncate flex-1">
@@ -1033,10 +1036,18 @@ export function PainelComercial() {
                 </div>
               ))}
               {resto.length > 0 && (
-                <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-100 text-gray-400">
-                  <span className="text-xs flex-1">+ {resto.length} outros produtos</span>
-                  <span className="text-sm font-medium tabular-nums w-24 text-right">{fmtQtd(restoQtd)} un</span>
-                </div>
+                <button type="button" onClick={() => setTodosProdutos(v => !v)}
+                  className="w-full flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-100 text-gray-400 hover:text-indigo-600 transition-colors"
+                  title={todosProdutos ? 'Mostrar só os 10 maiores' : 'Ver todos os produtos do mês'}>
+                  <span className="text-xs flex-1 text-left flex items-center gap-1">
+                    {todosProdutos
+                      ? <>Mostrar só os 10 maiores <ChevronUp size={13} /></>
+                      : <>+ {resto.length} outros produtos <ChevronDown size={13} /></>}
+                  </span>
+                  {!todosProdutos && (
+                    <span className="text-sm font-medium tabular-nums w-24 text-right">{fmtQtd(restoQtd)} un</span>
+                  )}
+                </button>
               )}
               <div className="flex items-baseline justify-between gap-3 pt-2 mt-1 border-t border-gray-200">
                 <span className="text-sm font-semibold text-gray-700 flex-1">Total de unidades</span>
