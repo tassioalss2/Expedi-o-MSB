@@ -68,8 +68,57 @@ def _data_iso(v) -> Optional[str]:
     return None
 
 
-def custo_por_produto(caminho_hist: str) -> dict:
-    """produto_codigo -> {custo_unitario, amostras, custo_min, custo_max}."""
+# A mesma extração sai ora como aba "Export", ora como "Base de NF" — muda o
+# nome, não o conteúdo. Sem isto, o arquivo bom era recusado por causa do rótulo
+# da aba.
+_ABAS_FATURAMENTO = ("Export", "Base de NF")
+
+# Cabeçalho esperado nas posições que o código lê. As colunas são por ÍNDICE,
+# então uma coluna a mais no export deslocaria tudo e carregaria dado trocado
+# calado — já aconteceu nesta mesma planilha, com a busca por nome. Aqui a
+# conferência é explícita: layout diferente para a importação, em vez de gravar
+# "Ano/Mês" dentro do campo de receita.
+_CABECALHO = {
+    _C_FATURA: "numero da fatura",
+    _C_ANOMES: "ano/mes do faturamento",
+    _C_FAMILIA: "familia",
+    _C_COD_PROD: "cod. produto",
+    _C_RECEITA: "faturamento",
+}
+
+
+def _sem_acento(s) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", str(s or ""))
+                   if not unicodedata.combining(c)).strip().lower()
+
+
+def _conferir_cabecalho(linha) -> Optional[str]:
+    """Devolve o problema encontrado, ou None quando o layout bate."""
+    for i, esperado in _CABECALHO.items():
+        achado = _sem_acento(linha[i] if len(linha) > i else "")
+        if achado != esperado:
+            return ('A coluna %d deveria ser "%s" e veio "%s". O layout do export '
+                    'mudou — importar assim gravaria dado trocado.'
+                    % (i + 1, esperado, achado or "(vazia)"))
+    return None
+
+
+def _aba_de_faturamento(wb):
+    for nome in _ABAS_FATURAMENTO:
+        if nome in wb.sheetnames:
+            return wb[nome]
+    return wb[wb.sheetnames[0]]
+
+
+def custo_por_produto(caminho_hist: Optional[str]) -> dict:
+    """produto_codigo -> {custo_unitario, amostras, custo_min, custo_max}.
+
+    Sem a planilha de custo devolve vazio: dá para carregar receita e
+    quantidade sem ela, e o que fica em branco é a margem.
+    """
+    if not caminho_hist:
+        return {}
     import openpyxl
     wb = openpyxl.load_workbook(caminho_hist, read_only=True, data_only=True)
     ws = wb["Sheet1"]
@@ -104,7 +153,12 @@ def ler_faturamento(caminho_fat: str, custos: dict) -> list:
     """Linhas prontas para gravar, já com custo aplicado."""
     import openpyxl
     wb = openpyxl.load_workbook(caminho_fat, read_only=True, data_only=True)
-    ws = wb["Export"]
+    ws = _aba_de_faturamento(wb)
+    cabecalho = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    problema = _conferir_cabecalho(cabecalho)
+    if problema:
+        wb.close()
+        raise ValueError(problema)
     linhas = []
     for r in ws.iter_rows(min_row=2, values_only=True):
         cliente = r[_C_CLIENTE]
@@ -145,7 +199,8 @@ def ler_faturamento(caminho_fat: str, custos: dict) -> list:
     return linhas
 
 
-def importar(caminho_fat: str, caminho_hist: str, substituir: bool = True) -> dict:
+def importar(caminho_fat: str, caminho_hist: Optional[str] = None,
+             substituir: bool = True) -> dict:
     """Carrega as duas planilhas. `substituir` limpa as competências presentes no
     arquivo antes de gravar — reimportar o mesmo mês não duplica."""
     db = get_service_db()
