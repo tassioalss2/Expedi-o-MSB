@@ -881,12 +881,16 @@ export function Expedicao() {
               </button>
             </>
           )}
+          {/* A Bio fecha a venda com o cliente final e lanca o que vendeu: e
+              a Venda Outbound, que pergunta itens, preco e estoque. "Novo
+              Pedido" e a OV que operacoes abre a partir do numero do D365 —
+              numero que a Bio nao tem na hora de lancar. */}
           <button
-            onClick={() => navigate('/expedicao/novo')}
+            onClick={() => navigate(daBio ? '/expedicao/outbound' : '/expedicao/novo')}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500"
           >
-            <Plus size={16} />
-            Novo Pedido
+            {daBio ? <Send size={16} /> : <Plus size={16} />}
+            {daBio ? 'Venda Outbound' : 'Novo Pedido'}
           </button>
         </div>
       </div>

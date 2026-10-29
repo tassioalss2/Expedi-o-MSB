@@ -11,6 +11,7 @@ import { ClienteAutocomplete } from './NovoPedido'
 import { BlocoDisponibilidade, ModalDecisaoEstoque, type DecisaoEstoque } from '../components/EstoqueVenda'
 import type { Disponibilidade } from '../lib/crm'
 import { EscolherAnexos, enviarAnexos } from '../components/AnexosOV'
+import { useAuthStore } from '../store/authStore'
 
 function formatarCnpj(v: string) {
   const d = v.replace(/\D/g, '').slice(0, 14)
@@ -24,6 +25,7 @@ function formatarCnpj(v: string) {
 export function VendaOutbound() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const daBio = useAuthStore((e: any) => e.usuario?.perfil) === 'BIO'
 
   const [form, setForm] = useState({
     cliente_id: '',
@@ -261,12 +263,17 @@ export function VendaOutbound() {
           <div className="col-span-2">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-gray-700">Itens *</label>
-              <button type="button" onClick={() => mutationOrcamento.mutate()}
-                disabled={mutationOrcamento.isPending || !form.cliente_id || itens.length === 0}
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                title={!form.cliente_id || itens.length === 0 ? 'Selecione o cliente e adicione os itens' : 'Gera um orçamento imprimível com o cliente e os itens preenchidos'}>
-                <FileText size={13} /> {mutationOrcamento.isPending ? 'Gerando…' : 'Gerar Orçamento'}
-              </button>
+              {/* O orcamento nasce no CRM, que esta fora do acesso da Bio: o
+                  botao voltaria 403 e pareceria defeito. Eles ja fecharam a
+                  venda do lado deles — o que vem aqui e o lancamento. */}
+              {!daBio && (
+                <button type="button" onClick={() => mutationOrcamento.mutate()}
+                  disabled={mutationOrcamento.isPending || !form.cliente_id || itens.length === 0}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  title={!form.cliente_id || itens.length === 0 ? 'Selecione o cliente e adicione os itens' : 'Gera um orçamento imprimível com o cliente e os itens preenchidos'}>
+                  <FileText size={13} /> {mutationOrcamento.isPending ? 'Gerando…' : 'Gerar Orçamento'}
+                </button>
+              )}
             </div>
             <p className="text-xs text-gray-400 mb-1.5">Informe o código do item (o sistema recomenda enquanto você digita) e a quantidade. Adicione ao menos um item.</p>
             <ItensPedido value={itens} onChange={setItens} comValor clienteId={form.cliente_id} />

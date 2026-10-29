@@ -102,8 +102,29 @@ def resolver(codigo: Optional[str], familia: Optional[str] = None,
     return linha_da_familia(familia)
 
 
+# Sufixo de quem vendeu, nao do que foi vendido: a Biomedical fecha venda
+# direta e a NF sai pela MSB. O produto continua sendo vascular, mas a receita
+# nao e da meta da Vascular — quem vendeu foi outra equipe. Fica como balde
+# separado ("Vascular - Bio"), monitorado e sem meta.
+SUFIXO_BIO = "_BIO"
+
+
+def com_bio(linha: Optional[str], bio: bool = False) -> Optional[str]:
+    """Chave da linha para o faturamento, marcada quando a venda e da Bio."""
+    if not linha or not bio:
+        return linha
+    return linha + SUFIXO_BIO
+
+
+def eh_bio(chave: Optional[str]) -> bool:
+    return (chave or "").endswith(SUFIXO_BIO)
+
+
 def label(linha: Optional[str]) -> str:
-    return LINHA_LABEL.get(linha or "", "Outros")
+    chave = linha or ""
+    if eh_bio(chave):
+        return LINHA_LABEL.get(chave[: -len(SUFIXO_BIO)], "Outros") + " - Bio"
+    return LINHA_LABEL.get(chave, "Outros")
 
 
 # Canal legado embute a linha E se foi licitação ("LICITACAO_VASCULAR"). Para o
@@ -121,7 +142,8 @@ def linha_do_canal(canal: Optional[str]) -> Optional[str]:
 
 def ratear_por_linha(valor: float, itens: list, produtos: dict,
                      por_codigo: Optional[dict] = None,
-                     canal: Optional[str] = None) -> dict:
+                     canal: Optional[str] = None,
+                     bio: bool = False) -> dict:
     """Divide o valor de uma OV entre as linhas comerciais dos seus itens.
 
     `itens`: linhas de itens_pedido (produto_id, qtd_solicitada, valor_unitario)
@@ -135,6 +157,10 @@ def ratear_por_linha(valor: float, itens: list, produtos: dict,
     Sem itens, ou com itens sem preço, cai no canal da OV — é o que existia
     antes e continua valendo enquanto o cadastro de itens não for completo.
     Devolve {} quando não dá para dizer nada, e quem chama decide o que fazer.
+
+    `bio`: a venda foi fechada pela Biomedical. O rateio é o mesmo — o produto
+    não muda de linha porque mudou quem vendeu —, mas cada chave sai marcada,
+    para a receita cair no balde "<Linha> - Bio" em vez da meta da linha.
     """
     total = float(valor or 0)
     pesos: dict = {}
@@ -155,12 +181,12 @@ def ratear_por_linha(valor: float, itens: list, produtos: dict,
                   for it in (itens or [])}
         linhas = {l for l in linhas if l}
         if len(linhas) == 1:
-            return {next(iter(linhas)): round(total, 2)}
+            return {com_bio(next(iter(linhas)), bio): round(total, 2)}
         fallback = linha_do_canal(canal)
-        return {fallback: round(total, 2)} if fallback else {}
+        return {com_bio(fallback, bio): round(total, 2)} if fallback else {}
 
     soma = sum(pesos.values())
-    saida = {l: round(total * (p / soma), 2) for l, p in pesos.items()}
+    saida = {com_bio(l, bio): round(total * (p / soma), 2) for l, p in pesos.items()}
     # Centavos da divisão vão para a maior linha, para o total fechar.
     dif = round(total - sum(saida.values()), 2)
     if dif and saida:

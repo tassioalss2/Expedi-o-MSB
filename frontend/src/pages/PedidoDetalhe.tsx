@@ -50,6 +50,41 @@ function Linha({ label, valor }: { label: string; valor?: string | number | null
   )
 }
 
+/** Quem fechou a venda: a Biomedical ou o comercial da MSB.
+ *
+ *  Fica aqui, e nao em "Corrigir dados", porque aquele formulario fecha depois
+ *  da NF — e e justamente no fechamento do mes, com a OV ja expedida, que
+ *  alguem percebe que a venda foi da Bio e esta somando na meta de outra
+ *  pessoa. Isto nao mexe na nota: mexe em para qual meta a receita conta. */
+function VendaDaBio({ pedido }: { pedido: Pedido }) {
+  const qc = useQueryClient()
+  const bio = Boolean((pedido as any).venda_bio)
+  const m = useMutation({
+    mutationFn: (v: boolean) => api.patch(`/pedidos/${pedido.id}/venda-bio`, { venda_bio: v }),
+    onSuccess: (_r, v) => {
+      toast.success(v
+        ? 'Venda da Biomedical — sai da meta da linha e passa a ser acompanhada à parte.'
+        : 'Marcação retirada — a receita volta para a meta da linha dos itens.')
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['vendas-por-canal'] })
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || 'Não consegui alterar'),
+  })
+  return (
+    <div className="flex justify-between items-center py-2 border-b border-gray-50">
+      <span className="text-sm text-gray-500">Quem vendeu</span>
+      <button onClick={() => m.mutate(!bio)} disabled={m.isPending}
+        className="flex items-center gap-1.5 text-sm text-gray-900 font-medium hover:text-blue-600 group disabled:opacity-50"
+        title={bio
+          ? 'Desmarcar: a receita volta para a meta da linha'
+          : 'Marcar: a receita sai da meta da linha e vai para o acompanhamento da Bio'}>
+        {bio ? 'Biomedical' : 'Comercial MSB'}
+        <Pencil size={14} className="text-gray-400 group-hover:text-blue-500" />
+      </button>
+    </div>
+  )
+}
+
 // ── Autocomplete de Produto ───────────────────────────────────────────────────
 function ProdutoAutocomplete({ value, onChange }: {
   value: string
@@ -3971,7 +4006,11 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
             {pedido.cliente?.cnpj && <Linha label="CNPJ" valor={formatarCnpjExibicao(pedido.cliente.cnpj)} />}
             <Linha label="Tipo de Operação" valor={pedido.tipo_operacao ? (OPERACAO_LABEL[pedido.tipo_operacao] || pedido.tipo_operacao) : null} />
             <Linha label="Prioridade" valor={PRIORIDADE_LABEL[pedido.prioridade] || pedido.prioridade} />
-            <Linha label="Linha (meta)" valor={pedido.canal ? (LINHA_DO_CANAL[pedido.canal] || CANAL_LABEL[pedido.canal] || pedido.canal) : null} />
+            <Linha label="Linha (meta)" valor={pedido.canal
+              ? (LINHA_DO_CANAL[pedido.canal] || CANAL_LABEL[pedido.canal] || pedido.canal)
+                + ((pedido as any).venda_bio ? ' - Bio' : '')
+              : null} />
+            <VendaDaBio pedido={pedido} />
             <Linha label="Forma de Venda" valor={FORMA_VENDA_LABEL[pedido.forma_venda || ''] || null} />
             <div className="flex justify-between items-center py-2 border-b border-gray-50">
               <span className="text-sm text-gray-500">Tipo de Frete</span>

@@ -673,6 +673,11 @@ export function PainelComercial() {
           ]
           const de = (k: string) => vendasCanal.find(c => c.canal === k)
           const semCanal = de('SEM_CANAL')
+          // Vendas fechadas pela Biomedical: a NF é nossa e a receita é real,
+          // mas quem vendeu não foi o comercial da linha. Ficam abaixo das
+          // metas, somadas à parte — ainda sem meta própria, só acompanhadas.
+          const daBio = vendasCanal.filter(c => c.canal.endsWith('_BIO') && c.valor > 0)
+          const totalBio = daBio.reduce((a, c) => a + c.valor, 0)
           // Onde o canal digitado discorda dos itens — quanto a meta mudou de lugar.
           const digitadoDe = (k: string) => vendasDigitado.find(c => c.canal === k)?.valor || 0
           const licitLegado = de('LICITACAO')  // OVs antigas sem base Uro/Vascular
@@ -758,6 +763,30 @@ export function PainelComercial() {
                   </div>
                 )
               })}
+              {daBio.length > 0 && (
+                <div className="pt-3 border-t border-dashed border-gray-200">
+                  <div className="flex items-baseline justify-between gap-2 mb-1.5">
+                    <span className="text-xs font-medium text-gray-500 flex-1">
+                      Vendas da Biomedical
+                      <span className="block text-[11px] text-gray-400 font-normal">
+                        fora das metas acima · sem meta definida — acompanhamento
+                      </span>
+                    </span>
+                    <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmtR$(totalBio)}</span>
+                  </div>
+                  {daBio.map(c => (
+                    <div key={c.canal}
+                      onClick={() => setDetalheFin({ categoria: `canal:${c.canal}`, titulo: `Vendas · ${c.label}` })}
+                      className="flex items-baseline justify-between gap-2 cursor-pointer hover:bg-gray-50 rounded-lg -mx-1 px-1 py-0.5 transition-colors"
+                      title="Ver as NFs desta linha"
+                    >
+                      <span className="text-sm text-gray-600 flex-1">{c.label}</span>
+                      <span className="text-xs text-gray-400 tabular-nums">{c.qtd} NF</span>
+                      <span className="text-sm font-medium text-gray-700 tabular-nums">{fmtR$(c.valor)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {licitLegado && licitLegado.valor > 0 && (
                 <div
                   onClick={() => setDetalheFin({ categoria: 'canal:LICITACAO_LEGADO', titulo: 'Licitação (legado) — reclassificar em Uro/Vascular' })}

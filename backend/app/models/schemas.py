@@ -224,6 +224,14 @@ class ReclassificarCanalRequest(BaseModel):
     canal: CanalVenda
 
 
+class VendaBioRequest(BaseModel):
+    """Quem fechou a venda: a Biomedical ou o comercial da MSB.
+
+    Separado do canal de propósito — o canal diz o que foi vendido e sai dos
+    itens; isto diz quem vendeu, e nenhum item sabe responder."""
+    venda_bio: bool
+
+
 class ItemPedidoOut(BaseModel):
     id: UUID
     produto_id: UUID

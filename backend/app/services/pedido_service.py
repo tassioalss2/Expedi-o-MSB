@@ -254,7 +254,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
     # Busca todas as OVs com esse número; usa a original (menor remessa_numero)
     existe = (
         db.table("pedidos")
-        .select("id,status,remessa_numero")
+        .select("id,status,remessa_numero" + (",venda_bio" if _tem_venda_bio(db) else ""))
         .eq("numero_pedido", payload.numero_pedido)
         .execute()
     )
@@ -295,6 +295,10 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
             from app.services.inventario_service import _get_usuario_real
             uid = _get_usuario_real(str(usuario.id))
             pedido_data = {
+                # A remessa herda de quem ela completa: se a venda era da Bio,
+                # o saldo dela continua sendo. Quem lança a remessa é a operação
+                # da MSB, então perguntar ao perfil daria a resposta errada.
+                **({"venda_bio": True} if ped_existente.get("venda_bio") else {}),
                 "numero_pedido":         payload.numero_pedido,
                 "cliente_id":            str(payload.cliente_id),
                 "transportadora_id":     str(payload.transportadora_id) if payload.transportadora_id else None,
@@ -543,6 +547,7 @@ def criar_pedido(payload: PedidoCreate, usuario: UsuarioOut) -> dict:
         else StatusPedido.LIBERADO.value
     )
     pedido_data = {
+        **_marca_bio(db, usuario),
         "numero_pedido": payload.numero_pedido,
         "cliente_id": str(payload.cliente_id),
         "transportadora_id": str(payload.transportadora_id) if payload.transportadora_id else None,
@@ -809,6 +814,7 @@ def criar_pedido_outbound(payload: PedidoOutboundCreate, usuario: UsuarioOut) ->
     db.table("clientes").update({"cnpj": payload.cliente_cnpj}).eq("id", str(payload.cliente_id)).execute()
 
     pedido_data = {
+        **_marca_bio(db, usuario),
         "numero_pedido": numero_provisorio,
         "cliente_id": str(payload.cliente_id),
         "transportadora_id": str(payload.transportadora_id) if payload.transportadora_id else None,
@@ -1985,6 +1991,62 @@ def reativar_pedido(pedido_id: str, motivo: str, usuario: UsuarioOut, dados: Opt
     )
 
     return db.table("pedidos").select("*").eq("id", pedido_id).execute().data[0]
+
+
+_TEM_VENDA_BIO: Optional[bool] = None
+
+
+def _tem_venda_bio(db) -> bool:
+    """A coluna já existe? O deploy sobe antes de a migration v60 rodar, e um
+    insert com coluna desconhecida impediria lançar qualquer OV nesse intervalo."""
+    global _TEM_VENDA_BIO
+    if _TEM_VENDA_BIO is None:
+        try:
+            db.table("pedidos").select("venda_bio").limit(1).execute()
+            _TEM_VENDA_BIO = True
+        except Exception:
+            _TEM_VENDA_BIO = False
+    return _TEM_VENDA_BIO
+
+
+def _marca_bio(db, usuario) -> dict:
+    """`{'venda_bio': True}` quando quem está lançando é da Biomedical.
+
+    Quem lança é a melhor fonte que existe: a Bio entra no app com perfil
+    próprio e fecha venda direta com cliente final. Op. Vendas lançando pela
+    Bio é o caso que sobra, e esse se corrige na tela da OV.
+    """
+    if not _tem_venda_bio(db):
+        return {}
+    return {"venda_bio": str(getattr(usuario, "perfil", "")).split(".")[-1] == "BIO"}
+
+
+def marcar_venda_bio(pedido_id: str, venda_bio: bool, usuario: UsuarioOut) -> dict:
+    """Diz se a venda foi fechada pela Biomedical — e para qual meta ela conta.
+
+    Fora de `atualizar_dados` de propósito: aquilo trava depois da NF, porque
+    corrige o que está no documento fiscal. Isto não está na NF. A pergunta
+    "de quem foi esta venda?" costuma aparecer no fechamento do mês, com a OV
+    já expedida — travar aqui seria travar justamente quando se usa.
+    """
+    db = get_service_db()
+    ped = db.table("pedidos").select("id, status, venda_bio, numero_pedido")\
+        .eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+    if bool(ped.get("venda_bio")) == bool(venda_bio):
+        return obter_pedido(pedido_id)
+
+    db.table("pedidos").update({"venda_bio": bool(venda_bio), "atualizado_em": _agora()})\
+        .eq("id", pedido_id).execute()
+    _registrar_movimentacao(
+        pedido_id, ped["status"], ped["status"], str(usuario.id),
+        ("Venda marcada como fechada pela Biomedical por %s — sai da meta da linha "
+         "e passa a contar no acompanhamento '<Linha> - Bio'." % usuario.nome)
+        if venda_bio else
+        ("Marcação de venda da Biomedical retirada por %s — a receita volta para a "
+         "meta da linha dos itens." % usuario.nome))
+    return obter_pedido(pedido_id)
 
 
 _CANAIS_META = ["URO", "VASCULAR", "REALCLOSURE", "LICITACAO"]

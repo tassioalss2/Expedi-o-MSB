@@ -29,6 +29,7 @@ from app.models.schemas import (
     PedidoCreate,
     PedidoOutboundCreate,
     ReclassificarCanalRequest,
+    VendaBioRequest,
     RejeicaoSefazRequest, TrocarOVRequest, EsperaRequest, AgendamentoRequest,
     TratativaRequest,
     UsuarioOut,
@@ -170,6 +171,17 @@ def reclassificar_canal_licitacao(pedido_id: UUID, payload: ReclassificarCanalRe
                                   usuario: UsuarioOut = Depends(get_current_user)):
     """Reclassifica uma OV de licitação legado para Uro/Vascular (drill-down do Painel Comercial)."""
     return pedido_service.reclassificar_canal_licitacao(str(pedido_id), payload.canal.value, usuario)
+
+
+@router.patch("/{pedido_id}/venda-bio")
+def marcar_venda_bio(pedido_id: UUID, payload: VendaBioRequest,
+                     usuario: UsuarioOut = Depends(get_current_user)):
+    """Marca (ou desmarca) a OV como venda fechada pela Biomedical.
+
+    Sem trava de status: a OV já está faturada quando a pergunta aparece, no
+    fechamento do mês. Isto não muda a NF — muda para qual meta a receita vai.
+    """
+    return pedido_service.marcar_venda_bio(str(pedido_id), payload.venda_bio, usuario)
 
 
 @router.patch("/{pedido_id}/itens")
@@ -763,22 +775,29 @@ def _eh_licitacao(pedido: dict) -> bool:
     return str(pedido.get("canal") or "").startswith("LICITACAO")
 
 
-# O deploy do código sobe antes de a migration v13 rodar. Sem isto, pedir
-# `forma_venda` no select derrubaria o Painel Comercial nesse intervalo — e a
-# licitação já tem fallback no canal legado, então dá para viver sem a coluna.
-_TEM_FORMA_VENDA: Optional[bool] = None
+# O deploy do código sobe antes de a migration rodar. Sem isto, pedir a coluna
+# nova no select derrubaria o Painel Comercial nesse intervalo — e as duas têm
+# comportamento de reserva: `forma_venda` cai no canal legado, `venda_bio` cai
+# em falso, que é o que toda OV era até agora.
+_COLUNAS_OPCIONAIS: dict = {}
+
+
+def _tem_coluna(db, coluna: str) -> bool:
+    if coluna not in _COLUNAS_OPCIONAIS:
+        try:
+            db.table("pedidos").select(coluna).limit(1).execute()
+            _COLUNAS_OPCIONAIS[coluna] = True
+        except Exception:
+            _COLUNAS_OPCIONAIS[coluna] = False
+    return _COLUNAS_OPCIONAIS[coluna]
 
 
 def _campos_pedido(db, base: str) -> str:
-    """Acrescenta `forma_venda` ao select só se a coluna já existir."""
-    global _TEM_FORMA_VENDA
-    if _TEM_FORMA_VENDA is None:
-        try:
-            db.table("pedidos").select("forma_venda").limit(1).execute()
-            _TEM_FORMA_VENDA = True
-        except Exception:
-            _TEM_FORMA_VENDA = False
-    return base + (", forma_venda" if _TEM_FORMA_VENDA else "")
+    """Acrescenta as colunas novas ao select só depois que elas existem."""
+    for coluna in ("forma_venda", "venda_bio"):
+        if _tem_coluna(db, coluna):
+            base += ", " + coluna
+    return base
 
 
 def _contexto_linha(db, ids: list) -> tuple:
@@ -1107,10 +1126,11 @@ def dashboard_financeiro_detalhe(
             "valor_sem_frete": round(bruto - frete_na_nf, 2),
             "eh_biomedical": _eh_biomedical(p),
             "data": faturados.get(p["id"]),
+            "venda_bio": bool(p.get("venda_bio")),
             # {linha: valor} — quanto desta NF foi para cada meta.
             "linhas": linha_produto.ratear_por_linha(
                 round(bruto - frete_na_nf, 2), itens_por_pedido.get(p["id"]) or [],
-                produtos, mapa_linha, p.get("canal")),
+                produtos, mapa_linha, p.get("canal"), bool(p.get("venda_bio"))),
         })
 
     # O card financeiro soma o complemento do D365 — a nota que não passou pelo
@@ -1221,6 +1241,10 @@ def vendas_por_canal(
     A licitação é um recorte transversal (vem de `forma_venda`): a mesma venda
     conta na linha dela e também aqui, para responder "quanto saiu por licitação
     no mês".
+
+    O que a Biomedical vendeu sai em balde próprio ("Vascular - Bio"): a NF é
+    da MSB e a receita é real, mas quem vendeu não foi o comercial da linha —
+    somar na meta dela seria creditar a alguém uma venda que não fez.
     """
     from app.core.database import get_service_db
     db = get_service_db()
@@ -1274,7 +1298,8 @@ def vendas_por_canal(
             licit["valor"] += valor
 
         rateio = linha_produto.ratear_por_linha(
-            valor, itens_por_pedido.get(p["id"]) or [], produtos, mapa_linha, p.get("canal"))
+            valor, itens_por_pedido.get(p["id"]) or [], produtos, mapa_linha,
+            p.get("canal"), bool(p.get("venda_bio")))
         if not rateio:
             # Nem itens cadastrados nem canal legado: não há como afirmar a linha.
             sem_linha["qtd"] += 1
