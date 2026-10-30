@@ -505,7 +505,30 @@ _NO_KANBAN = {
 }
 
 
-def remessas_abertas(db, numero_pedido: Optional[str], excluir_id=None) -> list:
+def todas_as_remessas(db) -> dict:
+    """numero_pedido -> linhas da OV, lido de uma vez.
+
+    `remessas_abertas` consultava por OV, e a lista de pendências a chama uma
+    vez por saldo: oito saldos, oito idas à rede, 1,6 s só nisso. Como toda OV
+    cabe em duas páginas, ler tudo e cruzar em memória sai mais barato que a
+    segunda consulta.
+    """
+    mapa: dict = {}
+    for off in range(0, 100000, 1000):
+        lote = db.table("pedidos").select(
+            "id, numero_pedido, status, numero_nf, remessa_numero, tipo_frete"
+        ).limit(1000).offset(off).execute().data
+        for r in lote:
+            k = str(r.get("numero_pedido") or "").strip().upper()
+            if k:
+                mapa.setdefault(k, []).append(r)
+        if len(lote) < 1000:
+            break
+    return mapa
+
+
+def remessas_abertas(db, numero_pedido: Optional[str], excluir_id=None,
+                     mapa: Optional[dict] = None) -> list:
     """As remessas da MESMA OV que ainda nao faturaram.
 
     Existe por um caso real: a OV016753 tinha a R1 expedida com NF, e a
@@ -519,12 +542,15 @@ def remessas_abertas(db, numero_pedido: Optional[str], excluir_id=None) -> list:
     alvo = str(numero_pedido or "").strip().upper()
     if not alvo:
         return []
-    try:
-        linhas = db.table("pedidos").select(
-            "id, numero_pedido, status, numero_nf, remessa_numero, tipo_frete"
-        ).eq("numero_pedido", alvo).execute().data
-    except Exception:
-        return []
+    if mapa is not None:
+        linhas = mapa.get(alvo) or []
+    else:
+        try:
+            linhas = db.table("pedidos").select(
+                "id, numero_pedido, status, numero_nf, remessa_numero, tipo_frete"
+            ).eq("numero_pedido", alvo).execute().data
+        except Exception:
+            return []
     return sorted(
         [p for p in linhas
          if not p.get("numero_nf")
@@ -949,6 +975,8 @@ def listar(incluir_resolvidas: bool = False) -> dict:
     ovs = _ov_por_ids(db, ov_ids)
     clientes = _nomes_clientes(
         db, [o.get("cliente_id") for o in opps] + [p.get("cliente_id") for p in peds])
+    # Uma leitura para todas as remessas, em vez de uma por saldo.
+    remessas_de_todas = todas_as_remessas(db)
 
     saida = []
 
@@ -963,6 +991,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
             cliente=clientes.get(o.get("cliente_id")), cliente_id=o.get("cliente_id"),
             cliente_codigo=clientes.get("cod:" + str(o.get("cliente_id"))),
             canal=o.get("canal"), ov=ov, pend=pend, acao=acao, bloqueio=bloqueio,
+            remessas=remessas_de_todas,
             extra={"estagio": o.get("estagio"), "oportunidade_id": o["id"]}))
 
     for p in peds:
@@ -987,6 +1016,7 @@ def listar(incluir_resolvidas: bool = False) -> dict:
             cliente=clientes.get(p.get("cliente_id")), cliente_id=p.get("cliente_id"),
             cliente_codigo=clientes.get("cod:" + str(p.get("cliente_id"))),
             canal=p.get("canal"), ov=p, pend=pend, acao=acao, bloqueio=bloqueio,
+            remessas=remessas_de_todas,
             extra={"oportunidade_id": None}))
 
     saida += _solicitacoes_sem_ov(db, clientes)
@@ -1286,7 +1316,8 @@ def _estoque_agora(pendencias: list) -> dict:
 
 
 def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
-                ov, pend, acao, bloqueio, extra, cliente_codigo=None) -> dict:
+                ov, pend, acao, bloqueio, extra, cliente_codigo=None,
+                remessas: Optional[dict] = None) -> dict:
     itens = pend.get("itens") or []
 
     # "aguardar produção" sem OV = NADA saiu. Nesse caso `qtd_atendida` do item é
@@ -1388,7 +1419,8 @@ def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,
         # que faltou na OV016753 e virou duas MEDCER no kanban.
         "remessas_abertas": (remessas_abertas(get_service_db(),
                                               (ov or {}).get("numero_pedido"),
-                                              excluir_id=(ov or {}).get("id"))
+                                              excluir_id=(ov or {}).get("id"),
+                                              mapa=remessas)
                              if acao == "REMESSA_2" else []),
         "pode_liberar": bool(acao),
         "motivo_bloqueio": bloqueio,
