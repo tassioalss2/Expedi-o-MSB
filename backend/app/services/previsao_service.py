@@ -1,7 +1,9 @@
 """Previsão de Faturamento.
 
 Junta três fontes para estimar o fechamento do mês e do dia:
-  1. Realizado — NFs já faturadas no mês (mesma definição do dashboard financeiro).
+  1. Realizado — NFs faturadas no mês menos as devoluções, na MESMA definição
+     do dashboard financeiro e do placar da parede: OVs do app + o que só
+     existe no D365 (comunicado de uso) − devoluções.
   2. Em processo — OVs no pipeline ainda não faturadas (valor estimado pelos itens).
   3. Saldo de contratos ganhos — empenhos com saldo a entregar.
   4. Em negociação — negócios lançados na entrada rápida, ponderados pela chance (%).
@@ -73,22 +75,26 @@ def _conta_faturamento(tipo_operacao: Optional[str]) -> bool:
 
 
 def _valor_liquido_nf(p: dict) -> float:
-    """Faturamento fiscal da NF: tira o CIF sem valor (não está na nota)."""
-    nf = float(p.get("valor_nf") or 0)
-    if p.get("tipo_frete") == "CIF_SEM_VALOR":
-        nf -= float(p.get("valor_frete") or 0)
-    return round(nf, 2)
+    """Faturamento fiscal da NF — o `valor_nf` já é a nota.
+
+    Aqui se descontava o CIF sem valor, por ele ter sido digitado dentro do
+    valor da nota por hábito. Desde a migração de 16/09/2026 ele não está mais
+    lá, e descontar de novo tira do faturamento um frete que já tinha saído.
+    """
+    return round(float(p.get("valor_nf") or 0), 2)
 
 
 def _valor_sem_frete(p: dict) -> float:
-    """Venda pura: sem frete de nenhum tipo — o número que o Painel exibe.
+    """Venda pura — o número que o Painel exibe, pela mesma regra dele.
 
-    CIF_SEM_VALOR nao esta na NF (foi digitado dentro do valor por habito) e
-    CIF_COM_VALOR esta, mas e frete ressarcido pelo cliente, nao venda. Nenhum
-    dos dois e faturamento de produto, e a meta e de produto.
+    Sai só o CIF COM valor: esse está na NF, mas é frete ressarcido pelo
+    cliente, não venda. O CIF sem valor não está na nota desde a migração de
+    16/09/2026 — não há o que remover, e removê-lo tirava R$ 24.193,31 de
+    outubro/2026 do Realizado da Previsão (74 OVs), enquanto o Painel e o
+    placar da parede mostravam o valor certo.
     """
     nf = float(p.get("valor_nf") or 0)
-    if p.get("tipo_frete") in ("CIF_SEM_VALOR", "CIF_COM_VALOR"):
+    if p.get("tipo_frete") == "CIF_COM_VALOR":
         nf -= float(p.get("valor_frete") or 0)
     return round(nf, 2)
 
@@ -243,8 +249,9 @@ def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, float, list]:
             if p.get("status") == "CANCELADO":
                 continue
             op = p.get("tipo_operacao") or "VENDA_NORMAL"
-            devolucao = op == "DEVOLUCAO"
-            if not (_conta_faturamento(op) or devolucao):
+            # Devolução não entra por aqui: ela é nota de ENTRADA, vem inteira
+            # do espelho do D365 (abaixo) e entrava somando em vez de abater.
+            if op == "DEVOLUCAO" or not _conta_faturamento(op):
                 continue
             v = _valor_sem_frete(p)
             transfer = _eh_transfer(p)
@@ -259,8 +266,49 @@ def _realizado_mes(db, inicio: date, fim: date) -> tuple[float, float, list]:
                 "valor": v,
                 "data": dia_por_ped.get(p["id"]),
                 "transfer": transfer,
-                "devolucao": devolucao,
+                "devolucao": False,
             })
+    # ── O que não passa pelo app ────────────────────────────────────────────
+    # O faturamento do mês não é só o das OVs. O comunicado de uso a Bio emite
+    # direto no D365 e a devolução é nota de ENTRADA, que não nasce de OV — as
+    # duas coisas estão no placar da parede e no Painel, e ficavam de fora aqui.
+    # Em outubro/2026 isso dava R$ 60.728,94 a menos de venda e R$ 70.955,85 a
+    # mais, porque a devolução não era abatida.
+    #
+    # Mesma fonte das outras telas, de propósito: duas verdades sobre quanto se
+    # faturou é o que esta função foi escrita para acabar.
+    from app.services import notas_d365_service
+
+    try:
+        comp = notas_d365_service.complemento_do_periodo(
+            inicio.isoformat(), fim.isoformat())
+        for n in comp.get("notas") or []:
+            v = float(n.get("valor") or 0)
+            total += v
+            itens.append({
+                "numero_pedido": None, "cliente": n.get("cliente"),
+                "numero_nf": n.get("nf"), "valor": round(v, 2),
+                "data": str(n.get("data") or "")[:10],
+                "transfer": False, "devolucao": False, "so_d365": True,
+            })
+    except Exception as exc:                       # espelho é opcional
+        print("complemento do D365 indisponivel: %s" % str(exc)[:140])
+
+    try:
+        dev = notas_d365_service.devolucoes_do_periodo(
+            inicio.isoformat(), fim.isoformat())
+        for n in dev.get("notas") or []:
+            v = -float(n.get("valor") or 0)
+            total += v
+            itens.append({
+                "numero_pedido": None, "cliente": n.get("cliente"),
+                "numero_nf": n.get("nf"), "valor": round(v, 2),
+                "data": str(n.get("data") or "")[:10],
+                "transfer": False, "devolucao": True, "so_d365": True,
+            })
+    except Exception as exc:
+        print("devolucoes do D365 indisponiveis: %s" % str(exc)[:140])
+
     itens.sort(key=lambda x: (x.get("data") or "", x.get("numero_pedido") or ""))
     return round(total, 2), round(total_transfer, 2), itens
 

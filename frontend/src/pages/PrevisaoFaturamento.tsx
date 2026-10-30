@@ -84,7 +84,12 @@ interface BlocoTransfer {
   realizado_hoje: number; sai_hoje: number; no_kanban: number
 }
 interface RealizadoItem {
-  numero_pedido: string; cliente?: string; numero_nf?: string; data?: string; valor: number; transfer?: boolean
+  numero_pedido: string | null; cliente?: string; numero_nf?: string; data?: string; valor: number
+  transfer?: boolean
+  // Nota que não passou pelo app: comunicado de uso que a Bio emite no D365, e
+  // devolução, que é nota de entrada e não nasce de OV. Entram no realizado
+  // porque entram na meta — mas não têm OV para mostrar na coluna.
+  so_d365?: boolean; devolucao?: boolean
 }
 interface ContratoItem {
   numero?: string; numero_pregao?: string; cliente?: string; total: number; faturado: number; saldo: number; transfer?: boolean
@@ -569,7 +574,7 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           {tipo === 'real_no_app' && (
             <>
               <Composicao linhas={[
-                { rotulo: 'Realizado (NFs já faturadas no mês)', valor: mes.realizado },
+                { rotulo: 'Realizado (NFs faturadas no mês, menos devoluções)', valor: mes.realizado },
                 { rotulo: 'Em processo (OVs no pipeline)', valor: mes.em_processo },
                 { rotulo: 'Em negociação (ponderado pela chance)', valor: mes.negociacao_ponderado, sub: true },
               ]} total={mes.real_no_app} totalCor="text-emerald-600" />
@@ -582,7 +587,7 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
           {tipo === 'garantido' && (
             <>
               <Composicao linhas={[
-                { rotulo: 'Realizado (NFs já faturadas no mês)', valor: mes.realizado },
+                { rotulo: 'Realizado (NFs faturadas no mês, menos devoluções)', valor: mes.realizado },
                 { rotulo: 'Em processo (OVs no pipeline)', valor: mes.em_processo },
               ]} total={mes.garantido} totalCor="text-emerald-600" />
               <p className="text-[11px] text-gray-400 mt-3">Só o que vai faturar de fato. O saldo de contratos não entra aqui — o órgão pede quando quer, sem data garantida.</p>
@@ -648,7 +653,9 @@ function DetalheModal({ tipo, data, onClose }: { tipo: DetalheTipo; data: Resumo
             realizadoGerais.length === 0
               ? <Vazio texto="Nenhuma NF de venda geral faturada no mês ainda." />
               : <Tabela cols={['OV', 'Cliente', 'NF', 'Data', 'Valor']} total={mes.realizado}
-                  linhas={realizadoGerais.map(r => [r.numero_pedido, r.cliente || '—', r.numero_nf || '—', fmtData(r.data), fmtBRL(r.valor)])} />
+                  linhas={realizadoGerais.map(r => [
+                    r.numero_pedido || (r.devolucao ? 'devolução' : 'só no D365'),
+                    r.cliente || '—', r.numero_nf || '—', fmtData(r.data), fmtBRL(r.valor)])} />
           )}
           {tipo === 'em_processo' && (
             pipelineGerais.length === 0
