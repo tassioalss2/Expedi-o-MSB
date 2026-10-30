@@ -1103,10 +1103,15 @@ def por_produto(incluir_resolvidas: bool = False) -> dict:
     pergunta, que é de quem produz e de quem prioriza: QUAL ITEM está segurando
     mais dinheiro, e quantos clientes esperam pela mesma coisa.
 
-    Reaproveita `listar` inteiro em vez de recalcular. O rateio do estoque entre
-    as pendências (_estoque_agora) respeita a fila e promete cada unidade uma vez
-    só; refazer a conta aqui daria dois números diferentes para a mesma verdade,
-    e o operador não teria como saber qual seguir.
+    Reaproveita `listar` inteiro em vez de recalcular: refazer a conta aqui
+    daria dois números diferentes para a mesma verdade, e o operador não teria
+    como saber qual seguir.
+
+    Um aviso sobre a coluna "pronta(s)": como nada é reservado entre
+    pendências, duas vendas do mesmo código podem contar a MESMA unidade. A
+    soma do que está "pronto" pode passar do que existe no estoque, e isso é o
+    desenho — a primeira que liberar leva. Para saber o que a produção ainda
+    tem de fazer, o número é `qtd_pendente`, não `qtd_coberta_agora`.
     """
     base = listar(incluir_resolvidas=incluir_resolvidas)
     pendencias = [p for p in (base.get("pendencias") or []) if not p.get("resolvido_em")]
@@ -1213,18 +1218,23 @@ def por_produto(incluir_resolvidas: bool = False) -> dict:
 def _estoque_agora(pendencias: list) -> dict:
     """Marca em cada pendência quanto do que falta JÁ existe em estoque hoje.
 
-    Uma chamada só para todas as pendências, de propósito: `analisar` faz rateio
-    sequencial, então a mesma unidade não é prometida a duas pendências. Item a
-    item por pendência mostraria "chegou" nas duas e o segundo operador levaria
-    um 409 na cara ao tentar liberar.
+    SEM reserva entre pendências. Cada uma é medida contra o estoque inteiro,
+    e duas podem mostrar o mesmo material — a primeira que liberar leva.
 
-    A ordem do rateio vem de `_ordem_da_fila`: a prioridade manual primeiro, e
-    depois quem espera há mais tempo. Mesma função que ordena a tela, senão a
-    fila mostrada e a fila que recebe material seriam duas coisas diferentes.
+    Era o contrário: uma análise só para a fila toda, com rateio sequencial, e
+    quem estava atrás via zero do que o de cima tinha levado. O material estava
+    na prateleira e a tela dizia "sem estoque na foto", o que é reserva com
+    outro nome. A decisão do Tássio (30/10/2026) é não reservar nada: o estoque
+    que entra fica livre.
+
+    A fila continua, e só para ORDENAR a tela — prioridade manual primeiro,
+    depois quem espera há mais tempo. Ela diz quem merece atenção antes, não
+    quem é dono do material.
 
     Não sincroniza com o PCP: esta é a listagem, tem que abrir na hora. Por isso
     devolve `desatualizado`, para a tela não afirmar "chegou" em cima de uma foto
-    velha. Quem libera reconfere o estoque de verdade, com sincronização.
+    velha. Quem libera reconfere o estoque de verdade, com sincronização — e lá
+    a conferência é recomendação, não veto.
     """
     fila = _ordem_da_fila(pendencias)
     entrada = []
@@ -1252,32 +1262,32 @@ def _estoque_agora(pendencias: list) -> dict:
                                   "itens_total": len(p.get("itens") or []), "itens": []}
         return {"desatualizado": False, "data_ref": None}
 
-    analise = disponibilidade_service.analisar(entrada, sincronizar=False)
-
+    # Uma análise POR PENDÊNCIA, cada uma contra o estoque inteiro.
+    #
+    # Antes era uma análise só para a fila toda, e o rateio sequencial fazia a
+    # segunda pendência ver zero do que a primeira tinha "levado": o material
+    # existia na prateleira e a tela dizia "sem estoque". Isso é reserva, e a
+    # decisão é não reservar nada — o estoque que entra fica livre para quem
+    # chegar primeiro na hora de liberar, não para quem está mais acima numa
+    # lista.
+    #
+    # O rateio DENTRO de uma pendência continua: duas linhas da mesma venda
+    # pedindo o mesmo código não podem prometer a mesma unidade duas vezes.
+    # Isso é a venda consigo mesma, não uma venda contra a outra.
+    #
+    # Quem libera reconfere o estoque de verdade, com sincronização — e lá a
+    # conferência já é recomendação, não veto. Duas pendências podem mostrar o
+    # mesmo material: a primeira que liberar leva.
     por_pendencia: dict = {}
-    for item in analise.get("itens") or []:
-        ref = str(item.get("ref") or "")
-        if ":" not in ref:
+    desatualizado, data_ref = False, None
+    for pos, _p in enumerate(fila):
+        meus = [e for e in entrada if e["ref"].startswith("%d:" % pos)]
+        if not meus:
             continue
-        pos = int(ref.split(":")[0])
-        por_pendencia.setdefault(pos, []).append(item)
-
-    # Quem ficou com cada código, na ordem da fila. É o que transforma um "0 em
-    # estoque" — que parece bug quando a tela de Estoque mostra 12 — em "as 12
-    # unidades estão reservadas para a OV que está na frente".
-    donos: dict = {}
-    for pos, p in enumerate(fila):
-        for item in por_pendencia.get(pos, []):
-            q = float(item.get("qtd_atendida") or 0)
-            if q <= 0:
-                continue
-            cod = (item.get("codigo") or "").strip().upper()
-            donos.setdefault(cod, []).append({
-                "pos": pos,
-                "ov": p.get("ov_ref") or None,
-                "cliente": p.get("cliente") or None,
-                "qtd": round(q, 3),
-            })
+        analise = disponibilidade_service.analisar(meus, sincronizar=False)
+        desatualizado = desatualizado or analise.get("desatualizado", False)
+        data_ref = data_ref or analise.get("data_ref")
+        por_pendencia[pos] = list(analise.get("itens") or [])
 
     for pos, p in enumerate(fila):
         itens = por_pendencia.get(pos, [])
@@ -1301,14 +1311,13 @@ def _estoque_agora(pendencias: list) -> dict:
                 # Estoque do código como um todo, antes do rateio da fila.
                 "disponivel": i.get("disponivel"),
                 "reservado_antes": float(i.get("reservado_antes") or 0),
-                # Quem está na frente segurando este código.
-                "reservado_para": [d for d in donos.get((i.get("codigo") or "").strip().upper(), [])
-                                   if d["pos"] < pos],
+                # Vazio sempre: ninguém segura estoque de ninguém. O campo
+                # continua existindo para a tela não ter de adivinhar.
+                "reservado_para": [],
             } for i in itens],
         }
 
-    return {"desatualizado": analise.get("desatualizado", False),
-            "data_ref": analise.get("data_ref")}
+    return {"desatualizado": desatualizado, "data_ref": data_ref}
 
 
 def _serializar(fonte, registro_id, titulo, cliente, cliente_id, canal,

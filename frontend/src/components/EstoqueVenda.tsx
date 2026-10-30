@@ -466,7 +466,7 @@ export function ModalLiberarPendencia({ pendencia: p, analise, saldos, onClose, 
    *  e daí para baixo é tudo igual. */
   type Linha = {
     produto_id: string; codigo?: string | null; descricao?: string | null
-    devido: number; naFoto: number; valor: number; reservado: any[]
+    devido: number; naFoto: number; valor: number
   }
   const linhas: Linha[] = useMemo(() => {
     const daAnalise = analise?.itens || []
@@ -478,7 +478,6 @@ export function ModalLiberarPendencia({ pendencia: p, analise, saldos, onClose, 
         devido: Number(i.qtd_pedida) || 0,
         naFoto: Number(i.qtd_atendida) || 0,
         valor: Number((i as any).valor_unitario) || 0,
-        reservado: (i as any).reservado_para || [],
       }))
     }
     return (p.itens || []).filter(i => i.produto_id).map(i => {
@@ -493,7 +492,6 @@ export function ModalLiberarPendencia({ pendencia: p, analise, saldos, onClose, 
         // Sem leitura do PCP não se afirma nada: a sugestão vira a dívida.
         naFoto: linha ? (Number(linha.qtd_atendida) || 0) : devido,
         valor: Number(i.valor_unitario) || 0,
-        reservado: (linha as any)?.reservado_para || [],
       }
     })
   }, [analise, p])
@@ -635,10 +633,6 @@ export function ModalLiberarPendencia({ pendencia: p, analise, saldos, onClose, 
               {linhas.map(l => (
                 <p key={l.produto_id}>
                   <span className="font-mono">{l.codigo}</span>: foto do PCP {n(l.naFoto)} un
-                  {(l.reservado || []).length > 0 && (
-                    <> · reservado para {(l.reservado as any[])
-                      .map(d => `${d.ov || d.cliente || 'outra venda'} (${n(d.qtd)})`).join(', ')}</>
-                  )}
                 </p>
               ))}
             </div>

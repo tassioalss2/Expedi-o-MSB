@@ -668,7 +668,8 @@ function PorProduto() {
                                 <div className="flex items-center gap-3 shrink-0 tabular-nums">
                                   <span className="text-gray-600">{n(o.qtd)} un</span>
                                   {o.coberta_agora > 0 && (
-                                    <span className="text-emerald-700" title="Já reservado para esta OV pelo rateio">
+                                    <span className="text-emerald-700"
+                                      title="Existe em estoque hoje. Nada fica reservado: duas vendas do mesmo código veem a mesma unidade, e quem liberar primeiro leva.">
                                       {n(o.coberta_agora)} pronta(s)
                                     </span>
                                   )}
@@ -1135,10 +1136,6 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, destacado }: {
                   const agora = (p.estoque_agora?.itens || [])
                     .find(x => (x.codigo || '') === (i.codigo || ''))
                   const temTudo = agora && agora.qtd_atendida >= (i.qtd_pendente || 0) - 0.001
-                  // O caso que parecia bug: a tela de Estoque mostra 12, aqui dá 0.
-                  // O estoque existe, mas a fila levou — quem está na frente é o
-                  // que fecha a conta.
-                  const naFila = (agora?.reservado_para || [])
                   return (
                     <tr key={idx} className="border-t border-gray-50 align-top">
                       <td className="py-1 pr-2">
@@ -1150,13 +1147,6 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, destacado }: {
                           <span className="ml-1.5 text-[10px] text-gray-400"
                             title="A venda lançou este produto em mais de uma linha; aqui elas estão somadas">
                             ({(i as any).linhas} lançamentos somados)
-                          </span>
-                        )}
-                        {naFila.length > 0 && (
-                          <span className="block text-[11px] text-amber-700">
-                            {agora?.disponivel} un existem, reservadas para{' '}
-                            {naFila.map(d => `${d.ov || d.cliente || 'outra venda'} (${d.qtd})`).join(', ')}
-                            {' '}— espera desde antes desta
                           </span>
                         )}
                       </td>
