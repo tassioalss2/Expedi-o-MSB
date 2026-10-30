@@ -26,7 +26,7 @@ def programacao_coleta(
     _: UsuarioOut = Depends(get_current_user),
 ):
     """As cargas que saem no dia, para conferir antes de mandar."""
-    dia = date.fromisoformat(data) if data else date.today()
+    dia = date.fromisoformat(data) if data else programacao_service._hoje_brt()
     return {"data": dia.isoformat(), "transportadora": transportadora,
             "linhas": programacao_service.listar(dia, transportadora)}
 
@@ -38,7 +38,7 @@ def programacao_coleta_planilha(
     _: UsuarioOut = Depends(get_current_user),
 ):
     """O xlsx no modelo da transportadora, pronto para mandar no grupo."""
-    dia = date.fromisoformat(data) if data else date.today()
+    dia = date.fromisoformat(data) if data else programacao_service._hoje_brt()
     conteudo = programacao_service.planilha(dia, transportadora)
     nome = "Programacao de coleta %s - %s.xlsx" % (
         dia.strftime("%d-%m-%Y"), transportadora)

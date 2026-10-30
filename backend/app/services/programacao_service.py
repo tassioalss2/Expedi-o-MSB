@@ -11,7 +11,7 @@ Volume · Valor NF · Observações. Reproduzir o formato é o que permite colar
 grupo sem ninguém reformatar nada.
 """
 import io
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -80,6 +80,13 @@ def modalidade(destino_local: str, prazo_cliente, saida: date,
         prazo_tabela, disponivel)
 
 
+def _hoje_brt() -> date:
+    """O servidor roda em UTC. Depois das 21h de Brasília `date.today()` já é o
+    dia seguinte lá, e a programação "de hoje" viraria a de amanhã — justo no
+    horário em que alguém ainda está fechando o carro."""
+    return (datetime.now(timezone.utc) - timedelta(hours=3)).date()
+
+
 def _br_data(iso) -> str:
     t = str(iso or "")[:10]
     return "%s/%s/%s" % (t[8:10], t[5:7], t[0:4]) if len(t) == 10 else ""
@@ -121,23 +128,44 @@ def pede_agendamento(texto) -> bool:
     return not _RE_NAO_AGENDA.search(t)
 
 
-def listar(dia: date, transportadora: str = "BRIX") -> list:
-    """As cargas que saem: faturadas no dia, ou já faturadas e esperando coleta.
+_CAMPOS = (
+    "id, numero_pedido, numero_nf, status, valor_nf, prioridade, forma_venda, "
+    "tipo_frete, "
+    "local_entrega, data_faturamento, data_prevista_entrega, coleta_agendada_em, "
+    "coleta_agendada_obs, observacoes, transportadora_id, clientes(nome), "
+    "transportadoras(nome)"
+)
 
-    As duas coisas de propósito — o que foi faturado hoje é o que entra no carro
-    de hoje, e o que ficou de ontem sem coletar continua esperando. Programação
-    que esquece a carga de ontem é a que deixa nota parada no estoque.
+
+def listar(dia: date, transportadora: str = "BRIX") -> list:
+    """As cargas do dia, para conferir antes de mandar para a transportadora.
+
+    HOJE e um dia PASSADO são perguntas diferentes, e por isso a busca é outra:
+
+      · hoje é "o que está esperando o carro" — tudo em FATURADO ou
+        AGUARD_COLETA, inclusive a carga de ontem que não foi coletada.
+        Programação que esquece a carga de ontem deixa nota parada no estoque;
+      · um dia passado é "o que saiu naquele dia", e aí o status de agora não
+        serve: a carga de ontem já está EXPEDIDO, e a lista voltava VAZIA. Para
+        trás a pergunta se responde pelo faturamento daquele dia, que não muda
+        depois.
+
+    A reconstrução do dia passado tem um limite honesto: ela lista o que foi
+    FATURADO naquele dia. O que já estava esperando desde antes não dá para
+    recuperar — o app guarda o status de agora, não o de ontem.
     """
     db = get_service_db()
     alvo = (transportadora or "").strip().upper()
+    passado = dia < _hoje_brt()
 
-    peds = db.table("pedidos").select(
-        "id, numero_pedido, numero_nf, status, valor_nf, prioridade, forma_venda, "
-        "tipo_frete, "
-        "local_entrega, data_faturamento, data_prevista_entrega, coleta_agendada_em, "
-        "coleta_agendada_obs, observacoes, transportadora_id, clientes(nome), "
-        "transportadoras(nome)"
-    ).in_("status", ["FATURADO", "AGUARD_COLETA"]).limit(2000).execute().data
+    if passado:
+        peds = db.table("pedidos").select(_CAMPOS)\
+            .gte("data_faturamento", dia.isoformat())\
+            .lte("data_faturamento", dia.isoformat() + "T23:59:59")\
+            .neq("status", "CANCELADO").limit(2000).execute().data
+    else:
+        peds = db.table("pedidos").select(_CAMPOS)\
+            .in_("status", ["FATURADO", "AGUARD_COLETA"]).limit(2000).execute().data
 
     saida = []
     for p in peds:
@@ -146,7 +174,7 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             continue
         faturada_em = str(p.get("data_faturamento") or "")[:10]
         # Faturada hoje OU faturada antes e ainda não coletada.
-        if faturada_em and faturada_em > dia.isoformat():
+        if not passado and faturada_em and faturada_em > dia.isoformat():
             continue
         saida.append(p)
 

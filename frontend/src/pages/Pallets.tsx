@@ -6,6 +6,7 @@ import api from '../lib/api'
 import { errMsg } from '../lib/errMsg'
 import { resolveNomeTransportadora } from '../lib/statusConfig'
 import toast from 'react-hot-toast'
+import { hojeLocal } from '../lib/dataLocal'
 
 const CORES: Record<string, string> = {
   'BRIX':     'bg-blue-600',
@@ -42,6 +43,8 @@ export function Pallets() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [modal, setModal] = useState<string | null>(null)
+  // Dia da programacao de coleta. Comeca em hoje e aceita voltar.
+  const [diaColeta, setDiaColeta] = useState(hojeLocal())
   const [ovInput, setOvInput] = useState('')
   const [modoColeta, setModoColeta] = useState<string | null>(null) // pallet_id em modo coleta
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set())
@@ -130,21 +133,28 @@ export function Pallets() {
           <p className="text-sm text-gray-500">{todos.reduce((a, p) => a + (p?.pedidos?.length || 0), 0)} OV(s) aguardando</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* O que sai hoje, no modelo que a transportadora usa para montar o
-              carro. Baixa e vai para o grupo — substitui o aviso carga a carga. */}
+          {/* O que sai no dia, no modelo que a transportadora usa para montar o
+              carro. Baixa e vai para o grupo — substitui o aviso carga a carga.
+              A data começa em hoje e aceita voltar: quem fecha o carro no fim
+              da tarde às vezes só manda a planilha no dia seguinte. */}
+          <input type="date" value={diaColeta} max={hojeLocal()}
+            onChange={e => setDiaColeta(e.target.value || hojeLocal())}
+            title="Dia da programação"
+            className="border border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-700" />
           <button
             onClick={async () => {
               try {
                 const r = await api.get('/programacao-coleta/planilha',
-                  { responseType: 'blob' })
+                  { params: { data: diaColeta }, responseType: 'blob' })
                 const url = URL.createObjectURL(new Blob([r.data]))
                 const a = document.createElement('a')
                 a.href = url
-                a.download = `Programacao de coleta ${new Date()
-                  .toLocaleDateString('pt-BR').replace(/\//g, '-')} - BRIX.xlsx`
+                a.download = `Programacao de coleta ${diaColeta.split('-').reverse().join('-')} - BRIX.xlsx`
                 a.click()
                 URL.revokeObjectURL(url)
-                toast.success('Programação baixada — mande no grupo da transportadora.')
+                toast.success(diaColeta === hojeLocal()
+                  ? 'Programação baixada — mande no grupo da transportadora.'
+                  : `Programação de ${diaColeta.split('-').reverse().join('/')} baixada.`)
               } catch {
                 toast.error('Não consegui gerar a programação.')
               }
