@@ -168,15 +168,55 @@ export default function Pendencias() {
   // O filtro continua trazendo a VENDA INTEIRA: se uma OV tem um saldo que casa
   // e outro que não, os dois ficam à vista, e só o que casou é destacado.
   // Liberar sem ver o resto do que o cliente espera é como esta tela erra.
+  /** Um card por VENDA, com os saldos dela somados.
+   *
+   *  A mesma OV tinha uma linha por remessa: a INFINITY apareceu três vezes,
+   *  duas delas a mesma OV e o mesmo item (2 un de setembro e 10 un de
+   *  outubro). Remessa é contabilidade nossa — quem olha a tela vê um cliente
+   *  esperando 12 un, e é assim que a tela passa a mostrar.
+   *
+   *  `saldos` leva as linhas de verdade adiante: liberar, cobrar e cancelar
+   *  agem em todas, porque o combinado é não soltar pedaço. A espera que vale
+   *  é a mais longa — é ela que vira reclamação de cliente. */
   const lista = useMemo(() => {
-    const ordenada = [...abertas].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0))
-    if (!recorte) return ordenada
+    const porVenda = new Map<string, Pendencia[]>()
+    for (const p of abertas) {
+      const k = vendaDe(p)
+      porVenda.set(k, [...(porVenda.get(k) || []), p])
+    }
+    const juntos = [...porVenda.values()].map(saldos => {
+      const ordem = [...saldos].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0))
+      if (ordem.length === 1) return { ...ordem[0], saldos: ordem }
+      const itens = new Map<string, any>()
+      for (const s of ordem) {
+        for (const i of (s.itens || [])) {
+          const k = String(i.produto_id || i.codigo)
+          const j = itens.get(k)
+          if (j) {
+            j.qtd_pedida = (Number(j.qtd_pedida) || 0) + (Number(i.qtd_pedida) || 0)
+            j.qtd_pendente = (Number(j.qtd_pendente) || 0) + (Number(i.qtd_pendente) || 0)
+          } else {
+            itens.set(k, { ...i })
+          }
+        }
+      }
+      return {
+        ...ordem[0],
+        saldos: ordem,
+        itens: [...itens.values()],
+        valor: ordem.reduce((a, s) => a + (s.valor || 0), 0),
+        qtd_total: ordem.reduce((a, s) => a + (Number(s.qtd_total) || 0), 0),
+        dias_parada: Math.max(...ordem.map(s => s.dias_parada || 0)),
+        pode_liberar: ordem.some(s => s.pode_liberar),
+      } as Pendencia & { saldos: Pendencia[] }
+    }).sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0))
+
+    if (!recorte) return juntos
     const casa = RECORTES[recorte]
-    const vendas = new Set(ordenada.filter(casa).map(vendaDe))
-    return ordenada.filter(p => vendas.has(vendaDe(p)))
+    return juntos.filter(g => ((g as any).saldos as Pendencia[]).some(casa))
   }, [abertas, recorte])
 
-  const vendasNaLista = new Set(lista.map(vendaDe)).size
+  const saldosNaLista = lista.reduce((a, g) => a + ((g as any).saldos?.length || 1), 0)
   const valorDaLista = lista.reduce(
     (a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0)
 
@@ -358,8 +398,8 @@ export default function Pendencias() {
                 : recorte === 'parada' ? `Vendas paradas há mais de ${DIAS_CRITICO} dias`
                 : 'Pendências abertas'}
               <span className="text-xs font-normal text-gray-400">
-                {lista.length} {lista.length === 1 ? 'saldo' : 'saldos'}
-                {vendasNaLista !== lista.length && ` · ${vendasNaLista} vendas`}
+                {lista.length} {lista.length === 1 ? 'venda' : 'vendas'}
+                {saldosNaLista !== lista.length && ` · ${saldosNaLista} saldos somados`}
               </span>
               {recorte && (
                 <button onClick={() => setRecorte(null)}
@@ -373,17 +413,10 @@ export default function Pendencias() {
               {fmtBRL(valorDaLista)}
             </span>
           </div>
-          {recorte && vendasNaLista !== lista.length && (
-            // Só quando é verdade: a venda veio inteira, e o saldo que não casou
-            // está aqui de propósito.
-            <p className="text-xs text-gray-500 mb-3">
-              A venda aparece inteira — o saldo que casou com o filtro está marcado.
-            </p>
-          )}
           <div className="space-y-2 mt-3">
             {lista.map(p => (
               <Card key={`${p.fonte}-${p.id}`} p={p}
-                destacado={!!recorte && RECORTES[recorte](p)}
+                destacado={undefined}
                 onLiberar={() => setLiberando(p)}
                 onAcompanhar={() => setAcompanhando(p)}
                 onCancelar={() => setCancelando(p)} />
@@ -432,6 +465,7 @@ export default function Pendencias() {
       {liberando && (
         <ModalLiberarPendencia
           pendencia={liberando}
+          saldos={(liberando as any).saldos}
           onClose={() => setLiberando(null)}
           onLiberado={invalidar}
         />
@@ -899,6 +933,14 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, destacado }: {
               <Link to={p.ov_id ? `/expedicao/${p.ov_id}` : '#'}
                 className="font-mono text-xs text-indigo-700 hover:underline">{p.ov_ref}</Link>
             ) : null}
+            {((p as any).saldos?.length || 1) > 1 && (
+              // A soma não pode ser silenciosa: quem confere o número quer
+              // saber que ele veio de duas entradas da mesma OV.
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500"
+                title="Esta OV teve mais de uma devolução ao estoque. Somadas aqui — liberar, cobrar e cancelar valem para todas.">
+                {(p as any).saldos.length} saldos somados
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
             <span className="text-[11px] text-gray-500 truncate">{tituloDoSaldo(p)}</span>
@@ -1280,9 +1322,18 @@ function ModalCancelar({ p, onClose, onCancelado }: {
   const [motivo, setMotivo] = useState('')
   const SUGESTOES = ['Cliente desistiu', 'Cliente inadimplente', 'Venda cancelada']
   const mut = useMutation({
-    mutationFn: () => api.post(`/crm/pendencias/${p.fonte}/${p.id}/cancelar`, { motivo: motivo.trim() }),
-    onSuccess: (r) => {
-      toast.success(`Pendencia encerrada — ${fmtBRL(r.data?.valor_cancelado || 0)} saem da fila`)
+    mutationFn: async () => {
+      // A venda que não vai acontecer não desiste pela metade.
+      let cancelado = 0
+      for (const s of ((p as any).saldos || [p])) {
+        const r = await api.post(`/crm/pendencias/${s.fonte}/${s.id}/cancelar`,
+          { motivo: motivo.trim() })
+        cancelado += Number(r.data?.valor_cancelado || 0)
+      }
+      return cancelado
+    },
+    onSuccess: (cancelado: number) => {
+      toast.success(`Pendencia encerrada — ${fmtBRL(cancelado)} saem da fila`)
       onCancelado(); onClose()
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Nao consegui cancelar'),
@@ -1340,11 +1391,20 @@ function ModalAcompanhar({ p, onClose, onSalvo }: {
   const acomp = p.acompanhamentos || []
 
   const salvar = useMutation({
-    mutationFn: () => api.patch(`/crm/pendencias/${p.fonte}/${p.id}`, {
-      previsao_pcp: limpar ? null : (previsao || null),
-      observacao: nota.trim() || null,
-      limpar_previsao: limpar,
-    }).then(r => r.data),
+    // Em todos os saldos da venda: a previsão do PCP e a cobrança falam do
+    // material, e o material é o mesmo — registrar em um só deixaria o outro
+    // card dizendo "sem previsão" no dia seguinte.
+    mutationFn: async () => {
+      let r: any = null
+      for (const s of ((p as any).saldos || [p])) {
+        r = await api.patch(`/crm/pendencias/${s.fonte}/${s.id}`, {
+          previsao_pcp: limpar ? null : (previsao || null),
+          observacao: nota.trim() || null,
+          limpar_previsao: limpar,
+        })
+      }
+      return r?.data
+    },
     onSuccess: () => {
       toast.success('Cobrança registrada.')
       onSalvo()

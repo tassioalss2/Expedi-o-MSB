@@ -411,10 +411,17 @@ function EscolhaDeLiberacao({ itens, qtds, onQtd, previsaoSa, mostrarSituacao, c
  *  E PADRAO, nao regra: os outros 23% existem. */
 const SUGERIDO_PENDENCIA = 'CIF_SEM_VALOR'
 
-export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLiberado }: {
+export function ModalLiberarPendencia({ pendencia: p, analise, saldos, onClose, onLiberado }: {
   pendencia: Pendencia
   /** Situação de agora, quando quem abriu o modal já a tem em mão. */
   analise?: Disponibilidade | null
+  /** Os saldos que esta liberação resolve. A tela de pendências junta os
+   *  saldos da mesma OV num card só — eles existem separados porque cada
+   *  remessa é uma linha de `pedidos`, e isso é contabilidade nossa, não uma
+   *  escolha de quem entrega. Aqui `p` é a soma que aparece na tela e `saldos`
+   *  são as linhas de verdade, cada uma com a sua chamada. Sem isto, liberar
+   *  resolveria um pedaço e deixaria o outro aberto. */
+  saldos?: Pendencia[]
   onClose: () => void
   onLiberado: () => void
 }) {
@@ -507,15 +514,54 @@ export function ModalLiberarPendencia({ pendencia: p, analise, onClose, onLibera
   const excedeu = linhas.filter(l => num(qtds[l.produto_id]) > l.devido + 0.001)
   const acimaDaFoto = linhas.filter(l => num(qtds[l.produto_id]) > l.naFoto + 0.001)
 
+  /** Quanto da escolha cabe em cada saldo, do mais parado para o mais novo.
+   *
+   *  A tela mostra a dívida somada; o servidor libera uma linha de `pedidos`
+   *  por vez. Então a quantidade escolhida é repartida entre os saldos até
+   *  acabar — e começa pelo mais antigo, que é o que vira reclamação. */
+  const repartir = (lista: Pendencia[]) => {
+    const resta: Record<string, number> = {}
+    for (const e of escolha) resta[e.produto_id] = e.qtd
+    return lista.map(s => {
+      const itens: { produto_id: string; qtd: number }[] = []
+      for (const i of (s.itens || [])) {
+        const pid = i.produto_id as string
+        const sobra = resta[pid] || 0
+        const devido = Number(i.qtd_pendente) || 0
+        const leva = Math.min(sobra, devido)
+        if (leva > 0) {
+          itens.push({ produto_id: pid, qtd: leva })
+          resta[pid] = sobra - leva
+        }
+      }
+      return { saldo: s, itens }
+    }).filter(x => x.itens.length > 0)
+  }
+
   const liberar = useMutation({
-    mutationFn: () => api.post(`/crm/pendencias/${p.fonte}/${p.id}/liberar`, {
-      parcial: true, observacao, itens: escolha,
-      somar_em: somarEm || null,
-      tipo_frete: freteEscolhido || null,
-      transportadora_id: transportadora || null,
-      prioridade: prioridade || null,
-      data_prevista_entrega: chegadaCliente || null,
-    }).then(r => r.data),
+    mutationFn: async () => {
+      const alvos = saldos && saldos.length > 1
+        ? repartir([...saldos].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0)))
+        : [{ saldo: p, itens: escolha }]
+      let destino = somarEm || null
+      let ultimo: any = null
+      for (const alvo of alvos) {
+        const r = await api.post(`/crm/pendencias/${alvo.saldo.fonte}/${alvo.saldo.id}/liberar`, {
+          parcial: true, observacao, itens: alvo.itens,
+          somar_em: destino,
+          tipo_frete: freteEscolhido || null,
+          transportadora_id: transportadora || null,
+          prioridade: prioridade || null,
+          data_prevista_entrega: chegadaCliente || null,
+        })
+        ultimo = r.data
+        // O segundo saldo soma na remessa que o primeiro usou: uma nota, uma
+        // coleta, um card. Sem isto, liberar dois saldos abriria duas remessas
+        // para o mesmo cliente no mesmo dia.
+        destino = ultimo?.ov?.id || destino
+      }
+      return ultimo
+    },
     onSuccess: (r: any) => {
       toast.success(`Pendência liberada — ${(ACAO_LIBERAR_LABEL[r?.acao] || 'liberada').toLowerCase()}.`)
       onLiberado()
