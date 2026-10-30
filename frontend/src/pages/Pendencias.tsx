@@ -117,37 +117,9 @@ export default function Pendencias() {
     }
   }, [todas, busca, linha, origem, soTransfer])
 
-  // Uma VENDA, um card. A pendência é gravada na linha de `pedidos`, e uma OV
-  // com várias remessas tem uma linha por remessa: a OV016456 da SEVEN MEDIC
-  // tinha três, então a mesma venda aparecia três vezes seguidas, com o mesmo
-  // cliente e o mesmo número de OV. Aqui elas se juntam sob um cabeçalho só; os
-  // saldos continuam distintos DENTRO do card, porque liberar, cobrar e
-  // cancelar agem em cada um separadamente.
-  //
-  // A chave é a OV. Sem OV (venda do CRM que ainda não desceu), cada pendência
-  // é a sua própria venda e vira um grupo de um.
-  const todosGrupos = useMemo(() => {
-    const m = new Map<string, Pendencia[]>()
-    for (const p of abertas) {
-      const k = p.ov_ref ? `ov:${p.ov_ref}` : `p:${p.fonte}-${p.id}`
-      m.set(k, [...(m.get(k) || []), p])
-    }
-    return [...m.entries()]
-      .map(([k, itens]) => ({
-        k,
-        itens: [...itens].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0)),
-        // O grupo se ordena pela espera mais longa que tem dentro: é ela que
-        // vira reclamação de cliente.
-        dias: Math.max(...itens.map(p => p.dias_parada || 0)),
-        // Transfer price (Biomedical) nao entra em valor nenhum da tela: e
-        // repasse dentro do grupo, nao dinheiro de venda parado. O material
-        // devido continua aparecendo — em unidades, item a item.
-        valor: itens.reduce((a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0),
-        transfer: itens.every(p => !!p.transfer_price),
-        valorTransfer: itens.reduce((a, p) => a + (p.transfer_price ? (p.valor || 0) : 0), 0),
-      }))
-      .sort((a, b) => b.dias - a.dias)
-  }, [abertas, soTransfer])
+  // Uma chave por VENDA. Não é mais para agrupar na tela — é só para o filtro
+  // continuar trazendo a venda inteira quando um saldo dela casa e o outro não.
+  const vendaDe = (p: Pendencia) => p.ov_ref ? `ov:${p.ov_ref}` : `p:${p.fonte}-${p.id}`
 
   // Continua servindo aos KPIs: quanto deste dinheiro a foto do estoque já cobre.
   const porFila = useMemo(() => {
@@ -188,27 +160,31 @@ export default function Pendencias() {
       && p.estoque_agora?.status !== 'PARCIAL',
   }
 
-  // O ponto do pedido dele: clicar em "dá para liberar agora" e ver a VENDA
-  // INTEIRA, não só o saldo que casa com o recorte. Uma OV com um saldo liberável
-  // e outro sem estoque aparece completa — senão a tela mostra metade de uma
-  // venda e a pessoa libera sem saber que o cliente espera mais coisa.
+  // Lista única, sem caixa dentro de caixa: um saldo, um card, os mais parados
+  // primeiro. A mesma OV com dois saldos aparece em dois cards seguidos, com o
+  // mesmo cliente e o mesmo número — e isso lê melhor do que o cabeçalho cinza
+  // com cards dentro, que existia para um caso em onze.
   //
-  // Por isso o teste é `.some()` sobre os saldos do grupo, e o grupo entra
-  // inteiro. O que casou ganha destaque dentro do card.
-  const grupos = useMemo(() => {
-    if (!recorte) return todosGrupos
+  // O filtro continua trazendo a VENDA INTEIRA: se uma OV tem um saldo que casa
+  // e outro que não, os dois ficam à vista, e só o que casou é destacado.
+  // Liberar sem ver o resto do que o cliente espera é como esta tela erra.
+  const lista = useMemo(() => {
+    const ordenada = [...abertas].sort((a, b) => (b.dias_parada || 0) - (a.dias_parada || 0))
+    if (!recorte) return ordenada
     const casa = RECORTES[recorte]
-    return todosGrupos.filter(g => g.itens.some(casa))
-  }, [todosGrupos, recorte])
+    const vendas = new Set(ordenada.filter(casa).map(vendaDe))
+    return ordenada.filter(p => vendas.has(vendaDe(p)))
+  }, [abertas, recorte])
+
+  const vendasNaLista = new Set(lista.map(vendaDe)).size
+  const valorDaLista = lista.reduce(
+    (a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0)
 
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold text-gray-800">Pendências de OV</h1>
-        <p className="text-sm text-gray-500">
-          Venda fechada com saldo a entregar. Organizado pelo que dá para fazer agora —
-          o que está só esperando material e o que já existe e foi deixado livre.
-        </p>
+        <p className="text-sm text-gray-500">Venda fechada com saldo a entregar.</p>
       </div>
 
       {/* Duas perguntas diferentes sobre o mesmo saldo: "o que faço com esta
@@ -235,7 +211,7 @@ export default function Pendencias() {
         <Kpi
           rotulo={soTransfer ? 'Material devido à Biomedical (fora da meta)' : 'Parado esperando material'}
           valor={fmtBRL(abertas.reduce((a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0))}
-          detalhe={`${abertas.length} pendência(s) · ${todosGrupos.length} venda(s)`}
+          detalhe={`${abertas.length} saldo(s) em ${new Set(abertas.map(vendaDe)).size} venda(s)`}
           cor="text-red-700"
           ativo={recorte === null} anel="ring-red-200 border-red-300"
           onClick={() => setRecorte(null)}
@@ -272,28 +248,22 @@ export default function Pendencias() {
           devido do mesmo jeito, e quem opera precisa saber o que e quanto.
           Por isso fica aqui, inteiro, e fora de todas as somas acima. */}
       {transferAberto.length > 0 && (
-        <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-xs text-slate-700">
-          <p className="font-semibold text-slate-800">
-            Fora da conta: {transferAberto.length} saldo(s) de transfer price (Biomedical)
-          </p>
-          <p className="mt-0.5">
-            Devemos o material, mas o valor nao e receita da MSB — por isso nao soma nos numeros
-            acima. {n(transferItens.reduce((a, i) => a + i.qtd, 0))} un no total:
-          </p>
-          <p className="mt-1">
-            <button onClick={() => setOrigem(o => o === 'TRANSFER' ? '' : 'TRANSFER')}
-              className="text-[11px] font-medium underline text-slate-700 hover:text-slate-900">
-              {soTransfer ? 'voltar para a pendência de venda' : 'ver estes saldos na lista →'}
-            </button>
-          </p>
-          <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-            {transferItens.map(i => (
-              <span key={i.codigo} title={i.descricao || ''}>
-                <span className="font-mono font-medium">{i.codigo}</span> {n(i.qtd)} un
-              </span>
-            ))}
-          </p>
-        </div>
+        /* Uma linha. O material é devido e precisa estar à vista, mas o valor
+           não é receita da MSB e fica fora de todas as somas acima — isso cabe
+           num tooltip. Os itens estão a um clique, na própria lista. */
+        <button onClick={() => setOrigem(o => o === 'TRANSFER' ? '' : 'TRANSFER')}
+          title="Devemos o material à Biomedical, mas o valor é repasse dentro do grupo — não soma nos números acima."
+          className={`w-full flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
+            soTransfer ? 'border-slate-400 bg-slate-100 text-slate-800'
+                       : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
+          <span>
+            <strong>Biomedical:</strong> {transferAberto.length} saldo(s) ·{' '}
+            {n(transferItens.reduce((a, i) => a + i.qtd, 0))} un — fora da conta
+          </span>
+          <span className="font-medium underline whitespace-nowrap">
+            {soTransfer ? 'voltar' : 'ver na lista →'}
+          </span>
+        </button>
       )}
 
       {data?.estoque_desatualizado && (
@@ -360,7 +330,7 @@ export default function Pendencias() {
             {busca || linha ? 'Nenhuma pendência com esse filtro.' : 'Tudo que foi vendido tem estoque.'}
           </p>
         </div>
-      ) : grupos.length === 0 ? (
+      ) : lista.length === 0 ? (
         /* Ha pendencias, mas nenhuma no recorte clicado. Dizer isso e oferecer a
            saida, em vez do mesmo aviso verde de "nao ha nada", que seria mentira. */
         <div className="bg-white border border-gray-200 rounded-xl px-4 py-8 text-center">
@@ -388,8 +358,8 @@ export default function Pendencias() {
                 : recorte === 'parada' ? `Vendas paradas há mais de ${DIAS_CRITICO} dias`
                 : 'Pendências abertas'}
               <span className="text-xs font-normal text-gray-400">
-                {grupos.length} {grupos.length === 1 ? 'venda' : 'vendas'}
-                {` · ${grupos.reduce((a, g) => a + g.itens.length, 0)} saldos`}
+                {lista.length} {lista.length === 1 ? 'saldo' : 'saldos'}
+                {vendasNaLista !== lista.length && ` · ${vendasNaLista} vendas`}
               </span>
               {recorte && (
                 <button onClick={() => setRecorte(null)}
@@ -400,33 +370,23 @@ export default function Pendencias() {
               )}
             </h2>
             <span className="text-sm font-semibold tabular-nums text-gray-700">
-              {fmtBRL(grupos.reduce((a, g) => a + g.valor, 0))}
+              {fmtBRL(valorDaLista)}
             </span>
           </div>
-          <p className="text-xs text-gray-500 mb-3">
-            {recorte ? (
-              <>A venda aparece <strong>inteira</strong>: se uma OV tem um saldo que casa com o
-              filtro e outro que não, os dois ficam à vista — liberar sem ver o resto do que o
-              cliente espera é como esta tela erra. O saldo que casou está marcado.</>
-            ) : (
-              <>As mais paradas primeiro. A etiqueta de estoque em cada card é o que a última
-              foto do PCP diz — recomendação, não trava: dá para liberar mesmo assim.
-              Clique nos números acima para filtrar.</>
-            )}
-          </p>
-          <div className="space-y-2">
-            {grupos.map(g => g.itens.length === 1 ? (
-              <Card key={g.k} p={g.itens[0]}
-                destacado={!!recorte && RECORTES[recorte](g.itens[0])}
-                onLiberar={() => setLiberando(g.itens[0])}
-                onAcompanhar={() => setAcompanhando(g.itens[0])}
-                onCancelar={() => setCancelando(g.itens[0])} />
-            ) : (
-              <GrupoDaVenda key={g.k} itens={g.itens} valor={g.valor}
-                transfer={g.transfer} valorTransfer={g.valorTransfer}
-                destaca={recorte ? RECORTES[recorte] : undefined}
-                onLiberar={setLiberando} onAcompanhar={setAcompanhando}
-                onCancelar={setCancelando} />
+          {recorte && vendasNaLista !== lista.length && (
+            // Só quando é verdade: a venda veio inteira, e o saldo que não casou
+            // está aqui de propósito.
+            <p className="text-xs text-gray-500 mb-3">
+              A venda aparece inteira — o saldo que casou com o filtro está marcado.
+            </p>
+          )}
+          <div className="space-y-2 mt-3">
+            {lista.map(p => (
+              <Card key={`${p.fonte}-${p.id}`} p={p}
+                destacado={!!recorte && RECORTES[recorte](p)}
+                onLiberar={() => setLiberando(p)}
+                onAcompanhar={() => setAcompanhando(p)}
+                onCancelar={() => setCancelando(p)} />
             ))}
           </div>
         </section>
@@ -789,11 +749,10 @@ function tituloDoSaldo(p: Pendencia): string {
     DEVOLUCAO_ESTOQUE: 'Devolvido ao estoque',
   }
   const t = base[(p.origem || '').toUpperCase()] || 'Saldo da venda'
-  // A remessa fecha a conta: dois saldos devolvidos pela mesma pessoa no mesmo
-  // minuto so se distinguem por ela.
-  const rem = p.remessa_numero ? `· remessa ${p.remessa_numero}` : ''
-  return [t, quando && `— ${quando}`, quem && `· ${quem}`, rem]
-    .filter(Boolean).join(' ')
+  // Sem o número da remessa: ele dizia respeito a uma divisão que a tela não
+  // faz mais, e quem lê pensa em VENDA, não em remessa. O que diferencia dois
+  // saldos da mesma OV continua à vista — a explicação e os itens de cada um.
+  return [t, quando && `— ${quando}`, quem && `· ${quem}`].filter(Boolean).join(' ')
 }
 
 /** Licitação ou comercial. Um traço quando o cadastro antigo não diz — chutar
@@ -854,85 +813,8 @@ function EtiquetaEstoque({ p }: { p: Pendencia }) {
   )
 }
 
-/** Uma venda com mais de um saldo aberto — a OV com várias remessas.
- *
- *  O cliente e a OV aparecem UMA vez, no topo; os saldos ficam dentro. Não dá
- *  para fundir os saldos num só: cada um é uma linha de `pedidos` diferente, e
- *  liberar, cobrar e cancelar agem em cada um. Juntar só o cabeçalho resolve o
- *  que incomodava — ler três vezes o mesmo cliente e a mesma OV. */
-function GrupoDaVenda({ itens, valor, transfer, valorTransfer, destaca,
-                       onLiberar, onAcompanhar, onCancelar }: {
-  itens: Pendencia[]; valor: number
-  /** Venda de transfer price: o valor fica a vista, mas em cinza e fora das somas. */
-  transfer?: boolean; valorTransfer?: number
-  /** Com filtro ativo, marca quais saldos casaram. Os outros continuam à vista:
-   *  a venda aparece inteira de proposito. */
-  destaca?: (p: Pendencia) => boolean
-  onLiberar: (p: Pendencia) => void
-  onAcompanhar: (p: Pendencia) => void
-  onCancelar: (p: Pendencia) => void
-}) {
-  const p0 = itens[0]
-  const unTotal = itens.reduce((a, p) => a + (Number(p.qtd_total) || 0), 0)
-  const dias = Math.max(...itens.map(p => p.dias_parada || 0))
-  const corDias = dias >= DIAS_CRITICO ? 'text-red-600 font-semibold'
-    : dias >= DIAS_ATENCAO ? 'text-amber-700' : 'text-gray-500'
-
-  return (
-    <div className="rounded-lg border border-gray-300 bg-gray-50/70">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-gray-800 truncate">{p0.cliente || '—'}</span>
-            {p0.canal && (
-              <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p0.canal] || p0.canal}</span>
-            )}
-            {p0.ov_ref && (
-              <Link to={p0.ov_id ? `/expedicao/${p0.ov_id}` : '#'}
-                className="font-mono text-xs text-indigo-700 hover:underline">{p0.ov_ref}</Link>
-            )}
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-600"
-              title="A mesma venda tem mais de um saldo aberto — normalmente uma remessa por saldo. Cada um se libera por si.">
-              {itens.length} saldos nesta venda
-            </span>
-          </div>
-        </div>
-        <div className="text-xs text-gray-500 whitespace-nowrap">{n(unTotal)} un no total</div>
-        <div className={`text-xs whitespace-nowrap tabular-nums ${corDias}`}
-          title="Espera mais longa desta venda">
-          <Clock size={12} className="inline mr-1 -mt-0.5" />{dias}d
-        </div>
-        <div className={`text-sm font-semibold tabular-nums w-28 text-right ${
-          transfer ? 'text-slate-400' : 'text-red-700'}`}
-          title={transfer
-            ? 'Transfer price (Biomedical): devemos o material, mas o valor nao soma na pendencia'
-            : undefined}>
-          {fmtBRL(transfer ? (valorTransfer || 0) : valor)}
-          {transfer && (
-            <span className="block text-[10px] font-normal leading-tight">fora da conta</span>
-          )}
-        </div>
-        {/* Espaço dos botões, que aqui vivem em cada saldo. */}
-        <div className="w-[236px] shrink-0" />
-      </div>
-      <div className="space-y-1.5 px-2 pb-2">
-        {itens.map(p => (
-          <Card key={`${p.fonte}-${p.id}`} p={p} dentroDeGrupo
-            destacado={destaca ? destaca(p) : undefined}
-            onLiberar={() => onLiberar(p)}
-            onAcompanhar={() => onAcompanhar(p)}
-            onCancelar={() => onCancelar(p)} />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado }: {
+function Card({ p, onLiberar, onAcompanhar, onCancelar, destacado }: {
   p: Pendencia; onLiberar: () => void; onAcompanhar: () => void; onCancelar: () => void
-  /** Dentro de GrupoDaVenda: cliente, linha e OV já estão no cabeçalho do grupo
-   *  e repeti-los em cada saldo era exatamente o ruído que o grupo desfaz. */
-  dentroDeGrupo?: boolean
   /** Filtro ativo: true = este saldo casou com o recorte, false = veio junto
    *  porque e da mesma venda. undefined = sem filtro, ninguem se destaca. */
   destacado?: boolean
@@ -986,19 +868,15 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            {dentroDeGrupo ? (
-              <span className="font-medium text-gray-700 truncate">{tituloDoSaldo(p)}</span>
-            ) : (
-              <span className="font-medium text-gray-800 truncate">
-                {(p as any).cliente_codigo && (
-                  <span className="font-mono text-gray-500 mr-1" title="Código do cliente no D365">
-                    {(p as any).cliente_codigo}
-                  </span>
-                )}
-                {p.cliente || '—'}
-              </span>
-            )}
-            {!dentroDeGrupo && p.canal && (
+            <span className="font-medium text-gray-800 truncate">
+              {(p as any).cliente_codigo && (
+                <span className="font-mono text-gray-500 mr-1" title="Código do cliente no D365">
+                  {(p as any).cliente_codigo}
+                </span>
+              )}
+              {p.cliente || '—'}
+            </span>
+            {p.canal && (
               <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p.canal] || p.canal}</span>
             )}
             {p.prioridade_fila != null && (
@@ -1017,22 +895,13 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, dentroDeGrupo, destacado
                 title="A OV existe no app, mas ainda não tem o número do D365">
                 sem nº D365
               </span>
-            ) : p.ov_ref && !dentroDeGrupo ? (
+            ) : p.ov_ref ? (
               <Link to={p.ov_id ? `/expedicao/${p.ov_id}` : '#'}
                 className="font-mono text-xs text-indigo-700 hover:underline">{p.ov_ref}</Link>
             ) : null}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            {/* Fora do grupo o titulo vem aqui, sob o cliente. Dentro dele o
-                titulo JA e a primeira linha, e repeti-lo seria dizer duas vezes. */}
-            {!dentroDeGrupo && (
-              <span className="text-[11px] text-gray-500 truncate">{tituloDoSaldo(p)}</span>
-            )}
-            {/* A etiqueta "material existe" saiu: ela dizia de onde o saldo veio
-                e ficava colada na "sem estoque na foto", que diz o que ha HOJE —
-                lado a lado as duas pareciam se contradizer. Quem explica a
-                origem agora e a frase abaixo, que tem espaco para dizer a coisa
-                inteira. */}
+            <span className="text-[11px] text-gray-500 truncate">{tituloDoSaldo(p)}</span>
             <SeloOrigem p={p} />
             {/* Parada pelo cliente: sai do kanban, entao esta lista vira o unico
                 lugar onde a venda aparece. Sem o selo ela se confunde com quem
