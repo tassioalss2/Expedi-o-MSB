@@ -216,6 +216,33 @@ export default function Pendencias() {
     return juntos.filter(g => ((g as any).saldos as Pendencia[]).some(casa))
   }, [abertas, recorte])
 
+  /** O cliente dito uma vez, e as vendas dele embaixo.
+   *
+   *  A INFINITY tem duas vendas abertas — produtos diferentes, OVs diferentes,
+   *  uma parada pelo cliente e a outra não. Juntar não dá: cada item pertence
+   *  à OV dele. O que dá é parar de repetir o nome, que era o que cansava.
+   *
+   *  Sem caixa em volta, de propósito. É um rótulo acima de uma sequência de
+   *  linhas, não um card contendo cards — essa foi a estrutura que a gente
+   *  acabou de tirar daqui. */
+  const porCliente = useMemo(() => {
+    const m = new Map<string, Pendencia[]>()
+    for (const p of lista) {
+      const k = p.cliente_id || p.cliente || '—'
+      m.set(k, [...(m.get(k) || []), p])
+    }
+    return [...m.values()]
+      .map(vendas => ({
+        chave: vendas[0].cliente_id || vendas[0].cliente || '—',
+        cliente: vendas[0].cliente || '—',
+        codigo: (vendas[0] as any).cliente_codigo as string | undefined,
+        vendas,
+        dias: Math.max(...vendas.map(v => v.dias_parada || 0)),
+        valor: vendas.reduce((a, v) => a + (v.transfer_price && !soTransfer ? 0 : (v.valor || 0)), 0),
+      }))
+      .sort((a, b) => b.dias - a.dias)
+  }, [lista, soTransfer])
+
   const saldosNaLista = lista.reduce((a, g) => a + ((g as any).saldos?.length || 1), 0)
   const valorDaLista = lista.reduce(
     (a, p) => a + (p.transfer_price && !soTransfer ? 0 : (p.valor || 0)), 0)
@@ -413,13 +440,32 @@ export default function Pendencias() {
               {fmtBRL(valorDaLista)}
             </span>
           </div>
-          <div className="space-y-2 mt-3">
-            {lista.map(p => (
-              <Card key={`${p.fonte}-${p.id}`} p={p}
-                destacado={undefined}
-                onLiberar={() => setLiberando(p)}
-                onAcompanhar={() => setAcompanhando(p)}
-                onCancelar={() => setCancelando(p)} />
+          <div className="space-y-4 mt-3">
+            {porCliente.map(c => (
+              <div key={c.chave} className="space-y-1.5">
+                <div className="flex items-baseline justify-between gap-3 px-1">
+                  <span className="text-sm font-semibold text-gray-800 truncate">
+                    {c.codigo && <span className="font-mono text-xs text-gray-400 mr-1.5">{c.codigo}</span>}
+                    {c.cliente}
+                    {c.vendas.length > 1 && (
+                      <span className="text-xs font-normal text-gray-400 ml-1.5">
+                        {c.vendas.length} vendas
+                      </span>
+                    )}
+                  </span>
+                  {c.vendas.length > 1 && (
+                    <span className="text-xs font-semibold tabular-nums text-gray-500 shrink-0">
+                      {fmtBRL(c.valor)}
+                    </span>
+                  )}
+                </div>
+                {c.vendas.map(p => (
+                  <Card key={`${p.fonte}-${p.id}`} p={p}
+                    onLiberar={() => setLiberando(p)}
+                    onAcompanhar={() => setAcompanhando(p)}
+                    onCancelar={() => setCancelando(p)} />
+                ))}
+              </div>
             ))}
           </div>
         </section>
@@ -902,23 +948,9 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, destacado }: {
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-gray-800 truncate">
-              {(p as any).cliente_codigo && (
-                <span className="font-mono text-gray-500 mr-1" title="Código do cliente no D365">
-                  {(p as any).cliente_codigo}
-                </span>
-              )}
-              {p.cliente || '—'}
-            </span>
-            {p.canal && (
-              <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p.canal] || p.canal}</span>
-            )}
-            {p.prioridade_fila != null && (
-              <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium"
-                title={`Posição escolhida à mão${p.prioridade_por_nome ? ` por ${p.prioridade_por_nome}` : ''}`}>
-                {p.posicao_fila}º na fila · à mão
-              </span>
-            )}
+            {/* O cliente e o código dele estão no rótulo acima, uma vez por
+                cliente. Aqui a linha começa pelo que distingue ESTA venda: a
+                OV, que é por onde se procura e por onde se abre. */}
             {p.decisao === 'AGUARDAR' ? (
               <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
                 title="O comercial escolheu esperar a produção: nada desceu para a expedição">
@@ -931,8 +963,17 @@ function Card({ p, onLiberar, onAcompanhar, onCancelar, destacado }: {
               </span>
             ) : p.ov_ref ? (
               <Link to={p.ov_id ? `/expedicao/${p.ov_id}` : '#'}
-                className="font-mono text-xs text-indigo-700 hover:underline">{p.ov_ref}</Link>
+                className="font-mono text-sm font-medium text-indigo-700 hover:underline">{p.ov_ref}</Link>
             ) : null}
+            {p.canal && (
+              <span className="text-[11px] text-gray-400">{LINHA_DO_CANAL[p.canal] || p.canal}</span>
+            )}
+            {p.prioridade_fila != null && (
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-medium"
+                title={`Posição escolhida à mão${p.prioridade_por_nome ? ` por ${p.prioridade_por_nome}` : ''}`}>
+                {p.posicao_fila}º na fila · à mão
+              </span>
+            )}
             {((p as any).saldos?.length || 1) > 1 && (
               // A soma não pode ser silenciosa: quem confere o número quer
               // saber que ele veio de duas entradas da mesma OV.
