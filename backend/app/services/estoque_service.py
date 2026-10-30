@@ -476,15 +476,26 @@ def _ovs_reservadas_na_foto(db, sincronizado_em: Optional[str]) -> set:
         return set()
 
     # Quando cada uma entrou em etapa pós-liberação (a primeira vez).
+    #
+    # Em páginas, e não por lote de 40 ids: são ~1.000 OVs, o que dava 26 idas
+    # à rede com a lista de ids na URL. Mesma troca que tirou o kanban de 28s
+    # para 5,7s — filtrar pelo STATUS traz 5 mil linhas de uma vez, e o cruzamento
+    # com os ids é em memória.
+    interessa = set(ids)
     entrada: dict = {}
-    for i in range(0, len(ids), 40):
-        for m in db.table("movimentacoes").select("pedido_id, status_novo, criado_em")\
-                .in_("pedido_id", ids[i:i + 40]).execute().data:
-            if m.get("status_novo") in _STATUS_POS_LIBERACAO:
-                k = m["pedido_id"]
-                quando = m.get("criado_em") or ""
-                if k not in entrada or quando < entrada[k]:
-                    entrada[k] = quando
+    for off in range(0, 200000, 1000):
+        lote = db.table("movimentacoes").select("pedido_id, status_novo, criado_em")\
+            .in_("status_novo", list(_STATUS_POS_LIBERACAO))\
+            .limit(1000).offset(off).execute().data
+        for m in lote:
+            k = m.get("pedido_id")
+            if k not in interessa:
+                continue
+            quando = m.get("criado_em") or ""
+            if k not in entrada or quando < entrada[k]:
+                entrada[k] = quando
+        if len(lote) < 1000:
+            break
     return {pid for pid, quando in entrada.items() if quando and quando < sincronizado_em}
 
 

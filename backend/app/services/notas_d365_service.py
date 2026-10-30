@@ -937,6 +937,33 @@ def conciliacao(ini: str, fim: str) -> dict:
 VAZIO = {"qtd": 0, "valor": 0.0, "por_dia": {}, "por_linha": {},
          "licitacao": {"qtd": 0, "valor": 0.0}, "notas": []}
 
+
+def nfs_do_app(db) -> set:
+    """Toda NF que já existe numa OV viva, normalizada por `chave_nf`.
+
+    Isto era o gargalo do app inteiro. O app grava o número ora "21083", ora
+    "000021083", ora "0021178" — então a consulta perguntava por TODAS as
+    variantes de zeros à esquerda de cada nota do mês: 233 notas viravam 1.165
+    variantes, em 30 consultas de 40. Cada uma levava quase um segundo (não há
+    índice em `numero_nf`), e davam 26 s — dentro de `complemento_do_periodo`,
+    que por sua vez está dentro do painel financeiro, do faturamento por dia,
+    das vendas por linha e da faixa de meta que roda em TODA tela.
+
+    Ler os números uma vez e normalizar em Python faz o mesmo em 1,4 s: 1.087
+    pedidos em duas páginas. A lista de variantes deixa de existir — normalizar
+    os dois lados é o que `chave_nf` sempre fez.
+    """
+    achados = set()
+    for off in range(0, 100000, 1000):
+        lote = db.table("pedidos").select("numero_nf, status")\
+            .limit(1000).offset(off).execute().data
+        for r in lote:
+            if r.get("numero_nf") and r.get("status") != "CANCELADO":
+                achados.add(chave_nf(r["numero_nf"]))
+        if len(lote) < 1000:
+            break
+    return achados
+
 VAZIO_DEVOLUCAO = {"qtd": 0, "valor": 0.0, "por_linha": {},
                    "sem_linha": {"qtd": 0, "valor": 0.0}, "notas": []}
 
@@ -1040,24 +1067,8 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
     if not notas:
         return dict(VAZIO)
 
-    # Quais desses números já existem como NF de alguma OV viva. O app guarda
-    # ora "21083", ora "000021083" — as duas formas vão na consulta.
-    chaves = sorted({n["chave_numero"] for n in notas})
-    variantes = []
-    for c in chaves:
-        # TODOS os zeros à esquerda possíveis, não só "nenhum" e "nove dígitos".
-        # A OV017097 gravou a NF como "0021178" — um zero — e escapou das duas
-        # variantes que eu testava: a nota entrou como se não tivesse OV e foi
-        # somada em cima dela, inflando o dia em R$ 7.840,00.
-        variantes.extend({c.zfill(n) for n in range(len(c), 10)})
-    no_app = set()
-    for i in range(0, len(variantes), 40):
-        rows = db.table("pedidos").select("numero_nf, status")\
-            .in_("numero_nf", variantes[i:i + 40])\
-            .neq("status", "CANCELADO").execute().data
-        for r in rows:
-            no_app.add(chave_nf(r.get("numero_nf")))
-
+    # Fora do laço: dentro dele, a leitura inteira rodaria uma vez por nota.
+    no_app = nfs_do_app(db)
     orfas = [n for n in notas if n["chave_numero"] not in no_app]
     if not orfas:
         return dict(VAZIO)
