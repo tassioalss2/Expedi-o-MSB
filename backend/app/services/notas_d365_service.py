@@ -31,7 +31,7 @@ from typing import Optional
 
 import pandas as pd
 
-from app.core.database import get_service_db
+from app.core.database import get_service_db, ler_tudo
 from app.models.enums import OPERACOES_FATURAMENTO, conta_faturamento
 from app.models.schemas import UsuarioOut
 
@@ -953,16 +953,11 @@ def nfs_do_app(db) -> set:
     pedidos em duas páginas. A lista de variantes deixa de existir — normalizar
     os dois lados é o que `chave_nf` sempre fez.
     """
-    achados = set()
-    for off in range(0, 100000, 1000):
-        lote = db.table("pedidos").select("numero_nf, status")\
-            .limit(1000).offset(off).execute().data
-        for r in lote:
-            if r.get("numero_nf") and r.get("status") != "CANCELADO":
-                achados.add(chave_nf(r["numero_nf"]))
-        if len(lote) < 1000:
-            break
-    return achados
+    return {chave_nf(r["numero_nf"])
+            for r in ler_tudo(lambda lim, off: db.table("pedidos")
+                              .select("numero_nf, status")
+                              .limit(lim).offset(off).execute().data)
+            if r.get("numero_nf") and r.get("status") != "CANCELADO"}
 
 VAZIO_DEVOLUCAO = {"qtd": 0, "valor": 0.0, "por_linha": {},
                    "sem_linha": {"qtd": 0, "valor": 0.0}, "notas": []}

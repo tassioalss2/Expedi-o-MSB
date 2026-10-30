@@ -59,7 +59,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from app.core.database import get_service_db
+from app.core.database import get_service_db, ler_tudo
 from app.services import linha_produto, pcp_estoque_service
 
 # Status em que o material ainda está fisicamente no estoque (o D365 só baixa no
@@ -483,19 +483,16 @@ def _ovs_reservadas_na_foto(db, sincronizado_em: Optional[str]) -> set:
     # com os ids é em memória.
     interessa = set(ids)
     entrada: dict = {}
-    for off in range(0, 200000, 1000):
-        lote = db.table("movimentacoes").select("pedido_id, status_novo, criado_em")\
-            .in_("status_novo", list(_STATUS_POS_LIBERACAO))\
-            .limit(1000).offset(off).execute().data
-        for m in lote:
-            k = m.get("pedido_id")
-            if k not in interessa:
-                continue
-            quando = m.get("criado_em") or ""
-            if k not in entrada or quando < entrada[k]:
-                entrada[k] = quando
-        if len(lote) < 1000:
-            break
+    for m in ler_tudo(lambda lim, off: db.table("movimentacoes")
+                      .select("pedido_id, status_novo, criado_em")
+                      .in_("status_novo", list(_STATUS_POS_LIBERACAO))
+                      .limit(lim).offset(off).execute().data):
+        k = m.get("pedido_id")
+        if k not in interessa:
+            continue
+        quando = m.get("criado_em") or ""
+        if k not in entrada or quando < entrada[k]:
+            entrada[k] = quando
     return {pid for pid, quando in entrada.items() if quando and quando < sincronizado_em}
 
 
@@ -507,15 +504,9 @@ def _todos_os_itens(db) -> list:
     PostgREST põe a lista de ids na URL. São 826 linhas no total — trazer tudo
     de uma vez e cruzar em memória custa 0,7s contra 4,2s em oito consultas.
     """
-    linhas = []
-    for off in range(0, 60000, 1000):
-        bloco = db.table("itens_pedido")\
-            .select("pedido_id, produto_id, qtd_solicitada")\
-            .limit(1000).offset(off).execute().data
-        linhas += bloco
-        if len(bloco) < 1000:
-            break
-    return linhas
+    return ler_tudo(lambda lim, off: db.table("itens_pedido")
+                    .select("pedido_id, produto_id, qtd_solicitada")
+                    .limit(lim).offset(off).execute().data)
 
 
 def _comprometido_por_produto(db, sincronizado_em: str) -> dict:

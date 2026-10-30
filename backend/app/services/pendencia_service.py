@@ -34,7 +34,7 @@ from typing import Optional
 
 from fastapi import HTTPException
 
-from app.core.database import get_service_db
+from app.core.database import get_service_db, ler_tudo
 from app.models.enums import StatusPedido, TipoFrete
 from app.models.schemas import UsuarioOut
 from app.services import disponibilidade_service
@@ -514,16 +514,12 @@ def todas_as_remessas(db) -> dict:
     segunda consulta.
     """
     mapa: dict = {}
-    for off in range(0, 100000, 1000):
-        lote = db.table("pedidos").select(
+    for r in ler_tudo(lambda lim, off: db.table("pedidos").select(
             "id, numero_pedido, status, numero_nf, remessa_numero, tipo_frete"
-        ).limit(1000).offset(off).execute().data
-        for r in lote:
-            k = str(r.get("numero_pedido") or "").strip().upper()
-            if k:
-                mapa.setdefault(k, []).append(r)
-        if len(lote) < 1000:
-            break
+    ).limit(lim).offset(off).execute().data):
+        k = str(r.get("numero_pedido") or "").strip().upper()
+        if k:
+            mapa.setdefault(k, []).append(r)
     return mapa
 
 

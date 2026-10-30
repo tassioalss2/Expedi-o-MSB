@@ -4,6 +4,7 @@ Substitui o SDK supabase que tem incompatibilidades com Python 3.14.
 """
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 import requests
 from app.core.config import settings
@@ -22,6 +23,13 @@ from app.core.config import settings
 # thread reusa a conexão do mesmo jeito e não divide estado com ninguém.
 _local = threading.local()
 
+# Pool FIXO, criado uma vez. Um `ThreadPoolExecutor` novo a cada leitura cria
+# threads novas, e thread nova não tem sessão: cada página voltava a pagar o
+# aperto de mão TLS que a sessão existe para evitar — o paralelo ficava mais
+# lento que a sequência. Com o pool fixo, as mesmas threads voltam e trazem a
+# conexão delas quente.
+_POOL = ThreadPoolExecutor(max_workers=6, thread_name_prefix="leitura")
+
 
 def _sessao() -> requests.Session:
     s = getattr(_local, "sessao", None)
@@ -35,6 +43,45 @@ def _sessao() -> requests.Session:
         s.mount("http://", adaptador)
         _local.sessao = s
     return s
+
+
+def ler_tudo(pagina, tamanho: int = 1000, janela: int = 6, teto: int = 200) -> list:
+    """Lê uma tabela inteira, buscando um punhado de páginas ao mesmo tempo.
+
+    `pagina(limite, deslocamento) -> list` é o que varia; o resto é sempre
+    igual e estava copiado em cada serviço, sempre em sequência.
+
+    Por que paralelo: o PostgREST corta em 1.000 linhas por página e não há
+    como pedir mais. As 5.074 movimentações viram 6 páginas, e cada ida à rede
+    custa ~170 ms de latência pura — o banco em si é instantâneo nessas
+    tabelas, então o tempo é só espera. Em sequência dá 3,48 s; buscando as
+    páginas juntas, 1,25 s, com exatamente as mesmas linhas.
+    (Índice não resolveria nada disso: buscar UMA linha com filtro custa os
+    mesmos 167 ms que buscar uma linha sem filtro nenhum.)
+
+    Cada thread tem a sua sessão HTTP — ver `_sessao` —, então as páginas não
+    disputam conexão.
+
+    A primeira página vem sozinha: na maioria das tabelas ela já é a última, e
+    aí não se abre thread nenhuma.
+    """
+    primeira = pagina(tamanho, 0)
+    if len(primeira) < tamanho:
+        return primeira
+
+    linhas = list(primeira)
+    offset = tamanho
+    while offset < teto * tamanho:
+        offsets = [offset + i * tamanho for i in range(janela)]
+        lotes = list(_POOL.map(lambda o: pagina(tamanho, o), offsets))
+        for lote in lotes:
+            linhas += lote
+        # Página curta em qualquer posição significa que o fim chegou dentro
+        # desta janela — o que veio depois dela já está vazio.
+        if any(len(l) < tamanho for l in lotes):
+            break
+        offset += janela * tamanho
+    return linhas
 
 
 class QueryBuilder:
