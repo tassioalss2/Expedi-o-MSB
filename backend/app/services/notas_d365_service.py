@@ -539,6 +539,25 @@ def _agrupar_por_tipo(linhas: list) -> list:
     return sorted(agg.values(), key=lambda x: -x["valor"])
 
 
+def _por_natureza(serializadas: list) -> list:
+    """Natureza + origem das notas já serializadas (que trazem `valor` pronto).
+
+    Separado de `_agrupar` porque aquele recalcula o valor da nota crua, e aqui
+    as linhas já passaram por isso. Licitação e comercial ficam em baldes
+    distintos no mesmo tipo: "venda normal de licitação" e "venda normal do
+    comercial" chegam ao app por caminhos diferentes, e confundi-las esconde
+    justamente a que não deveria estar fora.
+    """
+    agg: dict = {}
+    for n in serializadas:
+        k = (n.get("tipo_operacao") or "A CLASSIFICAR",
+             "LICITACAO" if (n.get("origem_venda") or "") == "LICITACAO" else "COMERCIAL")
+        g = agg.setdefault(k, {"tipo": k[0], "origem": k[1], "qtd": 0, "valor": 0.0})
+        g["qtd"] += 1
+        g["valor"] = round(g["valor"] + float(n.get("valor") or 0), 2)
+    return sorted(agg.values(), key=lambda x: -x["valor"])
+
+
 def _agrupar(linhas: list, chave) -> list:
     agg = {}
     for l in linhas:
@@ -847,6 +866,12 @@ def conciliacao(ini: str, fim: str) -> dict:
         "diferenca": round(total_d365 - total_app, 2),
         "casam": len(d365) - len(so_d365),
         "so_d365": so_d365,
+        # O mesmo dinheiro de "o app não vê", quebrado por natureza. O número
+        # sozinho não diz nada: R$ 56 mil fora do app é esperado quando são 101
+        # comunicados de uso que a Bio emite direto no D365, e é problema quando
+        # é venda normal que alguém esqueceu de faturar aqui. São coisas
+        # diferentes e estavam somadas no mesmo card.
+        "so_d365_por_tipo": _por_natureza(so_d365),
         "so_app": so_app,
         "divergentes": sorted(divergentes, key=lambda x: -abs(x["valor_d365"] - x["valor_app"])),
         # Fora da conta, à vista: o material existe e a logística o movimenta,

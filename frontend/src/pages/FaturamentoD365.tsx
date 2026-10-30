@@ -45,6 +45,7 @@ type Conciliacao = {
   diferenca: number
   casam: number
   sem_espelho: boolean
+  so_d365_por_tipo?: Array<{ tipo: string; origem: string; qtd: number; valor: number }>
   so_d365: Array<{ id: string; nf: string; data: string | null; cliente: string | null
                    valor: number; operacao: string | null; tipo_operacao: string | null
                    origem_venda: string | null; linha: string | null; linha_ajustada?: boolean }>
@@ -306,7 +307,28 @@ export default function FaturamentoD365() {
               valor={fmtBRL(Math.abs(dif))}
               detalhe={dif === 0 ? 'as duas pontas batem'
                 : `${data?.so_d365.length} nota(s) fora do app`}
-              cor={Math.abs(dif) < 0.01 ? 'text-emerald-700' : 'text-amber-700'} />
+              cor={Math.abs(dif) < 0.01 ? 'text-emerald-700' : 'text-amber-700'}>
+              {/* O número sozinho não diz se é esperado ou problema: comunicado
+                  de uso a Bio emite direto no D365 e sempre vai estar aqui;
+                  venda normal fora do app é OV que ninguém faturou deste lado.
+                  Eram coisas diferentes somadas no mesmo valor. */}
+              {!!data?.so_d365_por_tipo?.length && (
+                <div className="mt-2 pt-2 border-t border-gray-100 space-y-1">
+                  {data.so_d365_por_tipo.map(g => (
+                    <div key={`${g.tipo}-${g.origem}`} className="flex items-baseline justify-between gap-2 text-[11px]">
+                      <span className="text-gray-500 truncate">
+                        {TIPO_LABEL[g.tipo] || g.tipo}
+                        {g.origem === 'LICITACAO' && (
+                          <span className="ml-1 px-1 py-0.5 rounded bg-violet-100 text-violet-700">licitação</span>
+                        )}
+                      </span>
+                      <span className="text-gray-400 tabular-nums shrink-0">{g.qtd} NF</span>
+                      <span className="font-medium text-gray-700 tabular-nums shrink-0">{fmtBRL(g.valor)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Cartao>
           </div>
 
           {!!data?.por_tipo?.length && (
@@ -617,14 +639,17 @@ export default function FaturamentoD365() {
   )
 }
 
-function Cartao({ rotulo, valor, detalhe, cor }: {
+function Cartao({ rotulo, valor, detalhe, cor, children }: {
   rotulo: string; valor: string; detalhe?: string; cor: string
+  /** Quebra do mesmo número, quando ela cabe dentro do cartão. */
+  children?: any
 }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4">
       <p className="text-xs text-gray-500">{rotulo}</p>
       <p className={`text-2xl font-bold tabular-nums ${cor}`}>{valor}</p>
       {detalhe && <p className="text-[11px] text-gray-400 mt-0.5">{detalhe}</p>}
+      {children}
     </div>
   )
 }
