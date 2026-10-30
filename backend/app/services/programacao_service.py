@@ -92,6 +92,19 @@ def _br_data(iso) -> str:
     return "%s/%s/%s" % (t[8:10], t[5:7], t[0:4]) if len(t) == 10 else ""
 
 
+def _hora_brt(iso) -> str:
+    """Só a hora, já em Brasília — o banco grava tudo em UTC."""
+    if not iso:
+        return ""
+    try:
+        d = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if d.tzinfo:
+            d = d.astimezone(timezone(timedelta(hours=-3)))
+        return d.strftime("%Hh%M")
+    except Exception:
+        return ""
+
+
 def _br_data_hora(iso) -> str:
     if not iso:
         return ""
@@ -150,6 +163,12 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
         trás a pergunta se responde pelo faturamento daquele dia, que não muda
         depois.
 
+    Em qualquer um dos dois entra também o que o carro JÁ LEVOU no dia. Quando
+    a transportadora passa mais de uma vez, a planilha da segunda viagem sem as
+    notas da manhã parece um dia menor do que foi, e ninguém consegue conferir
+    o que já saiu contra o que ainda está no dock (pedido do Tássio em
+    30/10/2026). A carga coletada vai marcada, não misturada com a que espera.
+
     A reconstrução do dia passado tem um limite honesto: ela lista o que foi
     FATURADO naquele dia. O que já estava esperando desde antes não dá para
     recuperar — o app guarda o status de agora, não o de ontem.
@@ -166,6 +185,28 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
     else:
         peds = db.table("pedidos").select(_CAMPOS)\
             .in_("status", ["FATURADO", "AGUARD_COLETA"]).limit(2000).execute().data
+
+    # O que o carro já levou no dia. A fonte é a coleta registrada no app, não
+    # o status: `coletas.data_real` é a data que o operador informou como a da
+    # coleta de verdade, e não se mexe depois.
+    # A janela é a do dia de Brasília, não a do dia UTC: o banco grava em UTC,
+    # e uma coleta das 22h daqui já é o dia seguinte lá.
+    ja_saiu = {}
+    for c in db.table("coletas").select(
+            "pedido_id, data_real, protocolo, motorista, placa")\
+            .gte("data_real", dia.isoformat() + "T03:00:00")\
+            .lte("data_real", (dia + timedelta(days=1)).isoformat() + "T02:59:59")\
+            .limit(2000).execute().data:
+        pid = c.get("pedido_id")
+        if pid and str(c.get("data_real") or "") >= str(
+                (ja_saiu.get(pid) or {}).get("data_real") or ""):
+            ja_saiu[pid] = c
+
+    vistos = {p["id"] for p in peds}
+    faltam = [pid for pid in ja_saiu if pid not in vistos]
+    for i in range(0, len(faltam), 40):
+        peds += db.table("pedidos").select(_CAMPOS)\
+            .in_("id", faltam[i:i + 40]).execute().data
 
     saida = []
     for p in peds:
@@ -210,7 +251,24 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
                                   p.get("tipo_frete"))
         if modo == "EXPRESSA":
             obs.insert(0, "EXPRESSA — %s" % porque)
+        col = ja_saiu.get(p["id"])
+        if col:
+            # A hora diz qual viagem levou a carga — é o que permite conferir a
+            # segunda passagem do dia contra a primeira.
+            marca = ("JÁ COLETADA %s" % _hora_brt(col.get("data_real"))).strip()
+            quem = " · ".join(x for x in (col.get("placa"), col.get("motorista"))
+                              if x)
+            if col.get("protocolo"):
+                quem = (quem + " · prot. " + col["protocolo"]).strip(" ·")
+            if quem:
+                obs.append("Coletada nesta data: %s" % quem)
+        else:
+            # Num dia passado "aguarda coleta" seria mentira: a carga já saiu,
+            # só não naquele dia. O que a planilha pode afirmar é isso.
+            marca = "NÃO COLETADA NO DIA" if passado else "AGUARDA COLETA"
         linhas.append({
+            "situacao": marca,
+            "ja_coletada": bool(col),
             "data": _br_data(p.get("data_faturamento")) or _br_data(dia.isoformat()),
             "nf": p.get("numero_nf") or "",
             "ov": p.get("numero_pedido") or "",
@@ -233,10 +291,12 @@ def listar(dia: date, transportadora: str = "BRIX") -> list:
             "observacoes": " · ".join(obs),
             "sem_cubagem": not c.get("num_caixas"),
         })
-    # Expressa primeiro, depois agendada: as duas mudam a decisão do carro.
-    # Expressa primeiro porque muda a decisão do carro; FOB por último porque
-    # a modalidade ali não é escolha nossa.
-    linhas.sort(key=lambda x: (x["modalidade"].startswith("FOB"),
+    # O que ainda espera o carro vem primeiro — é o que a transportadora tem de
+    # fazer hoje. O que já saiu fica embaixo, para conferência.
+    # Depois: expressa primeiro porque muda a decisão do carro; agendada em
+    # seguida; FOB por último porque a modalidade ali não é escolha nossa.
+    linhas.sort(key=lambda x: (x["ja_coletada"],
+                               x["modalidade"].startswith("FOB"),
                                x["modalidade"] != "EXPRESSA",
                                x["agendamento"] == "NÃO", x["prazo"] or "9", x["nf"]))
     # As instruções de entrega são para o motorista: vão inteiras, não cortadas.
@@ -255,7 +315,7 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
     ws.title = "Programação"
     ws.sheet_view.showGridLines = False
 
-    ws.merge_cells("B2:M2")
+    ws.merge_cells("B2:N2")
     t = ws["B2"]
     t.value = "PROGRAMAÇÃO DE COLETA"
     t.font = Font(bold=True, size=14, color="FFFFFF")
@@ -263,12 +323,25 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
     t.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[2].height = 26
 
-    ws["B3"] = "MSB Medical System do Brasil · %s · transportadora %s" % (
+    espera = [l for l in linhas if not l["ja_coletada"]]
+    coletadas = [l for l in linhas if l["ja_coletada"]]
+    # Num dia passado a planilha não pede coleta nenhuma: ela reconstrói o dia.
+    pedindo = any(l["situacao"] == "AGUARDA COLETA" for l in espera)
+    rotulo_total = "TOTAL A COLETAR" if pedindo else "TOTAL"
+    resumo = "MSB Medical System do Brasil · %s · transportadora %s" % (
         dia.strftime("%d/%m/%Y"), transportadora)
+    if coletadas:
+        # A segunda viagem do dia precisa saber o que sobrou, não o total.
+        resumo += " · %d nota(s) %s · %d já coletada(s) nesta data" % (
+            len(espera), "a coletar" if pedindo else "não coletada(s) no dia",
+            len(coletadas))
+    ws["B3"] = resumo
     ws["B3"].font = Font(size=10, color="595959")
 
-    cab = ["Data", "NF", "OV", "Cliente", "Destino", "Modalidade", "Tipo de venda",
-           "COM AGENDAMENTO", "Prazo", "Volume", "Valor NF", "Observações"]
+    cab = ["Data", "Situação", "NF", "OV", "Cliente", "Destino", "Modalidade",
+           "Tipo de venda", "COM AGENDAMENTO", "Prazo", "Volume", "Valor NF",
+           "Observações"]
+    COL = {nome: j for j, nome in enumerate(cab, start=2)}
     borda = Border(*[Side(style="thin", color="BFBFBF")] * 4)
     for j, nome in enumerate(cab, start=2):
         c = ws.cell(row=5, column=j, value=nome)
@@ -278,58 +351,98 @@ def planilha(dia: date, transportadora: str = "BRIX") -> bytes:
         c.border = borda
     ws.row_dimensions[5].height = 30
 
+    centrada = (COL["Data"], COL["Situação"], COL["Modalidade"],
+                COL["Tipo de venda"], COL["COM AGENDAMENTO"], COL["Prazo"])
+    quebra = (COL["Cliente"], COL["Destino"], COL["Observações"])
+
     r = 6
     for l in linhas:
-        vals = [l["data"], l["nf"], l["ov"], l["cliente"][:46], l["destino"],
-                l["modalidade"], l["tipo_venda"], l["agendamento"], l["prazo"],
-                l["volume"], l["valor_nf"], l["observacoes"]]
+        vals = [l["data"], l["situacao"], l["nf"], l["ov"], l["cliente"][:46],
+                l["destino"], l["modalidade"], l["tipo_venda"], l["agendamento"],
+                l["prazo"], l["volume"], l["valor_nf"], l["observacoes"]]
+        # A carga que já saiu está ali para conferência, não para ser carregada:
+        # fica cinza e em itálico, para o olho não confundir com o que espera.
+        base = (Font(size=10, italic=True, color="808080") if l["ja_coletada"]
+                else Font(size=10))
         for j, v in enumerate(vals, start=2):
             c = ws.cell(row=r, column=j, value=v)
             c.border = borda
-            c.font = Font(size=10)
+            c.font = base
             c.alignment = Alignment(vertical="center",
-                                    wrap_text=(j in (5, 6, 13)),
-                                    horizontal="center" if j in (2, 7, 8, 9, 10) else "left")
-        ws.cell(row=r, column=12).number_format = 'R$ #,##0.00'
+                                    wrap_text=(j in quebra),
+                                    horizontal="center" if j in centrada else "left")
+        ws.cell(row=r, column=COL["Valor NF"]).number_format = 'R$ #,##0.00'
+        cel = ws.cell(row=r, column=COL["Situação"])
+        if l["ja_coletada"]:
+            cel.fill = PatternFill("solid", fgColor="E2EFDA")
+            cel.font = Font(size=10, bold=True, color="375623")
+        else:
+            cel.font = Font(size=10, bold=True, color="1F3864")
+        if l["ja_coletada"]:
+            # O resto do destaque abaixo é para decidir o carro; nada disso vale
+            # para carga que já foi embora.
+            r += 1
+            continue
         # Agendamento e prioridade são o que muda a rota do carro: ficam em cor.
         if l["agendamento"] != "NÃO":
-            cel = ws.cell(row=r, column=9)
+            cel = ws.cell(row=r, column=COL["COM AGENDAMENTO"])
             cel.fill = PatternFill("solid", fgColor="FFF2CC")
             cel.font = Font(size=10, bold=True, color="7F6000")
         if "PRIORIDADE" in (l["observacoes"] or ""):
-            ws.cell(row=r, column=13).font = Font(size=10, bold=True, color="C00000")
+            ws.cell(row=r, column=COL["Observações"]).font = \
+                Font(size=10, bold=True, color="C00000")
         # Expressa é a exceção cara: tem de saltar aos olhos de quem monta o carro.
         if l["modalidade"] == "EXPRESSA":
-            cel = ws.cell(row=r, column=7)
+            cel = ws.cell(row=r, column=COL["Modalidade"])
             cel.fill = PatternFill("solid", fgColor="FFC7CE")
             cel.font = Font(size=10, bold=True, color="9C0006")
         elif l["modalidade"] == "A DEFINIR":
-            ws.cell(row=r, column=7).font = Font(size=10, italic=True, color="BF8F00")
+            ws.cell(row=r, column=COL["Modalidade"]).font = \
+                Font(size=10, italic=True, color="BF8F00")
         elif l["modalidade"].startswith("FOB"):
             # Apagada de propósito: a carga está na lista para ser coletada,
             # mas a modalidade é decisão de quem paga, e não somos nós.
-            ws.cell(row=r, column=7).font = Font(size=10, italic=True, color="808080")
+            ws.cell(row=r, column=COL["Modalidade"]).font = \
+                Font(size=10, italic=True, color="808080")
         if l["sem_cubagem"]:
-            ws.cell(row=r, column=11).value = "a cubar"
-            ws.cell(row=r, column=11).font = Font(size=10, italic=True, color="BF8F00")
+            ws.cell(row=r, column=COL["Volume"]).value = "a cubar"
+            ws.cell(row=r, column=COL["Volume"]).font = \
+                Font(size=10, italic=True, color="BF8F00")
         if r % 2 == 0:
-            for j in range(2, 14):
+            for j in range(2, 2 + len(cab)):
                 if not ws.cell(row=r, column=j).fill.fgColor.rgb or \
                         ws.cell(row=r, column=j).fill.fgColor.rgb == "00000000":
                     ws.cell(row=r, column=j).fill = PatternFill("solid", fgColor=CINZA)
         r += 1
 
     if linhas:
-        ws.cell(row=r, column=11, value="TOTAL").font = Font(bold=True)
-        tot = ws.cell(row=r, column=12, value=sum(l["valor_nf"] for l in linhas))
-        tot.number_format = 'R$ #,##0.00'
-        tot.font = Font(bold=True)
-        ws.cell(row=r, column=3, value="%d nota(s)" % len(linhas)).font = Font(bold=True)
+        # O total que interessa ao carro é o do que ainda espera. O que já saiu
+        # vai somado à parte, na linha de baixo, para conferir o dia inteiro.
+        if espera:
+            ws.cell(row=r, column=COL["Volume"], value=rotulo_total).font = Font(bold=True)
+            tot = ws.cell(row=r, column=COL["Valor NF"],
+                          value=sum(l["valor_nf"] for l in espera))
+            tot.number_format = 'R$ #,##0.00'
+            tot.font = Font(bold=True)
+            ws.cell(row=r, column=COL["NF"],
+                    value="%d nota(s)" % len(espera)).font = Font(bold=True)
+        if coletadas:
+            if espera:
+                r += 1
+            cinza = Font(bold=True, size=10, color="808080")
+            ws.cell(row=r, column=COL["Volume"], value="JÁ COLETADAS").font = cinza
+            tot = ws.cell(row=r, column=COL["Valor NF"],
+                          value=sum(l["valor_nf"] for l in coletadas))
+            tot.number_format = 'R$ #,##0.00'
+            tot.font = cinza
+            ws.cell(row=r, column=COL["NF"],
+                    value="%d nota(s)" % len(coletadas)).font = cinza
     else:
         ws.cell(row=6, column=2, value="Nenhuma carga para coletar neste dia.").font = \
             Font(size=10, italic=True, color="808080")
 
-    for j, w in enumerate([11, 12, 12, 32, 22, 14, 14, 19, 12, 17, 14, 44], start=2):
+    for j, w in enumerate([11, 17, 12, 12, 32, 22, 14, 14, 19, 12, 17, 14, 44],
+                          start=2):
         ws.column_dimensions[get_column_letter(j)].width = w
     ws.freeze_panes = "B6"
 
