@@ -269,6 +269,36 @@ def esquecer_cache_operacoes() -> None:
     _APRENDIDO_EM = 0.0
 
 
+def data_competencia(nota: dict) -> str:
+    """O mês a que a nota pertence: a data de LANÇAMENTO.
+
+    O mês fecha pela contabilidade, e o que entra nela é o lançamento, não a
+    emissão. A devolução da Infinity (NF 000021254) tem documento de 19/10 e
+    lançamento em 04/11: o estorno aconteceu em novembro e é novembro que tem
+    de senti-lo. Export antigo, sem a coluna de lançamento, continua valendo
+    pela data do documento.
+    """
+    return str(nota.get("data_lancamento") or nota.get("data_documento") or "")[:10]
+
+
+def _notas_do_periodo(db, colunas: str, ini: str, fim: str) -> list:
+    """As notas cuja COMPETÊNCIA cai no período — ver `data_competencia`.
+
+    `data_competencia` é coluna gerada (migração v62). Enquanto ela não existe,
+    cai na data do documento: uma tela de conferência não pode ficar vazia
+    porque uma migração ainda não rodou.
+    """
+    try:
+        return db.table("notas_d365").select(colunas)\
+            .gte("data_competencia", ini).lte("data_competencia", fim)\
+            .limit(5000).execute().data
+    except Exception as exc:
+        print("data_competencia indisponivel (migracao v62?): %s" % str(exc)[:110])
+        return db.table("notas_d365").select(colunas)\
+            .gte("data_documento", ini).lte("data_documento", fim)\
+            .limit(5000).execute().data
+
+
 def classificar(texto: Optional[str]) -> tuple:
     """(tipo_operacao, origem_venda) a partir da descrição da operação.
 
@@ -344,10 +374,9 @@ def operacoes_a_classificar(ini: str, fim: str) -> list:
     direção para quem responde saber o que está olhando.
     """
     db = get_service_db()
-    notas = db.table("notas_d365").select(
-        "id, numero, cliente_nome, data_documento, valor_total, valor_produtos, "
-        "operacao, tipo_operacao, direcao, status"
-    ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+    notas = _notas_do_periodo(db,
+        "id, numero, cliente_nome, data_documento, data_lancamento, valor_total, "
+        "valor_produtos, operacao, tipo_operacao, direcao, status", ini, fim)
     classificar_na_leitura(notas)
 
     agg: dict = {}
@@ -920,11 +949,10 @@ def conciliacao(ini: str, fim: str) -> dict:
     """
     db = get_service_db()
 
-    notas = db.table("notas_d365").select(
+    notas = _notas_do_periodo(db,
         "id, numero, chave_numero, serie, cliente_nome, cliente_conta, data_documento, "
-        "valor_total, valor_produtos, operacao, tipo_operacao, origem_venda, linha, linha_ajustada, "
-        "direcao, status, pedido_id"
-    ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+        "data_lancamento, valor_total, valor_produtos, operacao, tipo_operacao, "
+        "origem_venda, linha, linha_ajustada, direcao, status, pedido_id", ini, fim)
     classificar_na_leitura(notas)
 
     # Saída aprovada é tudo o que a MSB emitiu e vale; dentro disso, só venda é
@@ -1157,11 +1185,10 @@ def devolucoes_do_periodo(ini: str, fim: str) -> dict:
     palpite.
     """
     db = get_service_db()
-    notas = db.table("notas_d365").select(
-        "id, numero, chave_numero, cliente_nome, data_documento, valor_total, "
-        "valor_produtos, operacao, tipo_operacao, origem_venda, linha, linha_ajustada, "
-        "direcao, status"
-    ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+    notas = _notas_do_periodo(db,
+        "id, numero, chave_numero, cliente_nome, data_documento, data_lancamento, "
+        "valor_total, valor_produtos, operacao, tipo_operacao, origem_venda, linha, "
+        "linha_ajustada, direcao, status", ini, fim)
     classificar_na_leitura(notas)
 
     devolucoes = [n for n in notas
@@ -1187,7 +1214,8 @@ def devolucoes_do_periodo(ini: str, fim: str) -> dict:
         "por_linha": por_linha,
         "sem_linha": sem_linha,
         "notas": sorted([{
-            "id": n.get("id"), "nf": n.get("numero"), "data": n.get("data_documento"),
+            "id": n.get("id"), "nf": n.get("numero"),
+            "data": data_competencia(n), "data_nota": str(n.get("data_documento") or "")[:10],
             "cliente": n.get("cliente_nome"), "valor": round(valor_da_nota(n), 2),
             "operacao": n.get("operacao"), "linha": n.get("linha"),
             "linha_ajustada": n.get("linha_ajustada"),
@@ -1216,10 +1244,10 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
     não é receita de venda não vira faturamento só porque veio do D365.
     """
     db = get_service_db()
-    notas = db.table("notas_d365").select(
-        "id, numero, chave_numero, cliente_nome, data_documento, valor_total, "
-        "valor_produtos, operacao, tipo_operacao, origem_venda, linha, direcao, status"
-    ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+    notas = _notas_do_periodo(db,
+        "id, numero, chave_numero, cliente_nome, data_documento, data_lancamento, "
+        "valor_total, valor_produtos, operacao, tipo_operacao, origem_venda, linha, "
+        "direcao, status", ini, fim)
     classificar_na_leitura(notas)
 
     notas = [n for n in notas
@@ -1246,7 +1274,7 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
     licit = {"qtd": 0, "valor": 0.0}
     for n in orfas:
         v = valor_da_nota(n)
-        dia = str(n.get("data_documento") or "")[:10]
+        dia = data_competencia(n)
         d = por_dia.setdefault(dia, {"qtd": 0, "valor": 0.0})
         d["qtd"] += 1
         d["valor"] = round(d["valor"] + v, 2)
@@ -1265,7 +1293,8 @@ def complemento_do_periodo(ini: str, fim: str) -> dict:
         "por_linha": por_linha,
         "licitacao": licit,
         "notas": sorted([{
-            "id": n.get("id"), "nf": n.get("numero"), "data": n.get("data_documento"),
+            "id": n.get("id"), "nf": n.get("numero"),
+            "data": data_competencia(n), "data_nota": str(n.get("data_documento") or "")[:10],
             "cliente": n.get("cliente_nome"), "valor": round(valor_da_nota(n), 2),
             "tipo_operacao": n.get("tipo_operacao"), "linha": n.get("linha"),
             "origem_venda": n.get("origem_venda"),
