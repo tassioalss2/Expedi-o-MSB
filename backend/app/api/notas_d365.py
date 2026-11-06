@@ -60,6 +60,43 @@ def ajustar_linha(nota_id: UUID, payload: LinhaDaNota,
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class OperacaoEnsinada(BaseModel):
+    """O que é, de fato, uma operação fiscal que o app não reconheceu."""
+    operacao: str
+    tipo_operacao: str
+    origem_venda: Optional[str] = None
+    observacao: Optional[str] = None
+
+
+@router.get("/operacoes-a-classificar")
+def operacoes_a_classificar(ini: str = Query(..., description="AAAA-MM-DD"),
+                            fim: str = Query(..., description="AAAA-MM-DD"),
+                            _: UsuarioOut = Depends(get_current_user)):
+    """Operações do espelho sem natureza, com exemplos de nota para identificar.
+
+    Inclui entrada: devolução é nota de ENTRADA e abate a meta, então uma
+    entrada desconhecida pode ser uma devolução que ninguém está descontando.
+    """
+    return {"operacoes": notas_d365_service.operacoes_a_classificar(ini, fim)}
+
+
+@router.post("/operacoes")
+def ensinar_operacao(payload: OperacaoEnsinada,
+                     usuario: UsuarioOut = Depends(get_current_user)):
+    """Ensina ao app o que é uma operação do D365 e reclassifica o espelho."""
+    if payload.tipo_operacao not in notas_d365_service.TIPOS_ENSINAVEIS:
+        raise HTTPException(
+            status_code=400,
+            detail="tipo_operacao deve ser um de: %s"
+                   % ", ".join(notas_d365_service.TIPOS_ENSINAVEIS))
+    try:
+        return notas_d365_service.ensinar_operacao(
+            payload.operacao, payload.tipo_operacao, payload.origem_venda,
+            payload.observacao, str(usuario.id))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.get("/conciliacao")
 def conciliacao(ini: str = Query(..., description="AAAA-MM-DD"),
                 fim: str = Query(..., description="AAAA-MM-DD"),

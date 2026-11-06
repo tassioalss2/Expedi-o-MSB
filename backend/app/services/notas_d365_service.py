@@ -25,8 +25,9 @@ Valor total · Valor total de produtos · CNPJ/CPF · IE · Direção ·
 Tipo de empresa · Chave de acesso · Descrição da operação.
 """
 import io
+import time
 import unicodedata
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 import pandas as pd
@@ -220,15 +221,162 @@ MAPA_OPERACAO = (
 LINHA_PADRAO_LICITACAO = "VASCULAR"
 
 
+# As naturezas que a tela pode atribuir. É o conjunto que o MAPA_OPERACAO já
+# usa — ensinar uma operação não pode inventar uma natureza que o resto do app
+# não sabe ler.
+TIPOS_ENSINAVEIS = (
+    "VENDA_NORMAL", "EXPORTACAO", "COMUNICADO_USO", "DEVOLUCAO",
+    "DEVOLUCAO_SIMBOLICA", "CONSIGNADO", "AMOSTRA", "BONIFICACAO_DOACAO",
+    "COMODATO", "REMESSA", "RETORNO", "COMPRA", "ENTRADA",
+)
+
+
+# ── Operações ensinadas pela tela (migração v61) ────────────────────────────
+# O mapa acima é o que o código sabe. Quando o D365 emite uma operação nova,
+# ninguém quer esperar uma versão do app para dizer o que ela é: a tela ensina,
+# e a resposta fica aqui. Cache curto porque `classificar` roda por nota.
+_APRENDIDO: dict = {}
+_APRENDIDO_EM: float = 0.0
+_APRENDIDO_TTL = 60.0
+
+
+def _aprendido() -> dict:
+    """Mapa ensinado pelo usuário: texto normalizado -> (tipo, origem).
+
+    Best-effort de propósito: sem a tabela (migração ainda não rodada) ou sem
+    banco, o app continua classificando pelo mapa do código. Uma tela de
+    conferência não pode cair porque uma tabela nova ainda não existe.
+    """
+    global _APRENDIDO, _APRENDIDO_EM
+    agora = time.time()
+    if _APRENDIDO_EM and agora - _APRENDIDO_EM < _APRENDIDO_TTL:
+        return _APRENDIDO
+    try:
+        rows = get_service_db().table("operacoes_d365_mapa").select(
+            "operacao, tipo_operacao, origem_venda").limit(500).execute().data
+        _APRENDIDO = {r["operacao"]: (r.get("tipo_operacao"), r.get("origem_venda"))
+                      for r in rows if r.get("operacao")}
+    except Exception as exc:
+        print("mapa de operacoes ensinadas indisponivel: %s" % str(exc)[:120])
+        _APRENDIDO = {}
+    _APRENDIDO_EM = agora
+    return _APRENDIDO
+
+
+def esquecer_cache_operacoes() -> None:
+    """Chamado logo depois de ensinar, para a resposta já sair classificada."""
+    global _APRENDIDO_EM
+    _APRENDIDO_EM = 0.0
+
+
 def classificar(texto: Optional[str]) -> tuple:
-    """(tipo_operacao, origem_venda) a partir da descrição da operação."""
+    """(tipo_operacao, origem_venda) a partir da descrição da operação.
+
+    O que foi ensinado na tela vale ANTES do mapa do código: quem ensinou viu
+    a nota, e o código não sabia. A comparação é por igualdade do texto todo —
+    o mapa do código usa pedaço de texto, que é bom para generalizar e perigoso
+    para uma regra que alguém criou olhando uma nota só.
+    """
     t = _sem_acento(texto)
     if not t:
         return None, None
+    ensinado = _aprendido().get(t)
+    if ensinado:
+        return ensinado
     for marca, (tipo, origem) in MAPA_OPERACAO:
         if marca in t:
             return tipo, origem
     return None, None
+
+
+def ensinar_operacao(operacao: str, tipo_operacao: str,
+                     origem_venda: Optional[str] = None,
+                     observacao: Optional[str] = None,
+                     usuario_id: Optional[str] = None) -> dict:
+    """Grava a tradução de uma operação fiscal e reclassifica o espelho.
+
+    Reclassificar na hora importa: sem isso o número só mudaria na próxima
+    importação, e o mês fechado ninguém reimporta. `classificar_na_leitura`
+    cobre a leitura, mas gravar deixa o espelho coerente para quem consulta a
+    tabela direto.
+    """
+    db = get_service_db()
+    chave = _sem_acento(operacao)
+    if not chave:
+        raise ValueError("operacao vazia")
+    linha = {
+        "operacao": chave,
+        "operacao_exibe": operacao,
+        "tipo_operacao": tipo_operacao,
+        "origem_venda": origem_venda or None,
+        "observacao": observacao or None,
+        "ensinado_por": usuario_id,
+        "atualizado_em": datetime.now(timezone.utc).isoformat(),
+    }
+    db.table("operacoes_d365_mapa").upsert(linha, on_conflict="operacao").execute()
+    esquecer_cache_operacoes()
+
+    # As notas que já estão no espelho com essa operação passam a ter natureza.
+    alvo = {"tipo_operacao": tipo_operacao}
+    if origem_venda:
+        alvo["origem_venda"] = origem_venda
+    atualizadas = 0
+    try:
+        pendentes = db.table("notas_d365").select("id, operacao").is_(
+            "tipo_operacao", "null").limit(5000).execute().data
+        ids = [n["id"] for n in pendentes if _sem_acento(n.get("operacao")) == chave]
+        for i in range(0, len(ids), 100):
+            db.table("notas_d365").update(alvo).in_("id", ids[i:i + 100]).execute()
+        atualizadas = len(ids)
+    except Exception as exc:
+        print("reclassificacao do espelho falhou: %s" % str(exc)[:140])
+
+    return {"operacao": operacao, "tipo_operacao": tipo_operacao,
+            "origem_venda": origem_venda, "notas_reclassificadas": atualizadas}
+
+
+def operacoes_a_classificar(ini: str, fim: str) -> list:
+    """Operações do espelho que o app não sabe traduzir, com exemplos.
+
+    Entrada entra na lista, e não é detalhe: devolução é nota de ENTRADA e abate
+    a meta. Uma entrada desconhecida pode ser uma devolução que ninguém está
+    descontando — justamente o caso que não pode passar batido. A tela diz a
+    direção para quem responde saber o que está olhando.
+    """
+    db = get_service_db()
+    notas = db.table("notas_d365").select(
+        "id, numero, cliente_nome, data_documento, valor_total, valor_produtos, "
+        "operacao, tipo_operacao, direcao, status"
+    ).gte("data_documento", ini).lte("data_documento", fim).limit(5000).execute().data
+    classificar_na_leitura(notas)
+
+    agg: dict = {}
+    for n in notas:
+        if n.get("tipo_operacao") or not _aprovada(n):
+            continue
+        chave = (n.get("operacao") or "").strip() or "(nota sem operação no export)"
+        g = agg.setdefault(chave, {
+            "operacao": chave, "qtd": 0, "valor": 0.0,
+            "direcoes": set(), "exemplos": [],
+        })
+        g["qtd"] += 1
+        g["valor"] = round(g["valor"] + valor_da_nota(n), 2)
+        g["direcoes"].add(n.get("direcao") or "Saída")
+        if len(g["exemplos"]) < 4:
+            g["exemplos"].append({
+                "nf": n.get("numero"), "data": str(n.get("data_documento") or "")[:10],
+                "cliente": n.get("cliente_nome"),
+                "valor": round(valor_da_nota(n), 2),
+                "direcao": n.get("direcao") or "Saída",
+            })
+    saida = []
+    for g in agg.values():
+        g["direcoes"] = sorted(g["direcoes"])
+        # Entrada já fica fora do faturamento por ser entrada; saída sem
+        # natureza é que está mexendo num número que alguém vai olhar.
+        g["afeta_faturamento"] = "Saída" in g["direcoes"]
+        saida.append(g)
+    return sorted(saida, key=lambda x: (not x["afeta_faturamento"], -x["valor"]))
 
 
 def tipo_da_operacao(texto: Optional[str]) -> Optional[str]:

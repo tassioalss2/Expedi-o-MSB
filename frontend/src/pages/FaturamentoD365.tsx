@@ -353,25 +353,12 @@ export default function FaturamentoD365() {
 
           {/* Operação que o app não sabe traduzir fica fora do faturamento até
               alguém dizer o que é. Melhor um número a menos do que uma remessa
-              de conserto virando receita. */}
-          {!!data?.a_classificar?.length && (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
-              <p className="text-sm font-semibold text-amber-900">
-                {data.a_classificar.length} operação(ões) do D365 que eu ainda não sei classificar
-              </p>
-              <p className="text-[11px] text-amber-800 mt-0.5">
-                Estas notas estão no espelho mas <strong>fora</strong> do faturamento — me diga o que
-                cada operação significa (venda? comunicado de uso? remessa?) e eu ensino o app.
-              </p>
-              <ul className="mt-1.5 text-[11px] text-amber-900 space-y-0.5">
-                {data.a_classificar.map(o => (
-                  <li key={o.chave}>
-                    <span className="font-medium">{o.chave}</span> · {o.qtd} NF(s) · {fmtBRL(o.valor)}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+              de conserto virando receita. Aqui é onde se diz: a lista mostra a
+              nota (sem a nota ninguém sabe responder) e grava a resposta. */}
+          <OperacoesAClassificar
+            ini={data?.periodo?.ini || `${competencia}-01`}
+            fim={data?.periodo?.fim || `${competencia}-28`}
+            onEnsinou={refetch} />
 
           {/* Transfer price (Biomedical) sai das duas pontas ao mesmo tempo: se
               saísse só de uma, a diferença entre D365 e app passaria a ser o
@@ -692,6 +679,130 @@ function Secao({ titulo, explicacao, vazio, linhas, cor, render }: {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+type OperacaoAClassificar = {
+  operacao: string
+  qtd: number
+  valor: number
+  direcoes: string[]
+  afeta_faturamento: boolean
+  exemplos: Array<{ nf: string; data: string; cliente: string; valor: number; direcao: string }>
+}
+
+/** As operações que o app não sabe traduzir — e o lugar de responder.
+ *
+ *  Antes a tela só listava o nome da operação fiscal. Ninguém consegue dizer o
+ *  que é "Outra ent merc ou prest serv não especificado" sem ver a nota: quem
+ *  responde precisa do número da NF, do cliente e da data para ir olhar no
+ *  D365. E não havia onde responder — a tradução vivia só no código, e ensinar
+ *  o app significava subir uma versão. Agora é aqui mesmo.
+ */
+function OperacoesAClassificar({ ini, fim, onEnsinou }:
+  { ini: string; fim: string; onEnsinou: () => void }) {
+  const [escolha, setEscolha] = useState<Record<string, string>>({})
+
+  const { data, refetch } = useQuery<{ operacoes: OperacaoAClassificar[] }>({
+    queryKey: ['operacoes-a-classificar', ini, fim],
+    queryFn: () => api.get('/notas-d365/operacoes-a-classificar',
+      { params: { ini, fim } }).then(r => r.data),
+  })
+
+  const ensinar = useMutation({
+    mutationFn: (p: { operacao: string; tipo_operacao: string }) =>
+      api.post('/notas-d365/operacoes', p).then(r => r.data),
+    onSuccess: (r: any) => {
+      toast.success(
+        `Aprendido: "${r.operacao}" é ${TIPO_LABEL[r.tipo_operacao] || r.tipo_operacao}`
+        + (r.notas_reclassificadas ? ` — ${r.notas_reclassificadas} nota(s) reclassificada(s).` : '.'),
+        { duration: 7000 })
+      refetch(); onEnsinou()
+    },
+    onError: (e: any) => toast.error(
+      'Não consegui gravar: ' + (e?.response?.data?.detail || e?.message), { duration: 9000 }),
+  })
+
+  const ops = data?.operacoes || []
+  if (!ops.length) return null
+
+  return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+      <p className="text-sm font-semibold text-amber-900">
+        {ops.length} operação(ões) do D365 que eu ainda não sei classificar
+      </p>
+      <p className="text-[11px] text-amber-800 mt-0.5">
+        Veja a nota, diga o que é e eu aprendo — vale para as notas que já estão no espelho e
+        para as próximas importações.
+      </p>
+
+      <div className="mt-2.5 space-y-2.5">
+        {ops.map(o => (
+          <div key={o.operacao} className="rounded-lg border border-amber-200 bg-white px-3 py-2.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-xs font-semibold text-gray-800">{o.operacao}</p>
+              <p className="text-[11px] text-gray-500 tabular-nums">
+                {o.qtd} NF(s) · {fmtBRL(o.valor)} · {o.direcoes.join(' e ')}
+              </p>
+            </div>
+            {/* Entrada já fica fora do faturamento por ser entrada. Dizer isso
+                evita a correria de classificar o que não muda número nenhum —
+                mas ela continua na lista, porque devolução é entrada. */}
+            <p className="text-[11px] mt-0.5 text-gray-500">
+              {o.afeta_faturamento
+                ? '⚠️ Tem nota de SAÍDA: está fora do faturamento até ser classificada.'
+                : 'Só entrada: não afeta o faturamento. Classifique se for devolução.'}
+            </p>
+
+            <div className="mt-1.5 overflow-x-auto">
+              <table className="text-[11px] w-full">
+                <tbody className="text-gray-600">
+                  {o.exemplos.map(e => (
+                    <tr key={e.nf}>
+                      <td className="pr-3 py-0.5 font-mono">{e.nf}</td>
+                      <td className="pr-3">{dataBR(e.data)}</td>
+                      <td className="pr-3 truncate max-w-[280px]">{e.cliente}</td>
+                      <td className="pr-3 text-gray-400">{e.direcao}</td>
+                      <td className="text-right tabular-nums">{fmtBRL(e.valor)}</td>
+                    </tr>
+                  ))}
+                  {o.qtd > o.exemplos.length && (
+                    <tr><td colSpan={5} className="text-gray-400 pt-0.5">
+                      e mais {o.qtd - o.exemplos.length} nota(s)
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <select
+                value={escolha[o.operacao] || ''}
+                onChange={e => setEscolha(s => ({ ...s, [o.operacao]: e.target.value }))}
+                className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-700"
+              >
+                <option value="">O que é esta operação?</option>
+                {['VENDA_NORMAL', 'COMUNICADO_USO', 'EXPORTACAO', 'DEVOLUCAO',
+                  'DEVOLUCAO_SIMBOLICA', 'CONSIGNADO', 'AMOSTRA', 'BONIFICACAO_DOACAO',
+                  'COMODATO', 'REMESSA', 'RETORNO', 'COMPRA', 'ENTRADA'].map(t => (
+                    <option key={t} value={t}>{TIPO_LABEL[t] || t}</option>
+                  ))}
+              </select>
+              <button
+                disabled={!escolha[o.operacao] || ensinar.isPending}
+                onClick={() => ensinar.mutate({
+                  operacao: o.operacao, tipo_operacao: escolha[o.operacao],
+                })}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-amber-600
+                           hover:bg-amber-500 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              >
+                Ensinar o app
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
