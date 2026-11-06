@@ -4,7 +4,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { DollarSign, Truck, FileText, X, Pencil, CalendarDays, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Rectangle } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Rectangle, ReferenceLine } from 'recharts'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
 import { ClienteAutocomplete } from './NovoPedido'
@@ -214,6 +214,8 @@ export function PainelComercial() {
     dias: Array<{ dia: string; valor: number; qtd: number; qtds: Record<string, number> } & Record<string, any>>
     total: number
     tipos: Array<{ tipo: string; label: string; valor: number; qtd: number }>
+    devolucoes?: { valor: number; qtd: number }
+    total_liquido?: number
   }>({
     queryKey: ['faturamento-diario', inicioFinanceiro, fimFinanceiro],
     queryFn: () => api.get('/pedidos/dashboard/faturamento-diario', {
@@ -248,6 +250,15 @@ export function PainelComercial() {
   const liquidoHoje = devHoje > 0 ? (barra?.dia?.realizado ?? vendasHoje) : vendasHoje
 
   // Média diária e melhor dia do mês (só dias com venda contam na média)
+  // A devolucao vai para o grafico como valor NEGATIVO: ela desce abaixo da
+  // linha, que e onde um estorno pertence. Somar na pilha a esconderia dentro
+  // da barra do dia, como se o dia tivesse vendido menos.
+  const diasGrafico = (fatDiario?.dias ?? []).map(d => ({
+    ...d, devolucao_neg: -(d.devolucao || 0),
+  }))
+  const devMes = fatDiario?.devolucoes?.valor ?? 0
+  const liquidoMes = fatDiario?.total_liquido ?? (fatDiario?.total ?? 0)
+
   const diasComVenda = (fatDiario?.dias ?? []).filter(d => d.valor > 0)
   const mediaDia = diasComVenda.length ? (fatDiario!.total / diasComVenda.length) : 0
   const melhorDia = diasComVenda.reduce<{ dia: string; valor: number } | null>(
@@ -308,10 +319,17 @@ export function PainelComercial() {
       const nome = categoria.slice(8)
       return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && r.cliente === nome)
     }
-    // Vendas de um dia específico (clique no gráfico / card "hoje")
+    // Vendas de um dia específico (clique no gráfico / card "hoje").
+    //
+    // A devolução do dia entra junto, negativa. Sem ela a lista abria com uma
+    // NF de R$ 4.469,13 enquanto a barra do topo dizia −R$ 11.532,86 para o
+    // mesmo dia: quem clicava para entender a diferença via justamente a
+    // metade que não explicava nada.
     if (categoria.startsWith('dia:')) {
       const d = categoria.slice(4)
-      return rows.filter(r => r.eh_faturamento && !r.eh_biomedical && !/ESTERILIZE/i.test(r.cliente || '') && r.data === d)
+      return rows.filter(r => (r.eh_faturamento || r.eh_devolucao)
+                              && !r.eh_biomedical
+                              && !/ESTERILIZE/i.test(r.cliente || '') && r.data === d)
     }
     // Demais categorias refletem só o que é faturamento (bate com os totais do card).
     // Transfer/outras incluem as devoluções do grupo, porque os números
@@ -693,7 +711,11 @@ export function PainelComercial() {
           </div>
           <div className="mt-auto pt-3 border-t border-gray-100 space-y-1.5">
             <div className="flex items-baseline justify-between">
-              <span className="text-xs text-gray-500">Média/dia c/ venda</span>
+              {/* Bruto de propósito: a média mede o ritmo de VENDA. Estorno
+                  lançado num dia não diz que aquele dia vendeu menos. */}
+              <span className="text-xs text-gray-500" title="Faturado (bruto) ÷ dias com venda. Não desconta devolução: a média mede o ritmo de venda.">
+                Média/dia c/ venda
+              </span>
               <span className="text-sm font-semibold text-gray-700 tabular-nums">{fmtR$(mediaDia)}</span>
             </div>
             {melhorDia && (
@@ -712,15 +734,25 @@ export function PainelComercial() {
           <div className="flex items-baseline justify-between mb-3">
             <div>
               <h2 className="text-sm font-semibold text-gray-700">Faturamento por dia</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Empilhado por tipo de venda · clique numa barra para ver as NFs do dia · {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })}</p>
+              <p className="text-xs text-gray-400 mt-0.5">Empilhado por tipo de venda · devolução abaixo da linha, no dia do lançamento · clique numa barra para ver as NFs do dia · {format(mesFinanceiro, "MMMM 'de' yyyy", { locale: ptBR })}</p>
             </div>
-            <span className="text-sm font-semibold text-gray-700 tabular-nums">Total {fmtR$(fatDiario?.total ?? 0)}</span>
+            <div className="text-right">
+              <span className="text-sm font-semibold text-gray-700 tabular-nums">
+                Total {fmtR$(liquidoMes)}
+              </span>
+              {devMes > 0 && (
+                <p className="text-[11px] text-gray-400 tabular-nums">
+                  {fmtR$(fatDiario?.total ?? 0)} faturado − {fmtR$(devMes)} devolvido
+                  {' '}em {fatDiario?.devolucoes?.qtd} NF
+                </p>
+              )}
+            </div>
           </div>
           {(fatDiario?.dias?.length ?? 0) === 0 ? (
             <div className="h-64 flex items-center justify-center text-sm text-gray-400">Sem faturamento no período</div>
           ) : (
             <ResponsiveContainer width="100%" height={256}>
-              <BarChart data={fatDiario!.dias} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={diasGrafico} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <pattern id="hachuraBio" width="6" height="6" patternUnits="userSpaceOnUse"
                     patternTransform="rotate(45)">
@@ -767,11 +799,31 @@ export function PainelComercial() {
                             <span className="text-gray-800 font-medium tabular-nums">{fmtR$(p[t.key])}</span>
                           </div>
                         ))}
+                        {p.devolucao > 0 && (
+                          <div className="flex items-baseline gap-2">
+                            <span className="w-2 h-2 rounded-sm shrink-0 bg-rose-500" />
+                            <span className="text-gray-500 flex-1">Devolução</span>
+                            <span className="text-gray-400 tabular-nums">{p.devolucao_qtd} NF</span>
+                            <span className="text-rose-600 font-medium tabular-nums">
+                              −{fmtR$(p.devolucao)}
+                            </span>
+                          </div>
+                        )}
                         <div className="flex items-baseline gap-2 mt-1 pt-1 border-t border-gray-100">
-                          <span className="text-gray-500 flex-1">Total</span>
+                          <span className="text-gray-500 flex-1">
+                            {p.devolucao > 0 ? 'Líquido do dia' : 'Total'}
+                          </span>
                           <span className="text-gray-400 tabular-nums">{p.qtd} NF</span>
-                          <span className="text-gray-900 font-bold tabular-nums">{fmtR$(p.valor)}</span>
+                          <span className={`font-bold tabular-nums ${
+                            p.liquido < 0 ? 'text-rose-600' : 'text-gray-900'}`}>
+                            {fmtR$(p.devolucao > 0 ? p.liquido : p.valor)}
+                          </span>
                         </div>
+                        {p.devolucao > 0 && (
+                          <p className="text-[10px] text-gray-400 mt-1 leading-snug max-w-[220px]">
+                            A devolução entra no dia do lançamento e pode estornar venda de outro dia.
+                          </p>
+                        )}
                       </div>
                     )
                   }}
@@ -788,6 +840,11 @@ export function PainelComercial() {
                       })
                     }} />
                 ))}
+                {/* Pilha propria: a devolucao nao divide stackId com a venda,
+                    senao ela encolheria a barra do dia em vez de descer. */}
+                <Bar dataKey="devolucao_neg" stackId="dev" fill="#e11d48"
+                  maxBarSize={28} radius={[0, 0, 4, 4]} />
+                <ReferenceLine y={0} stroke="#cbd5e1" />
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -805,6 +862,14 @@ export function PainelComercial() {
                   <span className="text-gray-400 tabular-nums">· {t.qtd} NF</span>
                 </div>
               ))}
+              {devMes > 0 && (
+                <div className="flex items-baseline gap-1.5 text-xs">
+                  <span className="w-2.5 h-2.5 rounded-sm shrink-0 translate-y-px bg-rose-600" />
+                  <span className="text-gray-500">Devoluções</span>
+                  <span className="text-rose-600 font-medium tabular-nums">−{fmtR$(devMes)}</span>
+                  <span className="text-gray-400 tabular-nums">· {fatDiario?.devolucoes?.qtd} NF</span>
+                </div>
+              )}
             </div>
           )}
         </div>

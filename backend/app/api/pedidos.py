@@ -1493,6 +1493,10 @@ def faturamento_diario(
     while d <= data_fim:
         iso = d.isoformat()
         dias[iso] = {"dia": iso, "valor": 0.0, "qtd": 0,
+                     # Devolucao e grandeza propria: nao e um tipo de venda
+                     # negativo, e o estorno de uma venda que ja aconteceu -
+                     # as vezes em outro dia, as vezes em outro mes.
+                     "devolucao": 0.0, "devolucao_qtd": 0, "liquido": 0.0,
                      **{t: 0.0 for t in _TIPOS_VENDA},
                      "qtds": {t: 0 for t in _TIPOS_VENDA}}
         d += timedelta(days=1)
@@ -1539,15 +1543,45 @@ def faturamento_diario(
                 else "DIRETA")
         _somar(str(n.get("data") or "")[:10], tipo, float(n.get("valor") or 0))
 
+    # Devolucao, no dia do LANCAMENTO. Sem ela o grafico somava R$ 153.779,94
+    # enquanto o card ao lado do mesmo mes dizia R$ 128.570,05: dois totais
+    # para o mesmo periodo, na mesma tela. Entra como grandeza separada, para
+    # a barra do dia continuar sendo o que o dia vendeu e o estorno aparecer
+    # abaixo da linha, que e onde ele esta.
+    total_dev = 0.0
+    qtd_dev = 0
+    try:
+        devolvidas = notas_d365_service.devolucoes_do_periodo(
+            data_inicio.isoformat(), data_fim.isoformat()).get("notas") or []
+    except Exception as exc:                       # espelho e opcional
+        print("devolucoes do D365 indisponiveis no grafico: %s" % str(exc)[:120])
+        devolvidas = []
+    for n in devolvidas:
+        dia = str(n.get("data") or "")[:10]
+        if dia not in dias:
+            continue
+        v = float(n.get("valor") or 0)
+        dias[dia]["devolucao"] += v
+        dias[dia]["devolucao_qtd"] += 1
+        total_dev += v
+        qtd_dev += 1
+
     serie = sorted(dias.values(), key=lambda x: x["dia"])
     for g in serie:
         g["valor"] = round(g["valor"], 2)
+        g["devolucao"] = round(g["devolucao"], 2)
+        g["liquido"] = round(g["valor"] - g["devolucao"], 2)
         for t in _TIPOS_VENDA:
             g[t] = round(g[t], 2)
     for t in _TIPOS_VENDA:
         totais[t]["valor"] = round(totais[t]["valor"], 2)
     total = round(sum(g["valor"] for g in serie), 2)
+    # `total` segue sendo o BRUTO: e o que os outros cards desta tela ja
+    # consomem, e trocar o sentido de uma chave usada noutro lugar conserta
+    # uma tela quebrando outra. O liquido vem ao lado, com nome proprio.
     return {"dias": serie, "total": total,
+            "devolucoes": {"valor": round(total_dev, 2), "qtd": qtd_dev},
+            "total_liquido": round(total - total_dev, 2),
             "tipos": [{"tipo": t, "label": _TIPO_VENDA_LABEL[t], **totais[t]}
                       for t in _TIPOS_VENDA]}
 
