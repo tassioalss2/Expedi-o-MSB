@@ -269,6 +269,45 @@ def esquecer_cache_operacoes() -> None:
     _APRENDIDO_EM = 0.0
 
 
+def _eh_saida(direcao: Optional[str]) -> bool:
+    return _sem_acento(direcao or "saida").startswith("said")
+
+
+def _ov_da_nota(candidatos: list, direcao: Optional[str],
+                conta: Optional[str]) -> Optional[str]:
+    """A OV que emitiu esta nota — ou nenhuma, quando não dá para afirmar.
+
+    `candidatos` são as OVs vivas com o MESMO número de NF. Costuma ser uma,
+    mas o número não é identificador: o D365 reinicia a numeração por
+    estabelecimento e série.
+
+    Duas travas, nesta ordem:
+
+      · nota de ENTRADA nunca é a NF de uma OV nossa. A devolução é emitida
+        pelo cliente, com a numeração dele, e casá-la com uma venda pelo número
+        pendura o estorno na OV errada — foi o que aconteceu com a devolução da
+        Infinity (NF 000021254) e a OV017233, da EBSERH;
+      · havendo mais de uma OV com o mesmo número, o cliente desempata.
+
+    O cliente NÃO é exigido quando há um candidato só. A conta do D365 e o
+    cliente da OV são cadastros diferentes e nem sempre apontam para a mesma
+    entidade — no setor público a nota sai para a Secretaria e a OV está no
+    órgão do empenho. Exigir igualdade desligaria 15 notas de saída que o app
+    casou corretamente, o que é pior do que o defeito que esta função conserta.
+
+    Na dúvida, devolve None. Nota sem OV aparece como "não passou pelo app",
+    que é visível e conferível; nota na OV errada não aparece em lugar nenhum.
+    """
+    if not candidatos or not _eh_saida(direcao):
+        return None
+    if len(candidatos) == 1:
+        return candidatos[0][0]
+    conta_n = (conta or "").strip().upper()
+    iguais = ([c for c in candidatos if (c[1] or "").strip().upper() == conta_n]
+              if conta_n else [])
+    return iguais[0][0] if len(iguais) == 1 else None
+
+
 def data_competencia(nota: dict) -> str:
     """O mês a que a nota pertence: a data de LANÇAMENTO.
 
@@ -484,11 +523,21 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     for c in _pagina(db, "clientes", "id, codigo"):
         if c.get("codigo"):
             clientes[str(c["codigo"]).strip().upper()] = c["id"]
-    ovs = {}
-    for p in _pagina(db, "pedidos", "id, numero_nf, status"):
+    # Número de NF não identifica nota: o D365 reinicia a numeração por
+    # estabelecimento e série, e o mesmo 000021254 existe duas vezes — uma
+    # devolução da Infinity (entrada, 19/10) e uma venda da EBSERH (saída,
+    # 23/10). Casando só pelo número, a devolução da Infinity ficou pendurada
+    # na OV da EBSERH. Por isso a lista de candidatos, resolvida por `_ov_da_nota`.
+    codigo_do_cliente = {}
+    for c in _pagina(db, "clientes", "id, codigo"):
+        if c.get("codigo"):
+            codigo_do_cliente[c["id"]] = str(c["codigo"]).strip().upper()
+    ovs: dict = {}
+    for p in _pagina(db, "pedidos", "id, numero_nf, status, cliente_id"):
         k = chave_nf(p.get("numero_nf"))
         if k and p.get("status") != "CANCELADO":
-            ovs[k] = p["id"]
+            ovs.setdefault(k, []).append(
+                (p["id"], codigo_do_cliente.get(p.get("cliente_id"))))
 
     linhas, sem_classificacao = [], {}
     for _, r in df.iterrows():
@@ -506,6 +555,7 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
         direcao = _txt(r[col["direcao"]]) if "direcao" in col else None
         status = _txt(r[col["status"]]) if "status" in col else None
         emissor = _txt(r[col["emissor"]]) if "emissor" in col else None
+        pedido_da_nota = _ov_da_nota(ovs.get(chave), direcao, conta)
         # A nota de ENTRADA é numerada pelo fornecedor: o número sozinho não
         # identifica nada. O CNPJ e a direção entram na chave; o status fica
         # fora dela, para a reimportação substituir a versão anterior.
@@ -541,7 +591,7 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
             # Nota COM OV não usa a linha daqui: a OV manda, item a item, e é
             # rateio melhor do que qualquer palpite. Sem OV, licitação nasce
             # vascular e o resto fica sem linha até alguém dizer.
-            "linha": (None if ovs.get(chave)
+            "linha": (None if pedido_da_nota
                       else (LINHA_PADRAO_LICITACAO if origem == "LICITACAO" else None)),
             # Sempre presente, mesmo falso. O PostgREST recusa a gravação em
             # lote quando os objetos não têm exatamente as mesmas chaves
@@ -551,7 +601,7 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
             # bastou existir UMA correção para a gravação inteira ser recusada.
             "linha_ajustada": False,
             "chave_acesso": _txt(r[col["chave_acesso"]]) if "chave_acesso" in col else None,
-            "pedido_id": ovs.get(chave),
+            "pedido_id": pedido_da_nota,
             "arquivo": nome_arquivo,
             "importado_por": str(usuario.id),
         })
