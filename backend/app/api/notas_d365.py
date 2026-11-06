@@ -80,6 +80,27 @@ def operacoes_a_classificar(ini: str = Query(..., description="AAAA-MM-DD"),
     return {"operacoes": notas_d365_service.operacoes_a_classificar(ini, fim)}
 
 
+class NaturezaDaNota(BaseModel):
+    """Natureza de uma nota só — para quando não há operação a ensinar."""
+    tipo_operacao: str
+    origem_venda: Optional[str] = None
+
+
+@router.patch("/{nota_id}/tipo-operacao")
+def classificar_nota(nota_id: UUID, payload: NaturezaDaNota,
+                     _: UsuarioOut = Depends(get_current_user)):
+    """Classifica UMA nota do espelho.
+
+    Existe para a nota que chega sem descrição de operação no export: não há
+    texto para ensinar, então a resposta fica na própria nota.
+    """
+    try:
+        return notas_d365_service.classificar_nota(
+            str(nota_id), payload.tipo_operacao, payload.origem_venda)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/operacoes")
 def ensinar_operacao(payload: OperacaoEnsinada,
                      usuario: UsuarioOut = Depends(get_current_user)):

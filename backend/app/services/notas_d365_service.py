@@ -269,6 +269,32 @@ def esquecer_cache_operacoes() -> None:
     _APRENDIDO_EM = 0.0
 
 
+# Rótulo do balde das notas que vieram sem descrição de operação no export.
+# Não é uma operação: é a ausência dela, e por isso não se ensina.
+SEM_OPERACAO = "(nota sem operação no export)"
+
+
+def classificar_nota(nota_id: str, tipo_operacao: str,
+                     origem_venda: Optional[str] = None) -> dict:
+    """Natureza de UMA nota, quando não há texto de operação para ensinar.
+
+    A nota da Onfly (serviço contratado pela MSB) chegou sem descrição nenhuma
+    no export. Ensinar pelo texto não resolve — não há texto —, então a
+    classificação fica na própria nota.
+    """
+    if tipo_operacao not in TIPOS_ENSINAVEIS:
+        raise ValueError("natureza desconhecida: %s" % tipo_operacao)
+    alvo = {"tipo_operacao": tipo_operacao}
+    if origem_venda:
+        alvo["origem_venda"] = origem_venda
+    db = get_service_db()
+    db.table("notas_d365").update(alvo).eq("id", nota_id).execute()
+    linha = db.table("notas_d365").select(
+        "id, numero, cliente_nome, tipo_operacao, origem_venda"
+    ).eq("id", nota_id).execute().data
+    return linha[0] if linha else {"id": nota_id, **alvo}
+
+
 def _eh_saida(direcao: Optional[str]) -> bool:
     return _sem_acento(direcao or "saida").startswith("said")
 
@@ -422,16 +448,24 @@ def operacoes_a_classificar(ini: str, fim: str) -> list:
     for n in notas:
         if n.get("tipo_operacao") or not _aprovada(n):
             continue
-        chave = (n.get("operacao") or "").strip() or "(nota sem operação no export)"
+        texto = (n.get("operacao") or "").strip()
+        # Nota sem texto de operação não dá para ENSINAR: o que o app aprende é
+        # a tradução de um texto, e sem texto a regra nunca casaria com nada.
+        # Ela vai para um balde próprio, e a tela classifica nota a nota.
+        chave = texto or SEM_OPERACAO
         g = agg.setdefault(chave, {
             "operacao": chave, "qtd": 0, "valor": 0.0,
+            "sem_operacao": not texto,
             "direcoes": set(), "exemplos": [],
         })
         g["qtd"] += 1
         g["valor"] = round(g["valor"] + valor_da_nota(n), 2)
         g["direcoes"].add(n.get("direcao") or "Saída")
-        if len(g["exemplos"]) < 4:
+        # Sem operação, cada nota é um caso: todas vão para a tela, não só
+        # quatro de amostra, porque é nelas que se clica.
+        if g["sem_operacao"] or len(g["exemplos"]) < 4:
             g["exemplos"].append({
+                "id": n.get("id"),
                 "nf": n.get("numero"), "data": str(n.get("data_documento") or "")[:10],
                 "cliente": n.get("cliente_nome"),
                 "valor": round(valor_da_nota(n), 2),

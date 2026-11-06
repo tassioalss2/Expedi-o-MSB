@@ -689,7 +689,27 @@ type OperacaoAClassificar = {
   valor: number
   direcoes: string[]
   afeta_faturamento: boolean
-  exemplos: Array<{ nf: string; data: string; cliente: string; valor: number; direcao: string }>
+  /** A nota veio SEM descricao de operacao: nao ha texto para ensinar, e cada
+   *  nota e classificada sozinha. */
+  sem_operacao?: boolean
+  exemplos: Array<{
+    id: string; nf: string; data: string; cliente: string; valor: number; direcao: string
+  }>
+}
+
+const NATUREZAS = ['VENDA_NORMAL', 'COMUNICADO_USO', 'EXPORTACAO', 'DEVOLUCAO',
+  'DEVOLUCAO_SIMBOLICA', 'CONSIGNADO', 'AMOSTRA', 'BONIFICACAO_DOACAO',
+  'COMODATO', 'REMESSA', 'RETORNO', 'COMPRA', 'ENTRADA']
+
+function SelectNatureza({ valor, onChange }:
+  { valor: string; onChange: (v: string) => void }) {
+  return (
+    <select value={valor} onChange={e => onChange(e.target.value)}
+      className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-700">
+      <option value="">O que e?</option>
+      {NATUREZAS.map(t => <option key={t} value={t}>{TIPO_LABEL[t] || t}</option>)}
+    </select>
+  )
 }
 
 /** As operações que o app não sabe traduzir — e o lugar de responder.
@@ -708,6 +728,21 @@ function OperacoesAClassificar({ ini, fim, onEnsinou }:
     queryKey: ['operacoes-a-classificar', ini, fim],
     queryFn: () => api.get('/notas-d365/operacoes-a-classificar',
       { params: { ini, fim } }).then(r => r.data),
+  })
+
+  // Nota sem operacao: a resposta vai na propria nota, nao num mapa de texto.
+  const classificarNota = useMutation({
+    mutationFn: (p: { id: string; tipo_operacao: string }) =>
+      api.patch('/notas-d365/' + p.id + '/tipo-operacao',
+        { tipo_operacao: p.tipo_operacao }).then(r => r.data),
+    onSuccess: (r: any) => {
+      toast.success('NF ' + r.numero + ' classificada como '
+        + (TIPO_LABEL[r.tipo_operacao] || r.tipo_operacao) + '.', { duration: 6000 })
+      refetch(); onEnsinou()
+    },
+    onError: (e: any) => toast.error(
+      'Nao consegui classificar: ' + (e?.response?.data?.detail || e?.message),
+      { duration: 9000 }),
   })
 
   const ensinar = useMutation({
@@ -750,25 +785,47 @@ function OperacoesAClassificar({ ini, fim, onEnsinou }:
                 evita a correria de classificar o que não muda número nenhum —
                 mas ela continua na lista, porque devolução é entrada. */}
             <p className="text-[11px] mt-0.5 text-gray-500">
-              {o.afeta_faturamento
-                ? '⚠️ Tem nota de SAÍDA: está fora do faturamento até ser classificada.'
-                : 'Só entrada: não afeta o faturamento. Classifique se for devolução.'}
+              {o.sem_operacao
+                ? 'Estas notas vieram sem descrição de operação no export — não há texto para o app '
+                  + 'aprender. Classifique uma a uma, na própria linha.'
+                : o.afeta_faturamento
+                  ? '⚠️ Tem nota de SAÍDA: está fora do faturamento até ser classificada.'
+                  : 'Só entrada: não afeta o faturamento. Classifique se for devolução.'}
             </p>
 
             <div className="mt-1.5 overflow-x-auto">
               <table className="text-[11px] w-full">
                 <tbody className="text-gray-600">
                   {o.exemplos.map(e => (
-                    <tr key={e.nf}>
+                    <tr key={e.id || e.nf}>
                       <td className="pr-3 py-0.5 font-mono">{e.nf}</td>
                       <td className="pr-3">{dataBR(e.data)}</td>
                       <td className="pr-3 truncate max-w-[280px]">{e.cliente}</td>
                       <td className="pr-3 text-gray-400">{e.direcao}</td>
-                      <td className="text-right tabular-nums">{fmtBRL(e.valor)}</td>
+                      <td className="pr-3 text-right tabular-nums">{fmtBRL(e.valor)}</td>
+                      {/* Sem operacao para ensinar, a escolha e nota a nota. */}
+                      {o.sem_operacao && (
+                        <td className="pl-3 whitespace-nowrap">
+                          <SelectNatureza
+                            valor={escolha[e.id] || ''}
+                            onChange={v => setEscolha(st => ({ ...st, [e.id]: v }))} />
+                          <button
+                            disabled={!escolha[e.id] || classificarNota.isPending}
+                            onClick={() => classificarNota.mutate({
+                              id: e.id, tipo_operacao: escolha[e.id],
+                            })}
+                            className="ml-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium
+                                       text-white bg-amber-600 hover:bg-amber-500
+                                       disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          >
+                            Classificar
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                   {o.qtd > o.exemplos.length && (
-                    <tr><td colSpan={5} className="text-gray-400 pt-0.5">
+                    <tr><td colSpan={6} className="text-gray-400 pt-0.5">
                       e mais {o.qtd - o.exemplos.length} nota(s)
                     </td></tr>
                   )}
@@ -776,30 +833,23 @@ function OperacoesAClassificar({ ini, fim, onEnsinou }:
               </table>
             </div>
 
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <select
-                value={escolha[o.operacao] || ''}
-                onChange={e => setEscolha(s => ({ ...s, [o.operacao]: e.target.value }))}
-                className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-700"
-              >
-                <option value="">O que é esta operação?</option>
-                {['VENDA_NORMAL', 'COMUNICADO_USO', 'EXPORTACAO', 'DEVOLUCAO',
-                  'DEVOLUCAO_SIMBOLICA', 'CONSIGNADO', 'AMOSTRA', 'BONIFICACAO_DOACAO',
-                  'COMODATO', 'REMESSA', 'RETORNO', 'COMPRA', 'ENTRADA'].map(t => (
-                    <option key={t} value={t}>{TIPO_LABEL[t] || t}</option>
-                  ))}
-              </select>
-              <button
-                disabled={!escolha[o.operacao] || ensinar.isPending}
-                onClick={() => ensinar.mutate({
-                  operacao: o.operacao, tipo_operacao: escolha[o.operacao],
-                })}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-amber-600
-                           hover:bg-amber-500 disabled:bg-gray-300 disabled:cursor-not-allowed"
-              >
-                Ensinar o app
-              </button>
-            </div>
+            {!o.sem_operacao && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <SelectNatureza
+                  valor={escolha[o.operacao] || ''}
+                  onChange={v => setEscolha(st => ({ ...st, [o.operacao]: v }))} />
+                <button
+                  disabled={!escolha[o.operacao] || ensinar.isPending}
+                  onClick={() => ensinar.mutate({
+                    operacao: o.operacao, tipo_operacao: escolha[o.operacao],
+                  })}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-amber-600
+                             hover:bg-amber-500 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  Ensinar o app
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
