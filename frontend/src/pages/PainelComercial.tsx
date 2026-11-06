@@ -234,6 +234,19 @@ export function PainelComercial() {
   const vendasHoje = fatHoje?.total ?? 0
   const qtdHoje = fatHoje?.dias?.[0]?.qtd ?? 0
 
+  // A devolucao do dia vem da MESMA consulta da barra de meta: mesma chave,
+  // mesma resposta, sem requisicao a mais. Sem ela o card mostrava o bruto
+  // enquanto a barra mostrava o liquido, para o mesmo dia.
+  const { data: barra } = useQuery<{
+    dia: { realizado: number; bruto: number; devolucao: number; devolucao_nfs: number } | null
+  }>({
+    queryKey: ['barra-meta'],
+    queryFn: () => api.get('/home/barra-meta').then(r => r.data),
+    refetchInterval: 60000,
+  })
+  const devHoje = barra?.dia?.devolucao ?? 0
+  const liquidoHoje = devHoje > 0 ? (barra?.dia?.realizado ?? vendasHoje) : vendasHoje
+
   // Média diária e melhor dia do mês (só dias com venda contam na média)
   const diasComVenda = (fatDiario?.dias ?? []).filter(d => d.valor > 0)
   const mediaDia = diasComVenda.length ? (fatDiario!.total / diasComVenda.length) : 0
@@ -666,8 +679,17 @@ export function PainelComercial() {
                 <p className="text-xs text-gray-400">{format(hoje, "dd 'de' MMMM", { locale: ptBR })}</p>
               </div>
             </div>
-            <p className="text-3xl font-bold text-green-600 leading-tight">{fmtR$(vendasHoje)}</p>
+            <p className={`text-3xl font-bold leading-tight ${
+              liquidoHoje < 0 ? 'text-rose-600' : 'text-green-600'}`}>{fmtR$(liquidoHoje)}</p>
             <p className="text-xs text-gray-400 mt-0.5">{qtdHoje} NF · Vendas sem frete</p>
+            {/* Devolucao entra no dia do LANCAMENTO e pode estornar venda de
+                outro dia - por isso o dia fica negativo sem ter vendido menos. */}
+            {devHoje > 0 && (
+              <p className="text-[11px] text-rose-600 mt-1 leading-snug">
+                {fmtR$(vendasHoje)} faturado − {fmtR$(devHoje)} devolvido
+                {' '}em {barra?.dia?.devolucao_nfs} NF
+              </p>
+            )}
           </div>
           <div className="mt-auto pt-3 border-t border-gray-100 space-y-1.5">
             <div className="flex items-baseline justify-between">

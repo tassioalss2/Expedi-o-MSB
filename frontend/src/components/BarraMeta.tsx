@@ -11,8 +11,13 @@ interface Ritmo {
 }
 interface DiaMeta {
   data: string
+  /** Liquido: faturado menos devolvido. Pode ser NEGATIVO num dia em que a
+   *  devolucao foi maior que a venda. */
   realizado: number
   nfs: number
+  bruto: number
+  devolucao: number
+  devolucao_nfs: number
   /** Alvo do dia, FIXO durante o dia: pendente no início do dia ÷ dias úteis
    *  restantes. Faturar hoje não diminui o alvo de hoje — só enche a barra. */
   alvo: number
@@ -139,14 +144,29 @@ export function BarraMeta() {
             uma fileira só de números sem hierarquia. */}
         {data.dia && (
           <span className="flex items-center gap-2 sm:ml-auto whitespace-nowrap"
-            title={`Alvo de hoje: ${fmtR$(data.dia.alvo)}`
+            title={(data.dia.devolucao > 0
+              ? `Hoje: ${fmtR$(data.dia.bruto)} faturados menos ${fmtR$(data.dia.devolucao)}`
+                + ` de devolução em ${data.dia.devolucao_nfs} nota(s) = ${fmtR$(data.dia.realizado)}.`
+                + ` A devolução entra no dia do LANÇAMENTO, e pode estornar venda de outro dia.\n`
+              : '')
+              + `Alvo de hoje: ${fmtR$(data.dia.alvo)}`
               + ` — ${fmtR$(data.dia.pendente_inicio)} pendentes no início do dia`
               + ` ÷ ${data.dia.dias_uteis_restantes} dia(s) útil(eis).`
               + ` O alvo não muda durante o dia: faturar enche a barra, não abaixa a régua.`
               + ` Falta agora no mês: ${fmtR$(data.falta)}.`}>
             <span className="w-px h-5 bg-white/25 hidden sm:inline-block" />
             <span className="text-xs font-semibold">Hoje</span>
-            <span className="text-sm font-bold tabular-nums">{fmtR$(data.dia.realizado)}</span>
+            <span className={`text-sm font-bold tabular-nums ${
+              data.dia.realizado < 0 ? 'text-rose-200' : ''}`}>
+              {fmtR$(data.dia.realizado)}
+            </span>
+            {/* Sem a conta aberta, um dia negativo parece defeito da barra. */}
+            {data.dia.devolucao > 0 && (
+              <span className="text-[11px] text-cyan-100/70 font-normal hidden lg:inline">
+                ({fmtR$(data.dia.bruto)} fat. − {fmtR$(data.dia.devolucao)} dev.
+                {' '}em {data.dia.devolucao_nfs} NF)
+              </span>
+            )}
             {data.dia.eh_dia_util ? (
               <>
                 <span className="relative w-10 h-2 bg-white/20 rounded-full overflow-hidden hidden sm:inline-block">

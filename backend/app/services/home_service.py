@@ -145,9 +145,20 @@ def barra_meta() -> dict:
             "data": hoje.isoformat(),
             "realizado": round(realizado_hoje, 2),
             "nfs": nfs_hoje,
+            # A conta do dia, aberta. Devolução grande derruba o dia para
+            # NEGATIVO — em 06/11/2026 foram R$ 4.469,13 faturados contra
+            # R$ 16.001,99 devolvidos, e a barra mostrava −R$ 11.532,86 sem
+            # dizer por quê, contra um card de "faturamento de hoje" que dizia
+            # R$ 4.469,13. Dois números para o mesmo dia, na mesma tela.
+            "bruto": round(realizado_hoje + _dvh, 2),
+            "devolucao": round(_dvh, 2),
+            "devolucao_nfs": _dqh,
             "alvo": alvo,
             "pendente_inicio": pendente_inicio,
-            "pct": round(realizado_hoje / alvo * 100, 1) if alvo else 100.0,
+            # O percentual mede o que o dia ENTREGOU contra o alvo. Dia no
+            # negativo é 0% de entrega, não "−258%": a régua não tem lado de
+            # baixo, e o estorno se explica na conta ao lado.
+            "pct": round(max(0.0, realizado_hoje) / alvo * 100, 1) if alvo else 100.0,
             "dias_uteis_restantes": restantes,
             "eh_dia_util": hoje.weekday() < 5,
         }
