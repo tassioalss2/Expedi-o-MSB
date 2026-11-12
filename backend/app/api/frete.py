@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Conferência da fatura de frete — sobe o zip da transportadora e confere."""
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -77,6 +77,117 @@ def estimativa(
 ):
     """Quanto a transportadora deve cobrar nesta carga, pela tabela."""
     return tabela_frete_service.estimar(uf, cidade, peso_kg, m3, valor_nf)
+
+
+class CaixaCotada(BaseModel):
+    """Uma linha da cubagem: que caixa e quantas."""
+    tipo_caixa_id: Optional[str] = None
+    # Para quem cota sem passar pelo cadastro: a descrição traz a medida entre
+    # parênteses e volume_m3 lê dali.
+    descricao: Optional[str] = None
+    codigo: Optional[str] = None
+    quantidade: float = 1
+
+
+class CotacaoAvulsa(BaseModel):
+    """Uma carga que ainda não é OV — ou que nunca vai ser."""
+    cidade: Optional[str] = None
+    uf: Optional[str] = None
+    peso_kg: float = 0
+    # m³ pronto, para quando a cubagem vem calculada de fora. Quando vem, manda
+    # sobre as caixas: quem digitou o volume sabe mais que o cadastro.
+    m3: Optional[float] = None
+    caixas: List[CaixaCotada] = []
+    valor_mercadoria: float = 0
+    # Sem data de entrega a modalidade é convencional, que é o padrão.
+    data_entrega: Optional[str] = None
+    # A data em que a carga sai. O prazo corre dela, não de hoje.
+    saida: Optional[str] = None
+
+
+@router.post("/frete/cotacao")
+def cotacao_avulsa(c: CotacaoAvulsa, _: UsuarioOut = Depends(get_current_user)):
+    """A mesma conta da OV, sem precisar de OV.
+
+    Existe para o frete continuar sendo calculado quando a carga não nasce no
+    app: cotação para o cliente antes da venda, carga que vive em outro
+    sistema, conferência de um preço que a transportadora mandou. Os números
+    entram na mão e a conta é idêntica — mesma tabela, mesmo ICMS por dentro,
+    mesma escolha de modalidade pela data.
+
+    O volume sai dos TIPOS de caixa, como na OV, para a cotação avulsa não
+    virar um segundo jeito de medir a mesma caixa.
+    """
+    m3, caixas_detalhe, sem_medida = 0.0, [], []
+
+    descr = {}
+    ids = [x.tipo_caixa_id for x in c.caixas if x.tipo_caixa_id]
+    if ids:
+        from app.core.database import get_service_db
+        for t_ in get_service_db().table("tipos_caixa").select(
+                "id, codigo, descricao").in_("id", ids[:40]).execute().data:
+            descr[t_["id"]] = t_
+
+    for x in c.caixas:
+        cad = descr.get(x.tipo_caixa_id) or {}
+        texto = cad.get("descricao") or x.descricao or ""
+        nome = cad.get("codigo") or x.codigo or texto[:40] or "caixa"
+        qtd = float(x.quantidade or 0)
+        unit = tabela_frete_service.volume_m3(texto)
+        m3 += unit * qtd
+        caixas_detalhe.append({"caixa": nome, "quantidade": qtd,
+                               "m3_unitario": unit, "m3": round(unit * qtd, 5)})
+        # Caixa sem medida no cadastro ("Envelope P/ Amostras") devolve 0. Isso
+        # não pode virar volume zero calado: a carga sairia mais barata na tela
+        # do que na fatura. Quem cota precisa ver e decidir.
+        if qtd and not unit:
+            sem_medida.append(nome)
+
+    origem_m3 = "tipos de caixa"
+    if c.m3 is not None and float(c.m3) > 0:
+        m3, origem_m3 = float(c.m3), "informado na tela"
+        sem_medida = []
+    m3 = round(m3, 4)
+
+    escolha = tabela_frete_service.escolher_modalidade(
+        c.uf, c.cidade, peso_kg=float(c.peso_kg or 0), m3=m3,
+        valor_nf=float(c.valor_mercadoria or 0),
+        data_entrega=c.data_entrega or None, saida=c.saida or None)
+
+    r = escolha["estimativa"]
+    r["modalidade"] = escolha["modalidade"]
+    r["motivo_modalidade"] = escolha.get("motivo")
+    r["data_entrega_alvo"] = escolha.get("data_entrega_alvo")
+    r["chegada_convencional"] = escolha.get("chegada_convencional")
+    r["chegada_expresso"] = escolha.get("chegada_expresso")
+    r["nem_expresso_alcanca"] = escolha.get("nem_expresso_alcanca", False)
+    r["diferenca_modalidade"] = escolha.get("diferenca")
+    alt = escolha.get("alternativa")
+    r["alternativa"] = ({"tabela": alt.get("tabela") or "Convencional",
+                         "total": alt.get("total")} if alt else None)
+
+    if sem_medida:
+        r.setdefault("avisos", []).append(
+            "Sem medida no cadastro: %s. Estas caixas entraram com volume zero — "
+            "o peso cubado está menor do que a carga real, e a fatura virá acima "
+            "desta conta. Cadastre a medida ou informe o m³ na mão."
+            % ", ".join(sorted(set(sem_medida))))
+    if not c.peso_kg and not m3:
+        r.setdefault("avisos", []).append(
+            "Sem peso e sem volume: a conta saiu pelo peso mínimo do destino, "
+            "que é o piso da tabela. Qualquer carga real custa isto ou mais.")
+    r["aviso"] = " ".join(r["avisos"]) if r.get("avisos") else r.get("aviso")
+
+    r["m3"] = m3
+    r["origem_m3"] = origem_m3
+    r["caixas"] = caixas_detalhe
+    r["num_caixas"] = sum(float(x.quantidade or 0) for x in c.caixas) or None
+    r["tem_cubagem"] = bool(m3)
+    r["valor_mercadoria"] = round(float(c.valor_mercadoria or 0), 2)
+    r["saida"] = escolha.get("saida")
+    r["local_entrega"] = ("%s/%s" % ((c.cidade or "").strip(), (c.uf or "").strip().upper())
+                          if (c.cidade or c.uf) else None)
+    return r
 
 
 @router.get("/frete/estimativa/pedido/{pedido_id}")

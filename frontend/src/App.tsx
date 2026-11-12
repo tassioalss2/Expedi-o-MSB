@@ -19,6 +19,7 @@ import Devolucoes from './pages/Devolucoes'
 import Rastreio from './pages/Rastreio'
 import TrocarSenha from './pages/TrocarSenha'
 import ConferenciaFrete from './pages/ConferenciaFrete'
+import CotacaoFrete from './pages/CotacaoFrete'
 import { Inicio } from './pages/Inicio'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
@@ -118,6 +119,9 @@ export default function App() {
             <Route path="devolucoes" element={<Devolucoes />} />
             <Route path="rastreio" element={<Rastreio />} />
             <Route path="frete" element={<ConferenciaFrete />} />
+            {/* A cotacao nao depende de OV: e a porta do calculo de frete para
+                quando a carga nao nasce no app. */}
+            <Route path="cotacao-frete" element={<CotacaoFrete />} />
             <Route path="faturamento-d365" element={<FaturamentoD365 />} />
           </Route>
 

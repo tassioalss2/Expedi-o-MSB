@@ -6,6 +6,7 @@ import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
   DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2, Monitor, FileCheck, MapPin,
+  Calculator,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -48,6 +49,7 @@ const navComercial: NavItem[] = [
   },
   { to: '/pendencias', label: 'Pendências de OV', icone: PackageX, badge: 'pendencias' },
   { to: '/devolucoes', label: 'Devoluções', icone: Undo2 },
+  { to: '/cotacao-frete', label: 'Cotação de Frete', icone: Calculator },
   { to: '/frete',      label: 'Conferência de Frete', icone: Truck },
   { to: '/previsao', label: 'Previsão de Faturamento', icone: TrendingUp },
   // O faturamento conferido contra o D365: com a licitacao indo para a Bio, o

@@ -11,7 +11,7 @@ import api from '../lib/api'
  *  tabela e conferir a fatura depois.
  */
 
-type Estimativa = {
+export type Estimativa = {
   encontrado: boolean; motivo?: string; transportadora?: string; vigencia?: string
   destino?: string; aviso?: string | null; tem_cubagem?: boolean
   peso_real_kg?: number; peso_cubado_kg?: number; peso_taxado_kg?: number
@@ -59,7 +59,17 @@ export function FreteEstimado({ pedidoId, versao }: {
   })
 
   if (isLoading || !data) return null
+  return <PainelFrete data={data} />
+}
 
+/** Só o desenho da estimativa, sem saber de onde ela veio.
+ *
+ *  Separado porque a mesma conta aparece em dois lugares: na OV, lida do
+ *  banco, e na cotação avulsa, digitada na mão. O que a tela mostra — a
+ *  abertura da conta, o ICMS por dentro, a comparação entre convencional e
+ *  expresso — é idêntico nos dois casos, e precisa continuar idêntico.
+ */
+export function PainelFrete({ data }: { data: Estimativa }) {
   if (!data.encontrado) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">

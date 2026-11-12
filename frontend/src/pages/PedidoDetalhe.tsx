@@ -20,6 +20,7 @@ import { LocalEntregaInput } from '../components/LocalEntregaInput'
 import { LocalEntregaExportacao } from '../components/LocalEntregaExportacao'
 import { AgendamentoDaEntrega } from '../components/MensagemTransportadora'
 import { FreteEstimado } from '../components/FreteEstimado'
+import { TipoCaixaAutocomplete } from '../components/TipoCaixaAutocomplete'
 import { ModalTextoCliente } from '../components/ModalTextoCliente'
 import { ModalCotacaoCIF } from '../components/ModalCotacaoCIF'
 import { AnexosDaOV } from '../components/AnexosOV'
@@ -610,52 +611,6 @@ function ModalVerificacao({ pedido, onClose }: { pedido: Pedido; onClose: () => 
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-// ── Autocomplete de Tipo de Caixa ─────────────────────────────────────────────
-function TipoCaixaAutocomplete({ value, onSelect }: {
-  value: string
-  onSelect: (id: string, codigo: string, descricao: string) => void
-}) {
-  const [busca, setBusca] = useState(value)
-  const [aberto, setAberto] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  const { data: tipos = [] } = useQuery({
-    queryKey: ['tipos-caixa', busca],
-    queryFn: () => api.get('/tipos-caixa', { params: busca ? { search: busca } : {} }).then(r => r.data),
-  })
-
-  useEffect(() => {
-    function click(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setAberto(false)
-    }
-    document.addEventListener('mousedown', click)
-    return () => document.removeEventListener('mousedown', click)
-  }, [])
-
-  return (
-    <div ref={ref} className="relative">
-      <input type="text" value={busca}
-        onChange={e => { setBusca(e.target.value); setAberto(true) }}
-        onFocus={() => setAberto(true)}
-        placeholder="Digite ou role para escolher..."
-        className="w-full border rounded-lg px-3 py-2 text-sm"
-      />
-      {aberto && (
-        <div className="absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-xl mt-1 max-h-48 overflow-y-auto">
-          {(tipos as any[]).length === 0 && <p className="px-3 py-2 text-xs text-gray-400">Nenhum tipo encontrado</p>}
-          {(tipos as any[]).map((t: any) => (
-            <button key={t.id} onClick={() => { setBusca(t.codigo); setAberto(false); onSelect(t.id, t.codigo, t.descricao || '') }}
-              className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-gray-50 last:border-0">
-              <p className="text-sm font-medium text-gray-800">{t.codigo}</p>
-              <p className="text-xs text-gray-400">{t.descricao}</p>
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
