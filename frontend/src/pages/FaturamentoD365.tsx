@@ -116,6 +116,18 @@ export default function FaturamentoD365() {
       if (r.avisos?.length) {
         toast.error(r.avisos.join(' '), { duration: 14000 })
       }
+      // A importação mexe na data de faturamento da OV quando ela discorda da
+      // nota. Mexer calado seria pior que não mexer: quem importou precisa
+      // poder conferir — e discordar, se for o caso.
+      if (r.datas_corrigidas?.length) {
+        const q = r.datas_corrigidas.length
+        const quais = r.datas_corrigidas.slice(0, 4)
+          .map((d: any) => `${d.ov} ${dataBR(d.de)} → ${dataBR(d.para)}`).join(', ')
+        toast(
+          `${q} OV${q > 1 ? 's tiveram' : ' teve'} a data de faturamento acertada pela `
+          + `nota fiscal: ${quais}${q > 4 ? ` e mais ${q - 4}` : ''}.`,
+          { duration: 12000, icon: '📅' })
+      }
       if (r.operacoes_sem_classificacao?.length) {
         toast(`${r.operacoes_sem_classificacao.length} operação(ões) do D365 que eu não sei `
           + 'classificar — me diga o que são e eu ensino o app.', { duration: 11000, icon: '⚠️' })

@@ -27,7 +27,7 @@ Tipo de empresa · Chave de acesso · Descrição da operação.
 import io
 import time
 import unicodedata
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
@@ -515,6 +515,88 @@ def _pagina(db, tabela: str, cols: str) -> list:
     return out
 
 
+def _dia_brt(ts) -> Optional[str]:
+    """O dia de um timestamp do banco, em horário de Brasília.
+
+    O banco grava UTC. Uma OV registrada às 22h de Brasília está gravada como
+    01h do dia seguinte, e comparar o texto cru acusaria divergência onde não
+    há — por isso a conversão vem antes de qualquer comparação de data.
+    """
+    if not ts:
+        return None
+    try:
+        d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return (d.astimezone(timezone.utc) - timedelta(hours=3)).date().isoformat()
+
+
+def _puxar_faturamento_para_a_nota(db, linhas: list) -> list:
+    """Acerta a data de faturamento da OV pela data da nota fiscal.
+
+    A nota é o fato; a data que estava na OV é a hora em que a operadora mexeu
+    no app. Toda vez que o faturamento sai no fim do dia e só é informado na
+    manhã seguinte, a OV nasce com um dia a mais — e esse dia muda o placar do
+    dia, a previsão e, quando cai na virada, o mês.
+
+    Foi o Tássio quem pediu, em 12/11/2026, depois de um faturamento de
+    11/11 informado em 12/11: "corrija tudo com base nas notas fiscais que eu
+    importo". Então a correção mora aqui, na importação, e não numa limpeza
+    manual que alguém precisa lembrar de rodar.
+
+    Três cuidados:
+
+    - só nota de SAÍDA APROVADA entra. Devolução tem data própria e cancelada
+      não é faturamento;
+    - a OV com mais de uma nota vale pela MAIS ANTIGA: o faturamento começou
+      ali, e as remessas seguintes não devem empurrar a data para a frente;
+    - o deslocamento é em DIAS INTEIROS, preservando a hora gravada. A hora
+      real do faturamento ninguém sabe — o D365 exporta só a data —, e manter
+      a hora preserva a ordem dos registros do dia em vez de inventar um
+      horário igual para todos.
+
+    OV sem data de faturamento não é tocada: ela não foi marcada como faturada
+    no app, e preencher a data aqui mudaria o estado dela por tabela.
+    """
+    alvo: dict = {}
+    for l in linhas:
+        pid = l.get("pedido_id")
+        if not pid or not _vale_como_faturamento(l):
+            continue
+        dia = data_competencia(l)
+        if dia and (pid not in alvo or dia < alvo[pid]):
+            alvo[pid] = dia
+    if not alvo:
+        return []
+
+    ids = sorted(alvo)
+    atuais = []
+    for i in range(0, len(ids), 40):
+        atuais += db.table("pedidos").select(
+            "id, numero_pedido, numero_nf, data_faturamento"
+        ).in_("id", ids[i:i + 40]).execute().data
+
+    corrigidas = []
+    for p in atuais:
+        gravado = _dia_brt(p.get("data_faturamento"))
+        da_nota = alvo.get(p["id"])
+        if not gravado or not da_nota or gravado == da_nota:
+            continue
+        try:
+            dias = (date.fromisoformat(gravado) - date.fromisoformat(da_nota)).days
+            velho = datetime.fromisoformat(
+                str(p["data_faturamento"]).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        novo = (velho - timedelta(days=dias)).isoformat()
+        db.table("pedidos").update({"data_faturamento": novo}).eq("id", p["id"]).execute()
+        corrigidas.append({"ov": p.get("numero_pedido"), "nf": p.get("numero_nf"),
+                           "de": gravado, "para": da_nota, "dias": dias})
+    return corrigidas
+
+
 def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     """Lê o export e grava o espelho. Reimportar o mesmo período não duplica.
 
@@ -691,6 +773,8 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     for i in range(0, len(obsoletas), 40):
         db.table("notas_d365").delete().in_("identidade", obsoletas[i:i + 40]).execute()
 
+    corrigidas_datas = _puxar_faturamento_para_a_nota(db, linhas)
+
     datas = [l["data_documento"] for l in linhas if l["data_documento"]]
     # O export traz as canceladas, e ainda bem: é assim que uma nota que morreu
     # depois de importada some do faturamento sem ninguém avisar o app. Elas
@@ -715,6 +799,7 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
                                     and eh_transfer_price(l.get("cliente_nome"))), 2),
         "com_ov": sum(1 for l in linhas if l["pedido_id"]),
         "sem_ov": sum(1 for l in linhas if not l["pedido_id"]),
+        "datas_corrigidas": corrigidas_datas,
         "operacoes_sem_classificacao": [
             {"operacao": k, "qtd": v} for k, v in sorted(
                 sem_classificacao.items(), key=lambda x: -x[1])],
