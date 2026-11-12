@@ -355,14 +355,27 @@ export function PainelComercial() {
   // Reclassifica uma OV de licitação legado (sem base Uro/Vascular) direto no
   // drill-down — some da lista assim que reclassificada (canal deixa de bater
   // com o filtro 'LICITACAO' puro).
+  /** Reclassifica a venda — e o caminho depende de onde ela nasceu.
+   *
+   *  A mesma lista mistura duas coisas: a OV do app, onde a classificação é o
+   *  CANAL do pedido, e a nota emitida direto no D365, que não tem OV e onde o
+   *  que existe é a LINHA da nota. O id do D365 vem prefixado com `d365:`
+   *  justamente para a tela saber distinguir — mandar esse id para /pedidos
+   *  devolvia "Input should be a valid UUID", porque o prefixo nunca foi UUID.
+   */
+  const ehNotaD365 = (id: string) => id.startsWith('d365:')
+
   const reclassificarCanal = useMutation({
     mutationFn: ({ id, canal }: { id: string; canal: string }) =>
-      api.patch(`/pedidos/${id}/canal-licitacao`, { canal }),
-    onSuccess: () => {
-      toast.success('OV reclassificada')
+      ehNotaD365(id)
+        ? api.patch(`/notas-d365/${id.slice(5)}/linha`, { linha: canal })
+        : api.patch(`/pedidos/${id}/canal-licitacao`, { canal }),
+    onSuccess: (_r, v) => {
+      toast.success(ehNotaD365(v.id) ? 'Nota reclassificada' : 'OV reclassificada')
       qc.invalidateQueries({ queryKey: ['financeiro-detalhe'] })
       qc.invalidateQueries({ queryKey: ['financeiro'] })
       qc.invalidateQueries({ queryKey: ['vendas-por-canal'] })
+      qc.invalidateQueries({ queryKey: ['notas-d365'] })
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Erro ao reclassificar'),
   })
@@ -1322,7 +1335,12 @@ export function PainelComercial() {
                           {podeReclassificar && (
                             <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                               <select
-                                defaultValue=""
+                                /* Controlado em "", nunca defaultValue: o select
+                                   guardava a escolha mesmo quando o PATCH falhava,
+                                   e a tela passava a mostrar uma linha que o banco
+                                   não tinha. Em "", a escolha só aparece depois de
+                                   salva — e aí a nota sai desta lista. */
+                                value=""
                                 disabled={reclassificarCanal.isPending}
                                 onChange={(e) => {
                                   const canal = e.target.value
@@ -1330,8 +1348,16 @@ export function PainelComercial() {
                                 }}
                                 className="text-xs border border-gray-300 rounded-lg px-2 py-1 disabled:opacity-50"
                               >
-                                <option value="" disabled>Definir canal…</option>
-                                {opcoesCanal.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                <option value="" disabled>
+                                  {r.origem === 'D365' ? 'Definir linha…' : 'Definir canal…'}
+                                </option>
+                                {/* A nota do D365 só aceita a LINHA (Uro, Vascular,
+                                    RealClosure): licitação nela é origem da venda,
+                                    não canal, e o backend recusaria LICITACAO_*. */}
+                                {(r.origem === 'D365'
+                                  ? opcoesCanal.filter(o => !o.value.startsWith('LICITACAO_'))
+                                  : opcoesCanal
+                                ).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                               </select>
                             </td>
                           )}
