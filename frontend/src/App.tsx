@@ -20,6 +20,7 @@ import Rastreio from './pages/Rastreio'
 import TrocarSenha from './pages/TrocarSenha'
 import ConferenciaFrete from './pages/ConferenciaFrete'
 import CotacaoFrete from './pages/CotacaoFrete'
+import CargasPortal from './pages/CargasPortal'
 import { Inicio } from './pages/Inicio'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
@@ -122,6 +123,9 @@ export default function App() {
             {/* A cotacao nao depende de OV: e a porta do calculo de frete para
                 quando a carga nao nasce no app. */}
             <Route path="cotacao-frete" element={<CotacaoFrete />} />
+            {/* Espelho das cargas do Portal: o que mantem a conferencia
+                de fatura viva quando o Kanban sair do app. */}
+            <Route path="cargas-portal" element={<CargasPortal />} />
             <Route path="faturamento-d365" element={<FaturamentoD365 />} />
           </Route>
 
