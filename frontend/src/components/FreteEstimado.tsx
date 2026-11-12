@@ -18,6 +18,7 @@ type Estimativa = {
   peso_cobrado_kg?: number; usou_peso_minimo?: boolean; fator_cubagem?: number
   tarifa_kg?: number; frete_peso?: number; ad_valorem?: number; ad_valorem_pct?: number
   gris?: number; gris_pct?: number; total?: number
+  servicos?: number; icms?: number; icms_pct?: number
   taxa_coleta?: number; taxa_entrega?: number; tipo_entrega?: string
   prazo_capital?: number; prazo_redespacho?: number; premissa_cubagem?: string
   avisos?: string[]
@@ -159,11 +160,22 @@ export function FreteEstimado({ pedidoId, versao }: {
           <p className="font-semibold text-gray-800">{brl(data.ad_valorem)}</p>
           <p className="text-gray-400">{data.ad_valorem_pct}% da NF</p>
         </div>
-        <div className="rounded-lg bg-gray-50 px-2 py-1.5">
-          <p className="text-gray-500">GRIS</p>
-          <p className="font-semibold text-gray-800">{brl(data.gris)}</p>
-          <p className="text-gray-400">{data.gris_pct}% da NF</p>
-        </div>
+        {/* GRIS só aparece quando existe: a tabela da BRIX está com ele
+            zerado, e um quadro de R$ 0,00 só ocupa espaço. */}
+        {!!data.gris && (
+          <div className="rounded-lg bg-gray-50 px-2 py-1.5">
+            <p className="text-gray-500">GRIS</p>
+            <p className="font-semibold text-gray-800">{brl(data.gris)}</p>
+            <p className="text-gray-400">{data.gris_pct}% da NF</p>
+          </div>
+        )}
+        {!!data.icms && (
+          <div className="rounded-lg bg-gray-50 px-2 py-1.5">
+            <p className="text-gray-500">ICMS</p>
+            <p className="font-semibold text-gray-800">{brl(data.icms)}</p>
+            <p className="text-gray-400">{data.icms_pct}% por dentro</p>
+          </div>
+        )}
       </div>
 
       {data.usou_peso_minimo && (

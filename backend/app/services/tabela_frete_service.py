@@ -9,17 +9,32 @@ mesma para todo destino:
     coleta       = R$ 22,00 até 10 kg + R$ 0,49 por kg acima
     entrega      = R$ 49,50 (capital), R$ 71,50 (grande capital) ou R$ 165,00
                    (interior/redespacho; R$ 209,00 no Norte), + excedente por kg
-    ad valorem   = 0,333% do valor da NF
-    GRIS         = 0,05% do valor da NF (0,02% em São Paulo)
+    ad valorem   = 0,33% do valor da NF
+    GRIS         = zerado (ver abaixo)
+    ICMS         = 12%, POR DENTRO: total = soma dos serviços ÷ 0,88
 
 O "peso mínimo" da tabela é a tarifa mínima dividida pela tarifa por kg — por
 isso a fórmula acima já devolve R$ 110,88 em qualquer carga leve, sem precisar
 de um caso especial.
 
-O que esta conta NÃO cobre, e por isso o resultado é ESTIMATIVA: pedágio, ICMS,
-hora parada, taxa de emergência, veículo dedicado (R$ 2,20/km) e qualquer acordo
-fora da tabela. Cubagem fora do
-padrão continua sendo cotada com eles antes do faturamento.
+O ICMS, o ad valorem de 0,33% e o GRIS zerado vieram do CT-e 35240 (09/11/2026,
+Vitória/ES), que traz os componentes abertos: 110,88 + 22,00 + 49,50 + 23,66 =
+206,04, cobrado 234,14 — exatamente 206,04 ÷ 0,88. Até 10/11/2026 esta conta
+parava na soma dos serviços e a estimativa saía ~13% abaixo do cobrado nas
+cargas leves; na fatura de 16 a 30/10 isso aparecia como uma sobra de R$ 4,83 a
+R$ 7,72 por CT-e, que ninguém conseguia explicar porque o ICMS que faltava era
+quase compensado pelo piso de frete-peso, que à época ainda era R$ 94,30.
+Com a fórmula corrigida, 19 dos 57 CT-e daquela fatura batem na casa dos
+centavos — são as cargas leves para capital. As outras têm peso acima do mínimo
+ou destino de interior.
+
+Os 12% são a alíquota interestadual. Carga que fica dentro da Bahia deve sair a
+18% e ainda não foi medida contra um CT-e.
+
+O que esta conta NÃO cobre, e por isso o resultado continua sendo ESTIMATIVA:
+pedágio, hora parada, taxa de emergência, veículo dedicado (R$ 2,20/km), o
+trecho final de redespacho do interior e qualquer acordo fora da tabela.
+Cubagem fora do padrão continua sendo cotada com eles antes do faturamento.
 """
 import json
 import math
@@ -216,10 +231,24 @@ def estimar(uf: Optional[str], cidade: Optional[str] = None,
     taxa_coleta = _taxa_por_faixa(t.get("taxa_coleta"), peso_taxado)
     taxa_entrega = _taxa_por_faixa((t.get("taxas_entrega") or {}).get(tipo_entrega), peso_taxado)
 
-    ad_valorem = float(valor_nf or 0) * float(t.get("ad_valorem_pct") or 0) / 100
+    # Arredondado AQUI, antes de somar: o CT-e lista cada componente em
+    # centavos e soma os valores já arredondados. Somar os centésimos e
+    # arredondar no fim dá um centavo de diferença no total — foi o que
+    # separava 234,13 de 234,14 no CT-e 35240.
+    ad_valorem = round(float(valor_nf or 0) * float(t.get("ad_valorem_pct") or 0) / 100, 2)
     gris_pct = float(destino.get("gris_pct", t.get("gris_pct_padrao") or 0))
-    gris = float(valor_nf or 0) * gris_pct / 100
-    total = frete_peso + taxa_coleta + taxa_entrega + ad_valorem + gris
+    gris = round(float(valor_nf or 0) * gris_pct / 100, 2)
+    servicos = round(frete_peso + taxa_coleta + taxa_entrega + ad_valorem + gris, 2)
+
+    # ICMS POR DENTRO. A BRIX soma os componentes e divide por (1 - aliquota):
+    # o imposto incide sobre o total já com ele dentro, e não sobre a soma dos
+    # serviços. Somar 12% por fora daria R$ 230,76 onde o CT-e cobra R$ 234,14.
+    #
+    # Isto ficou de fora até 10/11/2026 e era o maior erro da estimativa:
+    # nas cargas leves o frete previsto saía ~13% abaixo do cobrado.
+    icms_pct = float(t.get("icms_pct") or 0)
+    total = servicos / (1 - icms_pct / 100) if icms_pct < 100 else servicos
+    icms = total - servicos
 
     avisos = []
     if como == "capital_da_uf":
@@ -257,6 +286,9 @@ def estimar(uf: Optional[str], cidade: Optional[str] = None,
         "ad_valorem_pct": float(t.get("ad_valorem_pct") or 0),
         "gris": round(gris, 2),
         "gris_pct": gris_pct,
+        "servicos": round(servicos, 2),
+        "icms": round(icms, 2),
+        "icms_pct": icms_pct,
         "total": round(total, 2),
         "prazo_capital": destino.get("prazo_capital"),
         "prazo_redespacho": destino.get("prazo_redespacho"),
@@ -340,8 +372,19 @@ def estimar_proximo_voo(uf: Optional[str], cidade: Optional[str] = None,
     tipo_entrega = "CAPITAL" if como == "cidade" else "GRANDE_CAPITAL"
     taxa_coleta = _taxa_por_faixa(t.get("taxa_coleta"), peso_taxado)
     taxa_entrega = _taxa_por_faixa((t.get("taxas_entrega") or {}).get(tipo_entrega), peso_taxado)
-    ad_valorem = float(valor_nf or 0) * float(t.get("ad_valorem_pct") or 0) / 100
-    total = frete_peso + taxa_coleta + taxa_entrega + ad_valorem
+    ad_valorem = round(float(valor_nf or 0) * float(t.get("ad_valorem_pct") or 0) / 100, 2)
+    servicos = round(frete_peso + taxa_coleta + taxa_entrega + ad_valorem, 2)
+
+    # O ICMS entra aqui pelo mesmo motivo que entra no convencional: é imposto
+    # sobre o serviço de transporte, não sobre a modalidade. Sem ele, o
+    # expresso apareceria ~13% mais barato do que é só porque o convencional
+    # passou a calcular certo — e a tela compara os dois lado a lado.
+    #
+    # A alíquota vem da tabela convencional, onde um CT-e a confirmou. Para o
+    # Proximo Voo ainda não vimos nenhum CT-e: por isso o aviso abaixo.
+    icms_pct = float(t.get("icms_pct") or tabela().get("icms_pct") or 0)
+    total = servicos / (1 - icms_pct / 100) if icms_pct < 100 else servicos
+    icms = round(total - servicos, 2)
 
     avisos = []
     if peso_cobrado > teto:
@@ -362,6 +405,12 @@ def estimar_proximo_voo(uf: Optional[str], cidade: Optional[str] = None,
                       "(acima de R$ 200 mil, escolta e carro dedicado).")
     if not float(t.get("gris_pct_padrao") or 0):
         avisos.append("A tabela expressa nao menciona GRIS — confirmar com a BRIX antes de fechar preco.")
+    if icms_pct and not t.get("icms_pct"):
+        avisos.append(
+            "O ICMS de %.0f%% usado aqui veio da tabela convencional, onde um CT-e "
+            "confirmou a aliquota. Nenhum CT-e de Proximo Voo foi conferido ainda: "
+            "o imposto desta estimativa e suposicao fundamentada, nao medicao."
+            % icms_pct)
 
     return {
         "encontrado": True,
@@ -384,6 +433,9 @@ def estimar_proximo_voo(uf: Optional[str], cidade: Optional[str] = None,
         "ad_valorem_pct": float(t.get("ad_valorem_pct") or 0),
         "gris": 0.0,
         "gris_pct": 0.0,
+        "servicos": servicos,
+        "icms": icms,
+        "icms_pct": icms_pct,
         "total": round(total, 2),
         "prazo": destino.get("prazo"),
         # A tela le prazo_capital; o expresso tem um prazo so.

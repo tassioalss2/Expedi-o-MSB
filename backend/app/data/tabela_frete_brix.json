@@ -6,8 +6,12 @@
  "emitida_em": "2026-10-20",
  "contato": "Lucimara Bispo — Executiva de Contas",
  "tarifa_minima": 110.88,
- "ad_valorem_pct": 0.333,
- "gris_pct_padrao": 0.05,
+ "ad_valorem_pct": 0.33,
+ "gris_pct_padrao": 0.0,
+ "icms_pct": 12.0,
+ "observacao_icms": "O CT-e 35240 (09/11/2026, Vitoria/ES) abriu a conta: FRETE PESO 110,88 + TX. COLETA 22,00 + TX. ENTREGA 49,50 + AD VALOREM 23,66 = 206,04, e o vTPrest cobrado foi 234,14 — que e 206,04 dividido por 0,88, com ICMS de 12% (R$ 28,10) embutido. A BRIX soma os componentes e poe o imposto POR DENTRO. Testado contra a fatura de 16 a 30/10: a formula acerta 19 dos 57 CT-e na casa dos centavos (as cargas leves para capital; as outras tem peso acima do minimo ou destino de interior, que a tabela nao cobre). 12% e a aliquota interestadual: carga dentro da Bahia deve sair a 18% e ainda nao foi medida.",
+ "observacao_ad_valorem": "0,33% e o que o CT-e 35240 cobra: R$ 23,66 sobre carga de R$ 7.169,20. A tabela impressa traz 0,333%, que sobrestimava alguns centavos por carga.",
+ "observacao_gris_zerado": "Zerado em 10/11/2026: o CT-e 35240 nao tem linha de GRIS, e a formula sem GRIS reproduz na virgula as cobrancas de outubro — inclusive as de Sao Paulo, que era o destino com percentual proprio (0,02%). Confirmar com a Lucimara se e isencao permanente ou cortesia da tabela atual.",
  "fator_cubagem_kg_m3": 166.67,
  "observacao_fator": "A formula de cubagem aparece cortada na tabela ('comprimento x largura x altura ('). 166,67 kg/m3 e o divisor aereo 6.000 cm3/kg, coerente com a tabela se reajustar pelas cias aereas; confere com as duas cargas pesadas ja faturadas (OV017118 e OV017054, erro de 1,6% e 2,1%), enquanto 300 kg/m3 errava mais de 60%. Confirmar com a BRIX.",
  "taxa_coleta": {
@@ -88,7 +92,7 @@
  "observacao_taxas": "Taxa de coleta e taxa de entrega sao da 2a parte da tabela (TAXA DE COLETA / TAXAS DE ENTREGA) e entram em todo envio. Cidade fora da tabela entra como interior/redespacho; se a BRIX tratar o destino como grande capital, a taxa de entrega cai de R$ 165,00 para R$ 71,50.",
  "grande_capital": {},
  "observacao_grande_capital": "Cidades que a BRIX cobra como GRANDE CAPITAL (R$ 71,50 em vez de R$ 165,00 de interior). A tabela nao lista quais sao: preencher por UF conforme a transportadora confirmar, ex. \"SP\": [\"BARUERI\", \"OSASCO\"].",
- "nao_incluido": "ICMS (cobrado conforme a legislacao), pedagio, hora parada, taxa de emergencia, veiculo dedicado e trecho de redespacho de interior.",
+ "nao_incluido": "Pedagio, hora parada, taxa de emergencia, veiculo dedicado e trecho de redespacho de interior. O ICMS saiu desta lista em 10/11/2026: ele passou a entrar na conta (ver observacao_icms).",
  "destinos": [
   {
    "cidade": "ARACAJU",
@@ -321,7 +325,7 @@
    "tarifa_kg": 2.54,
    "prazo_capital": 3,
    "prazo_redespacho": 7,
-   "gris_pct": 0.02
+   "gris_pct": 0.0
   },
   {
    "cidade": "TERESINA",

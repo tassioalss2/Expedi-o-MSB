@@ -1708,7 +1708,12 @@ function ModalCotacaoFrete({ pedido, onClose }: { pedido: Pedido; onClose: () =>
                   {estimativa.usou_peso_minimo ? ' (peso mínimo)' : ''}
                   {' · '}frete-peso R$ {Number(estimativa.frete_peso).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   {' + '}ad valorem R$ {Number(estimativa.ad_valorem).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  {' + '}GRIS R$ {Number(estimativa.gris).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  {Number(estimativa.gris) > 0 && <>
+                    {' + '}GRIS R$ {Number(estimativa.gris).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </>}
+                  {Number(estimativa.icms) > 0 && <>
+                    {' + '}ICMS R$ {Number(estimativa.icms).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </>}
                 </p>
                 {Number(valorFrete) > 0
                   && Math.abs(Number(valorFrete) - Number(estimativa.total)) > 0.01 && (
