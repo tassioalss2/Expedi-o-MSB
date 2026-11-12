@@ -48,6 +48,13 @@ const SITUACAO: Record<string, { rotulo: string; cor: string; ajuda: string }> =
     rotulo: 'NF não está no app', cor: 'bg-amber-100 text-amber-900 border-amber-200',
     ajuda: 'o CT-e cobra uma nota que não existe no sistema — confira se é venda nossa',
   },
+  SO_NO_PORTAL: {
+    rotulo: 'carga do Portal', cor: 'bg-indigo-100 text-indigo-900 border-indigo-200',
+    ajuda: 'a carga é nossa (está no espelho do Portal), mas a OV não nasceu no app, '
+      + 'então não há frete previsto para comparar. O valor ao lado é ESTIMATIVA pela '
+      + 'tabela contratada, sem cubagem — carga volumosa custa mais que isso, e por '
+      + 'isso a diferença aqui não é acusação',
+  },
   FRETE_DE_ENTRADA: {
     rotulo: 'entrada / devolução', cor: 'bg-violet-100 text-violet-900 border-violet-200',
     ajuda: 'a MSB é o destinatário: alguém mandou material PARA nós. A nota é do '
@@ -278,6 +285,11 @@ export default function ConferenciaFrete() {
             <Achado titulo="Entrada / devolução" n={contagem('FRETE_DE_ENTRADA')}
               sub={fmtBRL(a.valor_frete_de_entrada)}
               ativo={filtro === 'FRETE_DE_ENTRADA'} onClick={() => alterna('FRETE_DE_ENTRADA')} />
+            {/* Carga nossa que o app não conhece porque a OV nasceu no Portal.
+                Não é "grave": é a migração em curso aparecendo na fatura. */}
+            <Achado titulo="Carga do Portal" n={contagem('SO_NO_PORTAL')}
+              sub={fmtBRL(a.valor_so_no_portal)}
+              ativo={filtro === 'SO_NO_PORTAL'} onClick={() => alterna('SO_NO_PORTAL')} />
             <Achado titulo="Valor diferente do previsto" n={contagem('VALOR_DIFERENTE')}
               sub={`${Number(a.soma_das_diferencas) >= 0 ? '+' : ''}${fmtBRL(a.soma_das_diferencas)}`}
               ativo={filtro === 'VALOR_DIFERENTE'} onClick={() => setFiltro(f => f === 'VALOR_DIFERENTE' ? '' : 'VALOR_DIFERENTE')} />
@@ -372,6 +384,31 @@ export default function ConferenciaFrete() {
             </div>
           )}
 
+          {/* 5b · o mesmo, para as cargas que só existem no espelho do Portal */}
+          {a.sem_cte_portal?.length > 0 && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-indigo-900">
+                <AlertTriangle className="h-4 w-4" />
+                {a.sem_cte_portal.length} carga(s) do Portal com frete nosso e sem CT-e aqui
+              </p>
+              <p className="mt-0.5 text-xs text-indigo-800">
+                São OVs que não nasceram no app — vieram do espelho do Portal. O espelho
+                não sabe a transportadora (o Dynamics devolve esse campo vazio), então
+                <strong> confira se elas são mesmo desta fatura</strong> antes de cobrar
+                explicação: podem ter ido por outra.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {a.sem_cte_portal.map((s: any) => (
+                  <span key={s.carga}
+                    className="rounded-lg border border-indigo-300 bg-white px-2 py-1 text-xs">
+                    <b className="font-mono">{s.ov || s.carga}</b> · NF {s.nf}
+                    {s.destino ? ` · ${s.destino}` : ''} · {fmtDia(s.data)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* A lista, com o porquê de cada linha */}
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
             <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2.5">
@@ -422,7 +459,17 @@ export default function ConferenciaFrete() {
                           {c.destinatario}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-gray-500">
-                          {c.previsto == null ? '—' : fmtBRL(c.previsto)}
+                          {c.previsto != null ? fmtBRL(c.previsto)
+                            /* Carga do Portal: o app não tem previsto, só a
+                               estimativa da tabela. Vai em itálico e com "~"
+                               para ninguém confundir com um valor cotado — e a
+                               coluna de diferença continua vazia de propósito. */
+                            : c.estimado != null ? (
+                              <span className="italic text-indigo-600"
+                                title="estimativa pela tabela contratada, sem cubagem">
+                                ~{fmtBRL(c.estimado)}
+                              </span>
+                            ) : '—'}
                         </td>
                         <td className="px-3 py-2 text-right font-medium tabular-nums">
                           {fmtBRL(c.valor)}

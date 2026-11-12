@@ -299,10 +299,33 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
         for n in _numeros_de_nf(p.get("numero_nf")):
             por_nf.setdefault(n, p)
 
+    # ── o espelho das cargas do Portal ──────────────────────────────────────
+    # As OVs pararam de nascer no app: em 12/11/2026, 17 das 42 do Portal não
+    # existiam aqui, e esse número vai a 100% quando o Kanban terminar de sair.
+    # Sem olhar o espelho, a conferência chamaria todas essas cargas de "NF não
+    # está no app" — acusando de cadastro faltando o que é migração em curso.
+    cargas_portal = []
+    try:
+        for off in range(0, 40000, 1000):
+            b = db.table("cargas_portal").select(
+                "carga_id, numero_ov, numero_nf, cidade, uf, peso_kg, valor_nf, "
+                "tipo_frete, envio_em, expedido_em").limit(1000).offset(off).execute().data
+            cargas_portal += b
+            if len(b) < 1000:
+                break
+    except Exception as exc:                      # espelho é opcional
+        print("espelho de cargas indisponivel: %s" % str(exc)[:140])
+    portal_por_nf: dict = {}
+    for g in cargas_portal:
+        for n in _numeros_de_nf(g.get("numero_nf")):
+            portal_por_nf.setdefault(n, g)
+
     linhas = []
     for c in ctes:
         p = next((por_nf[n] for n in c["notas"] if n in por_nf), None)
         previsto = float(p.get("valor_frete") or 0) if p else None
+        g = (None if p else
+             next((portal_por_nf[n] for n in c["notas"] if n in portal_por_nf), None))
         # A MSB como DESTINATARIO e o remetente sendo outro: frete de
         # ENTRADA — devolucao ou retorno. A nota ai e do remetente, entao ela
         # nunca vai estar em `pedidos`, e chamar isso de "NF desconhecida" faz
@@ -316,14 +339,42 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
             situacao = "NAO_E_NOSSO"
         elif de_entrada:
             situacao = "FRETE_DE_ENTRADA"
+        elif p is None and g is not None:
+            situacao = "SO_NO_PORTAL"
         elif p is None:
             situacao = "NF_DESCONHECIDA"
         elif abs((previsto or 0) - c["valor"]) >= 0.01:
             situacao = "VALOR_DIFERENTE"
         else:
             situacao = "OK"
+
+        extra = {}
+        if situacao == "SO_NO_PORTAL":
+            # A carga é nossa, mas o app não tem frete previsto para ela: o
+            # previsto nascia na cotação, que acontecia no kanban daqui.
+            #
+            # O que dá para oferecer é a ESTIMATIVA pela tabela contratada, e
+            # ela entra como referência — nunca como acusação. O espelho não
+            # traz cubagem, então o peso taxado sai só pelo peso real: carga
+            # volumosa custa mais do que esta conta, e chamar a diferença de
+            # "valor diferente" seria acusar a transportadora com uma conta que
+            # eu sei estar incompleta.
+            est = None
+            try:
+                from app.services import tabela_frete_service
+                r = tabela_frete_service.estimar(
+                    g.get("uf"), g.get("cidade"),
+                    peso_kg=float(g.get("peso_kg") or 0), m3=0,
+                    valor_nf=float(g.get("valor_nf") or 0))
+                est = round(float(r["total"]), 2) if r.get("encontrado") else None
+            except Exception as exc:
+                print("estimativa do espelho falhou: %s" % str(exc)[:140])
+            extra = {"carga": g.get("carga_id"), "estimado": est,
+                     "sem_cubagem": True, "peso_kg": g.get("peso_kg")}
+
         linhas.append({**c, "situacao": situacao, "previsto": previsto,
-                       "ov": p.get("numero_pedido") if p else None})
+                       "ov": (p.get("numero_pedido") if p
+                              else (g.get("numero_ov") if g else None)), **extra})
 
     # ── a cotação do WhatsApp ────────────────────────────────────────────────
     # Cruza por VALOR: o número cobrado aparece entre os que a transportadora
@@ -381,6 +432,30 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
             sem_cte.append({"ov": p.get("numero_pedido"), "nf": p.get("numero_nf"),
                             "previsto": float(p.get("valor_frete") or 0)})
 
+    # O mesmo teste 5 para as cargas que só existem no espelho. Vai numa lista
+    # separada por um motivo concreto: o espelho não sabe a transportadora (o
+    # D365 devolve esse campo vazio nas 46 cargas de 12/11/2026), então não dá
+    # para filtrar por quem emitiu a fatura. Misturar com a lista de cima
+    # traria carga de outra transportadora para dentro desta conferência — o
+    # ruído que o filtro de transportadora existe para evitar.
+    sem_cte_portal = []
+    if de and ate:
+        ja_listadas = {n for s in sem_cte for n in _numeros_de_nf(s.get("nf"))}
+        for g in cargas_portal:
+            if (g.get("tipo_frete") or "") != "CIF_SEM_VALOR":
+                continue
+            dia = str(g.get("expedido_em") or g.get("envio_em") or "")[:10]
+            if not dia or not (de <= dia <= ate):
+                continue
+            nums = _numeros_de_nf(g.get("numero_nf"))
+            if not nums or any(n in cobradas or n in ja_listadas for n in nums):
+                continue
+            sem_cte_portal.append({
+                "ov": g.get("numero_ov"), "nf": g.get("numero_nf"),
+                "carga": g.get("carga_id"), "data": dia,
+                "destino": ("%s/%s" % (g.get("cidade"), g.get("uf"))
+                            if g.get("cidade") else None)})
+
     def _soma(sit):
         return round(sum(l["valor"] for l in linhas if l["situacao"] == sit), 2)
 
@@ -395,6 +470,10 @@ def conferir(conteudo: bytes, arquivo: str, transportadora: Optional[str] = None
             for l in linhas if l["situacao"] == "VALOR_DIFERENTE"), 2),
         "nf_desconhecida": len([l for l in linhas if l["situacao"] == "NF_DESCONHECIDA"]),
         "valor_nf_desconhecida": _soma("NF_DESCONHECIDA"),
+        # Carga nossa, vista pelo espelho do Portal, sem previsto no app.
+        "so_no_portal": len([l for l in linhas if l["situacao"] == "SO_NO_PORTAL"]),
+        "valor_so_no_portal": _soma("SO_NO_PORTAL"),
+        "sem_cte_portal": sem_cte_portal,
         "frete_de_entrada": len([l for l in linhas if l["situacao"] == "FRETE_DE_ENTRADA"]),
         "valor_frete_de_entrada": _soma("FRETE_DE_ENTRADA"),
         "sem_cte": sem_cte,
