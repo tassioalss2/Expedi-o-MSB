@@ -15,6 +15,12 @@ Duas regras que valem para sempre:
    linha "TOTAL DO FILTRO" com a soma do período. Ela é descartada da carga e
    usada para conferir: se a soma das linhas não bater com ela, o arquivo veio
    truncado e a importação avisa em vez de gravar um mês pela metade.
+
+Importar também CLASSIFICA. A nota do espelho fiscal sabe o valor e não sabe o
+que tinha dentro; esta base sabe, e a família responde a linha comercial. Então
+a importação chama `notas_d365_service.importar_base_itens` com o mesmo arquivo
+e preenche a linha das notas que estavam sem — nota já classificada não é
+tocada, e correção feita à mão continua valendo.
 """
 import io
 from datetime import date, datetime, timezone
@@ -236,6 +242,20 @@ def _rodar(conteudo: bytes, arquivo: str, gravar: bool, usuario) -> dict:
                 linhas[i:i + 300],
                 on_conflict="numero_fatura,seq_item").execute()
 
+    # A mesma planilha que traz o item também responde a LINHA da nota: quem
+    # sobe a base não deveria ter de subir de novo noutra tela para classificar
+    # o que acabou de entrar. Importado dentro da função por ser mão dupla —
+    # o espelho fiscal não deve depender desta base para carregar.
+    classificacao = None
+    if gravar:
+        try:
+            from app.services import notas_d365_service
+            classificacao = notas_d365_service.importar_base_itens(conteudo, arquivo)
+        except Exception as exc:                      # noqa: BLE001
+            # Classificar é ganho, não condição: a base item a item já está
+            # gravada e falhar aqui não pode desfazer nem esconder isso.
+            classificacao = {"erro": str(exc)[:200], "atualizadas": 0}
+
     devol = [l for l in linhas if (l["valor"] or 0) < 0]
     competencias = sorted({l["competencia"] for l in linhas if l["competencia"]})
     return {
@@ -248,6 +268,7 @@ def _rodar(conteudo: bytes, arquivo: str, gravar: bool, usuario) -> dict:
         "de": min((l["data_faturamento"] for l in linhas if l["data_faturamento"]), default=None),
         "ate": max((l["data_faturamento"] for l in linhas if l["data_faturamento"]), default=None),
         "conferencia": conferencia,
+        "classificacao": classificacao,
         "devolucoes": {"linhas": len(devol),
                        "valor": round(sum(l["valor"] or 0 for l in devol), 2)},
         "produtos_sem_cadastro": sem_cadastro,

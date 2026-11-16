@@ -12,7 +12,7 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  AlertTriangle, BarChart3, Check, FileSpreadsheet, Loader2, Upload, Undo2,
+  AlertTriangle, BarChart3, Check, FileSpreadsheet, Loader2, Tag, Upload, Undo2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../lib/api'
@@ -30,6 +30,15 @@ type Relatorio = {
   produtos_sem_cadastro: string[]
   notas_sem_vertical: string[]
   vendedor_informado: number
+  classificacao?: Classificacao | null
+}
+/** O que a mesma planilha resolveu no espelho fiscal: a linha comercial das
+ *  notas que o D365 não sabe classificar sozinho. */
+type Classificacao = {
+  atualizadas: number; por_numero?: number; por_valor?: number
+  notas_na_planilha?: number; ja_tinham_linha?: number
+  devolucoes_sem_resposta?: { nf: string; cliente: string; valor: number }[]
+  erro?: string
 }
 type Grupo = { chave: string; rotulo?: string; valor: number; qtd: number; notas: number }
 type Resumo = {
@@ -220,6 +229,36 @@ export default function FaturamentoBI() {
               (<span className="font-mono">{relatorio.notas_sem_vertical.slice(0, 5).join(', ')}</span>):
               ficam sem linha até o BI classificar.
             </p>
+          )}
+
+          {/* A classificação do espelho fiscal. Só aparece depois de gravar:
+              na prévia nada foi classificado, e anunciar número aqui seria
+              prometer o que ainda não aconteceu. */}
+          {relatorio.gravou && relatorio.classificacao && (
+            relatorio.classificacao.erro ? (
+              <p className="mt-2 text-[11px] text-amber-800 flex items-start gap-1.5">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                A base entrou, mas não consegui classificar as notas do espelho:{' '}
+                {relatorio.classificacao.erro}
+              </p>
+            ) : (
+              <p className="mt-2 text-[11px] text-emerald-800 flex items-start gap-1.5">
+                <Tag size={13} className="mt-0.5 shrink-0 text-emerald-600" />
+                <span>
+                  <strong>{relatorio.classificacao.atualizadas} nota(s)</strong> do espelho
+                  do D365 ganharam a linha comercial a partir desta base
+                  {!!relatorio.classificacao.por_valor && (
+                    <> ({relatorio.classificacao.por_numero} pelo número da nota,{' '}
+                    {relatorio.classificacao.por_valor} por cliente e valor)</>
+                  )}. Nota que já tinha linha não foi tocada.
+                  {!!relatorio.classificacao.devolucoes_sem_resposta?.length && (
+                    <> {relatorio.classificacao.devolucoes_sem_resposta.length} devolução(ões)
+                    continuam sem resposta — a base não traz nota com esse número nem
+                    um único crédito do mesmo cliente e valor.</>
+                  )}
+                </span>
+              </p>
+            )
           )}
         </div>
       )}
