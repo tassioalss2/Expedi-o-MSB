@@ -1005,6 +1005,30 @@ def dashboard_financeiro(
             "qtd_com_frete": sum(1 for p in lista if p.get("valor_frete")),
         }
 
+    def _liquido(bruto: dict, devolucao: dict) -> dict:
+        return {
+            **bruto,
+            "total_nf": round(bruto["total_nf"] + devolucao["total_nf"], 2),
+            "faturamento_sem_frete": round(
+                bruto["faturamento_sem_frete"] + devolucao["faturamento_sem_frete"], 2),
+        }
+
+    def _espelho_devolucoes() -> list:
+        """A devolução que não passou pelo app, no formato que `_resumo` lê.
+
+        Negativa porque é assim que `_liquido` a consome: ele SOMA o resumo da
+        devolução ao do bruto.
+        """
+        try:
+            notas = notas_d365_service.devolucoes_do_periodo(
+                inicio.isoformat(), fim.isoformat()).get("notas") or []
+        except Exception as exc:                   # espelho é opcional
+            print("devolucoes do D365 indisponiveis: %s" % str(exc)[:140])
+            return []
+        return [{"valor_nf": -float(n.get("valor") or 0),
+                 "valor_produtos": -float(n.get("valor") or 0),
+                 "valor_frete": 0.0, "tipo_frete": None} for n in notas]
+
     def _sem_faturamento(lista: list) -> list:
         # Agrega as operações que NÃO entram no faturamento por natureza.
         LABELS = {
@@ -1024,23 +1048,35 @@ def dashboard_financeiro(
             g["valor_nf"] = round(g["valor_nf"], 2)
         return sorted(agg.values(), key=lambda x: -x["valor_nf"])
 
+    # Nenhuma OV faturada no período. Não é o mesmo que "nada aconteceu": o
+    # D365 pode ter emitido venda e devolução sem passar pelo app — e, desde
+    # que o Kanban migrou, esse é o caso NORMAL, não a exceção.
+    #
+    # Aqui já se respondeu "a devolução do dia é igual à venda do dia": todas
+    # as chaves apontavam para o MESMO dicionário `vazio`, então o complemento
+    # somado às vendas aparecia também como devolução. Cada bloco agora é o seu
+    # próprio dicionário, e a devolução vem de onde sempre veio.
     if not faturados:
-        vazio = _resumo([])
         comp = notas_d365_service.complemento_do_periodo(inicio.isoformat(), fim.isoformat())
+        vendas = _resumo([])
         if comp["qtd"]:
-            vazio = {**vazio, "total_nf": comp["valor"], "total_produtos": comp["valor"],
-                     "faturamento_sem_frete": comp["valor"], "qtd_nfs": comp["qtd"]}
+            vendas = {**vendas, "total_nf": comp["valor"], "total_produtos": comp["valor"],
+                      "faturamento_sem_frete": comp["valor"], "qtd_nfs": comp["qtd"]}
+        devolucoes = _resumo(_espelho_devolucoes())
         return {
             "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
-            **vazio,
+            # Topo é o BRUTO, como no caminho normal: o líquido tem chave própria.
+            **vendas,
             "transfer_price": _resumo([]),
-            "outras_vendas": vazio,
+            "outras_vendas": vendas,
             "complemento_d365": {k: comp[k] for k in ("qtd", "valor", "licitacao")},
-            "devolucoes": vazio,
-            "devolucoes_transfer": vazio,
-            "outras_vendas_liquido": vazio,
-            "transfer_price_liquido": vazio,
-            "faturamento_liquido": vazio,
+            "devolucoes": devolucoes,
+            # Transfer price nasce de OV: sem OV faturada, não há transfer nem
+            # devolução de transfer. Zerado de verdade, não por reaproveitamento.
+            "devolucoes_transfer": _resumo([]),
+            "outras_vendas_liquido": _liquido(vendas, devolucoes),
+            "transfer_price_liquido": _resumo([]),
+            "faturamento_liquido": _liquido(vendas, devolucoes),
             "sem_faturamento": [],
         }
 
@@ -1066,23 +1102,7 @@ def dashboard_financeiro(
     #
     # Entram como negativo porque é assim que `_liquido` as consome: ele SOMA o
     # resumo da devolução ao do bruto.
-    try:
-        espelho_dev = notas_d365_service.devolucoes_do_periodo(
-            inicio.isoformat(), fim.isoformat()).get("notas") or []
-    except Exception as exc:                       # espelho é opcional
-        print("devolucoes do D365 indisponiveis: %s" % str(exc)[:140])
-        espelho_dev = []
-    devolucoes += [{"valor_nf": -float(n.get("valor") or 0),
-                    "valor_produtos": -float(n.get("valor") or 0),
-                    "valor_frete": 0.0, "tipo_frete": None} for n in espelho_dev]
-
-    def _liquido(bruto: dict, devolucao: dict) -> dict:
-        return {
-            **bruto,
-            "total_nf": round(bruto["total_nf"] + devolucao["total_nf"], 2),
-            "faturamento_sem_frete": round(
-                bruto["faturamento_sem_frete"] + devolucao["faturamento_sem_frete"], 2),
-        }
+    devolucoes += _espelho_devolucoes()
 
     resumo_outras = _resumo(outras)
     resumo_devolucoes = _resumo(devolucoes)
