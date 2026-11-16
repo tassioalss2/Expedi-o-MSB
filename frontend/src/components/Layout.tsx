@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Package, ClipboardList, AlertTriangle,
   LogOut, Activity, Layers, Menu, X, BarChart2, ScanLine,
   DollarSign, Home, Users, Inbox, Gavel, Handshake, TrendingUp, Boxes, Sparkles, PackageX, Truck, Undo2, Monitor, FileCheck, MapPin,
-  Calculator, CloudDownload,
+  Calculator, CloudDownload, BarChart3,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { PERFIL_LABELS, type PerfilUsuario } from '../types'
@@ -56,6 +56,7 @@ const navComercial: NavItem[] = [
   // O faturamento conferido contra o D365: com a licitacao indo para a Bio, o
   // numero derivado da nossa operacao deixa de ser o numero real.
   { to: '/faturamento-d365', label: 'Faturamento conferido', icone: FileCheck },
+  { to: '/faturamento-bi', label: 'Faturamento por Item', icone: BarChart3 },
   { to: '/crm',      label: 'CRM',                     icone: Handshake },
   { to: '/inteligencia', label: 'Inteligência',        icone: Sparkles },
   { to: '/estoque',  label: 'Estoque',                 icone: Boxes },

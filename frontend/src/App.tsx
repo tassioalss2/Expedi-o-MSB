@@ -21,6 +21,7 @@ import TrocarSenha from './pages/TrocarSenha'
 import ConferenciaFrete from './pages/ConferenciaFrete'
 import CotacaoFrete from './pages/CotacaoFrete'
 import CargasPortal from './pages/CargasPortal'
+import FaturamentoBI from './pages/FaturamentoBI'
 import { Inicio } from './pages/Inicio'
 import { Pallets } from './pages/Pallets'
 import { RelatorioColeta } from './pages/RelatorioColeta'
@@ -127,6 +128,8 @@ export default function App() {
                 de fatura viva quando o Kanban sair do app. */}
             <Route path="cargas-portal" element={<CargasPortal />} />
             <Route path="faturamento-d365" element={<FaturamentoD365 />} />
+            {/* O faturamento item a item, que o espelho fiscal nao tem. */}
+            <Route path="faturamento-bi" element={<FaturamentoBI />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
