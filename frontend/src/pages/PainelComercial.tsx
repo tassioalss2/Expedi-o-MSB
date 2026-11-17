@@ -1259,6 +1259,17 @@ export function PainelComercial() {
         const somaNf = linhas.reduce((a, r) => a + (r.valor_nf || 0), 0)
         const somaSemFrete = linhas.reduce((a, r) => a + (r.valor_sem_frete || 0), 0)
         const somaFrete = linhas.reduce((a, r) => a + (r.valor_frete || 0), 0)
+        // Venda e devolução na mesma lista: o total é líquido, e "17 NF" sozinho
+        // não diz que 3 delas puxam para baixo.
+        //
+        // Pela marca que o backend já manda, não pelo sinal: a devolução vinda
+        // do espelho fiscal chega negativa, mas a que nasce de OV depende de
+        // como a NF foi lançada. Confiar só no sinal classificaria uma dessas
+        // como venda, e aí as duas sublinhas somariam certo pelo motivo errado.
+        const ehDev = (r: any) => !!r.eh_devolucao || (r.valor_nf || 0) < 0
+        const devolucoes = ehFrete ? [] : linhas.filter(ehDev)
+        const vendas = ehFrete ? linhas : linhas.filter(r => !ehDev(r))
+        const soma = (ls: any[], campo: string) => ls.reduce((a, r) => a + (r[campo] || 0), 0)
         return (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col">
@@ -1365,8 +1376,30 @@ export function PainelComercial() {
                       ))}
                     </tbody>
                     <tfoot className="bg-gray-50 sticky bottom-0 border-t-2 border-gray-200">
+                      {devolucoes.length > 0 && (
+                        <>
+                          <tr className="text-gray-600">
+                            <td className="px-4 py-2" colSpan={5}>
+                              {vendas.length} venda{vendas.length === 1 ? '' : 's'}
+                            </td>
+                            <td className="px-4 py-2 text-right">{fmtMoeda(soma(vendas, 'valor_nf'))}</td>
+                            <td className="px-4 py-2 text-right">{fmtMoeda(soma(vendas, 'valor_sem_frete'))}</td>
+                            {ehLegado && <td className="px-4 py-2" />}
+                          </tr>
+                          <tr className="text-rose-600">
+                            <td className="px-4 py-2" colSpan={5}>
+                              {devolucoes.length} devoluç{devolucoes.length === 1 ? 'ão' : 'ões'}
+                            </td>
+                            <td className="px-4 py-2 text-right">{fmtMoeda(soma(devolucoes, 'valor_nf'))}</td>
+                            <td className="px-4 py-2 text-right">{fmtMoeda(soma(devolucoes, 'valor_sem_frete'))}</td>
+                            {ehLegado && <td className="px-4 py-2" />}
+                          </tr>
+                        </>
+                      )}
                       <tr className="font-semibold text-gray-800">
-                        <td className="px-4 py-3" colSpan={5}>{linhas.length} NF(s)</td>
+                        <td className="px-4 py-3" colSpan={5}>
+                          {devolucoes.length > 0 ? 'Líquido · ' : ''}{linhas.length} NF(s)
+                        </td>
                         <td className="px-4 py-3 text-right">{fmtMoeda(somaNf)}</td>
                         <td className="px-4 py-3 text-right">{fmtMoeda(ehFrete ? somaFrete : somaSemFrete)}</td>
                         {ehLegado && <td className="px-4 py-3" />}
