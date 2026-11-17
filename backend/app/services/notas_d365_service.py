@@ -994,6 +994,10 @@ def importar_base_itens(conteudo: bytes, nome_arquivo: str) -> dict:
     c_fam = _col("familia", "familia")
     c_val = _col("faturamento")          # a receita, e só ela
     c_cli = _col("cliente")              # o nome, não o tipo
+    # O CÓDIGO do produto responde melhor que a família: família é um balde de
+    # texto, o código é o item. A planilha traz os dois, e usar só o segundo
+    # deixava sem resposta nota cuja família o mapa não conhece.
+    c_cod = _col("cod. produto", "cod", "produto")
     if not (c_nf and c_fam and c_val):
         return {"erro": "Não parece a base de notas item a item: faltam as colunas de "
                         "número da fatura, família e faturamento.",
@@ -1015,10 +1019,14 @@ def importar_base_itens(conteudo: bytes, nome_arquivo: str) -> dict:
     # Linha de cada NF: a que concentra mais VALOR entre os itens dela. Mesma
     # regra do rateio das OVs — um cateter caro e cinquenta fios baratos não
     # repartem meio a meio.
+    db = get_service_db()
+    por_codigo = linha_produto.mapa_por_codigo(db)
+
     por_nf: dict = {}
     creditos: list = []          # linhas negativas, para casar devolução
     for _, r in df.iterrows():
-        linha = linha_produto.linha_da_familia(_texto(r[c_fam]))
+        linha = linha_produto.resolver(
+            _texto(r[c_cod]) if c_cod else None, _texto(r[c_fam]), por_codigo)
         if not linha:
             continue
         valor = _valor(r[c_val])
@@ -1029,7 +1037,6 @@ def importar_base_itens(conteudo: bytes, nome_arquivo: str) -> dict:
                              "valor": round(abs(valor), 2), "linha": linha})
     por_nf = {nf: max(p, key=p.get) for nf, p in por_nf.items() if p}
 
-    db = get_service_db()
     notas = db.table("notas_d365").select(
         "id, numero, chave_numero, cliente_nome, valor_total, valor_produtos, "
         "tipo_operacao, linha, pedido_id, direcao, status").limit(20000).execute().data

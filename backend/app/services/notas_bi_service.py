@@ -29,6 +29,7 @@ from typing import Optional
 from openpyxl import load_workbook
 
 from app.core.database import get_service_db
+from app.services import linha_produto
 
 ABA = "Base de NF"
 
@@ -216,17 +217,41 @@ def _rodar(conteudo: bytes, arquivo: str, gravar: bool, usuario) -> dict:
     # não impede a carga — entra sem o vínculo e é relatado, porque a venda
     # aconteceu e esconder isso seria pior do que um cadastro incompleto.
     cods = sorted({l["produto_codigo"] for l in linhas if l["produto_codigo"]})
-    prods = {}
+    prods, linha_do_cod = {}, {}
     for i in range(0, len(cods), 40):
         try:
-            for p in db.table("produtos").select("id, codigo").in_(
+            for p in db.table("produtos").select("id, codigo, linha").in_(
                     "codigo", cods[i:i + 40]).execute().data:
-                prods[str(p["codigo"]).strip()] = p["id"]
+                cod = str(p["codigo"]).strip()
+                prods[cod] = p["id"]
+                if p.get("linha"):
+                    linha_do_cod[cod] = p["linha"]
         except Exception as exc:
             print("produtos indisponiveis: %s" % str(exc)[:140])
     sem_cadastro = sorted({l["produto_codigo"] for l in linhas
                            if l["produto_codigo"] and l["produto_codigo"] not in prods})
+
+    # A Sales Vertical do BI manda — é a classificação de quem vendeu. Mas
+    # quando ela vem vazia (ou com um balde que não é linha, como "DEMAIS
+    # PRODUTOS"), o ITEM responde: o código do produto está na própria planilha
+    # e o cadastro daqui sabe a linha dele. Ficar sem linha esperando o BI era
+    # desistir de uma resposta que já estava na mão.
+    #
+    # Ordem: vertical → cadastro de produtos → família. Cada degrau é mais
+    # genérico que o anterior, e o primeiro que responder vale.
+    por_produto = 0
     sem_vertical = sorted({l["numero_fatura"] for l in linhas if not l["linha"]})
+    for l in linhas:
+        if l["linha"]:
+            continue
+        achada = linha_produto.resolver(l["produto_codigo"], l["familia"], linha_do_cod)
+        if achada:
+            # Só o campo `linha` entra na linha gravada: a tabela tem as colunas
+            # que tem, e um campo a mais aqui faria o PostgREST recusar a carga
+            # inteira. A contagem da origem fica fora do dicionário.
+            l["linha"] = achada
+            por_produto += 1
+    sem_linha = sorted({l["numero_fatura"] for l in linhas if not l["linha"]})
 
     if gravar:
         agora = datetime.now(timezone.utc).isoformat()
@@ -272,7 +297,13 @@ def _rodar(conteudo: bytes, arquivo: str, gravar: bool, usuario) -> dict:
         "devolucoes": {"linhas": len(devol),
                        "valor": round(sum(l["valor"] or 0 for l in devol), 2)},
         "produtos_sem_cadastro": sem_cadastro,
+        # Três números diferentes, de propósito: quantas notas o BI não
+        # classificou, quantas linhas o código do produto resolveu, e o que
+        # ficou REALMENTE sem resposta. Antes só existia o primeiro, e ele era
+        # lido como "ficou sem linha" — o que deixou de ser verdade.
         "notas_sem_vertical": sem_vertical,
+        "linhas_pelo_produto": por_produto,
+        "notas_sem_linha": sem_linha,
         "vendedor_informado": sum(
             1 for l in linhas
             if l["vendedor"] and l["vendedor"].upper() not in

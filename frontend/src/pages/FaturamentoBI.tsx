@@ -29,6 +29,8 @@ type Relatorio = {
   devolucoes: { linhas: number; valor: number }
   produtos_sem_cadastro: string[]
   notas_sem_vertical: string[]
+  linhas_pelo_produto?: number
+  notas_sem_linha?: string[]
   vendedor_informado: number
   classificacao?: Classificacao | null
 }
@@ -224,10 +226,23 @@ export default function FaturamentoBI() {
             </p>
           )}
           {!!relatorio.notas_sem_vertical?.length && (
-            <p className="mt-2 text-[11px] text-amber-800">
+            <p className="mt-2 text-[11px] text-gray-600">
               {relatorio.notas_sem_vertical.length} nota(s) sem Sales Vertical no BI
-              (<span className="font-mono">{relatorio.notas_sem_vertical.slice(0, 5).join(', ')}</span>):
-              ficam sem linha até o BI classificar.
+              (<span className="font-mono">{relatorio.notas_sem_vertical.slice(0, 5).join(', ')}</span>)
+              {!!relatorio.linhas_pelo_produto && (
+                <> — a linha saiu do <strong>código do produto</strong>,
+                em {relatorio.linhas_pelo_produto} linha(s)</>
+              )}.
+            </p>
+          )}
+          {/* O que sobrou mesmo. Separado do aviso acima de propósito: nota sem
+              Sales Vertical deixou de significar nota sem linha, e misturar os
+              dois faria parecer problema o que já foi resolvido. */}
+          {!!relatorio.notas_sem_linha?.length && (
+            <p className="mt-2 text-[11px] text-amber-800">
+              {relatorio.notas_sem_linha.length} nota(s) continuam sem linha
+              (<span className="font-mono">{relatorio.notas_sem_linha.slice(0, 5).join(', ')}</span>):
+              nem a vertical do BI nem o cadastro do produto responderam.
             </p>
           )}
 
