@@ -744,22 +744,41 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
     # A linha corrigida à mão sobrevive: é a única informação do espelho que não
     # vem do D365, e perdê-la a cada reimportação faria o operador corrigir a
     # mesma nota todo dia.
+    #
+    # A NATUREZA classificada à mão também, pelo mesmo motivo. Quando o export
+    # não traz descrição de operação (acontece: as notas da Onfly chegam sem
+    # texto nenhum), `_traduzir_operacao` devolve None — e gravar esse None por
+    # cima apagaria o que alguém já respondeu em `classificar_nota`. A regra é
+    # estreita de propósito: só preserva quando o ARQUIVO NÃO TEM NADA A DIZER.
+    # Se o export passar a trazer a operação, ele manda, como sempre mandou.
     chaves = sorted({l["chave_nota"] for l in linhas})
     ajustadas: dict = {}
+    naturezas: dict = {}           # chave_nota -> (tipo_operacao, origem_venda)
     existentes: dict = {}          # chave_nota -> {identidades no banco}
     for i in range(0, len(chaves), 40):
         lote = chaves[i:i + 40]
         for n in db.table("notas_d365").select(
-                "chave_nota, identidade, linha, linha_ajustada"
+                "chave_nota, identidade, linha, linha_ajustada, "
+                "tipo_operacao, origem_venda"
         ).in_("chave_nota", lote).execute().data:
             if n.get("linha_ajustada"):
                 ajustadas[n["chave_nota"]] = n.get("linha")
+            if n.get("tipo_operacao"):
+                naturezas[n["chave_nota"]] = (n.get("tipo_operacao"),
+                                              n.get("origem_venda"))
             existentes.setdefault(n["chave_nota"], set()).add(n.get("identidade"))
 
+    preservadas = 0
     for l in linhas:
         if l["chave_nota"] in ajustadas:
             l["linha"] = ajustadas[l["chave_nota"]]
             l["linha_ajustada"] = True
+        if not l.get("tipo_operacao") and l["chave_nota"] in naturezas:
+            tipo_antigo, origem_antiga = naturezas[l["chave_nota"]]
+            l["tipo_operacao"] = tipo_antigo
+            if not l.get("origem_venda"):
+                l["origem_venda"] = origem_antiga
+            preservadas += 1
 
     for i in range(0, len(linhas), 200):
         db.table("notas_d365").upsert(linhas[i:i + 200], on_conflict="identidade").execute()
@@ -800,6 +819,11 @@ def importar(conteudo: bytes, nome_arquivo: str, usuario: UsuarioOut) -> dict:
         "com_ov": sum(1 for l in linhas if l["pedido_id"]),
         "sem_ov": sum(1 for l in linhas if not l["pedido_id"]),
         "datas_corrigidas": corrigidas_datas,
+        # Quantas notas mantiveram a natureza que alguém classificou à mão
+        # porque o arquivo veio sem a operação. Relatado para que preservar não
+        # seja uma gentileza invisível: se este número crescer, o export está
+        # vindo pior e vale descobrir por quê.
+        "naturezas_preservadas": preservadas,
         "operacoes_sem_classificacao": [
             {"operacao": k, "qtd": v} for k, v in sorted(
                 sem_classificacao.items(), key=lambda x: -x[1])],
