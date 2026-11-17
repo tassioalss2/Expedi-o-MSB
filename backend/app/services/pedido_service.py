@@ -14,6 +14,7 @@ from app.models.enums import (
     ResultadoConferencia,
     StatusPedido,
     TipoFrete,
+    TipoOperacao,
     TRANSICOES_PERMITIDAS,
 )
 from app.models.schemas import (
@@ -1531,6 +1532,149 @@ def atualizar_dados(pedido_id: str, dados: dict, usuario: UsuarioOut) -> dict:
         pedido_id, ped["status"], ped["status"], str(usuario.id),
         f"Dados da OV corrigidos por {usuario.nome} — " + "; ".join(mudancas))
     return obter_pedido(pedido_id)
+
+
+# ── Alinhar a OV à nota fiscal ──────────────────────────────────────────────
+#
+# `atualizar_dados` trava estes campos depois da NF, e com razão: depois do
+# faturamento eles são o que está no documento fiscal. Mas isso pressupõe que a
+# OV concorde com o documento — e quando ela não concorda não havia saída. Em
+# novembro/2026 duas apareceram: uma amostra grátis lançada como venda normal
+# (R$ 1.180,00 entrando na meta) e uma OV com R$ 14,00 a mais que a própria NF.
+#
+# Este caminho não reabre a OV para edição: ele COPIA o que o espelho fiscal
+# diz, campo a campo, e só nos campos abaixo. Não há como digitar um valor aqui
+# — o único valor possível é o da nota. Por isso é seguro depois do faturamento,
+# enquanto a edição livre não seria.
+_CAMPOS_DA_NF = {
+    "valor_nf": ("Valor da NF", "valor_total"),
+    "valor_produtos": ("Valor dos produtos", "valor_produtos"),
+    "tipo_operacao": ("Natureza da operação", "tipo_operacao"),
+}
+
+
+def _nota_da_ov(db, numero_nf: Optional[str]) -> dict:
+    """A nota de SAÍDA do espelho fiscal que corresponde a este número.
+
+    Devolve {"nota": ...} ou {"motivo": ...}. Nunca escolhe entre duas: o mesmo
+    número existe em entrada e saída (a devolução do cliente reusa a numeração
+    dele), e adivinhar aqui alinharia a OV ao documento errado.
+    """
+    chave = (numero_nf or "").strip().lstrip("0")
+    if not chave:
+        return {"motivo": "Esta OV ainda não tem número de NF."}
+    achadas = db.table("notas_d365").select(
+        "numero, chave_numero, chave_nota, valor_total, valor_produtos, "
+        "tipo_operacao, operacao, status, data_documento, cliente_nome"
+    ).eq("chave_numero", chave).execute().data or []
+    # `chave_nota` começa por "saida-"/"entrada-": ASCII, ao contrário de
+    # `direcao` ("Saída"), que depende da codificação do arquivo importado.
+    saidas = [n for n in achadas
+              if str(n.get("chave_nota") or "").startswith("saida-")
+              and not str(n.get("status") or "").upper().startswith("CANCEL")]
+    if not saidas:
+        if achadas:
+            return {"motivo": "No espelho fiscal esta NF só existe como entrada "
+                              "ou está cancelada — não há o que alinhar."}
+        return {"motivo": "Esta NF ainda não está no espelho do D365. "
+                          "Importe o export de notas e tente de novo."}
+    if len(saidas) > 1:
+        return {"motivo": "O espelho tem %d notas de saída com este número. "
+                          "Não vou escolher uma." % len(saidas)}
+    return {"nota": saidas[0]}
+
+
+def divergencia_nf(pedido_id: str) -> dict:
+    """Onde a OV discorda da própria nota fiscal, campo a campo."""
+    db = get_service_db()
+    ped = db.table("pedidos").select(
+        "id, numero_pedido, numero_nf, valor_nf, valor_produtos, tipo_operacao, status"
+    ).eq("id", pedido_id).single().execute().data
+    if not ped:
+        raise HTTPException(status_code=404, detail="OV não encontrada")
+
+    achado = _nota_da_ov(db, ped.get("numero_nf"))
+    if "nota" not in achado:
+        return {"pedido_id": pedido_id, "numero_nf": ped.get("numero_nf"),
+                "tem_nota": False, "motivo": achado["motivo"], "campos": []}
+    nota = achado["nota"]
+
+    campos = []
+    for campo, (rotulo, origem) in _CAMPOS_DA_NF.items():
+        atual, fiscal = ped.get(campo), nota.get(origem)
+        if campo == "tipo_operacao":
+            # O espelho conhece naturezas que a OV não representa (REMESSA,
+            # RETORNO, COMPRA...). Nesses casos não há alinhamento possível, e
+            # dizer isso é melhor do que oferecer um botão que erraria.
+            if fiscal and fiscal not in {t.value for t in TipoOperacao}:
+                campos.append({"campo": campo, "rotulo": rotulo, "atual": atual,
+                               "fiscal": fiscal, "diverge": atual != fiscal,
+                               "alinhavel": False,
+                               "nota_do_campo": "A OV não tem esta natureza — "
+                                                "ajuste pelo D365."})
+                continue
+        else:
+            atual = None if atual is None else round(float(atual), 2)
+            fiscal = None if fiscal is None else round(float(fiscal), 2)
+        # Campo VAZIO na OV não é divergência: é ausência. `valor_produtos` nunca
+        # foi preenchido em boa parte das OVs (medido: dezenas só de setembro
+        # para cá), e tratar isso como contradição acenderia o aviso em OV
+        # saudável — em pouco tempo ninguém mais olharia para ele. Este caminho
+        # existe para resolver desacordo entre dois números, não para completar
+        # cadastro.
+        diverge = (atual is not None and fiscal is not None and atual != fiscal)
+        campos.append({"campo": campo, "rotulo": rotulo, "atual": atual,
+                       "fiscal": fiscal, "diverge": diverge, "alinhavel": diverge,
+                       "nao_informado": atual is None and fiscal is not None})
+
+    return {
+        "pedido_id": pedido_id,
+        "numero_pedido": ped.get("numero_pedido"),
+        "numero_nf": ped.get("numero_nf"),
+        "tem_nota": True,
+        "nota": {k: nota.get(k) for k in
+                 ("numero", "data_documento", "cliente_nome", "operacao", "status")},
+        "campos": campos,
+        "diverge": any(c["diverge"] for c in campos),
+    }
+
+
+def alinhar_a_nf(pedido_id: str, campos: list, usuario: UsuarioOut) -> dict:
+    """Copia para a OV o que a nota fiscal diz, nos campos pedidos.
+
+    Só aceita campo que ESTEJA divergente agora: se a tela foi aberta há dez
+    minutos e alguém já corrigiu, o pedido chega velho e é recusado em vez de
+    reescrever por cima de uma decisão mais nova.
+    """
+    db = get_service_db()
+    atual = divergencia_nf(pedido_id)
+    if not atual.get("tem_nota"):
+        raise HTTPException(status_code=400, detail=atual.get("motivo") or
+                            "Sem nota no espelho fiscal para alinhar.")
+    pedidos_ = [c for c in (campos or []) if c in _CAMPOS_DA_NF]
+    if not pedidos_:
+        raise HTTPException(status_code=422, detail="Nenhum campo para alinhar.")
+
+    por_campo = {c["campo"]: c for c in atual["campos"]}
+    update, mudancas = {}, []
+    for campo in pedidos_:
+        c = por_campo.get(campo)
+        if not c or not c.get("alinhavel"):
+            raise HTTPException(
+                status_code=409,
+                detail="'%s' não está divergente agora — recarregue a OV." %
+                       _CAMPOS_DA_NF[campo][0])
+        update[campo] = c["fiscal"]
+        mudancas.append("%s: %s → %s" % (_CAMPOS_DA_NF[campo][0], c["atual"], c["fiscal"]))
+
+    ped = db.table("pedidos").select("status").eq("id", pedido_id).single().execute().data
+    update["atualizado_em"] = _agora()
+    db.table("pedidos").update(update).eq("id", pedido_id).execute()
+    _registrar_movimentacao(
+        pedido_id, ped["status"], ped["status"], str(usuario.id),
+        "Alinhado à NF %s por %s — %s" % (atual.get("numero_nf"), usuario.nome,
+                                          "; ".join(mudancas)))
+    return {"alinhado": mudancas, "pedido": obter_pedido(pedido_id)}
 
 
 def devolver_reserva(pedido_id: str, codigo: str, qtd: float, usuario: UsuarioOut,

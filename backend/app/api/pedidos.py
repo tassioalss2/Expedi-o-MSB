@@ -1,8 +1,8 @@
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.core.deps import get_current_user, lider_ou_superior
@@ -164,6 +164,41 @@ def atualizar_dados_ov(pedido_id: UUID, payload: DadosOVUpdate,
     de entrega, etc.) enquanto ela não faturou. Cada alteração vai para o
     histórico com o valor de antes e o de depois."""
     return pedido_service.atualizar_dados(str(pedido_id), payload.alteracoes(), usuario)
+
+
+@router.get("/{pedido_id}/divergencia-nf")
+def divergencia_nf(pedido_id: UUID, _: UsuarioOut = Depends(get_current_user)):
+    """Onde a OV discorda da própria nota fiscal, campo a campo.
+
+    Não altera nada: é o que a tela mostra antes de alguém decidir alinhar.
+    """
+    return pedido_service.divergencia_nf(str(pedido_id))
+
+
+class AlinharNFRequest(BaseModel):
+    # Lista explícita: alinhar é uma decisão por campo, não um "corrige tudo".
+    # O valor não vem daqui — vem da nota —, só a escolha de quais campos.
+    campos: List[str]
+
+
+@router.post("/{pedido_id}/alinhar-nf")
+def alinhar_a_nf(pedido_id: UUID, payload: AlinharNFRequest,
+                 usuario: UsuarioOut = Depends(get_current_user)):
+    """Copia para a OV o que o espelho fiscal diz, nos campos escolhidos.
+
+    Vale mesmo depois do faturamento — é justamente aí que serve. Não é edição
+    livre: o único valor possível é o da nota, e cada alinhamento vai para o
+    histórico com o antes e o depois.
+
+    Fechado para a Biomedical: `/pedidos` está no escopo deles (lançam OV e
+    acompanham entrega), mas o escopo é por prefixo e não alcança uma rota no
+    meio do caminho. Alinhar mexe em valor e natureza — portanto em receita e
+    meta da MSB —, e essa decisão é da operação daqui.
+    """
+    if getattr(usuario, "perfil", None) == "BIO":
+        raise HTTPException(status_code=403,
+                            detail="Alinhar a OV à NF é da operação da MSB.")
+    return pedido_service.alinhar_a_nf(str(pedido_id), payload.campos, usuario)
 
 
 @router.patch("/{pedido_id}/canal-licitacao")

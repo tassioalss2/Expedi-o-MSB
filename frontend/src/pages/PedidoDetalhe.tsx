@@ -3458,6 +3458,105 @@ function BotaoGerarOrcamento({ pedido }: { pedido: Pedido }) {
   )
 }
 
+/** A OV discorda da própria nota fiscal.
+ *
+ *  Só aparece quando há divergência — numa operação saudável este bloco nunca
+ *  é visto. Não é um formulário: os valores vêm da nota, e a única escolha é
+ *  quais campos alinhar. Por isso vale depois do faturamento, quando a edição
+ *  livre dos mesmos campos continua (com razão) bloqueada.
+ */
+function AvisoDivergenciaNF({ pedido }: { pedido: any }) {
+  const qc = useQueryClient()
+  const [escolhidos, setEscolhidos] = useState<string[] | null>(null)
+
+  const { data } = useQuery<any>({
+    queryKey: ['divergencia-nf', pedido.id],
+    queryFn: () => api.get(`/pedidos/${pedido.id}/divergencia-nf`).then(r => r.data),
+    enabled: !!pedido?.id && !!pedido?.numero_nf,
+  })
+
+  const alinhaveis: any[] = (data?.campos || []).filter((c: any) => c.alinhavel)
+  const travados: any[] = (data?.campos || []).filter((c: any) => c.diverge && !c.alinhavel)
+  // Todos marcados por padrão: quem abre isto quer a OV igual à nota. Desmarcar
+  // é a exceção, e continua possível.
+  const marcados = escolhidos ?? alinhaveis.map(c => c.campo)
+
+  const alinhar = useMutation({
+    mutationFn: () => api.post(`/pedidos/${pedido.id}/alinhar-nf`, { campos: marcados }),
+    onSuccess: (r: any) => {
+      toast.success(`OV alinhada à NF — ${(r.data?.alinhado || []).join('; ')}`, { duration: 7000 })
+      setEscolhidos(null)
+      qc.invalidateQueries({ queryKey: ['divergencia-nf', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedido', pedido.id] })
+      qc.invalidateQueries({ queryKey: ['pedidos'] })
+      // O valor e a natureza mudam o faturamento e a meta: o painel comercial
+      // tem de recarregar junto, ou mostra o número de antes.
+      qc.invalidateQueries({ queryKey: ['financeiro'] })
+      qc.invalidateQueries({ queryKey: ['financeiro-detalhe'] })
+      qc.invalidateQueries({ queryKey: ['barra-meta'] })
+    },
+    onError: (e: any) =>
+      toast.error(e?.response?.data?.detail || 'Não consegui alinhar à NF'),
+  })
+
+  if (!data?.tem_nota || !data?.diverge) return null
+
+  const fmt = (c: any, v: any) =>
+    v === null || v === undefined ? '—'
+      : c.campo === 'tipo_operacao' ? String(v)
+        : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+  return (
+    <div className="rounded-xl border-2 border-indigo-300 bg-indigo-50 p-4">
+      <div className="flex items-start gap-3">
+        <div className="text-2xl">🧾</div>
+        <div className="flex-1">
+          <p className="text-sm font-bold text-indigo-900">
+            Esta OV discorda da nota fiscal {data.numero_nf}
+          </p>
+          <p className="text-[11px] text-indigo-700 mt-0.5">
+            O que vale é o documento. Marque o que deve ser copiado da NF para a OV —
+            os valores vêm do espelho do D365, não há o que digitar.
+          </p>
+
+          <div className="mt-3 space-y-1.5">
+            {alinhaveis.map((c: any) => (
+              <label key={c.campo}
+                className="flex items-center gap-2 text-sm bg-white rounded-lg px-3 py-2 cursor-pointer">
+                <input type="checkbox" checked={marcados.includes(c.campo)}
+                  onChange={e => setEscolhidos(
+                    e.target.checked ? [...marcados, c.campo]
+                      : marcados.filter(x => x !== c.campo))} />
+                <span className="text-gray-600 w-44 shrink-0">{c.rotulo}</span>
+                <span className="text-rose-600 line-through">{fmt(c, c.atual)}</span>
+                <span className="text-gray-400">→</span>
+                <span className="font-semibold text-emerald-700">{fmt(c, c.fiscal)}</span>
+              </label>
+            ))}
+            {travados.map((c: any) => (
+              <p key={c.campo} className="text-[11px] text-indigo-800 bg-white rounded-lg px-3 py-2">
+                <strong>{c.rotulo}</strong>: a NF diz <strong>{String(c.fiscal)}</strong> e a OV
+                diz {String(c.atual)}. {c.nota_do_campo}
+              </p>
+            ))}
+          </div>
+
+          <div className="mt-3 flex items-center gap-3">
+            <button onClick={() => alinhar.mutate()}
+              disabled={alinhar.isPending || marcados.length === 0}
+              className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:bg-gray-300">
+              {alinhar.isPending ? 'Alinhando…' : 'Alinhar à NF'}
+            </button>
+            <span className="text-[11px] text-indigo-700">
+              Vai para o histórico da OV com o antes e o depois.
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function PedidoDetalhe({ pedidoId, onFechar }: {
   /** Quando vem por prop, a tela e aberta DENTRO de outra pagina (o relatorio
    *  de frete) em vez de pela rota. O id da URL continua valendo quando nao vem. */
@@ -3859,6 +3958,8 @@ export function PedidoDetalhe({ pedidoId, onFechar }: {
           })}
         </div>
       </div>
+
+      <AvisoDivergenciaNF pedido={pedido} />
 
       {/* Venda parada pelo cliente. Fica no lugar do relogio de propósito: o
           relogio ali dizia "220h acima do SLA de 2h" numa espera que nao e da
