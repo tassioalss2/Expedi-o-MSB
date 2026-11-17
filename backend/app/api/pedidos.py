@@ -1048,15 +1048,19 @@ def dashboard_financeiro(
                 bruto["faturamento_sem_frete"] + devolucao["faturamento_sem_frete"], 2),
         }
 
-    def _espelho_devolucoes() -> list:
+    def _espelho_devolucoes(transfer: bool = False) -> list:
         """A devolução que não passou pelo app, no formato que `_resumo` lê.
 
         Negativa porque é assim que `_liquido` a consome: ele SOMA o resumo da
         devolução ao do bruto.
+
+        `transfer=True` traz a da Biomedical, que vai para o balde do transfer
+        price. Sem isso ela não some de "Vendas" — some do app inteiro, e o
+        transfer aparece pelo bruto como se nada tivesse voltado.
         """
         try:
             notas = notas_d365_service.devolucoes_do_periodo(
-                inicio.isoformat(), fim.isoformat()).get("notas") or []
+                inicio.isoformat(), fim.isoformat(), transfer=transfer).get("notas") or []
         except Exception as exc:                   # espelho é opcional
             print("devolucoes do D365 indisponiveis: %s" % str(exc)[:140])
             return []
@@ -1098,19 +1102,22 @@ def dashboard_financeiro(
             vendas = {**vendas, "total_nf": comp["valor"], "total_produtos": comp["valor"],
                       "faturamento_sem_frete": comp["valor"], "qtd_nfs": comp["qtd"]}
         devolucoes = _resumo(_espelho_devolucoes())
+        # Sem OV faturada não há VENDA de transfer price (ela nasce de OV), mas
+        # pode haver DEVOLUÇÃO dela: a nota de entrada vem do espelho e não
+        # depende de OV nenhuma. Zerar as duas por simetria esconderia uma.
+        dev_transfer = _resumo(_espelho_devolucoes(transfer=True))
+        vazio_transfer = _resumo([])
         return {
             "periodo": {"inicio": inicio.isoformat(), "fim": fim.isoformat()},
             # Topo é o BRUTO, como no caminho normal: o líquido tem chave própria.
             **vendas,
-            "transfer_price": _resumo([]),
+            "transfer_price": vazio_transfer,
             "outras_vendas": vendas,
             "complemento_d365": {k: comp[k] for k in ("qtd", "valor", "licitacao")},
             "devolucoes": devolucoes,
-            # Transfer price nasce de OV: sem OV faturada, não há transfer nem
-            # devolução de transfer. Zerado de verdade, não por reaproveitamento.
-            "devolucoes_transfer": _resumo([]),
+            "devolucoes_transfer": dev_transfer,
             "outras_vendas_liquido": _liquido(vendas, devolucoes),
-            "transfer_price_liquido": _resumo([]),
+            "transfer_price_liquido": _liquido(vazio_transfer, dev_transfer),
             "faturamento_liquido": _liquido(vendas, devolucoes),
             "sem_faturamento": [],
         }
@@ -1138,6 +1145,7 @@ def dashboard_financeiro(
     # Entram como negativo porque é assim que `_liquido` as consome: ele SOMA o
     # resumo da devolução ao do bruto.
     devolucoes += _espelho_devolucoes()
+    devolucoes_transfer += _espelho_devolucoes(transfer=True)
 
     resumo_outras = _resumo(outras)
     resumo_devolucoes = _resumo(devolucoes)

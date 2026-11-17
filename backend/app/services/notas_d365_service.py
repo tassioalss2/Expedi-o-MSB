@@ -1387,8 +1387,13 @@ VAZIO_DEVOLUCAO = {"qtd": 0, "valor": 0.0, "por_linha": {},
                    "sem_linha": {"qtd": 0, "valor": 0.0}, "notas": []}
 
 
-def devolucoes_do_periodo(ini: str, fim: str) -> dict:
+def devolucoes_do_periodo(ini: str, fim: str, transfer: bool = False) -> dict:
     """Venda desfeita no período — o que a meta tem de devolver.
+
+    `transfer=True` devolve o OUTRO lado: a devolução da Biomedical, que não
+    sai de "Vendas" porque a venda dela também não entra. Ela precisa de um
+    caminho próprio, senão fica só excluída — e o balde do transfer price
+    mostraria o bruto como se nada tivesse voltado.
 
     Fica fora daqui, de propósito:
 
@@ -1417,7 +1422,7 @@ def devolucoes_do_periodo(ini: str, fim: str) -> dict:
     devolucoes = [n for n in notas
                   if _aprovada(n)
                   and n.get("tipo_operacao") == "DEVOLUCAO"
-                  and not eh_transfer_price(n.get("cliente_nome"))
+                  and eh_transfer_price(n.get("cliente_nome")) == transfer
                   and "ESTERILIZE" not in (n.get("cliente_nome") or "").upper()]
     if not devolucoes:
         return {**VAZIO_DEVOLUCAO, "por_linha": {}, "sem_linha": {"qtd": 0, "valor": 0.0},
