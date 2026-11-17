@@ -62,8 +62,11 @@ type Conciliacao = {
   saidas_sem_receita: Array<{ chave: string; qtd: number; valor: number }>
   transfer: {
     d365_qtd: number; d365_valor: number; app_qtd: number; app_valor: number
+    devolucao_qtd?: number; devolucao_valor?: number; d365_liquido?: number
     notas: Array<{ id: string; nf: string; data: string | null; cliente: string | null
                    valor: number; no_app: boolean }>
+    devolucoes?: Array<{ id: string; nf: string; data: string | null
+                         cliente: string | null; valor: number }>
   }
   ultima_importacao: {
     quando: string; arquivo: string | null; por: string | null; notas: number
@@ -398,6 +401,20 @@ export default function FaturamentoD365() {
                   </span>
                 ))}
               </p>
+              {/* A devolução do transfer price mora aqui. Ela já apareceu em
+                  "Devoluções de venda", onde derrubava um faturamento de que
+                  nunca fez parte — e some de lá sem este bloco. */}
+              {!!data.transfer.devolucao_qtd && (
+                <p className="mt-1.5 border-t border-slate-200 pt-1.5 text-[11px] text-slate-700">
+                  Devolvido: <span className="font-semibold text-rose-700">
+                    −{fmtBRL(data.transfer.devolucao_valor)}
+                  </span>{' '}
+                  em {data.transfer.devolucao_qtd} NF(s)
+                  {' '}({data.transfer.devolucoes?.map(n => n.nf).join(', ')}) ·
+                  líquido do transfer <strong>{fmtBRL(data.transfer.d365_liquido)}</strong>.
+                  Fora da conta do faturamento, como o bruto.
+                </p>
+              )}
             </div>
           )}
 

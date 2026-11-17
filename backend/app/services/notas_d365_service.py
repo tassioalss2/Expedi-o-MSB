@@ -1192,7 +1192,17 @@ def conciliacao(ini: str, fim: str) -> dict:
     # As devolucoes sao notas de ENTRADA: nao passam por _vale_como_faturamento,
     # que so olha a saida aprovada.
     aprovadas = [n for n in notas_periodo if _aprovada(n)]
-    devolucoes = [n for n in aprovadas if n.get("tipo_operacao") == "DEVOLUCAO"]
+    todas_dev = [n for n in aprovadas if n.get("tipo_operacao") == "DEVOLUCAO"]
+    # Transfer price sai das DUAS pontas, aqui como na receita logo acima. A
+    # venda da Biomedical já não entra em "Vendas"; a devolução dela também não
+    # pode sair de lá, ou o estorno derruba uma receita que nunca esteve ali.
+    # Enquanto estes dois filtros faltavam, esta tela dizia 13 devoluções e
+    # R$ 98.555,01 e o Painel Comercial dizia 12 e R$ 86.420,41 — a diferença
+    # era exatamente a devolução da Biomedical (R$ 12.134,60).
+    devolucoes = [n for n in todas_dev
+                  if not eh_transfer_price(n.get("cliente_nome"))
+                  and "ESTERILIZE" not in (n.get("cliente_nome") or "").upper()]
+    dev_transfer = [n for n in todas_dev if eh_transfer_price(n.get("cliente_nome"))]
     simbolicas = [n for n in aprovadas if n.get("tipo_operacao") == "DEVOLUCAO_SIMBOLICA"]
 
     so_d365, so_app, divergentes = [], [], []
@@ -1257,12 +1267,25 @@ def conciliacao(ini: str, fim: str) -> dict:
             "d365_valor": round(sum(valor_da_nota(n) for n in notas_transfer), 2),
             "app_qtd": len(app_transfer),
             "app_valor": round(sum(valor_da_ov(p) for p in app_transfer.values()), 2),
+            # A devolução do transfer price mora AQUI, não em "Devoluções de
+            # venda". Tirá-la de lá sem dar um lugar a ela só trocaria somar
+            # errado por sumir — e sumir é pior, porque ninguém procura o que
+            # não sabe que existe.
+            "devolucao_qtd": len(dev_transfer),
+            "devolucao_valor": round(sum(valor_da_nota(n) for n in dev_transfer), 2),
+            "d365_liquido": round(sum(valor_da_nota(n) for n in notas_transfer)
+                                  - sum(valor_da_nota(n) for n in dev_transfer), 2),
             "notas": sorted([{
                 "id": n.get("id"), "nf": n["numero"], "data": n.get("data_documento"),
                 "cliente": n.get("cliente_nome"),
                 "valor": round(valor_da_nota(n), 2),
                 "no_app": n["chave_numero"] in app_transfer,
             } for n in notas_transfer], key=lambda x: -x["valor"]),
+            "devolucoes": sorted([{
+                "id": n.get("id"), "nf": n["numero"], "data": n.get("data_documento"),
+                "cliente": n.get("cliente_nome"),
+                "valor": round(valor_da_nota(n), 2),
+            } for n in dev_transfer], key=lambda x: -x["valor"]),
         },
         # Devolucao e venda desfeita: o faturamento bruto continua sendo o que
         # saiu, e o liquido e o que ficou. Os dois aparecem, porque a meta olha
